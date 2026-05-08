@@ -19,6 +19,7 @@ import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { LeaveModule } from './modules/leave/leave.module';
+import { CalendarModule } from './modules/calendar/calendar.module';
 import { TimesheetModule } from './modules/timesheet/timesheet.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FamModule } from './modules/fam/fam.module';
@@ -115,6 +116,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     EmployeesModule,
     AttendanceModule,
     LeaveModule,
+    CalendarModule,
     TimesheetModule,
     NotificationsModule,
     FamModule,

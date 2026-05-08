@@ -89,6 +89,19 @@ VALUES (
   true, true
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- Copy Indian holidays from the default seed tenant (if pnpm db:seed has run)
+-- so the demo tenant's calendar is populated for Gate 4 testing.
+INSERT INTO holidays (tenant_id, holiday_date, name, type, description, is_recurring)
+SELECT '11111111-1111-1111-1111-111111111111', holiday_date, name, type, description, is_recurring
+FROM holidays
+WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
+  AND NOT EXISTS (
+    SELECT 1 FROM holidays h2
+    WHERE h2.tenant_id = '11111111-1111-1111-1111-111111111111'
+      AND h2.holiday_date = holidays.holiday_date
+      AND h2.name = holidays.name
+  );
 SQL
 
 echo "✅ Demo data ready."

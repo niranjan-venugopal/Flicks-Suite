@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, desc, gte, lte, ne, or, sql } from 'drizzle-orm';
+import { eq, and, desc, gte, lte, ne, or, sql, inArray } from 'drizzle-orm';
 import {
   leaveTypes,
   leaveBalances,
@@ -14,6 +14,7 @@ import {
   memberships,
   employees,
   users,
+  attendanceRecords,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
@@ -27,22 +28,58 @@ import type {
 } from './leave.dto';
 
 /**
- * Counts business days (Mon-Fri) between two YYYY-MM-DD dates inclusive.
- * Used as the v1 day-count heuristic. A future iteration should subtract
- * holidays and respect the tenant's working-week / shift configuration.
+ * Yields each YYYY-MM-DD between startISO and endISO inclusive.
  */
-function countBusinessDays(startISO: string, endISO: string): number {
+function* eachDay(startISO: string, endISO: string): Generator<string> {
   const start = new Date(`${startISO}T00:00:00Z`);
   const end = new Date(`${endISO}T00:00:00Z`);
-  if (end < start) return 0;
-  let count = 0;
+  if (end < start) return;
   const cursor = new Date(start);
   while (cursor <= end) {
-    const dow = cursor.getUTCDay(); // 0 = Sun, 6 = Sat
-    if (dow !== 0 && dow !== 6) count++;
+    yield cursor.toISOString().slice(0, 10);
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
+}
+
+/**
+ * Counts business days (Mon-Fri) between two YYYY-MM-DD dates inclusive.
+ * Falls back to weekend-only exclusion when no holidays are passed.
+ *
+ * PRD §7.7 acceptance: "Holiday on a leave date does not double-count: leave
+ * for Mon–Fri including Republic Day on Wed = 4 days, not 5."
+ *
+ * @param holidayDates set of YYYY-MM-DD holiday dates that fall in the range
+ */
+function countBusinessDays(
+  startISO: string,
+  endISO: string,
+  holidayDates: Set<string> = new Set(),
+): number {
+  let count = 0;
+  for (const d of eachDay(startISO, endISO)) {
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay(); // 0=Sun, 6=Sat
+    if (dow === 0 || dow === 6) continue;
+    if (holidayDates.has(d)) continue;
+    count++;
+  }
   return count;
+}
+
+/**
+ * Yields business days (Mon-Fri, non-holiday) between two YYYY-MM-DD dates.
+ * Used to back-fill attendance_records on leave approval.
+ */
+function* businessDays(
+  startISO: string,
+  endISO: string,
+  holidayDates: Set<string>,
+): Generator<string> {
+  for (const d of eachDay(startISO, endISO)) {
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    if (holidayDates.has(d)) continue;
+    yield d;
+  }
 }
 
 @Injectable()
@@ -80,6 +117,27 @@ export class LeaveService {
       }
       return m.employeeId;
     });
+  }
+
+  /** Returns the set of YYYY-MM-DD holiday dates for the tenant in [from, to]. */
+  private async fetchHolidayDates(
+    tenantId: string,
+    fromISO: string,
+    toISO: string,
+  ): Promise<Set<string>> {
+    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
+      tx
+        .select({ date: holidays.holiday_date })
+        .from(holidays)
+        .where(
+          and(
+            eq(holidays.tenant_id, tenantId),
+            gte(holidays.holiday_date, fromISO),
+            lte(holidays.holiday_date, toISO),
+          ),
+        ),
+    );
+    return new Set(rows.map((r) => r.date));
   }
 
   // ─── Leave Types ───────────────────────────────────────────────────────────
@@ -221,10 +279,17 @@ export class LeaveService {
   async applyLeave(userId: string, tenantId: string, dto: ApplyLeaveDto) {
     const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
 
-    // total_days: half-day = 0.5, otherwise count business days inclusive.
+    // Holiday-aware day counting (PRD §7.7 acceptance #8): subtract any
+    // tenant holidays falling within the leave range so a Mon–Fri leave
+    // straddling a Wed holiday counts as 4 days, not 5.
+    const holidayDates = await this.fetchHolidayDates(
+      tenantId,
+      dto.startDate,
+      dto.endDate,
+    );
     const totalDays = dto.isHalfDay
       ? 0.5
-      : countBusinessDays(dto.startDate, dto.endDate);
+      : countBusinessDays(dto.startDate, dto.endDate, holidayDates);
     if (totalDays <= 0) {
       throw new BadRequestException(
         'Leave dates do not include any business day',
@@ -630,6 +695,49 @@ export class LeaveService {
                 eq(leaveBalances.leave_year, leaveYear),
               ),
             );
+
+          // PRD §7.7 acceptance #7: approved leave creates attendance_records
+          // with status='on_leave' so daily/weekly reports show the day off.
+          // Skip weekends and holidays (already excluded by total_days math).
+          const holidayRows = await tx
+            .select({ d: holidays.holiday_date })
+            .from(holidays)
+            .where(
+              and(
+                eq(holidays.tenant_id, tenantId),
+                gte(holidays.holiday_date, req.start_date),
+                lte(holidays.holiday_date, req.end_date),
+              ),
+            );
+          const holidayDates = new Set(holidayRows.map((h) => h.d));
+          for (const day of businessDays(
+            req.start_date,
+            req.end_date,
+            holidayDates,
+          )) {
+            await tx
+              .insert(attendanceRecords)
+              .values({
+                tenant_id: tenantId,
+                employee_id: req.employee_id,
+                attendance_date: day,
+                attendance_status: 'on_leave',
+                source: 'system',
+                notes: `Leave: ${req.reason ?? ''}`.slice(0, 500),
+              })
+              .onConflictDoUpdate({
+                target: [
+                  attendanceRecords.tenant_id,
+                  attendanceRecords.employee_id,
+                  attendanceRecords.attendance_date,
+                ],
+                set: {
+                  attendance_status: 'on_leave',
+                  notes: sql`COALESCE(${attendanceRecords.notes}, '') || E'\nLeave approved'`,
+                  updated_at: now,
+                },
+              });
+          }
         } else {
           await tx
             .update(leaveBalances)
