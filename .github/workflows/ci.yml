@@ -8,7 +8,7 @@ on:
 
 jobs:
   ci:
-    name: Typecheck, Lint, Test
+    name: Typecheck, Lint, Test (incl. PRD Gate 1)
     runs-on: ubuntu-latest
 
     services:
@@ -26,14 +26,33 @@ jobs:
         ports:
           - 5432:5432
 
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
+      # App connection — non-superuser, NOBYPASSRLS, so RLS is enforced
+      DATABASE_URL: postgresql://flicks_app:flicks_app@localhost:5432/flicks_test
+      # Service role — superuser, used by FAM module + test setup
       DATABASE_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
       DATABASE_SERVICE_ROLE_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
       JWT_SECRET: test-jwt-secret-min-32-characters-long
       RESEND_API_KEY: re_test_key
       REDIS_URL: redis://localhost:6379
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
       DB_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      R2_ACCOUNT_ID: ci-placeholder
+      R2_ACCESS_KEY_ID: ci-placeholder
+      R2_SECRET_ACCESS_KEY: ci-placeholder
+      R2_BUCKET_NAME: ci-placeholder
+      R2_PUBLIC_URL: https://ci.placeholder
 
     steps:
       - uses: actions/checkout@v4
@@ -56,14 +75,36 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Generate DB types
-        run: pnpm db:generate
+      # Apply schema directly — drizzle-kit migrate requires a journal,
+      # but we ship a hand-curated 0001_initial.sql with all tables, RLS
+      # policies, indexes, and triggers in one transactional file.
+      - name: Apply schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d flicks_test -v ON_ERROR_STOP=1 \
+            -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"; CREATE EXTENSION IF NOT EXISTS citext; CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          psql -h localhost -U postgres -d flicks_test -v ON_ERROR_STOP=1 \
+            -f packages/db/drizzle/0001_initial.sql
 
-      - name: Run DB migrations
-        run: pnpm db:migrate
+      # Create the non-superuser role used by the API and the Gate 1 tests.
+      # Without this, postgres-as-superuser would silently bypass RLS and
+      # the multi-tenant isolation tests would pass for the wrong reason.
+      - name: Create app role (NOBYPASSRLS)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d flicks_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE flicks_app WITH LOGIN PASSWORD 'flicks_app' NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS;
+          GRANT USAGE ON SCHEMA public TO flicks_app;
+          GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public TO flicks_app;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flicks_app;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO flicks_app;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO flicks_app;
+          SQL
 
-      - name: Run tests (including multi-tenant isolation)
-        run: pnpm test
+      - name: Run tests (PRD Gate 1 — multi-tenant isolation)
+        run: pnpm --filter @flicks/api test
 
   security-audit:
     name: Security Audit
