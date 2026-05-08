@@ -1,0 +1,50 @@
+# Flicks Suite — local development infrastructure
+#
+# Brings up Postgres 16 + Redis 7 with sane defaults that match the rest of
+# the repo (apps/api/.env.example uses these credentials and ports).
+#
+# Usage:
+#   docker compose up -d           # start in background
+#   docker compose logs -f         # tail logs
+#   docker compose down            # stop and keep volumes
+#   docker compose down -v         # stop and wipe data
+#
+# After bringing it up, run:
+#   pnpm setup:db                  # create role, apply schema, seed
+#   pnpm setup:demo                # optional: create demo tenant + users
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: flicks-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: flicks_suite
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - flicks_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flicks_suite"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: flicks-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  flicks_pgdata:
+    driver: local

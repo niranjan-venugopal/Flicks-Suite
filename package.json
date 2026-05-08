@@ -7,12 +7,15 @@
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "turbo lint",
-    "test": "turbo test",
+    "test": "pnpm --filter @flicks/api test",
     "typecheck": "turbo typecheck",
     "db:generate": "pnpm --filter @flicks/db generate",
     "db:migrate": "pnpm --filter @flicks/db migrate",
     "db:seed": "pnpm --filter @flicks/db seed",
-    "db:studio": "pnpm --filter @flicks/db studio"
+    "db:studio": "pnpm --filter @flicks/db studio",
+    "setup:db": "bash scripts/setup-db.sh",
+    "setup:demo": "bash scripts/setup-demo.sh",
+    "setup": "pnpm install && pnpm setup:db && pnpm db:seed"
   },
   "devDependencies": {
     "turbo": "^2.4.4",
