@@ -48,7 +48,12 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: config.get<string>('JWT_ACCESS_EXPIRY', '15m'),
+          // The jsonwebtoken types narrow expiresIn to a templated string literal;
+          // config-driven values are validated at startup so casting is safe.
+          expiresIn: config.get<string>(
+            'JWT_ACCESS_EXPIRY',
+            '15m',
+          ) as unknown as number,
           issuer: config.get<string>('JWT_ISSUER', 'flicks-suite'),
           audience: config.get<string>('JWT_AUDIENCE', 'flicks-suite-api'),
         },

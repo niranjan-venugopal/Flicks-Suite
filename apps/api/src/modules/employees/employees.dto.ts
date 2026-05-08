@@ -33,10 +33,10 @@ export class InviteEmployeeDto {
   @IsNotEmpty()
   employeeCode: string;
 
-  @ApiProperty({ example: 'Software Engineer' })
-  @IsString()
-  @IsNotEmpty()
-  designation: string;
+  @ApiPropertyOptional({ description: 'Designation FK (designations.id)' })
+  @IsUUID()
+  @IsOptional()
+  designationId?: string;
 
   @ApiPropertyOptional()
   @IsUUID()
@@ -125,10 +125,10 @@ export class TransferEmployeeDto {
   @IsOptional()
   managerId?: string;
 
-  @ApiPropertyOptional()
-  @IsString()
+  @ApiPropertyOptional({ description: 'Designation FK (designations.id)' })
+  @IsUUID()
   @IsOptional()
-  designation?: string;
+  designationId?: string;
 
   @ApiProperty({ example: 'Transferred to new department for project requirements' })
   @IsString()

@@ -48,10 +48,9 @@ const SAFE_EMPLOYEE_FIELDS = {
   date_of_joining: employees.date_of_joining,
   department_id: employees.department_id,
   location_id: employees.location_id,
-  manager_id: employees.manager_id,
-  designation: employees.designation,
-  onboarding_step: employees.onboarding_step,
-  onboarding_completed_at: employees.onboarding_completed_at,
+  reporting_manager_id: employees.reporting_manager_id,
+  designation_id: employees.designation_id,
+  custom_fields: employees.custom_fields,
   created_at: employees.created_at,
   updated_at: employees.updated_at,
 } as const;
@@ -149,20 +148,27 @@ export class EmployeesService {
       ? dto.joiningDate
       : new Date().toISOString().split('T')[0];
 
+    const nameParts = dto.fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] ?? dto.fullName;
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
     const [employee] = await this.db
       .insert(employees)
       .values({
         tenant_id: tenantId,
         user_id: currentUser.id,
         employee_code: dto.employeeCode,
-        designation: dto.designation,
+        first_name: firstName,
+        last_name: lastName,
+        work_email: normalizedEmail,
+        designation_id: dto.designationId,
         department_id: dto.departmentId,
         location_id: dto.locationId,
-        manager_id: dto.managerId,
+        reporting_manager_id: dto.managerId,
         employment_type: (dto.employmentType as typeof employees.$inferInsert['employment_type']) ?? 'full_time',
         date_of_joining: joiningDate,
         status: 'inactive',
-        onboarding_step: 0,
+        custom_fields: { onboarding_step: 0 },
       })
       .returning();
 
@@ -226,7 +232,7 @@ export class EmployeesService {
     return {
       id: employee.id,
       employeeCode: employee.employee_code,
-      designation: employee.designation,
+      designationId: employee.designation_id,
       userId: employee.user_id,
       email: normalizedEmail,
       fullName: dto.fullName,
@@ -284,7 +290,6 @@ export class EmployeesService {
     const [updated] = await this.db
       .update(employees)
       .set({
-        designation: dto.designation ?? employee.designation,
         updated_at: new Date(),
       })
       .where(eq(employees.id, employeeId))
@@ -296,8 +301,8 @@ export class EmployeesService {
       action: 'employee.updated',
       resourceType: 'employee',
       resourceId: employeeId,
-      beforeState: { designation: employee.designation },
-      afterState: { designation: dto.designation },
+      beforeState: { designationId: employee.designation_id },
+      afterState: { fullName: dto.fullName, phone: dto.phone },
     });
 
     return updated;
@@ -342,16 +347,25 @@ export class EmployeesService {
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
-    const nextStep = Math.max(employee.onboarding_step ?? 0, step);
+    const existingCustom =
+      (employee.custom_fields as Record<string, unknown> | null) ?? {};
+    const currentStep =
+      typeof existingCustom.onboarding_step === 'number'
+        ? existingCustom.onboarding_step
+        : 0;
+    const nextStep = Math.max(currentStep, step);
     const allStepsComplete = nextStep >= 5;
 
     const [updated] = await this.db
       .update(employees)
       .set({
-        onboarding_step: nextStep,
-        onboarding_completed_at: allStepsComplete
-          ? new Date()
-          : null,
+        custom_fields: {
+          ...existingCustom,
+          onboarding_step: nextStep,
+          onboarding_completed_at: allStepsComplete
+            ? new Date().toISOString()
+            : null,
+        },
         updated_at: new Date(),
       })
       .where(eq(employees.id, employeeId))
@@ -365,10 +379,12 @@ export class EmployeesService {
       });
     }
 
+    const updatedCustom =
+      (updated.custom_fields as Record<string, unknown> | null) ?? {};
     return {
       employeeId,
       step,
-      onboardingStep: updated.onboarding_step,
+      onboardingStep: updatedCustom.onboarding_step ?? nextStep,
       allStepsComplete,
     };
   }
@@ -434,21 +450,28 @@ export class EmployeesService {
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
+    const previousValue = {
+      departmentId: employee.department_id,
+      reportingManagerId: employee.reporting_manager_id,
+      locationId: employee.location_id,
+      designationId: employee.designation_id,
+    };
+    const newValue = {
+      departmentId: dto.departmentId ?? employee.department_id,
+      reportingManagerId: dto.managerId ?? employee.reporting_manager_id,
+      locationId: dto.locationId ?? employee.location_id,
+      designationId: dto.designationId ?? employee.designation_id,
+    };
+
     // Record history
     await this.db.insert(employmentHistory).values({
       tenant_id: tenantId,
       employee_id: employeeId,
       change_type: 'transfer',
-      effective_date:
+      effective_from:
         dto.effectiveDate ?? new Date().toISOString().split('T')[0],
-      from_department_id: employee.department_id,
-      from_manager_id: employee.manager_id,
-      from_location_id: employee.location_id,
-      from_designation: employee.designation,
-      to_department_id: dto.departmentId,
-      to_manager_id: dto.managerId,
-      to_location_id: dto.locationId,
-      to_designation: dto.designation,
+      previous_value: previousValue,
+      new_value: newValue,
       reason: dto.reason,
       changed_by: adminId,
     });
@@ -458,9 +481,9 @@ export class EmployeesService {
       .update(employees)
       .set({
         department_id: dto.departmentId ?? employee.department_id,
-        manager_id: dto.managerId ?? employee.manager_id,
+        reporting_manager_id: dto.managerId ?? employee.reporting_manager_id,
         location_id: dto.locationId ?? employee.location_id,
-        designation: dto.designation ?? employee.designation,
+        designation_id: dto.designationId ?? employee.designation_id,
         updated_at: new Date(),
       })
       .where(eq(employees.id, employeeId))
@@ -472,14 +495,8 @@ export class EmployeesService {
       action: 'employee.transferred',
       resourceType: 'employee',
       resourceId: employeeId,
-      beforeState: {
-        departmentId: employee.department_id,
-        managerId: employee.manager_id,
-      },
-      afterState: {
-        departmentId: dto.departmentId,
-        managerId: dto.managerId,
-      },
+      beforeState: previousValue,
+      afterState: newValue,
     });
 
     return updated;
@@ -509,8 +526,12 @@ export class EmployeesService {
       tenant_id: tenantId,
       employee_id: employeeId,
       change_type: 'separation',
-      effective_date: lastWorkingDate,
-      from_designation: employee.designation,
+      effective_from: lastWorkingDate,
+      previous_value: {
+        designationId: employee.designation_id,
+        status: employee.status,
+      },
+      new_value: { status: 'notice_period', separationType: dto.separationType },
       reason: dto.reason,
       changed_by: adminId,
     });
@@ -543,7 +564,7 @@ export class EmployeesService {
       .select()
       .from(employmentHistory)
       .where(eq(employmentHistory.employee_id, employeeId))
-      .orderBy(desc(employmentHistory.effective_date));
+      .orderBy(desc(employmentHistory.effective_from));
   }
 
   async getOrgChart(tenantId: string) {
@@ -551,8 +572,8 @@ export class EmployeesService {
       .select({
         id: employees.id,
         employeeCode: employees.employee_code,
-        designation: employees.designation,
-        managerId: employees.manager_id,
+        designationId: employees.designation_id,
+        managerId: employees.reporting_manager_id,
         departmentId: employees.department_id,
         status: employees.status,
       })
@@ -621,6 +642,6 @@ export class EmployeesService {
       throw new NotFoundException('Document not found');
     }
 
-    return this.generateSignedUrl(doc.file_url ?? '');
+    return this.generateSignedUrl(doc.r2_key ?? '');
   }
 }

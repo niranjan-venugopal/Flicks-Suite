@@ -18,6 +18,7 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "strict": true,
+    "strictPropertyInitialization": false,
     "paths": {
       "@flicks/db": ["../../packages/db/src/index.ts"],
       "@flicks/db/schema": ["../../packages/db/src/schema/index.ts"],
@@ -27,5 +28,7 @@
       "@flicks/shared/validators": ["../../packages/shared/src/validators/index.ts"],
       "@flicks/shared/constants": ["../../packages/shared/src/constants/index.ts"]
     }
-  }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test"]
 }

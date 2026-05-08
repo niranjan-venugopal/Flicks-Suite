@@ -1,9 +1,5 @@
 import { z } from 'zod';
-
-// ─── Regex Constants ──────────────────────────────────────────────────────────
-
-export const IFSC_REGEX = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-export const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+import { IFSC_REGEX, PAN_REGEX } from '../constants/index.js';
 
 // ─── Invite Employee ──────────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ import type { Db } from '@flicks/db';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Inline notifications table type (until added to schema)
-interface InAppNotification {
+export interface InAppNotification {
   id: string;
   userId: string;
   type: string;

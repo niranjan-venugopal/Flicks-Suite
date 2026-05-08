@@ -97,3 +97,29 @@ export function useLogout() {
     },
   })
 }
+
+/**
+ * Verify magic link via React Query useQuery (auto-runs when token is non-null).
+ * Use from the /verify page where the token comes from the URL search params.
+ *
+ * Note: a separate useVerifyMagicLink mutation exists above; this query-style
+ * hook is suffixed with `Query` so it can coexist.
+ */
+export function useVerifyMagicLinkQuery(token: string | null) {
+  const { setUser, setTenant } = useAuthStore()
+
+  return useQuery({
+    queryKey: ['auth', 'verify-magic-link', token],
+    queryFn: async () => {
+      const data = await api.post<LoginResponse>('/api/v1/auth/verify-magic-link', {
+        token,
+      })
+      setUser(data.user as any)
+      setTenant(data.tenant as any)
+      return data
+    },
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+  })
+}
