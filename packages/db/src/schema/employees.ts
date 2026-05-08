@@ -13,7 +13,7 @@ import {
   date,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
-import { tenants, users } from './platform.js';
+import { tenants, users } from './platform';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 

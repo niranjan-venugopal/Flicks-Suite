@@ -12,8 +12,8 @@ import {
   real,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
-import { tenants, users } from './platform.js';
-import { employees } from './employees.js';
+import { tenants, users } from './platform';
+import { employees } from './employees';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 

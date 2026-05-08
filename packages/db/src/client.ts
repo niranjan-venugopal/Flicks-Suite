@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
-import * as schema from './schema/index.js'
+import * as schema from './schema/index'
 
 // ─── Tenant DB (RLS-enforced, uses app.tenant_id) ────────────────────────────
 

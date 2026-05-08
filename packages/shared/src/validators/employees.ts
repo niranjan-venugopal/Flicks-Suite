@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IFSC_REGEX, PAN_REGEX } from '../constants/index.js';
+import { IFSC_REGEX, PAN_REGEX } from '../constants/index';
 
 // ─── Invite Employee ──────────────────────────────────────────────────────────
 

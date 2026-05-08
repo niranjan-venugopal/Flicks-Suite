@@ -1,6 +1,6 @@
 // ─── FAM (Flicks Admin Module) Types ─────────────────────────────────────────
 
-import type { TenantStatus } from './auth.js';
+import type { TenantStatus } from './auth';
 
 export type HealthStatus = 'healthy' | 'degraded' | 'critical';
 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GSTIN_REGEX, PAN_REGEX } from '../constants/index.js';
+import { GSTIN_REGEX, PAN_REGEX } from '../constants/index';
 
 // ─── Slug Validator ───────────────────────────────────────────────────────────
 

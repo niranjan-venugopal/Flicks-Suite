@@ -10,7 +10,7 @@ import {
   pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
-import { users } from './platform.js';
+import { users } from './platform';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 

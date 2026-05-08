@@ -16,7 +16,7 @@ import 'dotenv/config';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq, and } from 'drizzle-orm';
-import * as schema from './schema/index.js';
+import * as schema from './schema/index';
 
 // ─── DB connection ─────────────────────────────────────────────────────────────
 

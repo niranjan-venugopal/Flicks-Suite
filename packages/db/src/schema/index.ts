@@ -1,32 +1,32 @@
 // ─── Platform ─────────────────────────────────────────────────────────────────
-export * from './platform.js';
+export * from './platform';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-export * from './auth.js';
+export * from './auth';
 
 // ─── Employees ────────────────────────────────────────────────────────────────
-export * from './employees.js';
+export * from './employees';
 
 // ─── Attendance ───────────────────────────────────────────────────────────────
-export * from './attendance.js';
+export * from './attendance';
 
 // ─── Leave ────────────────────────────────────────────────────────────────────
-export * from './leave.js';
+export * from './leave';
 
 // ─── Timesheet ────────────────────────────────────────────────────────────────
-export * from './timesheet.js';
+export * from './timesheet';
 
 // ─── FAM (Fleet Administration & Monitoring) ──────────────────────────────────
-export * from './fam.js';
+export * from './fam';
 
 // ─── Combined schema object (for Drizzle client) ─────────────────────────────
-import * as platformSchema from './platform.js';
-import * as authSchema from './auth.js';
-import * as employeesSchema from './employees.js';
-import * as attendanceSchema from './attendance.js';
-import * as leaveSchema from './leave.js';
-import * as timesheetSchema from './timesheet.js';
-import * as famSchema from './fam.js';
+import * as platformSchema from './platform';
+import * as authSchema from './auth';
+import * as employeesSchema from './employees';
+import * as attendanceSchema from './attendance';
+import * as leaveSchema from './leave';
+import * as timesheetSchema from './timesheet';
+import * as famSchema from './fam';
 
 export const schema = {
   ...platformSchema,
