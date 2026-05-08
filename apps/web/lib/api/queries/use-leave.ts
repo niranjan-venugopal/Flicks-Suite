@@ -3,95 +3,183 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 
+// ─── Wire types — match the API responses exactly ─────────────────────────────
+
+export interface LeaveType {
+  id: string
+  name: string
+  code: string
+  description: string | null
+  defaultQuotaDays: number
+  isPaid: boolean
+  allowHalfDay: boolean
+  color: string | null
+  displayOrder: number
+}
+
 export interface LeaveBalance {
-  leaveType: string
   leaveTypeId: string
-  total: number
+  leaveTypeName: string
+  code: string
+  color: string | null
+  opening: number
+  accrued: number
   used: number
   pending: number
   available: number
 }
 
+export interface LeaveBalancesResponse {
+  leaveYear: number
+  balances: LeaveBalance[]
+}
+
 export interface LeaveRequest {
   id: string
-  leaveType: string
+  leaveTypeId: string
   startDate: string
   endDate: string
-  days: number
-  halfDay?: 'first_half' | 'second_half'
-  reason?: string
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled'
+  isHalfDay: boolean
+  totalDays: number
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'draft' | 'revoked'
+  reason: string | null
   appliedAt: string
-  approvedBy?: { id: string; name: string }
-  coverPerson?: { id: string; name: string }
+  leaveTypeName: string | null
+  leaveTypeColor: string | null
+}
+
+export interface PendingLeaveRequest {
+  id: string
+  employeeId: string
+  leaveTypeId: string
+  startDate: string
+  endDate: string
+  totalDays: number
+  reason: string | null
+  appliedAt: string
+  employeeName: string
+  employeeCode: string
+  leaveTypeName: string | null
 }
 
 export interface ApplyLeavePayload {
   leaveTypeId: string
   startDate: string
   endDate: string
-  halfDay?: 'first_half' | 'second_half'
-  reason?: string
-  coverPersonId?: string
+  isHalfDay?: boolean
+  halfDaySession?: 'first_half' | 'second_half'
+  reason: string
+  coverEmployeeId?: string
 }
 
-export function useLeaveBalances(employeeId?: string) {
+export interface PaginatedResponse<T> {
+  data: T[]
+  pagination: { page: number; limit: number; total: number }
+}
+
+// ─── Hooks ───────────────────────────────────────────────────────────────────
+
+export function useLeaveTypes() {
   return useQuery({
-    queryKey: ['leave', 'balances', employeeId ?? 'me'],
+    queryKey: ['leave', 'types'],
     queryFn: () =>
-      api.get<LeaveBalance[]>(
-        employeeId ? `/api/leave/balances/${employeeId}` : '/api/leave/balances'
+      api.get<{ data: LeaveType[]; total: number }>('/api/v1/leave/types'),
+  })
+}
+
+export function useMyLeaveBalances() {
+  return useQuery({
+    queryKey: ['leave', 'me', 'balances'],
+    queryFn: () =>
+      api.get<LeaveBalancesResponse>('/api/v1/leave/me/balances'),
+  })
+}
+
+export function useMyLeaveRequests(query?: { status?: string; page?: number }) {
+  return useQuery({
+    queryKey: ['leave', 'me', query],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (query?.status) params.set('status', query.status)
+      if (query?.page) params.set('page', String(query.page))
+      const qs = params.toString()
+      return api.get<PaginatedResponse<LeaveRequest>>(
+        `/api/v1/leave/me${qs ? `?${qs}` : ''}`,
+      )
+    },
+  })
+}
+
+export function usePendingLeaveRequests() {
+  return useQuery({
+    queryKey: ['leave', 'pending'],
+    queryFn: () =>
+      api.get<PaginatedResponse<PendingLeaveRequest>>(
+        '/api/v1/leave/pending',
       ),
   })
 }
 
-export function useLeaveRequests(filters?: {
-  status?: string
-  startDate?: string
-  endDate?: string
-  employeeId?: string
-}) {
+export function useHolidays(year?: number) {
   return useQuery({
-    queryKey: ['leave', 'requests', filters],
-    queryFn: () => {
-      const params = new URLSearchParams()
-      if (filters?.status) params.set('status', filters.status)
-      if (filters?.startDate) params.set('startDate', filters.startDate)
-      if (filters?.endDate) params.set('endDate', filters.endDate)
-      if (filters?.employeeId) params.set('employeeId', filters.employeeId)
-      return api.get<LeaveRequest[]>(`/api/leave/requests?${params.toString()}`)
-    },
-  })
-}
-
-export function useTeamLeaveCalendar(month: number, year: number) {
-  return useQuery({
-    queryKey: ['leave', 'team-calendar', year, month],
+    queryKey: ['leave', 'holidays', year ?? 'current'],
     queryFn: () =>
-      api.get<LeaveRequest[]>(`/api/leave/team-calendar?month=${month}&year=${year}`),
+      api.get<{
+        year: number
+        holidays: Array<{
+          id: string
+          date: string
+          name: string
+          type: string
+          description: string | null
+        }>
+      }>(`/api/v1/leave/holidays${year ? `?year=${year}` : ''}`),
   })
 }
 
 export function useApplyLeave() {
-  const queryClient = useQueryClient()
-
+  const qc = useQueryClient()
   return useMutation({
     mutationFn: (payload: ApplyLeavePayload) =>
-      api.post<LeaveRequest>('/api/leave/apply', payload),
+      api.post<LeaveRequest>('/api/v1/leave/apply', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leave'] })
+      qc.invalidateQueries({ queryKey: ['leave'] })
     },
   })
 }
 
-export function useApproveLeave() {
-  const queryClient = useQueryClient()
-
+export function useReviewLeave() {
+  const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, action, comment }: { id: string; action: 'approve' | 'reject'; comment?: string }) =>
-      api.post<LeaveRequest>(`/api/leave/requests/${id}/${action}`, { comment }),
+    mutationFn: ({
+      id,
+      action,
+      comment,
+    }: {
+      id: string
+      action: 'approve' | 'reject'
+      comment?: string
+    }) =>
+      api.post<{ id: string; status: string; reviewedAt: string | null }>(
+        `/api/v1/leave/${id}/review`,
+        { action, comment },
+      ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leave'] })
+      qc.invalidateQueries({ queryKey: ['leave'] })
+    },
+  })
+}
+
+export function useCancelLeave() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.post<{ id: string; status: string; cancelledAt: string | null }>(
+        `/api/v1/leave/${id}/cancel`,
+        { reason },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['leave'] })
     },
   })
 }

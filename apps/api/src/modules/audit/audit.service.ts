@@ -3,6 +3,7 @@ import { eq, and, gte, lte, ilike, desc } from 'drizzle-orm';
 import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { auditLog, auditLogPlatform } from '@flicks/db/schema';
+import { DatabaseService } from '../../core/database/database.service';
 
 export interface AuditLogDto {
   tenantId: string;
@@ -45,23 +46,31 @@ export class AuditService {
   constructor(
     @Inject(DB_TENANT) private readonly db: Db,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+    private readonly databaseService: DatabaseService,
   ) {}
 
   async log(dto: AuditLogDto): Promise<void> {
     try {
-      await this.db.insert(auditLog).values({
-        tenant_id: dto.tenantId,
-        actor_user_id: dto.actorUserId,
-        actor_employee_id: dto.actorEmployeeId,
-        action: dto.action,
-        resource_type: dto.resourceType,
-        resource_id: dto.resourceId,
-        before_state: dto.beforeState ?? null,
-        after_state: dto.afterState ?? null,
-        ip_address: dto.ipAddress,
-        user_agent: dto.userAgent,
-        metadata: dto.metadata ?? null,
-      });
+      // Audit rows live in a tenant-scoped table with RLS; write inside
+      // a transaction with app.tenant_id set so the policy admits the row.
+      // Coerce empty strings to null for nullable uuid columns.
+      const nullIfEmpty = (v?: string) =>
+        v === undefined || v === '' ? null : v;
+      await this.databaseService.withTenant(dto.tenantId, (tx) =>
+        tx.insert(auditLog).values({
+          tenant_id: dto.tenantId,
+          actor_user_id: nullIfEmpty(dto.actorUserId),
+          actor_employee_id: nullIfEmpty(dto.actorEmployeeId),
+          action: dto.action,
+          resource_type: dto.resourceType,
+          resource_id: nullIfEmpty(dto.resourceId),
+          before_state: dto.beforeState ?? null,
+          after_state: dto.afterState ?? null,
+          ip_address: dto.ipAddress,
+          user_agent: dto.userAgent,
+          metadata: dto.metadata ?? null,
+        }),
+      );
     } catch (err) {
       this.logger.warn('Failed to write audit log:', err);
     }
@@ -109,19 +118,23 @@ export class AuditService {
       conditions.push(lte(auditLog.created_at, filters.to));
     }
 
-    const [logs, countResult] = await Promise.all([
-      this.db
-        .select()
-        .from(auditLog)
-        .where(and(...conditions))
-        .orderBy(desc(auditLog.created_at))
-        .limit(limit)
-        .offset(offset),
-      this.db
-        .select({ count: auditLog.id })
-        .from(auditLog)
-        .where(and(...conditions)),
-    ]);
+    const [logs, countResult] = await this.databaseService.withTenant(
+      tenantId,
+      async (tx) =>
+        Promise.all([
+          tx
+            .select()
+            .from(auditLog)
+            .where(and(...conditions))
+            .orderBy(desc(auditLog.created_at))
+            .limit(limit)
+            .offset(offset),
+          tx
+            .select({ count: auditLog.id })
+            .from(auditLog)
+            .where(and(...conditions)),
+        ]),
+    );
 
     return {
       data: logs,

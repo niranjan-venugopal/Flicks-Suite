@@ -20,8 +20,11 @@ import {
   memberships,
   tenants,
 } from '@flicks/db/schema';
-import { DB_TENANT } from '../../core/database/database.module';
-import type { Db } from '@flicks/db';
+import {
+  DB_TENANT,
+  DB_SERVICE_ROLE,
+} from '../../core/database/database.module';
+import type { Db, DbAdmin } from '@flicks/db';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -39,6 +42,10 @@ export class AuthService {
 
   constructor(
     @Inject(DB_TENANT) private readonly db: Db,
+    // Auth is a platform-level concern: it discovers a user's tenants by
+    // querying memberships before any tenant context is established. The
+    // service-role client bypasses RLS, which is required for that lookup.
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
@@ -102,6 +109,15 @@ export class AuthService {
     });
 
     this.logger.log(`OTP requested for: ${normalizedEmail}`);
+
+    // DEV ONLY: surface plaintext OTP + magic link in server logs so a
+    // developer can complete the login flow without an email account.
+    // This must NOT run in production — guard on NODE_ENV.
+    if (this.configService.get<string>('NODE_ENV') !== 'production') {
+      this.logger.warn(
+        `[DEV] OTP for ${normalizedEmail}: ${otpCode}  |  Magic link: ${magicLinkUrl}`,
+      );
+    }
 
     // Always return generic success (never reveal if email exists)
     return {
@@ -248,8 +264,9 @@ export class AuthService {
 
     const currentUser = user[0];
 
-    // Get memberships
-    const userMemberships = await this.db
+    // Get memberships across all tenants (uses admin client — RLS would
+    // hide them all since no tenant context is set yet at login time).
+    const userMemberships = await this.dbAdmin
       .select({
         id: memberships.id,
         tenantId: memberships.tenant_id,
@@ -434,7 +451,7 @@ export class AuthService {
     // Get current membership info from the token's tenant
     let membershipInfo = null;
     if (token.tenant_id) {
-      const membershipResult = await this.db
+      const membershipResult = await this.dbAdmin
         .select({ id: memberships.id, role: memberships.role })
         .from(memberships)
         .where(
@@ -508,7 +525,7 @@ export class AuthService {
   }
 
   async selectTenant(userId: string, tenantId: string) {
-    const membershipResult = await this.db
+    const membershipResult = await this.dbAdmin
       .select()
       .from(memberships)
       .where(
@@ -563,7 +580,7 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const userMemberships = await this.db
+    const userMemberships = await this.dbAdmin
       .select({
         id: memberships.id,
         tenantId: memberships.tenant_id,
@@ -697,7 +714,9 @@ export class AuthService {
     ip?: string,
     userAgent?: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
+    // iss/aud are set globally by JwtModule.registerAsync in app.module.ts —
+    // including them in the payload conflicts with sign() options.
+    const payload: Omit<JwtPayload, 'iat' | 'exp' | 'iss' | 'aud'> = {
       sub: user.id,
       email: user.email,
       tenantId: tenantId ?? '',
@@ -705,13 +724,9 @@ export class AuthService {
       role: role ?? 'employee',
       isPlatformAdmin: user.is_platform_admin,
       deviceId: deviceId ?? '',
-      iss: this.configService.get('JWT_ISSUER', 'flicks-suite'),
-      aud: this.configService.get('JWT_AUDIENCE', 'flicks-suite-api'),
     };
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: this.configService.get('JWT_ACCESS_EXPIRY', '15m'),
-    });
+    const accessToken = this.jwtService.sign(payload);
 
     const rawRefreshToken = generateSecureToken(48);
     const refreshTokenHash = sha256(rawRefreshToken);
