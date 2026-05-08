@@ -7,6 +7,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -14,6 +15,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { AttendanceService } from './attendance.service';
 import {
   PunchDto,
@@ -25,6 +27,13 @@ import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 
+function clientIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0]!.trim();
+  if (Array.isArray(forwarded)) return forwarded[0];
+  return req.ip;
+}
+
 @ApiTags('Attendance')
 @ApiBearerAuth('access-token')
 @Controller('attendance')
@@ -35,23 +44,52 @@ export class AttendanceController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Record punch-in for the day' })
   @ApiResponse({ status: 200, description: 'Punch-in recorded' })
-  @ApiResponse({ status: 409, description: 'Already punched in' })
+  @ApiResponse({ status: 404, description: 'No shift assigned' })
   async punchIn(
     @Body() dto: PunchDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    return this.attendanceService.punchIn(user.sub, user.tenantId, dto);
+    return this.attendanceService.punchIn(
+      user.sub,
+      user.tenantId,
+      dto,
+      clientIp(req),
+    );
   }
 
   @Post('punch-out')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Record punch-out for the day' })
   @ApiResponse({ status: 200, description: 'Punch-out recorded' })
+  @ApiResponse({ status: 400, description: 'No punch-in for today' })
   async punchOut(
     @Body() dto: PunchDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    return this.attendanceService.punchOut(user.sub, user.tenantId, dto);
+    return this.attendanceService.punchOut(
+      user.sub,
+      user.tenantId,
+      dto,
+      clientIp(req),
+    );
+  }
+
+  @Post('break-start')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Start a break' })
+  @ApiResponse({ status: 200, description: 'Break started' })
+  async breakStart(@CurrentUser() user: JwtPayload) {
+    return this.attendanceService.breakStart(user.sub, user.tenantId);
+  }
+
+  @Post('break-end')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'End a break' })
+  @ApiResponse({ status: 200, description: 'Break ended' })
+  async breakEnd(@CurrentUser() user: JwtPayload) {
+    return this.attendanceService.breakEnd(user.sub, user.tenantId);
   }
 
   @Get('me/today')
@@ -71,9 +109,21 @@ export class AttendanceController {
     return this.attendanceService.listMine(user.sub, user.tenantId, query);
   }
 
+  @Get('team/today')
+  @Roles('manager')
+  @ApiOperation({
+    summary: 'Get today’s status for direct reports',
+    description: 'Returns one row per active direct report with their current-day attendance state.',
+  })
+  @ApiResponse({ status: 200, description: 'Team status' })
+  async listTeamToday(@CurrentUser() user: JwtPayload) {
+    return this.attendanceService.listTeamToday(user.sub, user.tenantId);
+  }
+
   @Post('regularizations')
   @ApiOperation({ summary: 'Submit a regularization request' })
   @ApiResponse({ status: 201, description: 'Regularization submitted' })
+  @ApiResponse({ status: 400, description: 'Pending duplicate exists' })
   async requestRegularization(
     @Body() dto: RegularizationRequestDto,
     @CurrentUser() user: JwtPayload,

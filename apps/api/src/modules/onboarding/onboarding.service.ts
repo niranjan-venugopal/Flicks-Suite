@@ -15,6 +15,7 @@ import {
   holidays,
   employees,
   departments,
+  shiftTemplates,
 } from '@flicks/db/schema';
 import { AuditService } from '../audit/audit.service';
 import type {
@@ -232,6 +233,27 @@ export class OnboardingService {
         })),
       );
     }
+
+    // Seed the default "General" shift template (PRD §6.3)
+    // 09:00–18:00 IST, Mon–Fri, 60-min unpaid break, 15-min grace.
+    // Working days are 1=Mon..5=Fri (DB convention: 0=Sun..6=Sat).
+    await this.db.insert(shiftTemplates).values({
+      tenant_id: tenant.id,
+      name: 'General',
+      description: 'Default 9-to-6 shift, Mon–Fri, IST.',
+      start_time: '09:00',
+      end_time: '18:00',
+      is_overnight: false,
+      break_minutes: 60,
+      break_paid: false,
+      working_days: [1, 2, 3, 4, 5],
+      timezone: 'Asia/Kolkata',
+      grace_period_minutes: 15,
+      half_day_threshold_minutes: 240,
+      full_day_threshold_minutes: 480,
+      is_default: true,
+      is_active: true,
+    });
 
     // Write audit event
     await this.auditService.log({

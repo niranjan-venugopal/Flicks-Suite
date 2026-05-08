@@ -283,8 +283,8 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
       .where(eq(schema.leaveTypes.id, leaveType!.id));
   });
 
-  // ─── Test 8: Attendance records isolation ─────────────────────────────────
-  it('8. Attendance records are isolated per tenant', async () => {
+  // ─── Test 8: Attendance records + punches isolation ───────────────────────
+  it('8. Attendance records and punches are isolated per tenant', async () => {
     const [record] = await dbAdmin
       .insert(schema.attendanceRecords)
       .values({
@@ -295,15 +295,46 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
       })
       .returning();
 
-    const results = await withTestTenant(tenantB.id, (tx) =>
+    // Seed a punch row tied to that attendance record
+    const [punch] = await dbAdmin
+      .insert(schema.attendancePunches)
+      .values({
+        tenant_id: tenantA.id,
+        attendance_record_id: record!.id,
+        employee_id: employeeA.id,
+        punch_type: 'in',
+        punched_at: new Date('2026-05-15T03:30:00Z'),
+        source: 'web',
+      })
+      .returning();
+
+    // Tenant B must see neither the record nor the punch
+    const recordsFromB = await withTestTenant(tenantB.id, (tx) =>
       tx
         .select()
         .from(schema.attendanceRecords)
         .where(eq(schema.attendanceRecords.id, record!.id)),
     );
+    const punchesFromB = await withTestTenant(tenantB.id, (tx) =>
+      tx
+        .select()
+        .from(schema.attendancePunches)
+        .where(eq(schema.attendancePunches.id, punch!.id)),
+    );
 
-    expect(results.length).toBe(0);
+    expect(recordsFromB.length).toBe(0);
+    expect(punchesFromB.length).toBe(0);
 
+    // And tenant A's context should see exactly one of each
+    const recordsFromA = await withTestTenant(tenantA.id, (tx) =>
+      tx
+        .select()
+        .from(schema.attendanceRecords)
+        .where(eq(schema.attendanceRecords.id, record!.id)),
+    );
+    expect(recordsFromA.length).toBe(1);
+
+    // Cleanup (cascade deletes punches via the FK on attendance_record_id)
     await dbAdmin
       .delete(schema.attendanceRecords)
       .where(eq(schema.attendanceRecords.id, record!.id));

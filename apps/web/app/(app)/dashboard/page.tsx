@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Users, Clock, Calendar, TrendingUp, ArrowRight, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/lib/stores/auth.store'
+import { ClockInCard } from '@/components/attendance/ClockInCard'
 
 const STATS = [
   { label: 'Total Employees', value: '—', icon: Users, accent: 'text-brand-blue', bg: 'bg-brand-blue/10' },
@@ -39,6 +40,11 @@ export default function DashboardPage() {
           Here's what's happening at {currentTenant?.name ?? 'your workspace'} today
         </p>
       </motion.div>
+
+      {/* Clock-in hero (PRD §10.2) — first thing the employee sees */}
+      <div className="mb-8">
+        <ClockInCard />
+      </div>
 
       {/* Stats grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

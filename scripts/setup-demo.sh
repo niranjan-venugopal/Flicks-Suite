@@ -68,6 +68,27 @@ ON CONFLICT (tenant_id, user_id) DO NOTHING;
 INSERT INTO leave_types (tenant_id, name, code, default_quota_days, is_paid)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Casual Leave', 'CL', 12, true)
 ON CONFLICT (tenant_id, code) DO NOTHING;
+
+-- Default shift template: General 09:00-18:00 IST Mon-Fri (PRD §6.3)
+INSERT INTO shift_templates (
+  id, tenant_id, name, description,
+  start_time, end_time, is_overnight,
+  break_minutes, break_paid,
+  working_days, timezone,
+  grace_period_minutes, half_day_threshold_minutes, full_day_threshold_minutes,
+  is_default, is_active
+)
+VALUES (
+  '55555555-5555-4555-8555-555555555555',
+  '11111111-1111-1111-1111-111111111111',
+  'General', 'Default 9-to-6 shift, Mon-Fri, IST.',
+  '09:00', '18:00', false,
+  60, false,
+  ARRAY[1,2,3,4,5]::smallint[], 'Asia/Kolkata',
+  15, 240, 480,
+  true, true
+)
+ON CONFLICT (id) DO NOTHING;
 SQL
 
 echo "✅ Demo data ready."
