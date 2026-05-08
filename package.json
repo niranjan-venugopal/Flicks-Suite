@@ -1,0 +1,24 @@
+{
+  "name": "flicks-suite",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "typecheck": "turbo typecheck",
+    "db:generate": "pnpm --filter @flicks/db generate",
+    "db:migrate": "pnpm --filter @flicks/db migrate",
+    "db:seed": "pnpm --filter @flicks/db seed",
+    "db:studio": "pnpm --filter @flicks/db studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.10",
+    "prettier": "^3.4.2",
+    "prettier-plugin-tailwindcss": "^0.6.11"
+  }
+}

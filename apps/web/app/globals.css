@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Gilroy font faces — using local files */
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Light.ttf') format('truetype'); font-weight: 300; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Medium.ttf') format('truetype'); font-weight: 500; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-SemiBold.ttf') format('truetype'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-Bold.ttf') format('truetype'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Gilroy'; src: url('/fonts/Gilroy-ExtraBold.ttf') format('truetype'); font-weight: 800; font-display: swap; }
+
+:root {
+  --background: #01010D;
+  --foreground: #FFFFFF;
+  --brand-blue: #2B69F5;
+  --brand-yellow: #FFC72C;
+  --brand-coral: #FF6B6B;
+  --brand-green: #00C9A7;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  background: #01010D;
+  color: white;
+  font-family: 'Gilroy', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glass panel utility */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(32px) saturate(1.8);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid rgba(43, 105, 245, 0.6);
+  outline-offset: 2px;
+}
+
+/* Input base styles */
+input, textarea, select {
+  font-family: 'Gilroy', sans-serif;
+}
+
+/* Gradient text utility */
+.gradient-text-blue {
+  background: linear-gradient(135deg, #2B69F5, #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Active nav pill */
+.nav-active {
+  background: linear-gradient(135deg, rgba(43,105,245,0.2), rgba(43,105,245,0.1));
+  border: 1px solid rgba(43,105,245,0.3);
+  box-shadow: 0 0 12px rgba(43,105,245,0.15);
+}
+
+/* Ambient glow blobs */
+.glow-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.15;
+  pointer-events: none;
+}

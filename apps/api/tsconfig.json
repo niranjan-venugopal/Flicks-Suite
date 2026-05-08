@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "strictBindCallApply": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "strict": true,
+    "paths": {
+      "@flicks/db": ["../../packages/db/src/index.ts"],
+      "@flicks/db/schema": ["../../packages/db/src/schema/index.ts"],
+      "@flicks/db/client": ["../../packages/db/src/client.ts"],
+      "@flicks/shared": ["../../packages/shared/src/index.ts"],
+      "@flicks/shared/types": ["../../packages/shared/src/types/index.ts"],
+      "@flicks/shared/validators": ["../../packages/shared/src/validators/index.ts"],
+      "@flicks/shared/constants": ["../../packages/shared/src/constants/index.ts"]
+    }
+  }
+}

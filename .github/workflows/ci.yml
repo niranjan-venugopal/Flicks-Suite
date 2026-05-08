@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Typecheck, Lint, Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: flicks_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
+      DATABASE_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
+      DATABASE_SERVICE_ROLE_URL: postgresql://postgres:postgres@localhost:5432/flicks_test
+      JWT_SECRET: test-jwt-secret-min-32-characters-long
+      RESEND_API_KEY: re_test_key
+      REDIS_URL: redis://localhost:6379
+      DB_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Generate DB types
+        run: pnpm db:generate
+
+      - name: Run DB migrations
+        run: pnpm db:migrate
+
+      - name: Run tests (including multi-tenant isolation)
+        run: pnpm test
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high
