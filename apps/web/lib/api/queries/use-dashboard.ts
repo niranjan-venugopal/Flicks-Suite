@@ -1,82 +1,96 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api } from '../client'
 
-export interface DashboardData {
+export interface AdminOverview {
+  generatedAt: string
+  stats: {
+    totalEmployees: number
+    presentToday: number
+    onLeaveToday: number
+    pendingApprovals: number
+  }
   headcount: {
-    total: number
     active: number
+    notice: number
     onLeave: number
-    newThisMonth: number
+    inactive: number
   }
   attendanceToday: {
     present: number
-    absent: number
     late: number
     onLeave: number
-    percentage: number
+    yetToClockIn: number
+    holiday: number
   }
-  upcomingEvents: Array<{
-    id: string
-    title: string
-    date: string
-    type: 'birthday' | 'anniversary' | 'holiday' | 'event'
-  }>
+  pending: {
+    leaveCount: number
+    regularizationCount: number
+    leaves: Array<{
+      id: string
+      employeeId: string
+      employeeName: string
+      employeeCode: string | null
+      leaveTypeName: string | null
+      leaveTypeCode: string | null
+      startDate: string
+      endDate: string
+      totalDays: number
+      reason: string | null
+      appliedAt: string
+    }>
+    regularizations: Array<{
+      id: string
+      employeeId: string
+      employeeName: string
+      employeeCode: string | null
+      attendanceDate: string
+      requestType: string
+      reason: string
+      requestedAt: string
+    }>
+  }
   trends: {
-    attendanceCompliance: Array<{ date: string; value: number }>
-    leaveConsumption: Array<{ date: string; value: number }>
-    headcountChange: Array<{ date: string; value: number }>
+    attendanceCompliancePct: number | null
+    leaveDaysConsumed: number
+    headcountDelta: { joiners: number; exits: number; net: number }
+    avgWorkingHours: number | null
   }
-}
-
-export interface PendingApproval {
-  id: string
-  type: 'leave' | 'attendance' | 'timesheet' | 'expense'
-  title: string
-  description: string
-  requestedBy: {
-    id: string
-    name: string
-    avatarUrl?: string
-  }
-  requestedAt: string
-  priority: 'high' | 'medium' | 'low'
 }
 
 export interface ActivityItem {
   id: string
-  type: string
-  description: string
-  actor: {
-    id: string
-    name: string
-    avatarUrl?: string
-  }
-  timestamp: string
-  metadata?: Record<string, unknown>
+  action: string
+  resourceType: string | null
+  resourceId: string | null
+  actorUserId: string | null
+  actorName: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
 }
 
-export function useDashboardData() {
+export function useAdminOverview() {
   return useQuery({
-    queryKey: ['dashboard', 'data'],
-    queryFn: () => api.get<DashboardData>('/api/dashboard'),
-    staleTime: 5 * 60 * 1000,
+    queryKey: ['dashboard', 'admin', 'overview'],
+    queryFn: () => api.get<AdminOverview>('/api/v1/dashboard/admin/overview'),
+    staleTime: 30_000,
   })
 }
 
-export function usePendingApprovals() {
-  return useQuery({
-    queryKey: ['dashboard', 'pending-approvals'],
-    queryFn: () => api.get<PendingApproval[]>('/api/dashboard/pending-approvals'),
-    refetchInterval: 2 * 60 * 1000,
-  })
-}
-
-export function useActivityFeed(limit = 20) {
-  return useQuery({
-    queryKey: ['dashboard', 'activity', limit],
-    queryFn: () =>
-      api.get<ActivityItem[]>(`/api/dashboard/activity?limit=${limit}`),
+export function useAdminActivity(limit = 20) {
+  return useInfiniteQuery({
+    queryKey: ['dashboard', 'admin', 'activity', limit],
+    queryFn: ({ pageParam }) => {
+      const qs = new URLSearchParams({ limit: String(limit) })
+      if (pageParam) qs.set('before', pageParam)
+      return api.get<ActivityItem[]>(
+        `/api/v1/dashboard/admin/activity?${qs.toString()}`,
+      )
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.length === limit ? lastPage[lastPage.length - 1]!.id : undefined,
+    staleTime: 30_000,
   })
 }
