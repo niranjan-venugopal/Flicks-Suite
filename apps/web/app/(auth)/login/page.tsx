@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -29,7 +28,6 @@ type EmailForm = z.infer<typeof emailSchema>
 type OtpForm = z.infer<typeof otpSchema>
 
 export default function LoginPage() {
-  const router = useRouter()
   const { toast } = useToast()
   const [step, setStep] = useState<'email' | 'otp'>('email')
   const [email, setEmail] = useState('')
@@ -94,7 +92,10 @@ export default function LoginPage() {
   const handleOtpSubmit = async (code: string) => {
     try {
       await verifyOtp.mutateAsync({ email, code })
-      router.push('/dashboard')
+      // Hard navigation so the protected layout sees the fresh auth cookies
+      // and useCurrentUser runs against a clean tree (router.push alone can
+      // race with the cookie being committed to the jar).
+      window.location.assign('/dashboard')
     } catch {
       toast({
         title: 'Invalid code',

@@ -1,4 +1,15 @@
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
+
+// Endpoints that handle their own 401s — don't trigger a global hard-redirect
+// from inside the api client (which would mask the real error and bounce users
+// out of the OTP/magic-link flow before they can see what went wrong).
+const AUTH_PATHS_NO_REDIRECT = [
+  '/api/v1/auth/me',
+  '/api/v1/auth/request-otp',
+  '/api/v1/auth/verify-otp',
+  '/api/v1/auth/magic-link',
+  '/api/v1/auth/refresh',
+]
 
 interface RequestOptions {
   method?: string
@@ -33,11 +44,22 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   })
 
   if (response.status === 401) {
-    // Clear auth and redirect to login
-    if (typeof window !== 'undefined') {
+    const isAuthEndpoint = AUTH_PATHS_NO_REDIRECT.some((p) =>
+      path.startsWith(p),
+    )
+    const onLoginPage =
+      typeof window !== 'undefined' && window.location.pathname.startsWith('/login')
+
+    if (!isAuthEndpoint && !onLoginPage && typeof window !== 'undefined') {
       window.location.href = '/login'
     }
-    throw new APIError(401, 'Unauthorized')
+
+    const errorData = await response.json().catch(() => null)
+    throw new APIError(
+      401,
+      errorData?.message ?? 'Unauthorized',
+      errorData,
+    )
   }
 
   if (!response.ok) {

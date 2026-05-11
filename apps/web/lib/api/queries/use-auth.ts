@@ -77,7 +77,7 @@ export function useVerifyMagicLink() {
 
   return useMutation({
     mutationFn: (payload: VerifyMagicLinkPayload) =>
-      api.get<LoginResponse>(`/api/v1/auth/verify-magic-link?token=${encodeURIComponent(payload.token)}`),
+      api.get<LoginResponse>(`/api/v1/auth/magic-link?token=${encodeURIComponent(payload.token)}`),
     onSuccess: (data) => {
       setUser(data.user as any)
       setTenant(data.tenant as any)
@@ -111,9 +111,10 @@ export function useVerifyMagicLinkQuery(token: string | null) {
   return useQuery({
     queryKey: ['auth', 'verify-magic-link', token],
     queryFn: async () => {
-      const data = await api.post<LoginResponse>('/api/v1/auth/verify-magic-link', {
-        token,
-      })
+      // API exposes this as GET /api/v1/auth/magic-link?token=…
+      const data = await api.get<LoginResponse>(
+        `/api/v1/auth/magic-link?token=${encodeURIComponent(token ?? '')}`,
+      )
       setUser(data.user as any)
       setTenant(data.tenant as any)
       return data

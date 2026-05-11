@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { CheckCircle2, RefreshCw, ShieldAlert, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,6 @@ import { PageGlows } from '@/components/layout/PageGlows'
 import { useVerifyMagicLinkQuery } from '@/lib/api/queries/use-auth'
 
 export default function VerifyMagicLinkPage() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
 
@@ -19,11 +18,13 @@ export default function VerifyMagicLinkPage() {
   useEffect(() => {
     if (isSuccess) {
       const timeout = setTimeout(() => {
-        router.replace('/dashboard')
+        // Hard navigation so the protected layout boots with the fresh
+        // auth cookies already committed.
+        window.location.assign('/dashboard')
       }, 800)
       return () => clearTimeout(timeout)
     }
-  }, [isSuccess, router])
+  }, [isSuccess])
 
   const renderState = () => {
     if (!token) {
