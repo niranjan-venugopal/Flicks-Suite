@@ -33,13 +33,16 @@ export function generateSlug(name: string): string {
     .trim()
 }
 
-export function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((n) => n[0])
+export function getInitials(name: string | null | undefined): string {
+  if (!name || typeof name !== 'string') return 'U'
+  const trimmed = name.trim()
+  if (!trimmed) return 'U'
+  return trimmed
+    .split(/\s+/)
+    .map((n) => n[0] ?? '')
     .join('')
     .toUpperCase()
-    .slice(0, 2)
+    .slice(0, 2) || 'U'
 }
 
 export function formatCurrency(amount: number, currency = 'INR'): string {
