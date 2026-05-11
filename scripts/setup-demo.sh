@@ -19,20 +19,27 @@
 
 set -euo pipefail
 
-PGSUPERUSER="${PGSUPERUSER:-postgres}"
-PGSUPERPASSWORD="${PGSUPERPASSWORD:-postgres}"
-PGHOST="${PGHOST:-127.0.0.1}"
-PGPORT="${PGPORT:-5432}"
-APP_DB_NAME="${APP_DB_NAME:-flicks_suite}"
-
 if ! command -v psql >/dev/null 2>&1; then
   echo "ERROR: psql not found." >&2
   exit 1
 fi
 
-export PGPASSWORD="$PGSUPERPASSWORD"
+# Prefer DATABASE_DIRECT_URL (Supabase / remote). Fall back to local PG* env vars.
+if [[ -n "${DATABASE_DIRECT_URL:-}" ]]; then
+  CONN_TARGET=("$DATABASE_DIRECT_URL")
+elif [[ -n "${DATABASE_SERVICE_ROLE_URL:-}" ]]; then
+  CONN_TARGET=("$DATABASE_SERVICE_ROLE_URL")
+else
+  PGSUPERUSER="${PGSUPERUSER:-postgres}"
+  PGSUPERPASSWORD="${PGSUPERPASSWORD:-postgres}"
+  PGHOST="${PGHOST:-127.0.0.1}"
+  PGPORT="${PGPORT:-5432}"
+  APP_DB_NAME="${APP_DB_NAME:-flicks_suite}"
+  export PGPASSWORD="$PGSUPERPASSWORD"
+  CONN_TARGET=(-h "$PGHOST" -p "$PGPORT" -U "$PGSUPERUSER" -d "$APP_DB_NAME")
+fi
 
-psql -h "$PGHOST" -p "$PGPORT" -U "$PGSUPERUSER" -d "$APP_DB_NAME" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
 -- Tenant
 INSERT INTO tenants (id, name, slug, status)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Demo Co', 'demo-co', 'trialing')
