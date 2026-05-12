@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useAuthStore } from '@/lib/stores/auth.store'
+import { useAuthStore, roleLabel } from '@/lib/stores/auth.store'
 import { useLogout } from '@/lib/api/queries/use-auth'
 import { Avatar, Icon } from '@/components/proto'
 import {
@@ -134,8 +134,8 @@ export function Topbar() {
               <span style={{ fontSize: 12, fontWeight: 800 }}>
                 {currentUser?.name ?? 'User'}
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', textTransform: 'capitalize' }}>
-                {currentUser?.role?.toLowerCase().replace('_', ' ') ?? 'member'}
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                {roleLabel(currentUser?.role)}
               </span>
             </div>
             <Icon.chevD size={12} style={{ color: 'var(--text-mute)' }} />
