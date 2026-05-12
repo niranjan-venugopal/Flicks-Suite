@@ -1,285 +1,544 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  LayoutDashboard,
-  Users,
-  GitBranch,
-  UserPlus,
-  FileText,
-  Clock,
-  Calendar,
-  BarChart3,
-  Settings,
-  ChevronDown,
-  ChevronRight,
-  HelpCircle,
-  LogOut,
-  PanelLeftClose,
-  PanelLeftOpen,
-  ClipboardList,
-  TrendingUp,
-  Briefcase,
-  Bell,
-  Building2,
-  MapPin,
-  Timer,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Button } from '@/components/ui/button'
-import { useAuthStore } from '@/lib/stores/auth.store'
+import { useAuthStore, type UserRole } from '@/lib/stores/auth.store'
+import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
+import { Avatar, Icon, LogoMark, avBg, initials } from '@/components/proto'
+import type { IconKey } from '@/components/proto'
 
-interface NavItem {
+// ─── Nav model ─────────────────────────────────────────────────────────────
+
+interface NavChild {
+  href: string
   label: string
-  href?: string
-  icon: React.ComponentType<{ className?: string }>
-  children?: NavItem[]
   badge?: number
 }
+interface NavItem {
+  id: string
+  icon: IconKey
+  label: string
+  href?: string
+  badge?: number
+  children?: NavChild[]
+}
+interface NavSection {
+  section: 'main' | string
+  items: NavItem[]
+}
 
-const NAV_ITEMS: NavItem[] = [
+// Admin / Owner nav — used for HR_ADMIN and SUPER_ADMIN.
+const ADMIN_NAV: NavSection[] = [
   {
-    label: 'Dashboard',
-    href: '/dashboard',
-    icon: LayoutDashboard,
-  },
-  {
-    label: 'People',
-    icon: Users,
-    children: [
-      { label: 'Employees', href: '/employees', icon: Users },
-      { label: 'Org Chart', href: '/employees/org-chart', icon: GitBranch },
-      { label: 'Onboarding', href: '/employees/onboarding', icon: UserPlus },
-      { label: 'Documents', href: '/employees/documents', icon: FileText },
+    section: 'main',
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: 'home', href: '/dashboard' },
+      { id: 'inbox', label: 'Approvals', icon: 'inbox', href: '/inbox' },
     ],
   },
   {
-    label: 'Time',
-    icon: Clock,
-    children: [
-      { label: 'Attendance', href: '/attendance', icon: Clock },
-      { label: 'Leave', href: '/leave', icon: Calendar },
-      { label: 'Timesheets', href: '/timesheets', icon: Timer },
-      { label: 'Calendar', href: '/calendar', icon: Calendar },
-    ],
-  },
-  {
-    label: 'Reports',
-    icon: BarChart3,
-    children: [
-      { label: 'Attendance', href: '/reports/attendance', icon: ClipboardList },
-      { label: 'Leave', href: '/reports/leave', icon: Calendar },
-      { label: 'Headcount', href: '/reports/headcount', icon: TrendingUp },
-      { label: 'Audit Log', href: '/reports/audit', icon: FileText },
-    ],
-  },
-  {
-    label: 'Settings',
-    icon: Settings,
-    children: [
-      { label: 'Organization', href: '/settings', icon: Building2 },
-      { label: 'Locations', href: '/settings/locations', icon: MapPin },
-      { label: 'Departments', href: '/settings/departments', icon: Briefcase },
-      { label: 'Working Hours', href: '/settings/working-hours', icon: Clock },
-      { label: 'Leave Policies', href: '/settings/leave-policies', icon: Calendar },
-      { label: 'Members', href: '/settings/members', icon: Users },
-      { label: 'Notifications', href: '/settings/notifications', icon: Bell },
+    section: 'main',
+    items: [
+      {
+        id: 'people',
+        label: 'People',
+        icon: 'people',
+        children: [
+          { href: '/employees', label: 'Employees' },
+          { href: '/employees/org-chart', label: 'Org chart' },
+          { href: '/employees/onboarding', label: 'Onboarding' },
+          { href: '/employees/documents', label: 'Documents' },
+        ],
+      },
+      {
+        id: 'time',
+        label: 'Time',
+        icon: 'clock',
+        children: [
+          { href: '/attendance', label: 'Attendance' },
+          { href: '/leave', label: 'Leave' },
+          { href: '/timesheets', label: 'Timesheets' },
+          { href: '/calendar', label: 'Calendar' },
+        ],
+      },
+      {
+        id: 'insights',
+        label: 'Insights',
+        icon: 'chart',
+        children: [
+          { href: '/reports/headcount', label: 'Reports' },
+          { href: '/reports/audit', label: 'Audit log' },
+        ],
+      },
+      { id: 'settings', label: 'Settings', icon: 'cog', href: '/settings' },
     ],
   },
 ]
 
-interface SidebarProps {
-  className?: string
+// Manager nav — see direct reports + own self-service.
+const MANAGER_NAV: NavSection[] = [
+  {
+    section: 'main',
+    items: [
+      { id: 'mgr-dashboard', label: 'My team', icon: 'home', href: '/dashboard' },
+      { id: 'mgr-inbox', label: 'Approvals', icon: 'inbox', href: '/inbox' },
+    ],
+  },
+  {
+    section: 'Team',
+    items: [
+      { id: 'mgr-team', label: 'Direct reports', icon: 'people', href: '/team' },
+      { id: 'mgr-attendance', label: 'Team attendance', icon: 'clock', href: '/team/attendance' },
+      { id: 'mgr-leave', label: 'Team leave', icon: 'cal', href: '/team/leave' },
+      { id: 'mgr-timesheets', label: 'Team timesheets', icon: 'sheet', href: '/team/timesheets' },
+    ],
+  },
+  {
+    section: 'Personal',
+    items: [
+      { id: 'emp-attendance', label: 'My attendance', icon: 'fingerprint', href: '/attendance' },
+      { id: 'emp-leave', label: 'My leave', icon: 'cal', href: '/leave' },
+      { id: 'emp-timesheet', label: 'My timesheet', icon: 'sheet', href: '/timesheets' },
+      { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+    ],
+  },
+]
+
+// Employee nav — pure self-service.
+const EMPLOYEE_NAV: NavSection[] = [
+  {
+    section: 'main',
+    items: [{ id: 'emp-home', label: 'Home', icon: 'home', href: '/dashboard' }],
+  },
+  {
+    section: 'Time',
+    items: [
+      { id: 'emp-attendance', label: 'Attendance', icon: 'fingerprint', href: '/attendance' },
+      { id: 'emp-leave', label: 'Leave', icon: 'cal', href: '/leave' },
+      { id: 'emp-timesheet', label: 'Timesheet', icon: 'sheet', href: '/timesheets' },
+      { id: 'emp-calendar', label: 'Calendar', icon: 'cal', href: '/calendar' },
+    ],
+  },
+  {
+    section: 'Personal',
+    items: [
+      { id: 'emp-profile', label: 'Profile', icon: 'user', href: '/profile' },
+      { id: 'emp-documents', label: 'Documents', icon: 'doc', href: '/documents' },
+    ],
+  },
+]
+
+function navFor(role: UserRole | undefined): NavSection[] {
+  switch (role) {
+    case 'SUPER_ADMIN':
+    case 'HR_ADMIN':
+      return ADMIN_NAV
+    case 'MANAGER':
+      return MANAGER_NAV
+    case 'EMPLOYEE':
+    default:
+      return EMPLOYEE_NAV
+  }
 }
 
-function NavLink({
-  item,
-  isCollapsed,
-  depth = 0,
-}: {
-  item: NavItem
-  isCollapsed: boolean
-  depth?: number
-}) {
-  const pathname = usePathname()
-  const [isOpen, setIsOpen] = useState(() => {
-    if (item.children) {
-      return item.children.some((child) => child.href && pathname.startsWith(child.href))
-    }
-    return false
-  })
-
-  const isActive = item.href ? pathname === item.href || pathname.startsWith(item.href + '/') : false
-  const hasChildren = item.children && item.children.length > 0
-
-  if (hasChildren) {
-    const isChildActive = item.children!.some(
-      (child) => child.href && (pathname === child.href || pathname.startsWith(child.href + '/'))
-    )
-
-    return (
-      <div>
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          className={cn(
-            'w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm font-medium font-gilroy transition-all duration-200 group',
-            isChildActive
-              ? 'text-white bg-brand-blue/10'
-              : 'text-white/50 hover:text-white/80 hover:bg-white/5',
-            isCollapsed && 'justify-center px-2'
-          )}
-          title={isCollapsed ? item.label : undefined}
-        >
-          <item.icon
-            className={cn(
-              'h-4 w-4 shrink-0',
-              isChildActive ? 'text-brand-blue' : 'text-current'
-            )}
-          />
-          {!isCollapsed && (
-            <>
-              <span className="flex-1 text-left">{item.label}</span>
-              <ChevronDown
-                className={cn(
-                  'h-3.5 w-3.5 transition-transform duration-200',
-                  isOpen ? 'rotate-180' : ''
-                )}
-              />
-            </>
-          )}
-        </button>
-        {!isCollapsed && isOpen && (
-          <div className="ml-3 mt-1 space-y-0.5 border-l border-white/[0.06] pl-3">
-            {item.children!.map((child) => (
-              <NavLink key={child.href} item={child} isCollapsed={false} depth={1} />
-            ))}
-          </div>
-        )}
-      </div>
-    )
+function roleLabel(role: UserRole | undefined): string {
+  switch (role) {
+    case 'SUPER_ADMIN':
+      return 'Super admin'
+    case 'HR_ADMIN':
+      return 'Admin'
+    case 'MANAGER':
+      return 'Manager'
+    case 'EMPLOYEE':
+    default:
+      return 'Employee'
   }
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
+
+export function Sidebar() {
+  const { currentUser, currentTenant } = useAuthStore()
+  const pathname = usePathname() ?? '/'
+  const role = currentUser?.role
+  const nav = useMemo(() => navFor(role), [role])
+
+  // Live approvals badge — only meaningful for admins/managers.
+  const showApprovalsBadge = role === 'HR_ADMIN' || role === 'SUPER_ADMIN' || role === 'MANAGER'
+  const overview = useAdminOverview()
+  const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
+
+  // Determine which item is active and which parent group to auto-open.
+  const activeId = useMemo(() => {
+    for (const sec of nav) {
+      for (const it of sec.items) {
+        if (it.href && pathname === it.href) return it.id
+        if (it.children) {
+          for (const c of it.children) {
+            if (pathname === c.href) return `${it.id}>${c.href}`
+          }
+        }
+      }
+    }
+    let bestLen = 0
+    let bestId = ''
+    for (const sec of nav) {
+      for (const it of sec.items) {
+        if (it.href && pathname.startsWith(it.href) && it.href.length > bestLen) {
+          bestLen = it.href.length
+          bestId = it.id
+        }
+        if (it.children) {
+          for (const c of it.children) {
+            if (pathname.startsWith(c.href) && c.href.length > bestLen) {
+              bestLen = c.href.length
+              bestId = `${it.id}>${c.href}`
+            }
+          }
+        }
+      }
+    }
+    return bestId
+  }, [pathname, nav])
+
+  const parentOfActive = activeId.includes('>') ? activeId.split('>')[0] : null
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    if (parentOfActive) setOpenGroups((g) => ({ ...g, [parentOfActive!]: true }))
+  }, [parentOfActive])
+
+  const tenantName = currentTenant?.name ?? 'Workspace'
 
   return (
-    <Link
-      href={item.href!}
-      className={cn(
-        'flex items-center gap-3 px-3 py-2 rounded text-sm font-medium font-gilroy transition-all duration-200 relative group',
-        isActive
-          ? 'nav-active text-white'
-          : 'text-white/50 hover:text-white/80 hover:bg-white/5',
-        isCollapsed && 'justify-center px-2',
-        depth > 0 && 'text-xs py-1.5'
-      )}
-      title={isCollapsed ? item.label : undefined}
+    <aside
+      style={{
+        width: 252,
+        flexShrink: 0,
+        background:
+          'linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,0) 100%)',
+        borderRight: '1px solid var(--bord)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        position: 'sticky',
+        top: 0,
+      }}
     >
-      <item.icon
-        className={cn(
-          'shrink-0',
-          depth > 0 ? 'h-3.5 w-3.5' : 'h-4 w-4',
-          isActive ? 'text-brand-blue' : 'text-current'
-        )}
-      />
-      {!isCollapsed && <span>{item.label}</span>}
-      {item.badge && !isCollapsed && (
-        <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-blue text-white text-xs font-bold px-1">
-          {item.badge}
-        </span>
-      )}
-    </Link>
+      {/* Brand */}
+      <div
+        style={{
+          padding: '18px 18px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          borderBottom: '1px solid var(--bord)',
+        }}
+      >
+        <LogoMark size={32} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: '-0.02em' }}>
+            Flicks Suite
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: 'var(--text-mute)',
+              letterSpacing: '-0.01em',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {tenantName}
+          </div>
+        </div>
+      </div>
+
+      {/* Workspace switcher (display-only single-tenant for now) */}
+      <div style={{ padding: '12px 12px 0' }}>
+        <button
+          type="button"
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '9px 11px',
+            borderRadius: 10,
+            background: 'var(--surf-1)',
+            border: '1px solid var(--bord)',
+            cursor: 'pointer',
+          }}
+        >
+          <div className="avatar sm" style={{ background: avBg(tenantName) }}>
+            {initials(tenantName)}
+          </div>
+          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {tenantName}
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+              {currentTenant?.plan ?? 'free'}
+            </div>
+          </div>
+          <Icon.chevD size={14} style={{ color: 'var(--text-mute)' }} />
+        </button>
+      </div>
+
+      {/* Nav */}
+      <nav style={{ flex: 1, overflow: 'auto', padding: '8px 8px 12px' }}>
+        {nav.map((sec, si) => (
+          <div key={si} style={{ marginTop: sec.section === 'main' ? 4 : 14 }}>
+            {sec.section !== 'main' && (
+              <div
+                style={{
+                  padding: '8px 12px 6px',
+                  fontSize: 10,
+                  fontWeight: 800,
+                  color: 'var(--text-faint)',
+                  letterSpacing: '.1em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {sec.section}
+              </div>
+            )}
+            {sec.items.map((item) => (
+              <NavRow
+                key={item.id}
+                item={item}
+                activeId={activeId}
+                openGroups={openGroups}
+                setOpenGroups={setOpenGroups}
+                approvalsBadge={
+                  (item.id === 'inbox' || item.id === 'mgr-inbox') && pendingCount > 0
+                    ? pendingCount
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        ))}
+      </nav>
+
+      {/* User block */}
+      <div style={{ padding: '10px 12px', borderTop: '1px solid var(--bord)' }}>
+        <Link
+          href="/profile"
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '8px 8px',
+            borderRadius: 10,
+            background: 'transparent',
+            textDecoration: 'none',
+            color: 'inherit',
+          }}
+        >
+          <Avatar name={currentUser?.name ?? ''} size="sm" src={currentUser?.avatarUrl} />
+          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {currentUser?.name ?? 'Guest'}
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+              {roleLabel(role)}
+            </div>
+          </div>
+          <Icon.cog size={14} style={{ color: 'var(--text-mute)' }} />
+        </Link>
+      </div>
+    </aside>
   )
 }
 
-export function Sidebar({ className }: SidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false)
-  const { logout } = useAuthStore()
+// ─── One nav row ───────────────────────────────────────────────────────────
+
+function NavRow({
+  item,
+  activeId,
+  openGroups,
+  setOpenGroups,
+  approvalsBadge,
+}: {
+  item: NavItem
+  activeId: string
+  openGroups: Record<string, boolean>
+  setOpenGroups: (fn: (g: Record<string, boolean>) => Record<string, boolean>) => void
+  approvalsBadge?: number
+}) {
+  const hasChildren = !!item.children?.length
+  const isOpen =
+    openGroups[item.id] || (hasChildren && activeId.startsWith(`${item.id}>`))
+  const active = activeId === item.id
+  const parentActive = hasChildren && activeId.startsWith(`${item.id}>`)
+  const IconCmp = Icon[item.icon]
+
+  const rowStyle = {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 11,
+    padding: '9px 12px',
+    borderRadius: 9,
+    background: active ? 'var(--surf-2)' : 'transparent',
+    border: active ? '1px solid var(--bord-2)' : '1px solid transparent',
+    color: active || parentActive ? '#fff' : 'var(--text-2)',
+    transition: 'all .15s',
+    marginBottom: 1,
+    fontSize: 13,
+    fontWeight: active || parentActive ? 800 : 600,
+    letterSpacing: '-0.01em',
+    textAlign: 'left' as const,
+    position: 'relative' as const,
+    textDecoration: 'none',
+  }
+
+  const badge = approvalsBadge ?? item.badge
+
+  const innerContent = (
+    <>
+      {active && (
+        <div
+          style={{
+            position: 'absolute',
+            left: -8,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            width: 3,
+            height: 18,
+            borderRadius: '0 3px 3px 0',
+            background: 'var(--blue)',
+          }}
+        />
+      )}
+      <IconCmp size={17} />
+      <span style={{ flex: 1 }}>{item.label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span
+          style={{
+            minWidth: 18,
+            height: 18,
+            padding: '0 5px',
+            borderRadius: 99,
+            background: 'var(--blue)',
+            color: '#fff',
+            fontSize: 10,
+            fontWeight: 800,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {badge}
+        </span>
+      )}
+      {hasChildren && (
+        <Icon.chevD
+          size={12}
+          style={{
+            color: 'var(--text-mute)',
+            transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
+            transition: 'transform .15s',
+          }}
+        />
+      )}
+    </>
+  )
 
   return (
-    <div
-      className={cn(
-        'flex flex-col h-full glass border-r border-white/[0.06] transition-all duration-300',
-        isCollapsed ? 'w-[60px]' : 'w-[240px]',
-        className
-      )}
-    >
-      {/* Logo */}
-      <div
-        className={cn(
-          'flex items-center h-16 px-4 border-b border-white/[0.06] shrink-0',
-          isCollapsed ? 'justify-center' : 'gap-3'
-        )}
-      >
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-brand-blue shrink-0">
-          <span className="text-white font-bold text-sm font-gilroy">F</span>
-        </div>
-        {!isCollapsed && (
-          <div className="flex flex-col">
-            <span className="text-white font-bold text-sm font-gilroy leading-tight">
-              Flicks Suite
-            </span>
-            <span className="text-white/40 text-xs font-gilroy">HRMS</span>
-          </div>
-        )}
-      </div>
-
-      {/* Navigation */}
-      <ScrollArea className="flex-1 py-3 px-2">
-        <nav className="space-y-0.5">
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.label} item={item} isCollapsed={isCollapsed} />
-          ))}
-        </nav>
-      </ScrollArea>
-
-      {/* Bottom actions */}
-      <div
-        className={cn(
-          'border-t border-white/[0.06] p-2 space-y-0.5 shrink-0'
-        )}
-      >
-        <Link
-          href="/help"
-          className={cn(
-            'flex items-center gap-3 px-3 py-2 rounded text-sm font-medium font-gilroy text-white/40 hover:text-white/70 hover:bg-white/5 transition-all duration-200',
-            isCollapsed && 'justify-center px-2'
-          )}
-          title={isCollapsed ? 'Help' : undefined}
+    <div>
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={() => setOpenGroups((g) => ({ ...g, [item.id]: !isOpen }))}
+          style={{ ...rowStyle, cursor: 'pointer' }}
         >
-          <HelpCircle className="h-4 w-4 shrink-0" />
-          {!isCollapsed && <span>Help</span>}
+          {innerContent}
+        </button>
+      ) : (
+        <Link href={item.href ?? '#'} style={rowStyle}>
+          {innerContent}
         </Link>
-        <button
-          onClick={logout}
-          className={cn(
-            'w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium font-gilroy text-white/40 hover:text-brand-coral/80 hover:bg-brand-coral/5 transition-all duration-200',
-            isCollapsed && 'justify-center px-2'
-          )}
-          title={isCollapsed ? 'Logout' : undefined}
-        >
-          <LogOut className="h-4 w-4 shrink-0" />
-          {!isCollapsed && <span>Logout</span>}
-        </button>
+      )}
 
-        {/* Collapse toggle */}
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className={cn(
-            'w-full flex items-center gap-3 px-3 py-2 rounded text-sm font-medium font-gilroy text-white/30 hover:text-white/60 hover:bg-white/5 transition-all duration-200',
-            isCollapsed && 'justify-center px-2'
-          )}
+      {hasChildren && isOpen && (
+        <div
+          style={{
+            paddingLeft: 24,
+            marginBottom: 4,
+            borderLeft: '1px solid var(--bord)',
+            marginLeft: 18,
+            marginTop: 1,
+          }}
         >
-          {isCollapsed ? (
-            <PanelLeftOpen className="h-4 w-4 shrink-0" />
-          ) : (
-            <>
-              <PanelLeftClose className="h-4 w-4 shrink-0" />
-              <span>Collapse</span>
-            </>
-          )}
-        </button>
-      </div>
+          {item.children!.map((c) => {
+            const cActive = activeId === `${item.id}>${c.href}`
+            return (
+              <Link
+                key={c.href}
+                href={c.href}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 10px',
+                  borderRadius: 7,
+                  background: cActive ? 'var(--surf-2)' : 'transparent',
+                  border: cActive ? '1px solid var(--bord-2)' : '1px solid transparent',
+                  color: cActive ? '#fff' : 'var(--text-2)',
+                  fontSize: 12,
+                  fontWeight: cActive ? 800 : 600,
+                  letterSpacing: '-0.01em',
+                  textDecoration: 'none',
+                  marginBottom: 1,
+                }}
+              >
+                <span style={{ flex: 1 }}>{c.label}</span>
+                {c.badge !== undefined && c.badge > 0 && (
+                  <span
+                    style={{
+                      minWidth: 16,
+                      height: 16,
+                      padding: '0 4px',
+                      borderRadius: 99,
+                      background: 'var(--coral)',
+                      color: '#fff',
+                      fontSize: 9.5,
+                      fontWeight: 800,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {c.badge}
+                  </span>
+                )}
+              </Link>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
