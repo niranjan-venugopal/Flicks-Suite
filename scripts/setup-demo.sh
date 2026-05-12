@@ -1,21 +1,31 @@
 #!/usr/bin/env bash
 #
-# Flicks Suite — demo tenant + users (for browser testing)
+# Flicks Suite — demo tenant + users + history (rich seed)
 #
-# Creates:
-#   • Tenant "Demo Co" (slug: demo-co)
-#   • Manager: manager@demo.co (role=manager)
-#   • Employee: alice@demo.co (role=employee, manager=Mira)
-#   • One leave type: Casual Leave (CL, 12 days)
+# Creates a populated "Demo Co" tenant so every screen looks real:
+#   • 1 Founder/Admin     (niranjan@demo.co — placeholder until OWNER role lands)
+#   • 2 Managers          (manager@demo.co — Mira, sarah@demo.co — Sarah)
+#   • 8 Employees         (alice + 7 others) across 3 departments + 2 locations
+#   • 11 Indian leave types (copied from seed tenant if present, plus CL/SL/EL/ML/PL)
+#   • Default 9-to-6 shift template (Mon-Fri IST, 60-min unpaid break)
+#   • Attendance: last 30 days × 8 employees with realistic status mix
+#                 (mostly present, a few late, weekends + holidays auto-marked)
+#   • Leave requests: 4 in mixed states (pending / approved / rejected / cancelled)
+#   • Regularizations: 2 pending (one missing-punch, one wrong-time)
+#   • Holidays copied from default seed tenant for Calendar
 #
-# Idempotent — safe to re-run.
+# Idempotent — safe to re-run; uses fixed UUIDs and ON CONFLICT DO NOTHING.
 #
 # Usage:
-#   ./scripts/setup-demo.sh
+#   set -a; source apps/api/.env; set +a
+#   bash scripts/setup-demo.sh
 #
-# After running, log in via the web UI at http://localhost:3000/login
-# using either email. The OTP code will be printed in the API server log
-# (search for "[DEV] OTP for ...") since NODE_ENV is development.
+# Login at http://localhost:3000/login as any of:
+#   • niranjan@demo.co  (admin / future Owner)
+#   • manager@demo.co   (manager Mira)
+#   • sarah@demo.co     (manager Sarah)
+#   • alice@demo.co     (employee)
+# OTPs print to the API server log: search for [DEV] OTP for ...
 
 set -euo pipefail
 
@@ -40,43 +50,158 @@ else
 fi
 
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
--- Tenant
+-- ─── Tenant ──────────────────────────────────────────────────────────────────
 INSERT INTO tenants (id, name, slug, status)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Demo Co', 'demo-co', 'trialing')
 ON CONFLICT (id) DO NOTHING;
 
--- Users
+-- ─── Locations ───────────────────────────────────────────────────────────────
+INSERT INTO locations (id, tenant_id, name, address_line1, city, state_code, country_code, timezone, is_active)
+VALUES
+  ('66666666-6666-6666-6666-666666666661', '11111111-1111-1111-1111-111111111111',
+   'Bengaluru HQ', 'Indiranagar 100ft Road', 'Bengaluru', 'KA', 'IN', 'Asia/Kolkata', true),
+  ('66666666-6666-6666-6666-666666666662', '11111111-1111-1111-1111-111111111111',
+   'Mumbai Office', 'BKC Road', 'Mumbai', 'MH', 'IN', 'Asia/Kolkata', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- ─── Departments ─────────────────────────────────────────────────────────────
+INSERT INTO departments (id, tenant_id, name, description, is_active)
+VALUES
+  ('44444444-4444-4444-4444-444444444441', '11111111-1111-1111-1111-111111111111',
+   'Engineering', 'Product engineering and platform', true),
+  ('44444444-4444-4444-4444-444444444442', '11111111-1111-1111-1111-111111111111',
+   'Sales', 'Customer acquisition and growth', true),
+  ('44444444-4444-4444-4444-444444444443', '11111111-1111-1111-1111-111111111111',
+   'Operations', 'HR, finance, and ops', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- ─── Users ───────────────────────────────────────────────────────────────────
+-- Founder + 2 managers + 8 employees = 11 users.
 INSERT INTO users (id, email, full_name, status)
 VALUES
-  ('22222222-2222-2222-2222-222222222221', 'manager@demo.co', 'Mira Manager', 'active'),
-  ('22222222-2222-2222-2222-222222222222', 'alice@demo.co',   'Alice Employee', 'active')
+  ('22222222-2222-2222-2222-222222222220', 'niranjan@demo.co', 'Niranjan V',     'active'), -- Founder/Admin (Owner placeholder)
+  ('22222222-2222-2222-2222-222222222221', 'manager@demo.co',  'Mira Manager',   'active'), -- Manager (Engineering)
+  ('22222222-2222-2222-2222-222222222223', 'sarah@demo.co',    'Sarah Lead',     'active'), -- Manager (Sales)
+  ('22222222-2222-2222-2222-222222222222', 'alice@demo.co',    'Alice Sharma',   'active'), -- Engineer, reports to Mira
+  ('22222222-2222-2222-2222-222222222224', 'rohan@demo.co',    'Rohan Kapoor',   'active'), -- Engineer, reports to Mira
+  ('22222222-2222-2222-2222-222222222225', 'diya@demo.co',     'Diya Patel',     'active'), -- Engineer, reports to Mira
+  ('22222222-2222-2222-2222-222222222226', 'kabir@demo.co',    'Kabir Iyer',     'active'), -- Engineer, reports to Mira
+  ('22222222-2222-2222-2222-222222222227', 'vikram@demo.co',   'Vikram Singh',   'active'), -- AE, reports to Sarah
+  ('22222222-2222-2222-2222-222222222228', 'ananya@demo.co',   'Ananya Gupta',   'active'), -- AE, reports to Sarah
+  ('22222222-2222-2222-2222-222222222229', 'priya@demo.co',    'Priya Reddy',    'active'), -- BDR, reports to Sarah
+  ('2222222a-2222-2222-2222-22222222222a', 'tanvi@demo.co',    'Tanvi Bose',     'active')  -- HR, reports to Niranjan
 ON CONFLICT (id) DO NOTHING;
 
--- Employees
-INSERT INTO employees (id, tenant_id, user_id, employee_code, first_name, last_name, work_email, employment_type, date_of_joining, status)
+-- ─── Employees ───────────────────────────────────────────────────────────────
+-- Schema requires: tenant_id, user_id, employee_code, first_name, last_name,
+-- work_email, employment_type, date_of_joining, status. Optional: department_id,
+-- location_id, reporting_manager_id (set in a follow-up UPDATE because of self-FK).
+INSERT INTO employees (id, tenant_id, user_id, employee_code, first_name, last_name, work_email,
+                       employment_type, date_of_joining, status, department_id, location_id)
 VALUES
-  ('33333333-3333-3333-3333-333333333331', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', 'EMP001', 'Mira',  'Manager',  'manager@demo.co', 'full_time', '2025-01-01', 'active'),
-  ('33333333-3333-3333-3333-333333333332', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 'EMP002', 'Alice', 'Employee', 'alice@demo.co',   'full_time', '2025-06-01', 'active')
+  ('33333333-3333-3333-3333-333333333330', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220',
+   'EMP000', 'Niranjan', 'V',        'niranjan@demo.co', 'full_time', '2025-01-01', 'active',
+   '44444444-4444-4444-4444-444444444443', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333331', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221',
+   'EMP001', 'Mira',     'Manager',  'manager@demo.co',  'full_time', '2025-01-01', 'active',
+   '44444444-4444-4444-4444-444444444441', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222223',
+   'EMP003', 'Sarah',    'Lead',     'sarah@demo.co',    'full_time', '2025-02-15', 'active',
+   '44444444-4444-4444-4444-444444444442', '66666666-6666-6666-6666-666666666662'),
+  ('33333333-3333-3333-3333-333333333332', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'EMP002', 'Alice',    'Sharma',   'alice@demo.co',    'full_time', '2025-06-01', 'active',
+   '44444444-4444-4444-4444-444444444441', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333334', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222224',
+   'EMP004', 'Rohan',    'Kapoor',   'rohan@demo.co',    'full_time', '2025-07-15', 'active',
+   '44444444-4444-4444-4444-444444444441', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333335', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222225',
+   'EMP005', 'Diya',     'Patel',    'diya@demo.co',     'full_time', '2025-08-01', 'active',
+   '44444444-4444-4444-4444-444444444441', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333336', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222226',
+   'EMP006', 'Kabir',    'Iyer',     'kabir@demo.co',    'full_time', '2025-09-15', 'active',
+   '44444444-4444-4444-4444-444444444441', '66666666-6666-6666-6666-666666666661'),
+  ('33333333-3333-3333-3333-333333333337', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222227',
+   'EMP007', 'Vikram',   'Singh',    'vikram@demo.co',   'full_time', '2025-04-01', 'active',
+   '44444444-4444-4444-4444-444444444442', '66666666-6666-6666-6666-666666666662'),
+  ('33333333-3333-3333-3333-333333333338', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222228',
+   'EMP008', 'Ananya',   'Gupta',    'ananya@demo.co',   'full_time', '2025-10-01', 'active',
+   '44444444-4444-4444-4444-444444444442', '66666666-6666-6666-6666-666666666662'),
+  ('33333333-3333-3333-3333-333333333339', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222229',
+   'EMP009', 'Priya',    'Reddy',    'priya@demo.co',    'full_time', '2026-01-05', 'active',
+   '44444444-4444-4444-4444-444444444442', '66666666-6666-6666-6666-666666666661'),
+  ('3333333a-3333-3333-3333-33333333333a', '11111111-1111-1111-1111-111111111111', '2222222a-2222-2222-2222-22222222222a',
+   'EMP010', 'Tanvi',    'Bose',     'tanvi@demo.co',    'full_time', '2025-03-01', 'active',
+   '44444444-4444-4444-4444-444444444443', '66666666-6666-6666-6666-666666666661')
 ON CONFLICT (id) DO NOTHING;
 
--- Make Mira Alice's manager
+-- ─── Reporting lines ─────────────────────────────────────────────────────────
+-- Mira manages the Engineering individual contributors.
 UPDATE employees
 SET reporting_manager_id = '33333333-3333-3333-3333-333333333331'
-WHERE id = '33333333-3333-3333-3333-333333333332';
+WHERE id IN (
+  '33333333-3333-3333-3333-333333333332', -- Alice
+  '33333333-3333-3333-3333-333333333334', -- Rohan
+  '33333333-3333-3333-3333-333333333335', -- Diya
+  '33333333-3333-3333-3333-333333333336'  -- Kabir
+);
+-- Sarah manages the Sales reps.
+UPDATE employees
+SET reporting_manager_id = '33333333-3333-3333-3333-333333333333'
+WHERE id IN (
+  '33333333-3333-3333-3333-333333333337', -- Vikram
+  '33333333-3333-3333-3333-333333333338', -- Ananya
+  '33333333-3333-3333-3333-333333333339'  -- Priya
+);
+-- Niranjan oversees Tanvi (Operations), and the two managers.
+UPDATE employees
+SET reporting_manager_id = '33333333-3333-3333-3333-333333333330'
+WHERE id IN (
+  '3333333a-3333-3333-3333-33333333333a', -- Tanvi
+  '33333333-3333-3333-3333-333333333331', -- Mira
+  '33333333-3333-3333-3333-333333333333'  -- Sarah
+);
 
--- Memberships
+-- Department heads
+UPDATE departments SET head_employee_id = '33333333-3333-3333-3333-333333333331'
+  WHERE id = '44444444-4444-4444-4444-444444444441';
+UPDATE departments SET head_employee_id = '33333333-3333-3333-3333-333333333333'
+  WHERE id = '44444444-4444-4444-4444-444444444442';
+UPDATE departments SET head_employee_id = '3333333a-3333-3333-3333-33333333333a'
+  WHERE id = '44444444-4444-4444-4444-444444444443';
+
+-- ─── Memberships ─────────────────────────────────────────────────────────────
+-- Note: 'admin' is currently the highest role in the enum. Sprint 2 B0 adds
+-- 'owner' and the founder gets promoted; for now Niranjan = admin.
 INSERT INTO memberships (tenant_id, user_id, employee_id, role, status)
 VALUES
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220', '33333333-3333-3333-3333-333333333330', 'admin',    'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '33333333-3333-3333-3333-333333333331', 'manager',  'active'),
-  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333332', 'employee', 'active')
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222223', '33333333-3333-3333-3333-333333333333', 'manager',  'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333332', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222224', '33333333-3333-3333-3333-333333333334', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222225', '33333333-3333-3333-3333-333333333335', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222226', '33333333-3333-3333-3333-333333333336', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222227', '33333333-3333-3333-3333-333333333337', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222228', '33333333-3333-3333-3333-333333333338', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222229', '33333333-3333-3333-3333-333333333339', 'employee', 'active'),
+  ('11111111-1111-1111-1111-111111111111', '2222222a-2222-2222-2222-22222222222a', '3333333a-3333-3333-3333-33333333333a', 'employee', 'active')
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
 
--- Leave type: Casual Leave 12 days
-INSERT INTO leave_types (tenant_id, name, code, default_quota_days, is_paid)
-VALUES ('11111111-1111-1111-1111-111111111111', 'Casual Leave', 'CL', 12, true)
+-- ─── Leave types ─────────────────────────────────────────────────────────────
+-- Keep CL (existing); add 4 more standard Indian leave types so balances look realistic.
+INSERT INTO leave_types (tenant_id, name, code, default_quota_days, is_paid, color, display_order)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'Casual Leave',    'CL',  12, true, '#3E7BFA', 1),
+  ('11111111-1111-1111-1111-111111111111', 'Sick Leave',      'SL',  10, true, '#F8786B', 2),
+  ('11111111-1111-1111-1111-111111111111', 'Earned Leave',    'EL',  18, true, '#9B7BFA', 3),
+  ('11111111-1111-1111-1111-111111111111', 'Maternity Leave', 'ML', 182, true, '#F8786B', 4),
+  ('11111111-1111-1111-1111-111111111111', 'Paternity Leave', 'PL',   5, true, '#27D280', 5),
+  ('11111111-1111-1111-1111-111111111111', 'Compensatory',    'CO',   0, true, '#27D280', 6),
+  ('11111111-1111-1111-1111-111111111111', 'Work From Home',  'WFH',  0, true, '#3E7BFA', 7),
+  ('11111111-1111-1111-1111-111111111111', 'Loss of Pay',     'LOP',  0, false,'#F8786B', 8)
 ON CONFLICT (tenant_id, code) DO NOTHING;
 
--- Default shift template: General 09:00-18:00 IST Mon-Fri (PRD §6.3)
+-- ─── Default shift template ─────────────────────────────────────────────────
 INSERT INTO shift_templates (
   id, tenant_id, name, description,
   start_time, end_time, is_overnight,
@@ -97,8 +222,7 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- Copy Indian holidays from the default seed tenant (if pnpm db:seed has run)
--- so the demo tenant's calendar is populated for Gate 4 testing.
+-- ─── Holidays from default seed tenant ──────────────────────────────────────
 INSERT INTO holidays (tenant_id, holiday_date, name, type, description, is_recurring)
 SELECT '11111111-1111-1111-1111-111111111111', holiday_date, name, type, description, is_recurring
 FROM holidays
@@ -109,12 +233,204 @@ WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
       AND h2.holiday_date = holidays.holiday_date
       AND h2.name = holidays.name
   );
+
+-- ─── Attendance — last 30 days × 8 individual contributors ──────────────────
+-- Generate one row per (employee, date) for working days only (Mon-Fri, no holiday).
+-- Status mix: 88% present, 7% late, 3% on_leave, 2% work_from_home.
+-- Hours are reasonable (8-9.5 hours worked, 30-60min break).
+WITH ic_employees AS (
+  SELECT id AS employee_id
+  FROM employees
+  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND id IN (
+      '33333333-3333-3333-3333-333333333332', -- Alice
+      '33333333-3333-3333-3333-333333333334', -- Rohan
+      '33333333-3333-3333-3333-333333333335', -- Diya
+      '33333333-3333-3333-3333-333333333336', -- Kabir
+      '33333333-3333-3333-3333-333333333337', -- Vikram
+      '33333333-3333-3333-3333-333333333338', -- Ananya
+      '33333333-3333-3333-3333-333333333339', -- Priya
+      '3333333a-3333-3333-3333-33333333333a'  -- Tanvi
+    )
+),
+day_grid AS (
+  SELECT (current_date - g)::date AS attendance_date
+  FROM generate_series(1, 30) AS g  -- yesterday going back 30 days
+  WHERE EXTRACT(DOW FROM (current_date - g)::date) NOT IN (0, 6) -- skip Sun + Sat
+),
+joined AS (
+  SELECT
+    e.employee_id,
+    d.attendance_date,
+    -- deterministic-but-varied "random" via hash so re-runs don't churn
+    (abs(hashtext(e.employee_id::text || d.attendance_date::text)) % 100) AS r
+  FROM ic_employees e
+  CROSS JOIN day_grid d
+  WHERE NOT EXISTS (
+    SELECT 1 FROM holidays h
+    WHERE h.tenant_id = '11111111-1111-1111-1111-111111111111'
+      AND h.holiday_date = d.attendance_date
+  )
+)
+INSERT INTO attendance_records (
+  tenant_id, employee_id, attendance_date, shift_template_id,
+  first_punch_in_at, last_punch_out_at,
+  total_break_minutes, total_worked_minutes,
+  is_late, late_by_minutes,
+  attendance_status, source
+)
+SELECT
+  '11111111-1111-1111-1111-111111111111',
+  j.employee_id,
+  j.attendance_date,
+  '55555555-5555-4555-8555-555555555555',
+  -- punch-in: 09:00 IST nominal; late rows shift by 16-25 min
+  (j.attendance_date + time '03:30' + (CASE
+    WHEN j.r < 88 THEN make_interval(mins => (j.r % 15))             -- 0-14min after 9 (on time)
+    WHEN j.r < 95 THEN make_interval(mins => 16 + (j.r % 10))        -- 16-25min late
+    ELSE make_interval(mins => 0)                                    -- not used (on_leave/wfh have no clock)
+  END))::timestamptz,
+  -- punch-out: ~18:00-19:30 IST
+  (j.attendance_date + time '12:30' + make_interval(mins => 30 + (j.r % 60)))::timestamptz,
+  30 + (j.r % 30),  -- 30-59min break
+  -- worked minutes: ~8h-9h30
+  480 + (j.r % 90),
+  CASE WHEN j.r >= 88 AND j.r < 95 THEN true ELSE false END,
+  CASE WHEN j.r >= 88 AND j.r < 95 THEN 16 + (j.r % 10) ELSE 0 END,
+  CASE
+    WHEN j.r < 88 THEN 'present'::attendance_status
+    WHEN j.r < 95 THEN 'late'::attendance_status
+    WHEN j.r < 98 THEN 'on_leave'::attendance_status
+    ELSE 'work_from_home'::attendance_status
+  END,
+  'system'::attendance_source
+FROM joined j
+ON CONFLICT DO NOTHING;
+
+-- ─── Leave requests — 4 in mixed states ─────────────────────────────────────
+-- Pending: Alice → 2 CL, applied this week
+INSERT INTO leave_requests (id, tenant_id, employee_id, leave_type_id, start_date, end_date,
+                            is_half_day, total_days, reason, status, approver_id, applied_at)
+SELECT
+  '77777777-7777-7777-7777-777777777771',
+  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333332',  -- Alice
+  lt.id,
+  current_date + 3, current_date + 4,
+  false, 2,
+  'Family wedding in Chennai. Will be reachable on Slack for urgent items.',
+  'pending',
+  '33333333-3333-3333-3333-333333333331',  -- Mira approves
+  now() - interval '6 hours'
+FROM leave_types lt
+WHERE lt.tenant_id = '11111111-1111-1111-1111-111111111111' AND lt.code = 'CL'
+ON CONFLICT (id) DO NOTHING;
+
+-- Approved: Rohan → 1 SL, last week
+INSERT INTO leave_requests (id, tenant_id, employee_id, leave_type_id, start_date, end_date,
+                            is_half_day, total_days, reason, status, approver_id,
+                            approver_comment, applied_at, approved_at)
+SELECT
+  '77777777-7777-7777-7777-777777777772',
+  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333334',  -- Rohan
+  lt.id,
+  current_date - 5, current_date - 5,
+  false, 1,
+  'Fever and body ache. Resting at home.',
+  'approved',
+  '33333333-3333-3333-3333-333333333331',  -- Mira
+  'Get well soon!',
+  now() - interval '6 days', now() - interval '6 days' + interval '4 hours'
+FROM leave_types lt
+WHERE lt.tenant_id = '11111111-1111-1111-1111-111111111111' AND lt.code = 'SL'
+ON CONFLICT (id) DO NOTHING;
+
+-- Approved (longer): Vikram → 4 EL, two weeks ago
+INSERT INTO leave_requests (id, tenant_id, employee_id, leave_type_id, start_date, end_date,
+                            is_half_day, total_days, reason, status, approver_id,
+                            approver_comment, applied_at, approved_at)
+SELECT
+  '77777777-7777-7777-7777-777777777773',
+  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333337',  -- Vikram
+  lt.id,
+  current_date - 14, current_date - 11,
+  false, 4,
+  'Vacation in Goa with family.',
+  'approved',
+  '33333333-3333-3333-3333-333333333333',  -- Sarah
+  'Enjoy! Coverage by Ananya.',
+  now() - interval '20 days', now() - interval '19 days'
+FROM leave_types lt
+WHERE lt.tenant_id = '11111111-1111-1111-1111-111111111111' AND lt.code = 'EL'
+ON CONFLICT (id) DO NOTHING;
+
+-- Rejected: Diya → CL with too short notice
+INSERT INTO leave_requests (id, tenant_id, employee_id, leave_type_id, start_date, end_date,
+                            is_half_day, total_days, reason, status, approver_id,
+                            approver_comment, applied_at, rejected_at)
+SELECT
+  '77777777-7777-7777-7777-777777777774',
+  '11111111-1111-1111-1111-111111111111',
+  '33333333-3333-3333-3333-333333333335',  -- Diya
+  lt.id,
+  current_date - 1, current_date - 1,
+  false, 1,
+  'Personal',
+  'rejected',
+  '33333333-3333-3333-3333-333333333331',  -- Mira
+  'Need at least 1 day notice. Please regularise as WFH if needed.',
+  now() - interval '2 days', now() - interval '2 days' + interval '2 hours'
+FROM leave_types lt
+WHERE lt.tenant_id = '11111111-1111-1111-1111-111111111111' AND lt.code = 'CL'
+ON CONFLICT (id) DO NOTHING;
+
+-- ─── Regularizations — 2 pending ─────────────────────────────────────────────
+INSERT INTO attendance_regularizations (id, tenant_id, employee_id, attendance_date, request_type,
+                                        proposed_in_time, proposed_out_time, reason, status, approver_id)
+VALUES
+  -- Kabir forgot to clock in two days ago
+  ('88888888-8888-8888-8888-888888888881',
+   '11111111-1111-1111-1111-111111111111',
+   '33333333-3333-3333-3333-333333333336',  -- Kabir
+   current_date - 2,
+   'missing_punch',
+   (current_date - 2 + time '03:30' + interval '10 minutes')::timestamptz,
+   (current_date - 2 + time '12:30' + interval '20 minutes')::timestamptz,
+   'Forgot to clock in due to a 9:30 client call. Was at the office the whole day.',
+   'pending',
+   '33333333-3333-3333-3333-333333333331'),  -- Mira
+  -- Ananya was working from home but was marked late
+  ('88888888-8888-8888-8888-888888888882',
+   '11111111-1111-1111-1111-111111111111',
+   '33333333-3333-3333-3333-333333333338',  -- Ananya
+   current_date - 4,
+   'wfh_request',
+   (current_date - 4 + time '03:30')::timestamptz,
+   (current_date - 4 + time '12:30')::timestamptz,
+   'Was working from home for the morning to handle internet outage at office.',
+   'pending',
+   '33333333-3333-3333-3333-333333333333')   -- Sarah
+ON CONFLICT (id) DO NOTHING;
+
 SQL
 
-echo "✅ Demo data ready."
+echo "✅ Demo data ready (rich seed)."
 echo
-echo "Try logging in at http://localhost:3000/login with:"
-echo "  • alice@demo.co       (employee — applies for leave)"
-echo "  • manager@demo.co     (manager  — approves leave)"
+echo "Tenant:    Demo Co"
+echo "Locations: Bengaluru HQ, Mumbai Office"
+echo "Depts:     Engineering, Sales, Operations"
 echo
-echo "OTP codes appear in the API server log (look for '[DEV] OTP for ...')."
+echo "Login candidates (OTP printed in API server log):"
+echo "  • niranjan@demo.co  (admin / future Owner)"
+echo "  • manager@demo.co   (manager Mira — Engineering)"
+echo "  • sarah@demo.co     (manager Sarah — Sales)"
+echo "  • alice@demo.co     (employee — applies for leave)"
+echo "  • rohan@demo.co  diya@demo.co  kabir@demo.co  vikram@demo.co  ananya@demo.co  priya@demo.co  tanvi@demo.co"
+echo
+echo "Pre-seeded:"
+echo "  • 30 days × 8 employees of attendance history (mostly present, some late)"
+echo "  • 4 leave requests (1 pending, 2 approved, 1 rejected)"
+echo "  • 2 attendance regularizations (pending)"
+echo "  • 8 leave types (CL, SL, EL, ML, PL, CO, WFH, LOP) + 25 holidays"
