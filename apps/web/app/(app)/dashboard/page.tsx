@@ -10,8 +10,6 @@ import type { AdminOverview } from '@/lib/api/queries/use-dashboard'
 import { useReviewLeave, useMyLeaveBalances, useHolidays } from '@/lib/api/queries/use-leave'
 import {
   useMyAttendanceToday,
-  usePunchIn,
-  usePunchOut,
   useReviewRegularization,
 } from '@/lib/api/queries/use-attendance'
 import {
@@ -25,7 +23,7 @@ import {
   SectionHead,
   Sparkline,
 } from '@/components/proto'
-import { useToast } from '@/components/ui/use-toast'
+import { ClockCard } from '@/components/attendance/ClockCard'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -954,32 +952,11 @@ function EmployeeHome() {
   const today = useMyAttendanceToday()
   const balances = useMyLeaveBalances()
   const holidays = useHolidays()
-  const punchIn = usePunchIn()
-  const punchOut = usePunchOut()
-  const { toast } = useToast()
 
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const t = today.data
   const isClockedIn = !!t?.firstPunchInAt && !t.lastPunchOutAt
   const tz = t?.shift?.timezone ?? 'Asia/Kolkata'
-
-  const handlePunch = async () => {
-    try {
-      if (isClockedIn) {
-        await punchOut.mutateAsync({})
-        toast({ title: 'Clocked out', description: 'See you tomorrow.' })
-      } else {
-        await punchIn.mutateAsync({})
-        toast({ title: 'Clocked in', description: 'Have a productive day.' })
-      }
-    } catch (e) {
-      toast({
-        title: 'Could not record punch',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
 
   const fmtTime = (iso: string | null | undefined) =>
     iso
@@ -1042,58 +1019,20 @@ function EmployeeHome() {
                 Apply for leave
               </Btn>
             </Link>
-            <Btn
-              kind={isClockedIn ? 'danger' : 'primary'}
-              size="sm"
-              icon={<Icon.fingerprint size={13} />}
-              onClick={handlePunch}
-              disabled={punchIn.isPending || punchOut.isPending || today.isLoading}
-            >
-              {isClockedIn ? 'Clock out' : 'Clock in'}
-            </Btn>
+            <Link href="/calendar" style={{ textDecoration: 'none' }}>
+              <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />}>
+                View calendar
+              </Btn>
+            </Link>
           </div>
         </div>
 
-        {/* Quick stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
-          <Kpi
-            label="My status"
-            value={
-              today.isLoading
-                ? '—'
-                : isClockedIn
-                ? 'Clocked in'
-                : t?.lastPunchOutAt
-                ? 'Done'
-                : 'Off'
-            }
-            delta={t?.shift ? `${t.shift.startTime}–${t.shift.endTime}` : '—'}
-            icon={<Icon.fingerprint size={16} />}
-            accent={isClockedIn ? 'green' : 'yellow'}
-          />
-          <Kpi
-            label="Hours today"
-            value={t ? `${Math.floor((t.totalWorkedMinutes ?? 0) / 60)}h ${((t.totalWorkedMinutes ?? 0) % 60).toString().padStart(2, '0')}m` : '—'}
-            delta={t?.totalBreakMinutes ? `${t.totalBreakMinutes}m break` : 'No break'}
-            icon={<Icon.clock size={16} />}
-            accent="blue"
-          />
-          <Kpi
-            label="Leave available"
-            value={topBalances[0]?.available.toFixed(0) ?? '—'}
-            delta={topBalances[0] ? `${topBalances[0].code} this year` : '—'}
-            icon={<Icon.spark size={16} />}
-            accent="purple"
-          />
-          <Kpi
-            label="Late today"
-            value={t?.isLate ? 'Yes' : 'No'}
-            delta={t?.isLate ? `By ${t.lateByMinutes}m` : 'On time'}
-            icon={<Icon.warn size={16} />}
-            accent={t?.isLate ? 'coral' : 'green'}
-          />
+        {/* Full clock card — the primary surface of the employee home */}
+        <div style={{ marginBottom: 18 }}>
+          <ClockCard />
         </div>
 
+        {/* My leave + upcoming holidays */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 18 }}>
           {/* My leave balances */}
           <div className="card">
