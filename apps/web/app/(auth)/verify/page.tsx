@@ -4,7 +4,8 @@ import { useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { CheckCircle2, RefreshCw, ShieldAlert, Zap } from 'lucide-react'
+import { CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react'
+import { LogoMark } from '@/components/proto'
 import { Button } from '@/components/ui/button'
 import { PageGlows } from '@/components/layout/PageGlows'
 import { useVerifyMagicLinkQuery } from '@/lib/api/queries/use-auth'
@@ -110,11 +111,9 @@ export default function VerifyMagicLinkPage() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-10"
         >
-          <div className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-brand-blue rounded-xl flex items-center justify-center shadow-glow-blue">
-              <Zap className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-white">
+          <div className="inline-flex items-center gap-3 mb-6">
+            <LogoMark size={40} />
+            <span className="text-2xl font-bold text-white tracking-tight">
               flicks<span className="text-brand-blue">.</span>
             </span>
           </div>

@@ -5,85 +5,49 @@ interface PageGlowsProps {
   className?: string
 }
 
+/**
+ * Ambient glow blobs behind page content. Uses the .glow + tone classes
+ * defined in globals.css (ported from prototype tokens).
+ */
 export function PageGlows({ variant = 'default', className }: PageGlowsProps) {
   return (
     <div className={cn('fixed inset-0 pointer-events-none overflow-hidden', className)}>
       {variant === 'auth' && (
         <>
           <div
-            className="glow-blob animate-float-slow"
-            style={{
-              width: '600px',
-              height: '600px',
-              background: '#2B69F5',
-              top: '-200px',
-              left: '-200px',
-              opacity: 0.12,
-            }}
+            className="glow glow-blue"
+            style={{ top: -200, left: -150, width: 600, height: 600 }}
           />
           <div
-            className="glow-blob animate-float-medium"
-            style={{
-              width: '400px',
-              height: '400px',
-              background: '#00C9A7',
-              bottom: '-100px',
-              right: '-100px',
-              opacity: 0.08,
-              animationDelay: '2s',
-            }}
+            className="glow glow-coral"
+            style={{ bottom: -200, right: -150, width: 500, height: 500 }}
           />
           <div
-            className="glow-blob animate-float-slow"
-            style={{
-              width: '300px',
-              height: '300px',
-              background: '#FFC72C',
-              top: '50%',
-              right: '20%',
-              opacity: 0.06,
-              animationDelay: '4s',
-            }}
+            className="glow glow-purple"
+            style={{ top: '30%', right: '20%', width: 400, height: 400 }}
           />
         </>
       )}
       {variant === 'default' && (
         <>
           <div
-            className="glow-blob"
-            style={{
-              width: '800px',
-              height: '800px',
-              background: '#2B69F5',
-              top: '-300px',
-              right: '-200px',
-              opacity: 0.05,
-            }}
+            className="glow glow-blue"
+            style={{ top: -150, left: -100, width: 500, height: 500 }}
           />
           <div
-            className="glow-blob"
-            style={{
-              width: '500px',
-              height: '500px',
-              background: '#00C9A7',
-              bottom: '-150px',
-              left: '-100px',
-              opacity: 0.04,
-            }}
+            className="glow glow-coral"
+            style={{ bottom: -200, right: -100, width: 500, height: 500 }}
+          />
+          <div
+            className="glow glow-yellow"
+            style={{ top: '40%', right: '30%', width: 300, height: 300 }}
           />
         </>
       )}
       {variant === 'minimal' && (
         <div
-          className="glow-blob"
-          style={{
-            width: '600px',
-            height: '600px',
-            background: '#2B69F5',
-            top: '-200px',
-            right: '-100px',
-            opacity: 0.04,
-          }}
+          className="glow glow-blue"
+          style={{ top: -200, right: -100, width: 600, height: 600 }}
         />
       )}
     </div>

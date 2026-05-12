@@ -5,12 +5,13 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowRight, RefreshCw, Mail, Shield, Zap } from 'lucide-react'
+import { ArrowRight, RefreshCw, Mail, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/use-toast'
 import { PageGlows } from '@/components/layout/PageGlows'
+import { LogoMark } from '@/components/proto'
 import { useRequestOtp, useVerifyOtp } from '@/lib/api/queries/use-auth'
 
 const emailSchema = z.object({
@@ -120,7 +121,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen bg-brand-bg flex items-center justify-center overflow-hidden">
-      <PageGlows />
+      <PageGlows variant="auth" />
 
       <div className="relative z-10 w-full max-w-md px-4">
         {/* Logo */}
@@ -129,11 +130,11 @@ export default function LoginPage() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-10"
         >
-          <div className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-brand-blue rounded-xl flex items-center justify-center shadow-glow-blue">
-              <Zap className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-white">flicks<span className="text-brand-blue">.</span></span>
+          <div className="inline-flex items-center gap-3 mb-6">
+            <LogoMark size={40} />
+            <span className="text-2xl font-bold text-white tracking-tight">
+              flicks<span className="text-brand-blue">.</span>
+            </span>
           </div>
           <p className="text-brand-muted text-sm">HR that works at startup speed</p>
         </motion.div>
