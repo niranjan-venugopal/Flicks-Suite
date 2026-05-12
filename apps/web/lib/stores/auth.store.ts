@@ -1,13 +1,19 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type UserRole = 'SUPER_ADMIN' | 'HR_ADMIN' | 'MANAGER' | 'EMPLOYEE'
+export type UserRole =
+  | 'SUPER_ADMIN'
+  | 'OWNER'
+  | 'HR_ADMIN'
+  | 'MANAGER'
+  | 'EMPLOYEE'
 
 // Human-readable label for the Topbar / surfaces showing a role.
 // HR stays uppercase; everything else is title-cased.
 export function roleLabel(role: UserRole | string | null | undefined): string {
   switch (role) {
     case 'SUPER_ADMIN': return 'Super Admin'
+    case 'OWNER':       return 'Owner'
     case 'HR_ADMIN':    return 'HR Admin'
     case 'MANAGER':     return 'Manager'
     case 'EMPLOYEE':    return 'Employee'

@@ -61,6 +61,17 @@ else
   echo "  ✓ schema applied"
 fi
 
+echo "─── Step 3b: apply incremental migrations (>=0002) ───"
+# Each migration file uses IF NOT EXISTS guards so re-applying is a no-op.
+# Loop in lexical order so 0002 lands before 0003 etc.
+for MIG in "${REPO_ROOT}/packages/db/drizzle/"[0-9]*.sql; do
+  base=$(basename "$MIG")
+  # Skip 0001 — handled by Step 3.
+  if [[ "$base" == "0001_initial.sql" ]]; then continue; fi
+  psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" -f "$MIG" >/dev/null
+  echo "  ✓ applied $base"
+done
+
 echo "─── Step 4: insert seed tenant ───"
 psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" <<SQL >/dev/null
 INSERT INTO tenants (id, name, slug, status)

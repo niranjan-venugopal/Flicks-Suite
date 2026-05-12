@@ -23,6 +23,7 @@ export const tenantStatusEnum = pgEnum('tenant_status', [
 
 export const membershipRoleEnum = pgEnum('membership_role', [
   'super_admin',
+  'owner',
   'admin',
   'manager',
   'finance',

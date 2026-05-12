@@ -1,6 +1,6 @@
 // ─── Auth Types ──────────────────────────────────────────────────────────────
 
-export type UserRole = 'super_admin' | 'admin' | 'manager' | 'finance' | 'employee';
+export type UserRole = 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee';
 
 export type TenantStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended';
 

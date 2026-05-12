@@ -49,6 +49,14 @@ else
   CONN_TARGET=(-h "$PGHOST" -p "$PGPORT" -U "$PGSUPERUSER" -d "$APP_DB_NAME")
 fi
 
+# ─── Schema guard: ensure 'owner' enum value exists ────────────────────────
+# Run as a separate psql call so the ALTER TYPE commits before the seed
+# below tries to use the new value. Without this, users who only run
+# setup-demo.sh (without setup-supabase.sh) would fail on the owner role.
+# Idempotent: IF NOT EXISTS makes re-runs a no-op.
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
+  "ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'owner';" >/dev/null
+
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
 -- ─── Tenant ──────────────────────────────────────────────────────────────────
 INSERT INTO tenants (id, name, slug, status)
@@ -170,11 +178,11 @@ UPDATE departments SET head_employee_id = '3333333a-3333-3333-3333-33333333333a'
   WHERE id = '44444444-4444-4444-4444-444444444443';
 
 -- ─── Memberships ─────────────────────────────────────────────────────────────
--- Note: 'admin' is currently the highest role in the enum. Sprint 2 B0 adds
--- 'owner' and the founder gets promoted; for now Niranjan = admin.
+-- Niranjan is the founder/Owner — has all permissions of an admin plus
+-- billing and tenant-level controls (Sprint 2 B0).
 INSERT INTO memberships (tenant_id, user_id, employee_id, role, status)
 VALUES
-  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220', '33333333-3333-3333-3333-333333333330', 'admin',    'active'),
+  ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220', '33333333-3333-3333-3333-333333333330', 'owner',    'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '33333333-3333-3333-3333-333333333331', 'manager',  'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222223', '33333333-3333-3333-3333-333333333333', 'manager',  'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333332', 'employee', 'active'),
@@ -186,6 +194,13 @@ VALUES
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222229', '33333333-3333-3333-3333-333333333339', 'employee', 'active'),
   ('11111111-1111-1111-1111-111111111111', '2222222a-2222-2222-2222-22222222222a', '3333333a-3333-3333-3333-33333333333a', 'employee', 'active')
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
+
+-- Promote Niranjan to 'owner' even on subsequent runs (earlier seed used 'admin').
+UPDATE memberships
+SET role = 'owner'
+WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+  AND user_id   = '22222222-2222-2222-2222-222222222220'
+  AND role <> 'owner';
 
 -- ─── Leave types ─────────────────────────────────────────────────────────────
 -- Keep CL (existing); add 4 more standard Indian leave types so balances look realistic.

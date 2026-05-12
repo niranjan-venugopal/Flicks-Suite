@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAuthStore, type UserRole } from '@/lib/stores/auth.store'
+import { useAuthStore, roleLabel, type UserRole } from '@/lib/stores/auth.store'
 import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
 import { Avatar, Icon, LogoMark, avBg, initials } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
@@ -132,27 +132,17 @@ const EMPLOYEE_NAV: NavSection[] = [
 function navFor(role: UserRole | undefined): NavSection[] {
   switch (role) {
     case 'SUPER_ADMIN':
+    case 'OWNER':
     case 'HR_ADMIN':
+      // OWNER shares HR_ADMIN's nav for now; the prototype's OWNER_NAV
+      // variant (with Documents, Calendar, Audit log) lands when those
+      // pages exist as real surfaces in Sprint 2.
       return ADMIN_NAV
     case 'MANAGER':
       return MANAGER_NAV
     case 'EMPLOYEE':
     default:
       return EMPLOYEE_NAV
-  }
-}
-
-function roleLabel(role: UserRole | undefined): string {
-  switch (role) {
-    case 'SUPER_ADMIN':
-      return 'Super admin'
-    case 'HR_ADMIN':
-      return 'Admin'
-    case 'MANAGER':
-      return 'Manager'
-    case 'EMPLOYEE':
-    default:
-      return 'Employee'
   }
 }
 
@@ -165,7 +155,11 @@ export function Sidebar() {
   const nav = useMemo(() => navFor(role), [role])
 
   // Live approvals badge — only meaningful for admins/managers.
-  const showApprovalsBadge = role === 'HR_ADMIN' || role === 'SUPER_ADMIN' || role === 'MANAGER'
+  const showApprovalsBadge =
+    role === 'HR_ADMIN' ||
+    role === 'OWNER' ||
+    role === 'SUPER_ADMIN' ||
+    role === 'MANAGER'
   const overview = useAdminOverview()
   const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 

@@ -64,6 +64,8 @@ function normaliseRole(role: string | undefined | null): UserRole {
   switch ((role ?? '').toLowerCase()) {
     case 'super_admin':
       return 'SUPER_ADMIN'
+    case 'owner':
+      return 'OWNER'
     case 'admin':
       return 'HR_ADMIN'
     case 'manager':

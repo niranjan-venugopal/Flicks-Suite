@@ -39,11 +39,19 @@ export default function DesignationsSettingsPage() {
     e.preventDefault()
     if (!form.title.trim()) return
     try {
-      await create.mutateAsync({
+      // Build payload conditionally — never send empty strings, which would
+      // fail server-side @IsUUID() on departmentId despite @IsOptional()
+      // (class-validator treats '' as a defined value).
+      const payload: Parameters<typeof create.mutateAsync>[0] = {
         title: form.title.trim(),
-        level: form.level ? Number(form.level) : undefined,
-        departmentId: form.departmentId || undefined,
-      })
+      }
+      if (form.level.trim()) {
+        const n = Number(form.level)
+        if (Number.isFinite(n)) payload.level = n
+      }
+      if (form.departmentId) payload.departmentId = form.departmentId
+
+      await create.mutateAsync(payload)
       toast({ title: 'Designation added', description: form.title.trim() })
       setForm({ title: '', level: '', departmentId: '' })
       setOpen(false)
@@ -69,14 +77,16 @@ export default function DesignationsSettingsPage() {
     e.preventDefault()
     if (!editing) return
     try {
-      await update.mutateAsync({
-        id: editing.id,
-        payload: {
-          title: editForm.title.trim(),
-          level: editForm.level ? Number(editForm.level) : undefined,
-          departmentId: editForm.departmentId || undefined,
-        },
-      })
+      const payload: Parameters<typeof update.mutateAsync>[0]['payload'] = {
+        title: editForm.title.trim(),
+      }
+      if (editForm.level.trim()) {
+        const n = Number(editForm.level)
+        if (Number.isFinite(n)) payload.level = n
+      }
+      if (editForm.departmentId) payload.departmentId = editForm.departmentId
+
+      await update.mutateAsync({ id: editing.id, payload })
       toast({ title: 'Designation updated' })
       setEditing(null)
     } catch (err: any) {
