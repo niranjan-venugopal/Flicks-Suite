@@ -1,123 +1,157 @@
 'use client'
 
-import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { Calendar, Plus, Check, X, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useMemo, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { EmptyState } from '@/components/common/EmptyState'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { useToast } from '@/components/ui/use-toast'
+  Btn,
+  Icon,
+  Pill,
+  type PillTone,
+  SectionHead,
+} from '@/components/proto'
 import {
   useApplyLeave,
+  useHolidays,
   useLeaveTypes,
   useMyLeaveBalances,
   useMyLeaveRequests,
-  usePendingLeaveRequests,
-  useReviewLeave,
   type ApplyLeavePayload,
   type LeaveBalance,
   type LeaveRequest,
-  type PendingLeaveRequest,
+  type LeaveType,
 } from '@/lib/api/queries/use-leave'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/use-toast'
+import type { IconKey } from '@/components/proto'
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+const TYPE_ACCENT: Record<string, { color: string; icon: IconKey }> = {
+  CL: { color: '#3E7BFA', icon: 'cal' },
+  SL: { color: '#F8786B', icon: 'warn' },
+  PL: { color: '#9B7BFA', icon: 'spark' },
+  EL: { color: '#9B7BFA', icon: 'spark' },
+  ML: { color: '#F8786B', icon: 'warn' },
+  CO: { color: '#27D280', icon: 'refresh' },
+  WFH: { color: '#3E7BFA', icon: 'home' },
+  LOP: { color: '#F8786B', icon: 'warn' },
+  BL: { color: '#9B7BFA', icon: 'briefcase' },
+  RH: { color: '#FED800', icon: 'flag' },
+  MR: { color: '#27D280', icon: 'check' },
+}
+
+function accentFor(code: string): { color: string; icon: IconKey } {
+  return TYPE_ACCENT[code] ?? { color: '#3E7BFA', icon: 'cal' }
+}
+
+function statusPill(s: LeaveRequest['status']) {
+  switch (s) {
+    case 'approved':  return <Pill tone="green" dot>Approved</Pill>
+    case 'pending':   return <Pill tone="yellow" dot>Pending</Pill>
+    case 'rejected':  return <Pill tone="coral" dot>Rejected</Pill>
+    case 'cancelled': return <Pill>Cancelled</Pill>
+    case 'revoked':   return <Pill tone="coral">Revoked</Pill>
+    case 'draft':     return <Pill>Draft</Pill>
+    default:          return <Pill>{s}</Pill>
+  }
+}
+
+function typePill(code: string | null | undefined) {
+  if (!code) return <Pill>—</Pill>
+  const tone: PillTone =
+    code === 'CL' ? 'blue' :
+    code === 'SL' || code === 'ML' || code === 'LOP' ? 'coral' :
+    code === 'CO' || code === 'MR' ? 'green' :
+    code === 'RH' ? 'yellow' :
+    'purple'
+  return <Pill tone={tone}>{code}</Pill>
+}
+
+function fmtRange(start: string, end: string): string {
+  if (start === end) return new Date(`${start}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
+  const s = new Date(`${start}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
+  const e = new Date(`${end}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
+  return `${s} – ${e}`
+}
+
+function extractCode(typeName: string | null): string {
+  if (!typeName) return ''
+  const m = typeName.match(/^([A-Z]{2,4})\b/)
+  if (m) return m[1]!
+  return typeName.split(/\s+/).map((w) => w[0]?.toUpperCase() ?? '').join('').slice(0, 3)
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function LeavePage() {
   const [applyOpen, setApplyOpen] = useState(false)
   const balancesQ = useMyLeaveBalances()
   const myReqs = useMyLeaveRequests()
-  const pending = usePendingLeaveRequests()
+  const holidays = useHolidays()
 
   return (
-    <div className="relative min-h-full">
-      <PageGlows />
-      <div className="relative z-10 p-8 max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-start justify-between gap-4 mb-8 flex-wrap"
-        >
-          <div>
-            <h1 className="text-3xl font-bold text-white font-gilroy">Leave</h1>
-            <p className="text-brand-muted mt-1">
-              Plan time off and review approvals across your team
-            </p>
-          </div>
-          <Button onClick={() => setApplyOpen(true)} className="shrink-0">
-            <Plus className="w-4 h-4" />
-            Apply for leave
-          </Button>
-        </motion.div>
-
-        {/* ─── Balance summary ───────────────────────────────────────────── */}
-        <BalanceStrip
-          balances={balancesQ.data?.balances ?? []}
-          loading={balancesQ.isLoading}
+    <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
+        <SectionHead
+          title="Leave"
+          sub="Your balance, history, and upcoming time off"
+          right={
+            <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setApplyOpen(true)}>
+              Apply for leave
+            </Btn>
+          }
         />
 
-        <Tabs defaultValue="my" className="mt-6">
-          <TabsList>
-            <TabsTrigger value="my">My leave</TabsTrigger>
-            <TabsTrigger value="team">
-              Team queue
-              {pending.data && pending.data.data.length > 0 && (
-                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-brand-blue text-white text-[10px] font-bold">
-                  {pending.data.data.length}
-                </span>
-              )}
-            </TabsTrigger>
-          </TabsList>
+        {/* Balance cards */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 14,
+            marginBottom: 18,
+          }}
+        >
+          {balancesQ.isLoading
+            ? Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="card" style={{ padding: 18, minHeight: 130, opacity: 0.5 }}>
+                  <div className="t-caption">Loading…</div>
+                </div>
+              ))
+            : (balancesQ.data?.balances ?? []).slice(0, 4).map((b) => (
+                <BalanceCard key={b.leaveTypeId} balance={b} />
+              ))}
+        </div>
 
-          <TabsContent value="my">
-            <div className="glass rounded-xl overflow-hidden">
-              {myReqs.isLoading ? (
-                <LoadingRow />
-              ) : !myReqs.data || myReqs.data.data.length === 0 ? (
-                <EmptyState
-                  icon={Calendar}
-                  title="No leave taken yet"
-                  description="Apply for time off and your requests will land here."
-                />
-              ) : (
-                <MyLeaveTable rows={myReqs.data.data} />
-              )}
-            </div>
-          </TabsContent>
+        {/* History + holidays */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 18 }}>
+          <div className="card">
+            <SectionHead title="My leave history" right={<Btn kind="ghost" size="sm">{new Date().getFullYear()}</Btn>} />
+            {myReqs.isLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-mute)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading history…
+              </div>
+            ) : !myReqs.data || myReqs.data.data.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-mute)', fontSize: 13, fontWeight: 600 }}>
+                No leave requests yet. Use Apply for leave to submit one.
+              </div>
+            ) : (
+              <HistoryTable rows={myReqs.data.data} />
+            )}
+          </div>
 
-          <TabsContent value="team">
-            <div className="glass rounded-xl overflow-hidden">
-              {pending.isLoading ? (
-                <LoadingRow />
-              ) : !pending.data || pending.data.data.length === 0 ? (
-                <EmptyState
-                  icon={Calendar}
-                  title="No team requests"
-                  description="When teammates apply, their requests will show up here for review."
-                />
-              ) : (
-                <PendingLeaveTable rows={pending.data.data} />
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+          <div className="card">
+            <SectionHead
+              title="Holiday calendar"
+              sub={new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
+            />
+            <HolidayList holidays={holidays.data?.holidays ?? []} loading={holidays.isLoading} />
+          </div>
+        </div>
       </div>
 
       <ApplyLeaveDialog open={applyOpen} onOpenChange={setApplyOpen} />
@@ -125,218 +159,154 @@ export default function LeavePage() {
   )
 }
 
-// ─── Balance strip ──────────────────────────────────────────────────────────
+// ─── Balance card ──────────────────────────────────────────────────────────
 
-function BalanceStrip({
-  balances,
+function BalanceCard({ balance: b }: { balance: LeaveBalance }) {
+  const total = b.opening + b.accrued
+  const used = b.used + b.pending
+  const usagePct = total > 0 ? Math.min(100, (used / total) * 100) : 0
+  const accent = accentFor(b.code)
+  const IconCmp = Icon[accent.icon]
+
+  return (
+    <div className="card" style={{ padding: 18 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div className="t-caption">{b.leaveTypeName}</div>
+        <div
+          style={{
+            width: 30, height: 30, borderRadius: 8,
+            background: accent.color + '22', color: accent.color,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <IconCmp size={14} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 10 }}>
+        <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.03em' }}>
+          {b.available.toFixed(b.available % 1 === 0 ? 0 : 1)}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-mute)' }}>
+          / {total.toFixed(total % 1 === 0 ? 0 : 1)} days
+        </div>
+      </div>
+      <div className="progress" style={{ marginBottom: 8 }}>
+        <div style={{ width: `${usagePct}%`, background: accent.color }} />
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
+        {b.used} used{b.pending > 0 ? ` · ${b.pending} pending` : ''}
+      </div>
+    </div>
+  )
+}
+
+// ─── History table ─────────────────────────────────────────────────────────
+
+function HistoryTable({ rows }: { rows: LeaveRequest[] }) {
+  return (
+    <table className="tbl" style={{ width: '100%' }}>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Dates</th>
+          <th>Days</th>
+          <th>Status</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.id}>
+            <td>{typePill(extractCode(r.leaveTypeName))}</td>
+            <td>{fmtRange(r.startDate, r.endDate)}</td>
+            <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 800 }}>{r.totalDays}</td>
+            <td>{statusPill(r.status)}</td>
+            <td style={{ color: 'var(--text-2)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {r.reason ?? '—'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// ─── Holiday list ──────────────────────────────────────────────────────────
+
+function HolidayList({
+  holidays,
   loading,
 }: {
-  balances: LeaveBalance[]
+  holidays: Array<{ id: string; date: string; name: string; type: string; description: string | null }>
   loading: boolean
 }) {
+  const upcoming = useMemo(() => {
+    const todayMs = new Date().setHours(0, 0, 0, 0)
+    return [...holidays]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((h) => ({ ...h, isPast: new Date(`${h.date}T00:00:00`).getTime() < todayMs }))
+      .slice(0, 8)
+  }, [holidays])
+
   if (loading) {
     return (
-      <div className="glass rounded-xl p-4 flex items-center gap-3 text-white/40">
-        <Loader2 className="w-4 h-4 animate-spin" /> Loading balances…
+      <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-mute)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading holidays…
       </div>
     )
   }
-  if (balances.length === 0) {
+  if (upcoming.length === 0) {
     return (
-      <div className="glass rounded-xl p-4 text-sm text-white/50 font-gilroy">
-        No leave types configured yet. Ask an admin to set them up under
-        Settings → Leave Policies.
+      <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-mute)', fontSize: 13, fontWeight: 600 }}>
+        No holidays configured.
       </div>
     )
   }
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-      {balances.map((b) => (
-        <div
-          key={b.leaveTypeId}
-          className="glass rounded-xl p-4"
-          style={{ borderLeft: `3px solid ${b.color ?? '#6366f1'}` }}
-        >
-          <div className="text-xs uppercase tracking-wider text-white/40 font-gilroy">
-            {b.code}
-          </div>
-          <div className="text-base font-semibold text-white font-gilroy mt-0.5">
-            {b.leaveTypeName}
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white font-gilroy">
-              {b.available.toFixed(1)}
-            </span>
-            <span className="text-xs text-white/40">available</span>
-          </div>
-          <div className="mt-1 text-[11px] text-white/40 font-gilroy">
-            {b.used} used · {b.pending} pending
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ─── My leave table ─────────────────────────────────────────────────────────
-
-function MyLeaveTable({ rows }: { rows: LeaveRequest[] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-white/[0.06] text-left">
-            <Th>Type</Th>
-            <Th>From</Th>
-            <Th>To</Th>
-            <Th>Days</Th>
-            <Th>Reason</Th>
-            <Th>Status</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {upcoming.map((h) => {
+        const dt = new Date(`${h.date}T00:00:00`)
+        const day = dt.getDate().toString().padStart(2, '0')
+        const month = dt.toLocaleDateString('en-IN', { month: 'short' })
+        return (
+          <div
+            key={h.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '10px 12px', background: 'var(--surf-1)',
+              border: '1px solid var(--bord)', borderRadius: 9,
+              opacity: h.isPast ? 0.55 : 1,
+            }}
+          >
+            <div
+              style={{
+                width: 42, textAlign: 'center', padding: '4px 0',
+                background: 'var(--surf-2)', borderRadius: 8,
+                border: '1px solid var(--bord-2)',
+              }}
             >
-              <Td>
-                <span className="inline-flex items-center gap-2">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{ background: r.leaveTypeColor ?? '#6366f1' }}
-                  />
-                  {r.leaveTypeName ?? '—'}
-                </span>
-              </Td>
-              <Td>{r.startDate}</Td>
-              <Td>{r.endDate}</Td>
-              <Td>{r.totalDays}</Td>
-              <Td className="max-w-xs truncate">{r.reason}</Td>
-              <Td>
-                <StatusBadge status={r.status} />
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              <div style={{ fontSize: 9, fontWeight: 800, color: 'var(--text-mute)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+                {month}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}>{day}</div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {h.name}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
+                {h.description ?? h.type}
+              </div>
+            </div>
+            {h.type === 'optional' && <Pill tone="yellow">Optional</Pill>}
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-// ─── Pending (manager queue) ───────────────────────────────────────────────
-
-function PendingLeaveTable({ rows }: { rows: PendingLeaveRequest[] }) {
-  const review = useReviewLeave()
-  const { toast } = useToast()
-
-  const handle = async (id: string, action: 'approve' | 'reject') => {
-    try {
-      await review.mutateAsync({ id, action })
-      toast({
-        title: action === 'approve' ? 'Leave approved' : 'Leave rejected',
-        description: 'The applicant has been notified.',
-      })
-    } catch (err) {
-      toast({
-        title: 'Action failed',
-        description: err instanceof Error ? err.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-white/[0.06] text-left">
-            <Th>Employee</Th>
-            <Th>Type</Th>
-            <Th>From</Th>
-            <Th>To</Th>
-            <Th>Days</Th>
-            <Th>Reason</Th>
-            <Th>Action</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
-            >
-              <Td>
-                <div className="font-medium text-white">{r.employeeName}</div>
-                <div className="text-[11px] text-white/40">{r.employeeCode}</div>
-              </Td>
-              <Td>{r.leaveTypeName ?? '—'}</Td>
-              <Td>{r.startDate}</Td>
-              <Td>{r.endDate}</Td>
-              <Td>{r.totalDays}</Td>
-              <Td className="max-w-xs truncate">{r.reason}</Td>
-              <Td>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={review.isPending}
-                    onClick={() => handle(r.id, 'approve')}
-                    className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-400/10"
-                  >
-                    <Check className="w-4 h-4" />
-                    Approve
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={review.isPending}
-                    onClick={() => handle(r.id, 'reject')}
-                    className="text-rose-400 hover:text-rose-300 hover:bg-rose-400/10"
-                  >
-                    <X className="w-4 h-4" />
-                    Reject
-                  </Button>
-                </div>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-      {children}
-    </th>
-  )
-}
-function Td({
-  children,
-  className = '',
-}: {
-  children: React.ReactNode
-  className?: string
-}) {
-  return (
-    <td className={`px-6 py-4 text-sm text-white/80 font-gilroy ${className}`}>
-      {children}
-    </td>
-  )
-}
-function LoadingRow() {
-  return (
-    <div className="px-6 py-12 flex items-center justify-center text-white/40">
-      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-      Loading…
-    </div>
-  )
-}
-
-// ─── Apply dialog ──────────────────────────────────────────────────────────
+// ─── Apply leave dialog ────────────────────────────────────────────────────
 
 function ApplyLeaveDialog({
   open,
@@ -346,56 +316,61 @@ function ApplyLeaveDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const types = useLeaveTypes()
+  const balances = useMyLeaveBalances()
   const apply = useApplyLeave()
   const { toast } = useToast()
 
-  const [leaveTypeId, setLeaveTypeId] = useState<string>('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [leaveTypeId, setLeaveTypeId] = useState<string | null>(null)
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
   const [isHalfDay, setIsHalfDay] = useState(false)
-  const [halfDaySession, setHalfDaySession] = useState<
-    'first_half' | 'second_half'
-  >('first_half')
   const [reason, setReason] = useState('')
 
+  const allTypes = types.data?.data ?? []
+  const balanceByType = useMemo(() => {
+    const m = new Map<string, LeaveBalance>()
+    for (const b of balances.data?.balances ?? []) m.set(b.leaveTypeId, b)
+    return m
+  }, [balances.data])
+
+  const totalDays = useMemo(() => {
+    if (!startDate || !endDate) return 0
+    const s = new Date(`${startDate}T00:00:00`).getTime()
+    const e = new Date(`${endDate}T00:00:00`).getTime()
+    if (e < s) return 0
+    return Math.round((e - s) / 86_400_000) + 1 - (isHalfDay ? 0.5 : 0)
+  }, [startDate, endDate, isHalfDay])
+
+  const selectedType = allTypes.find((t) => t.id === leaveTypeId)
+  const selectedBalance = leaveTypeId ? balanceByType.get(leaveTypeId) : undefined
+
   const reset = () => {
-    setLeaveTypeId('')
-    setStartDate('')
-    setEndDate('')
+    setLeaveTypeId(null)
+    setStartDate(new Date().toISOString().slice(0, 10))
+    setEndDate(new Date().toISOString().slice(0, 10))
     setIsHalfDay(false)
     setReason('')
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!leaveTypeId || !startDate || !endDate || reason.trim().length < 10) {
-      toast({
-        title: 'Please fill all fields',
-        description: 'Reason must be at least 10 characters.',
-        variant: 'destructive',
-      })
+  const handleSubmit = async () => {
+    if (!leaveTypeId) {
+      toast({ title: 'Pick a leave type', variant: 'destructive' })
       return
     }
-    const payload: ApplyLeavePayload = {
-      leaveTypeId,
-      startDate,
-      endDate,
-      reason,
-      isHalfDay,
-      ...(isHalfDay ? { halfDaySession } : {}),
+    if (reason.trim().length < 5) {
+      toast({ title: 'Reason is required', description: 'At least 5 characters.', variant: 'destructive' })
+      return
     }
+    const payload: ApplyLeavePayload = { leaveTypeId, startDate, endDate, isHalfDay, reason }
     try {
       await apply.mutateAsync(payload)
-      toast({
-        title: 'Leave request submitted',
-        description: 'Your manager has been notified.',
-      })
+      toast({ title: 'Leave submitted', description: 'Your manager will see it in their approvals inbox.' })
       reset()
       onOpenChange(false)
-    } catch (err) {
+    } catch (e) {
       toast({
         title: 'Could not submit',
-        description: err instanceof Error ? err.message : 'Please try again',
+        description: e instanceof Error ? e.message : 'Try again',
         variant: 'destructive',
       })
     }
@@ -403,126 +378,108 @@ function ApplyLeaveDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Apply for leave</DialogTitle>
-          <DialogDescription>
-            Pick your leave type and dates. Your manager will be notified.
-          </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="leave-type">Leave type</Label>
-            <Select value={leaveTypeId} onValueChange={setLeaveTypeId}>
-              <SelectTrigger id="leave-type">
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                {(types.data?.data ?? []).map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name} ({t.code})
-                  </SelectItem>
-                ))}
-                {types.isLoading && (
-                  <div className="px-2 py-1 text-xs text-white/40">
-                    Loading…
-                  </div>
-                )}
-                {!types.isLoading &&
-                  (!types.data || types.data.data.length === 0) && (
-                    <div className="px-2 py-1 text-xs text-white/40">
-                      No types configured
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <div className="label">Leave type</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+              {allTypes.slice(0, 8).map((t: LeaveType) => {
+                const active = leaveTypeId === t.id
+                const bal = balanceByType.get(t.id)
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setLeaveTypeId(t.id)}
+                    style={{
+                      padding: '10px 8px', borderRadius: 9,
+                      background: active ? 'var(--surf-3)' : 'var(--surf-1)',
+                      border: `1.5px solid ${active ? 'var(--blue)' : 'var(--bord)'}`,
+                      cursor: 'pointer', textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '-0.01em' }}>
+                      {t.code}
                     </div>
-                  )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="leave-from">From</Label>
-              <Input
-                id="leave-from"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="leave-to">To</Label>
-              <Input
-                id="leave-to"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                required
-              />
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>
+                      {bal ? `${bal.available} left` : '—'}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-white/70 font-gilroy">
-            <input
-              type="checkbox"
-              checked={isHalfDay}
-              onChange={(e) => setIsHalfDay(e.target.checked)}
-              className="accent-brand-blue"
-            />
-            Half day
-          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div className="label">From</div>
+              <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            <div>
+              <div className="label">To</div>
+              <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+          </div>
 
-          {isHalfDay && (
-            <Select
-              value={halfDaySession}
-              onValueChange={(v) =>
-                setHalfDaySession(v as 'first_half' | 'second_half')
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="first_half">First half</SelectItem>
-                <SelectItem value="second_half">Second half</SelectItem>
-              </SelectContent>
-            </Select>
-          )}
+          <div
+            style={{
+              display: 'flex', gap: 14,
+              padding: '10px 14px', background: 'var(--surf-1)',
+              border: '1px solid var(--bord)', borderRadius: 9,
+              fontSize: 12, fontWeight: 600,
+            }}
+          >
+            <span>{totalDays} {totalDays === 1 ? 'day' : 'days'}</span>
+            <span style={{ color: 'var(--text-faint)' }}>·</span>
+            <span>
+              {selectedBalance
+                ? `${selectedBalance.available} ${selectedType?.code} → ${Math.max(0, selectedBalance.available - totalDays)} ${selectedType?.code} after`
+                : 'Pick a leave type to preview balance'}
+            </span>
+            <div style={{ flex: 1 }} />
+            {(selectedType?.allowHalfDay ?? true) && totalDays <= 1 && (
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--text-2)' }}>
+                <input
+                  type="checkbox"
+                  checked={isHalfDay}
+                  onChange={(e) => setIsHalfDay(e.target.checked)}
+                  style={{ accentColor: 'var(--blue)' }}
+                />
+                Half day
+              </label>
+            )}
+          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="leave-reason">
-              Reason <span className="text-white/40 text-xs">(min 10 characters)</span>
-            </Label>
-            <Textarea
-              id="leave-reason"
-              placeholder="Share a quick note for your manager"
+          <div>
+            <div className="label">Reason</div>
+            <textarea
+              className="input"
+              style={{ height: 80, padding: 12, resize: 'none' }}
+              placeholder="Why are you taking this leave?"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              minLength={10}
-              maxLength={500}
             />
           </div>
+        </div>
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-              disabled={apply.isPending}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={apply.isPending}>
-              {apply.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" /> Submitting…
-                </>
-              ) : (
-                'Submit request'
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
+        <div style={{ marginTop: 16, display: 'flex', gap: 10 }}>
+          <Btn kind="ghost" onClick={() => onOpenChange(false)} disabled={apply.isPending}>
+            Cancel
+          </Btn>
+          <div style={{ flex: 1 }} />
+          <Btn
+            kind="primary"
+            icon={<Icon.send size={14} />}
+            onClick={handleSubmit}
+            disabled={apply.isPending || !leaveTypeId || totalDays <= 0}
+          >
+            {apply.isPending ? 'Submitting…' : 'Submit to manager'}
+          </Btn>
+        </div>
       </DialogContent>
     </Dialog>
   )
