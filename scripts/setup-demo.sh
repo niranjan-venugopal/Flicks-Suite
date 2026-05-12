@@ -401,6 +401,35 @@ FROM leave_types lt
 WHERE lt.tenant_id = '11111111-1111-1111-1111-111111111111' AND lt.code = 'CL'
 ON CONFLICT (id) DO NOTHING;
 
+-- ─── Refresh leave-request dates on re-run ──────────────────────────────────
+-- The 4 seeded leave_requests use fixed UUIDs with ON CONFLICT DO NOTHING, so
+-- re-running setup-demo doesn't change them. That can leave dates stranded in
+-- a previous calendar year, which makes the Used YTD column on Settings →
+-- Leave policy read 0 instead of the actual value. Refresh dates here so the
+-- demo always shows believable, current-year activity.
+UPDATE leave_requests
+SET start_date = current_date + 3, end_date = current_date + 4,
+    applied_at = now() - interval '6 hours'
+WHERE id = '77777777-7777-7777-7777-777777777771';
+
+UPDATE leave_requests
+SET start_date = current_date - 5, end_date = current_date - 5,
+    applied_at = now() - interval '6 days',
+    approved_at = now() - interval '6 days' + interval '4 hours'
+WHERE id = '77777777-7777-7777-7777-777777777772';
+
+UPDATE leave_requests
+SET start_date = current_date - 14, end_date = current_date - 11,
+    applied_at = now() - interval '20 days',
+    approved_at = now() - interval '19 days'
+WHERE id = '77777777-7777-7777-7777-777777777773';
+
+UPDATE leave_requests
+SET start_date = current_date - 1, end_date = current_date - 1,
+    applied_at = now() - interval '2 days',
+    rejected_at = now() - interval '2 days' + interval '2 hours'
+WHERE id = '77777777-7777-7777-7777-777777777774';
+
 -- ─── Regularizations — 2 pending ─────────────────────────────────────────────
 INSERT INTO attendance_regularizations (id, tenant_id, employee_id, attendance_date, request_type,
                                         proposed_in_time, proposed_out_time, reason, status, approver_id)

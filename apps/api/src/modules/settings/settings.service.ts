@@ -812,7 +812,11 @@ export class SettingsService {
 
   async listLeavePolicies(tenantId: string) {
     const year = new Date().getFullYear();
-    const rows = await this.dbAdmin
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+
+    // 1. The policies themselves
+    const policies = await this.dbAdmin
       .select({
         id: leaveTypes.id,
         name: leaveTypes.name,
@@ -830,20 +834,40 @@ export class SettingsService {
         color: leaveTypes.color,
         displayOrder: leaveTypes.display_order,
         isActive: leaveTypes.is_active,
-        // YTD usage = approved leave days against this policy this year
-        approvedYtd: sql<number>`COALESCE((
-          SELECT SUM(${leaveRequests.total_days})::numeric FROM ${leaveRequests}
-          WHERE ${leaveRequests.tenant_id} = ${leaveTypes.tenant_id}
-            AND ${leaveRequests.leave_type_id} = ${leaveTypes.id}
-            AND ${leaveRequests.status} = 'approved'
-            AND EXTRACT(YEAR FROM ${leaveRequests.start_date}) = ${year}
-        ), 0)`.as('approved_ytd'),
       })
       .from(leaveTypes)
       .where(eq(leaveTypes.tenant_id, tenantId))
       .orderBy(asc(leaveTypes.display_order), asc(leaveTypes.name));
 
-    return { data: rows, total: rows.length };
+    // 2. YTD usage per leave type — separate query, grouped + cast to text
+    // so we get a stable string in JSON (no float-precision surprises).
+    const usageRows = await this.dbAdmin
+      .select({
+        leaveTypeId: leaveRequests.leave_type_id,
+        used: sql<string>`SUM(${leaveRequests.total_days})::text`,
+      })
+      .from(leaveRequests)
+      .where(
+        and(
+          eq(leaveRequests.tenant_id, tenantId),
+          eq(leaveRequests.status, 'approved'),
+          sql`${leaveRequests.start_date} >= ${yearStart}::date`,
+          sql`${leaveRequests.start_date} <= ${yearEnd}::date`,
+        ),
+      )
+      .groupBy(leaveRequests.leave_type_id);
+
+    const usageByType = new Map(
+      usageRows.map((r) => [r.leaveTypeId, Number(r.used) || 0]),
+    );
+
+    return {
+      data: policies.map((p) => ({
+        ...p,
+        approvedYtd: usageByType.get(p.id) ?? 0,
+      })),
+      total: policies.length,
+    };
   }
 
   async createLeavePolicy(
