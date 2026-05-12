@@ -225,3 +225,82 @@ export class CreateDesignationDto {
   @IsOptional()
   departmentId?: string;
 }
+
+// ─── Organization (tenant profile) ───────────────────────────────────────────
+
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+
+export class UpdateOrganizationDto {
+  @ApiPropertyOptional({ example: 'Acme Inc' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'Acme Corporation Pvt Ltd' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  legalName?: string;
+
+  @ApiPropertyOptional({ example: '27AABCU9603R1ZX' })
+  @IsString()
+  @IsOptional()
+  @Matches(GSTIN_RE, { message: 'Invalid GSTIN format' })
+  gstin?: string;
+
+  @ApiPropertyOptional({ example: 'AABCU9603R' })
+  @IsString()
+  @IsOptional()
+  @Matches(PAN_RE, { message: 'Invalid PAN format' })
+  pan?: string;
+
+  @ApiPropertyOptional({ example: 'U72200KA2020PTC123456' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  cin?: string;
+
+  @ApiPropertyOptional({ example: 'Technology' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(80)
+  industry?: string;
+
+  @ApiPropertyOptional({ example: '11-50' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  sizeBand?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  addressLine1?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  addressLine2?: string;
+
+  @ApiPropertyOptional({ example: 'Bengaluru' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(80)
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'KA' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(2)
+  stateCode?: string;
+
+  @ApiPropertyOptional({ example: '560038' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(12)
+  postalCode?: string;
+}

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Body,
   Param,
   HttpCode,
@@ -22,6 +23,7 @@ import {
   UpdateLocationDto,
   UpdateWorkingHoursDto,
   CreateDesignationDto,
+  UpdateOrganizationDto,
 } from './settings.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -32,6 +34,38 @@ import type { JwtPayload } from '@flicks/shared/types';
 @Controller('settings')
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
+
+  // ─── Organization (tenant profile) ─────────────────────────────────────────
+
+  @Get('organization')
+  @ApiOperation({
+    summary: 'Get the current tenant profile',
+    description:
+      'Workspace name, slug, legal/tax identifiers, registered address, branding, plus headcount/dept/location counts for the Settings landing screen.',
+  })
+  @ApiResponse({ status: 200, description: 'Tenant profile' })
+  async getOrganization(@CurrentUser() user: JwtPayload) {
+    return this.settingsService.getOrganization(user.tenantId);
+  }
+
+  @Patch('organization')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Update the tenant profile',
+    description:
+      'Edit display name, legal name, GSTIN/PAN/CIN, industry, size band, and registered address. Slug is immutable; status/billing live in FAM.',
+  })
+  @ApiResponse({ status: 200, description: 'Tenant updated' })
+  async updateOrganization(
+    @Body() dto: UpdateOrganizationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.updateOrganization(
+      user.tenantId,
+      user.sub,
+      dto,
+    );
+  }
 
   // ─── Departments ───────────────────────────────────────────────────────────
 
