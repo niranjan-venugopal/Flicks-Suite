@@ -27,6 +27,7 @@ import {
   UpdateShiftTemplateDto,
   CreateLeavePolicyDto,
   UpdateLeavePolicyDto,
+  UpdateMemberRoleDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -258,6 +259,69 @@ export class SettingsController {
       user.tenantId,
       user.sub,
       dto,
+    );
+  }
+
+  // ─── Members (memberships / workspace access) ──────────────────────────────
+
+  @Get('members')
+  @ApiOperation({
+    summary: 'List workspace members',
+    description: 'Memberships joined to user + employee + dept + designation.',
+  })
+  @ApiResponse({ status: 200, description: 'Members list' })
+  async listMembers(@CurrentUser() user: JwtPayload) {
+    return this.settingsService.listMembers(user.tenantId);
+  }
+
+  @Patch('members/:id/role')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Change a member\'s role' })
+  @ApiResponse({ status: 200, description: 'Role updated' })
+  async updateMemberRole(
+    @Param('id') id: string,
+    @Body() dto: UpdateMemberRoleDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.updateMemberRole(
+      id,
+      user.tenantId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Post('members/:id/deactivate')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Deactivate a member' })
+  @ApiResponse({ status: 200, description: 'Member deactivated' })
+  async deactivateMember(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.setMemberStatus(
+      id,
+      user.tenantId,
+      user.sub,
+      'deactivated',
+    );
+  }
+
+  @Post('members/:id/reactivate')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reactivate a member' })
+  @ApiResponse({ status: 200, description: 'Member reactivated' })
+  async reactivateMember(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.setMemberStatus(
+      id,
+      user.tenantId,
+      user.sub,
+      'active',
     );
   }
 }

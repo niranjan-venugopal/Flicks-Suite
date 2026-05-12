@@ -13,6 +13,7 @@ import {
   designations,
   employees,
   memberships,
+  users,
   shiftTemplates,
   employeeShifts,
   leaveTypes,
@@ -36,6 +37,7 @@ import type {
   UpdateShiftTemplateDto,
   CreateLeavePolicyDto,
   UpdateLeavePolicyDto,
+  UpdateMemberRoleDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 
@@ -993,6 +995,171 @@ export class SettingsService {
         defaultQuotaDays: after.default_quota_days,
         isActive: after.is_active,
       },
+    });
+
+    return after;
+  }
+
+  // ─── Members (memberships / workspace access) ──────────────────────────────
+
+  async listMembers(tenantId: string) {
+    const rows = await this.dbAdmin
+      .select({
+        id: memberships.id,
+        userId: memberships.user_id,
+        employeeId: memberships.employee_id,
+        role: memberships.role,
+        status: memberships.status,
+        invitedAt: memberships.invited_at,
+        acceptedAt: memberships.accepted_at,
+        createdAt: memberships.created_at,
+        // user
+        email: users.email,
+        fullName: users.full_name,
+        avatarUrl: users.avatar_url,
+        // employee (optional — invited-but-not-onboarded users may not have one)
+        employeeCode: employees.employee_code,
+        firstName: employees.first_name,
+        lastName: employees.last_name,
+        departmentId: employees.department_id,
+        departmentName: departments.name,
+        designationTitle: designations.title,
+      })
+      .from(memberships)
+      .leftJoin(users, eq(memberships.user_id, users.id))
+      .leftJoin(employees, eq(memberships.employee_id, employees.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
+      .leftJoin(designations, eq(employees.designation_id, designations.id))
+      .where(eq(memberships.tenant_id, tenantId))
+      .orderBy(asc(memberships.created_at));
+
+    return { data: rows, total: rows.length };
+  }
+
+  async updateMemberRole(
+    membershipId: string,
+    tenantId: string,
+    actorUserId: string,
+    dto: UpdateMemberRoleDto,
+  ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.id, membershipId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Member not found');
+    }
+
+    // Safeguard: cannot demote the only Owner — every tenant needs at least one.
+    if (before.role === 'owner' && dto.role !== 'owner') {
+      const [{ value: ownerCount }] = await this.dbAdmin
+        .select({ value: count() })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.role, 'owner'),
+            eq(memberships.status, 'active'),
+          ),
+        );
+
+      if (ownerCount <= 1) {
+        throw new ConflictException(
+          'Cannot demote the only Owner. Promote another member to Owner first.',
+        );
+      }
+    }
+
+    const [after] = await this.dbAdmin
+      .update(memberships)
+      .set({ role: dto.role })
+      .where(
+        and(
+          eq(memberships.id, membershipId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'membership.role_changed',
+      resourceType: 'membership',
+      resourceId: membershipId,
+      beforeState: { role: before.role },
+      afterState: { role: after.role },
+    });
+
+    return after;
+  }
+
+  async setMemberStatus(
+    membershipId: string,
+    tenantId: string,
+    actorUserId: string,
+    status: 'active' | 'deactivated',
+  ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.id, membershipId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Member not found');
+    }
+
+    if (status === 'deactivated' && before.role === 'owner') {
+      const [{ value: ownerCount }] = await this.dbAdmin
+        .select({ value: count() })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.role, 'owner'),
+            eq(memberships.status, 'active'),
+          ),
+        );
+
+      if (ownerCount <= 1) {
+        throw new ConflictException(
+          'Cannot deactivate the only Owner. Promote another member to Owner first.',
+        );
+      }
+    }
+
+    const [after] = await this.dbAdmin
+      .update(memberships)
+      .set({ status })
+      .where(
+        and(
+          eq(memberships.id, membershipId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: status === 'deactivated' ? 'membership.deactivated' : 'membership.reactivated',
+      resourceType: 'membership',
+      resourceId: membershipId,
+      beforeState: { status: before.status },
+      afterState: { status: after.status },
     });
 
     return after;

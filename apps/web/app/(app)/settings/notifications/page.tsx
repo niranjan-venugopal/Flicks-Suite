@@ -1,182 +1,246 @@
 'use client'
 
-import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { Bell, Plus, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { EmptyState } from '@/components/common/EmptyState'
+import { Icon, Pill, SectionHead } from '@/components/proto'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 
-// TODO: wire to useNotificationRules
-type Channel = 'email' | 'slack' | 'in_app'
-type Rule = { id: string; name: string; channel: Channel; enabled: boolean }
+interface ChannelRow {
+  channel: string
+  icon: 'mail' | 'bell' | 'phone' | 'zap'
+  status: 'live' | 'soon'
+  description: string
+}
 
-const SEED: Rule[] = [
-  { id: 'n_1', name: 'Leave request approved', channel: 'email', enabled: true },
-  { id: 'n_2', name: 'Late check-in alert', channel: 'slack', enabled: true },
-  { id: 'n_3', name: 'Weekly attendance summary', channel: 'email', enabled: false },
+const CHANNELS: ChannelRow[] = [
+  {
+    channel: 'Email',
+    icon: 'mail',
+    status: 'live',
+    description:
+      'Magic-link sign-in + transactional alerts (leave approvals, attendance regularizations) ship today.',
+  },
+  {
+    channel: 'In-app',
+    icon: 'bell',
+    status: 'soon',
+    description:
+      'Notification bell + dedicated /notifications page with unread counts. Sprint 2.',
+  },
+  {
+    channel: 'Slack',
+    icon: 'zap',
+    status: 'soon',
+    description:
+      'Notify managers in #people-ops when approvals are pending; daily attendance digest.',
+  },
+  {
+    channel: 'SMS',
+    icon: 'phone',
+    status: 'soon',
+    description:
+      'Critical-only fallback for managers (final approval reminders).',
+  },
+]
+
+const EVENT_GROUPS: Array<{
+  group: string
+  items: Array<{ title: string; desc: string }>
+}> = [
+  {
+    group: 'Leave',
+    items: [
+      { title: 'Request submitted',  desc: 'Notify the approving manager' },
+      { title: 'Request approved',   desc: 'Notify the employee' },
+      { title: 'Request rejected',   desc: 'Notify the employee with comment' },
+      { title: 'Quota low',          desc: 'Warn employees when balance < 2 days' },
+    ],
+  },
+  {
+    group: 'Attendance',
+    items: [
+      { title: 'Missing punch',      desc: 'Notify employee at end of day' },
+      { title: 'Regularization',     desc: 'Notify the approving manager' },
+      { title: 'Late arrival',       desc: 'Daily summary to manager' },
+    ],
+  },
+  {
+    group: 'Timesheet',
+    items: [
+      { title: 'Period open',        desc: 'Remind employees to fill timesheet' },
+      { title: 'Submitted',          desc: 'Notify the approving manager' },
+      { title: 'Rework requested',   desc: 'Notify the employee with comment' },
+    ],
+  },
+  {
+    group: 'Workspace',
+    items: [
+      { title: 'New member joined',  desc: 'Notify admins' },
+      { title: 'Role changed',       desc: 'Notify the affected member' },
+    ],
+  },
 ]
 
 export default function NotificationsSettingsPage() {
-  const [items, setItems] = useState<Rule[]>(SEED)
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [channel, setChannel] = useState<Channel>('email')
-
-  const handleAdd = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return
-    setItems((curr) => [
-      ...curr,
-      {
-        id: `n_${Date.now()}`,
-        name: name.trim(),
-        channel,
-        enabled: true,
-      },
-    ])
-    setName('')
-    setChannel('email')
-    setOpen(false)
-  }
-
-  const toggle = (id: string) => {
-    setItems((curr) =>
-      curr.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
-    )
-  }
-
   return (
-    <div className="relative min-h-full">
-      <PageGlows />
-      <div className="relative z-10 p-8 max-w-4xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-start justify-between gap-4 mb-8 flex-wrap"
-        >
-          <div>
-            <h1 className="text-3xl font-bold text-white font-gilroy">
-              Notifications
-            </h1>
-            <p className="text-brand-muted mt-1">
-              Control which events trigger notifications and where they’re sent
-            </p>
-          </div>
-          <Button onClick={() => setOpen(true)}>
-            <Plus className="w-4 h-4" />
-            Add rule
-          </Button>
-        </motion.div>
+    <SettingsLayout>
+      <div className="card">
+        <SectionHead
+          title="Notifications"
+          sub="Where and when the workspace tells you something happened. Per-event toggles ship in Sprint 2."
+          right={<Pill tone="yellow" dot>Preview</Pill>}
+        />
 
-        <div className="glass rounded-xl overflow-hidden">
-          {items.length === 0 ? (
-            <EmptyState
-              icon={Bell}
-              title="No notification rules"
-              description="Add a rule to start sending automated notifications."
-            />
-          ) : (
-            <div className="divide-y divide-white/[0.06]">
-              {items.map((item) => (
+        <div style={{ marginBottom: 18 }}>
+          <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
+            Channels
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {CHANNELS.map((c) => {
+              const IconComp = Icon[c.icon]
+              return (
                 <div
-                  key={item.id}
-                  className="flex items-center justify-between px-6 py-4 gap-4"
+                  key={c.channel}
+                  style={{
+                    padding: 14,
+                    background: 'var(--surf-1)',
+                    border: '1px solid var(--bord)',
+                    borderRadius: 10,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 12,
+                  }}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-lg bg-brand-blue/10 flex items-center justify-center shrink-0">
-                      <Bell className="w-4 h-4 text-brand-blue" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-white font-gilroy">
-                        {item.name}
-                      </div>
-                      <div className="text-xs text-white/50 font-gilroy capitalize">
-                        {item.channel.replace('_', ' ')}
-                      </div>
-                    </div>
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 9,
+                      background: 'rgba(62, 123, 250, 0.13)',
+                      color: 'var(--blue)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <IconComp size={15} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={item.enabled}
-                      onCheckedChange={() => toggle(item.id)}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() =>
-                        setItems((curr) => curr.filter((i) => i.id !== item.id))
-                      }
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        marginBottom: 4,
+                      }}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>{c.channel}</span>
+                      {c.status === 'live' ? (
+                        <Pill tone="green" dot>Live</Pill>
+                      ) : (
+                        <Pill tone="yellow">Soon</Pill>
+                      )}
+                    </div>
+                    <p
+                      style={{
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        color: 'var(--text-mute)',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {c.description}
+                    </p>
                   </div>
                 </div>
-              ))}
+              )
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
+            Events
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {EVENT_GROUPS.map((g) => (
+              <div
+                key={g.group}
+                style={{
+                  padding: 14,
+                  background: 'var(--surf-1)',
+                  border: '1px solid var(--bord)',
+                  borderRadius: 10,
+                  opacity: 0.7,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    color: 'var(--text-mute)',
+                    marginBottom: 10,
+                  }}
+                >
+                  {g.group}
+                </div>
+                <ul style={{ display: 'flex', flexDirection: 'column', gap: 8, listStyle: 'none', padding: 0, margin: 0 }}>
+                  {g.items.map((it) => (
+                    <li
+                      key={it.title}
+                      style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}
+                    >
+                      <div
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 4,
+                          border: '1px solid var(--bord-2)',
+                          background: 'var(--surf-2)',
+                          marginTop: 2,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{it.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>{it.desc}</div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 18,
+            padding: 14,
+            background: 'rgba(254, 216, 0, 0.07)',
+            border: '1px solid rgba(254, 216, 0, 0.18)',
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+          }}
+        >
+          <div style={{ color: 'var(--yellow)', flexShrink: 0, marginTop: 1 }}>
+            <Icon.info size={16} />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>
+              Coming next: per-event toggles
             </div>
-          )}
+            <p style={{ fontSize: 11.5, color: 'var(--text-mute)', lineHeight: 1.5 }}>
+              Sprint 2 adds a real bell + notifications page, a <code>notification_preferences</code>{' '}
+              table, and per-event channel selection per user. Today the workspace defaults to email
+              for every transactional event.
+            </p>
+          </div>
         </div>
       </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add notification rule</DialogTitle>
-            <DialogDescription>
-              Choose an event and the channel it should be delivered to.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAdd} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="rule-name">Rule name</Label>
-              <Input
-                id="rule-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="New leave request"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="rule-channel">Channel</Label>
-              <Select value={channel} onValueChange={(v) => setChannel(v as Channel)}>
-                <SelectTrigger id="rule-channel">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="email">Email</SelectItem>
-                  <SelectItem value="slack">Slack</SelectItem>
-                  <SelectItem value="in_app">In-app</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit">Add rule</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </SettingsLayout>
   )
 }

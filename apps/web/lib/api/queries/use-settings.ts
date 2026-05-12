@@ -471,3 +471,76 @@ export function useUpdateLeavePolicy() {
     },
   })
 }
+
+// ─── Members (memberships / workspace access) ────────────────────────────────
+
+export type MembershipRole =
+  | 'super_admin'
+  | 'owner'
+  | 'admin'
+  | 'manager'
+  | 'finance'
+  | 'employee'
+
+export type MembershipStatus = 'invited' | 'active' | 'deactivated'
+
+export interface Member {
+  id: string
+  userId: string
+  employeeId: string | null
+  role: MembershipRole
+  status: MembershipStatus
+  invitedAt: string | null
+  acceptedAt: string | null
+  createdAt: string
+  email: string | null
+  fullName: string | null
+  avatarUrl: string | null
+  employeeCode: string | null
+  firstName: string | null
+  lastName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  designationTitle: string | null
+}
+
+export function useMembers() {
+  return useQuery({
+    queryKey: ['settings', 'members'],
+    queryFn: () =>
+      api.get<{ data: Member[]; total: number }>('/api/v1/settings/members'),
+    staleTime: 30_000,
+  })
+}
+
+export function useUpdateMemberRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, role }: { id: string; role: MembershipRole }) =>
+      api.patch<Member>(`/api/v1/settings/members/${id}/role`, { role }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] })
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
+}
+
+export function useDeactivateMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<Member>(`/api/v1/settings/members/${id}/deactivate`),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] }),
+  })
+}
+
+export function useReactivateMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<Member>(`/api/v1/settings/members/${id}/reactivate`),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] }),
+  })
+}

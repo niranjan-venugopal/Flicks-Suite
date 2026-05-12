@@ -56,18 +56,19 @@ function adaptEmployee(row: ApiEmployeeRow): Employee {
   }
 }
 
+// Matches the server's InviteEmployeeDto exactly. fullName / email /
+// employeeCode are required; the rest are filled in later via the employee's
+// self-onboarding wizard (Sprint 2 #7).
 export interface InviteEmployeePayload {
-  name: string
+  fullName: string
   email: string
-  phone?: string
-  designation: string
-  department: string
-  location: string
-  employeeType: string
-  joinDate: string
-  reportingManagerId?: string
-  salary?: number
-  role: string
+  employeeCode: string
+  designationId?: string
+  departmentId?: string
+  locationId?: string
+  managerId?: string
+  employmentType?: string
+  joiningDate?: string
 }
 
 interface EmployeesFilters {

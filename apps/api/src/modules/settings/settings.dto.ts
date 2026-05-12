@@ -565,6 +565,24 @@ export class UpdateLeavePolicyDto {
   isActive?: boolean;
 }
 
+// ─── Members (memberships / workspace access) ────────────────────────────────
+
+const MEMBER_ROLE_VALUES = [
+  'super_admin',
+  'owner',
+  'admin',
+  'manager',
+  'finance',
+  'employee',
+] as const;
+
+export class UpdateMemberRoleDto {
+  @ApiProperty({ enum: MEMBER_ROLE_VALUES })
+  @IsString()
+  @IsEnum(MEMBER_ROLE_VALUES)
+  role: (typeof MEMBER_ROLE_VALUES)[number];
+}
+
 // ─── Organization (tenant profile) ───────────────────────────────────────────
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
