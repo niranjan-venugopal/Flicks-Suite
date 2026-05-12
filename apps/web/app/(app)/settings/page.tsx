@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Image as ImageIcon } from 'lucide-react'
 import { Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { SettingsTabs } from '@/components/layout/SettingsTabs'
 import {
   useOrganization,
   useUpdateOrganization,
@@ -214,6 +215,7 @@ export default function OrganizationSettingsPage() {
   return (
     <div className="relative min-h-full">
       <div className="relative z-10 p-8 max-w-5xl mx-auto">
+        <SettingsTabs />
         <SectionHead
           eyebrow="Settings"
           title="Organization"

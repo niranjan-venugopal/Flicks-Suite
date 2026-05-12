@@ -226,6 +226,32 @@ export class CreateDesignationDto {
   departmentId?: string;
 }
 
+export class UpdateDesignationDto {
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(160)
+  title?: string;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Max(20)
+  @Type(() => Number)
+  level?: number;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  departmentId?: string;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}
+
 // ─── Organization (tenant profile) ───────────────────────────────────────────
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;

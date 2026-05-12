@@ -1,14 +1,15 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Loader2, Plus, Users } from 'lucide-react'
+import { Briefcase, Loader2, Plus, Users } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { SettingsTabs } from '@/components/layout/SettingsTabs'
 import {
   useDepartments,
-  useCreateDepartment,
-  useUpdateDepartment,
-  type Department,
+  useDesignations,
+  useCreateDesignation,
+  useUpdateDesignation,
+  type Designation,
 } from '@/lib/api/queries/use-settings'
 import {
   Dialog,
@@ -18,45 +19,50 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
-export default function DepartmentsSettingsPage() {
-  const { data, isLoading } = useDepartments()
-  const create = useCreateDepartment()
-  const update = useUpdateDepartment()
+export default function DesignationsSettingsPage() {
+  const { data, isLoading } = useDesignations()
+  const { data: deptData } = useDepartments()
+  const create = useCreateDesignation()
+  const update = useUpdateDesignation()
   const { toast } = useToast()
 
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [editing, setEditing] = useState<Department | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editDescription, setEditDescription] = useState('')
+  const [form, setForm] = useState({ title: '', level: '', departmentId: '' })
+  const [editing, setEditing] = useState<Designation | null>(null)
+  const [editForm, setEditForm] = useState({ title: '', level: '', departmentId: '' })
 
   const items = data?.data ?? []
+  const depts = deptData?.data ?? []
   const activeCount = useMemo(() => items.filter((d) => d.isActive).length, [items])
-  const totalHeadcount = useMemo(
-    () => items.reduce((sum, d) => sum + (d.headcount ?? 0), 0),
-    [items],
-  )
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return
+    if (!form.title.trim()) return
     try {
       await create.mutateAsync({
-        name: name.trim(),
-        description: description.trim() || undefined,
+        title: form.title.trim(),
+        level: form.level ? Number(form.level) : undefined,
+        departmentId: form.departmentId || undefined,
       })
-      toast({ title: 'Department added', description: name.trim() })
-      setName('')
-      setDescription('')
+      toast({ title: 'Designation added', description: form.title.trim() })
+      setForm({ title: '', level: '', departmentId: '' })
       setOpen(false)
     } catch (err: any) {
       toast({
-        title: 'Could not add department',
+        title: 'Could not add designation',
         description: err?.message ?? 'Please try again.',
         variant: 'destructive',
       })
     }
+  }
+
+  const startEdit = (d: Designation) => {
+    setEditing(d)
+    setEditForm({
+      title: d.title,
+      level: d.level?.toString() ?? '',
+      departmentId: d.departmentId ?? '',
+    })
   }
 
   const handleEdit = async (e: React.FormEvent) => {
@@ -66,11 +72,12 @@ export default function DepartmentsSettingsPage() {
       await update.mutateAsync({
         id: editing.id,
         payload: {
-          name: editName.trim(),
-          description: editDescription.trim() || undefined,
+          title: editForm.title.trim(),
+          level: editForm.level ? Number(editForm.level) : undefined,
+          departmentId: editForm.departmentId || undefined,
         },
       })
-      toast({ title: 'Department updated' })
+      toast({ title: 'Designation updated' })
       setEditing(null)
     } catch (err: any) {
       toast({
@@ -81,15 +88,15 @@ export default function DepartmentsSettingsPage() {
     }
   }
 
-  const handleToggleActive = async (dept: Department) => {
+  const handleToggleActive = async (d: Designation) => {
     try {
       await update.mutateAsync({
-        id: dept.id,
-        payload: { isActive: !dept.isActive },
+        id: d.id,
+        payload: { isActive: !d.isActive },
       })
       toast({
-        title: dept.isActive ? 'Department deactivated' : 'Department reactivated',
-        description: dept.name,
+        title: d.isActive ? 'Designation deactivated' : 'Designation reactivated',
+        description: d.title,
       })
     } catch (err: any) {
       toast({
@@ -100,31 +107,24 @@ export default function DepartmentsSettingsPage() {
     }
   }
 
-  const startEdit = (dept: Department) => {
-    setEditing(dept)
-    setEditName(dept.name)
-    setEditDescription(dept.description ?? '')
-  }
-
   return (
     <div className="relative min-h-full">
       <div className="relative z-10 p-8 max-w-5xl mx-auto">
         <SettingsTabs />
         <SectionHead
           eyebrow="Settings"
-          title="Departments"
-          sub="Organise your workforce into business units used for reports, approvals, and leave policies."
+          title="Designations"
+          sub="Job titles assigned to employees. Levels (L1–L10) drive seniority bands and pay grade reports."
           right={
             <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
-              Add department
+              Add designation
             </Btn>
           }
         />
 
-        {/* KPI strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <div className="card p-4">
-            <div className="t-caption">Total departments</div>
+            <div className="t-caption">Total designations</div>
             <div className="text-2xl font-bold text-white mt-1">{items.length}</div>
           </div>
           <div className="card p-4">
@@ -132,8 +132,10 @@ export default function DepartmentsSettingsPage() {
             <div className="text-2xl font-bold text-white mt-1">{activeCount}</div>
           </div>
           <div className="card p-4">
-            <div className="t-caption">Headcount placed</div>
-            <div className="text-2xl font-bold text-white mt-1">{totalHeadcount}</div>
+            <div className="t-caption">Linked to departments</div>
+            <div className="text-2xl font-bold text-white mt-1">
+              {items.filter((d) => d.departmentId).length}
+            </div>
           </div>
         </div>
 
@@ -143,13 +145,13 @@ export default function DepartmentsSettingsPage() {
           </div>
         ) : items.length === 0 ? (
           <div className="card p-12 text-center">
-            <div className="w-12 h-12 rounded-xl bg-brand-blue/10 flex items-center justify-center mx-auto mb-4">
-              <Users className="w-5 h-5 text-brand-blue" />
+            <div className="w-12 h-12 rounded-xl bg-brand-purple/10 flex items-center justify-center mx-auto mb-4">
+              <Briefcase className="w-5 h-5 text-brand-purple" />
             </div>
-            <h3 className="t-h3 mb-1">No departments yet</h3>
-            <p className="t-mute mb-4">Add Engineering, Sales, Operations… anything that maps to how your org is structured.</p>
+            <h3 className="t-h3 mb-1">No designations yet</h3>
+            <p className="t-mute mb-4">Add titles like "Software Engineer" or "Account Executive" with optional seniority levels.</p>
             <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
-              Add your first department
+              Add your first designation
             </Btn>
           </div>
         ) : (
@@ -157,6 +159,8 @@ export default function DepartmentsSettingsPage() {
             <table className="tbl w-full">
               <thead>
                 <tr>
+                  <th>Title</th>
+                  <th>Level</th>
                   <th>Department</th>
                   <th>Headcount</th>
                   <th>Status</th>
@@ -167,12 +171,18 @@ export default function DepartmentsSettingsPage() {
                 {items.map((d) => (
                   <tr key={d.id} className={d.isActive ? '' : 'opacity-50'}>
                     <td>
-                      <div className="font-semibold text-white">{d.name}</div>
-                      {d.description && (
-                        <div className="text-xs text-brand-muted mt-0.5 max-w-md truncate">
-                          {d.description}
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-brand-purple/10 flex items-center justify-center shrink-0">
+                          <Briefcase className="w-3.5 h-3.5 text-brand-purple" />
                         </div>
-                      )}
+                        <div className="font-semibold text-white">{d.title}</div>
+                      </div>
+                    </td>
+                    <td>
+                      {d.level ? <Pill tone="purple">L{d.level}</Pill> : <span className="text-brand-muted">—</span>}
+                    </td>
+                    <td className="text-sm text-brand-muted">
+                      {d.departmentName ?? '—'}
                     </td>
                     <td>
                       <span className="inline-flex items-center gap-1.5 text-sm">
@@ -214,37 +224,54 @@ export default function DepartmentsSettingsPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add department</DialogTitle>
+            <DialogTitle>Add designation</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="label">Name</label>
+              <label className="label">Title</label>
               <input
                 className="input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Engineering"
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                placeholder="Senior Software Engineer"
                 autoFocus
                 required
-                maxLength={120}
+                maxLength={160}
               />
             </div>
-            <div className="space-y-1.5">
-              <label className="label">Description (optional)</label>
-              <input
-                className="input"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Product engineering and platform"
-                maxLength={200}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="label">Level (L1–L10)</label>
+                <input
+                  className="input"
+                  value={form.level}
+                  onChange={(e) => setForm({ ...form, level: e.target.value })}
+                  placeholder="5"
+                  type="number"
+                  min={1}
+                  max={20}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="label">Department</label>
+                <select
+                  className="input"
+                  value={form.departmentId}
+                  onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
+                >
+                  <option value="">—</option>
+                  {depts.filter((d) => d.isActive).map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Btn kind="ghost" type="button" onClick={() => setOpen(false)}>
                 Cancel
               </Btn>
               <Btn kind="primary" type="submit" disabled={create.isPending}>
-                {create.isPending ? 'Adding…' : 'Add department'}
+                {create.isPending ? 'Adding…' : 'Add designation'}
               </Btn>
             </div>
           </form>
@@ -255,27 +282,44 @@ export default function DepartmentsSettingsPage() {
       <Dialog open={Boolean(editing)} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit department</DialogTitle>
+            <DialogTitle>Edit designation</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleEdit} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="label">Name</label>
+              <label className="label">Title</label>
               <input
                 className="input"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
+                value={editForm.title}
+                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
                 required
-                maxLength={120}
+                maxLength={160}
               />
             </div>
-            <div className="space-y-1.5">
-              <label className="label">Description</label>
-              <input
-                className="input"
-                value={editDescription}
-                onChange={(e) => setEditDescription(e.target.value)}
-                maxLength={200}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="label">Level</label>
+                <input
+                  className="input"
+                  value={editForm.level}
+                  onChange={(e) => setEditForm({ ...editForm, level: e.target.value })}
+                  type="number"
+                  min={1}
+                  max={20}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="label">Department</label>
+                <select
+                  className="input"
+                  value={editForm.departmentId}
+                  onChange={(e) => setEditForm({ ...editForm, departmentId: e.target.value })}
+                >
+                  <option value="">—</option>
+                  {depts.filter((d) => d.isActive).map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Btn kind="ghost" type="button" onClick={() => setEditing(null)}>

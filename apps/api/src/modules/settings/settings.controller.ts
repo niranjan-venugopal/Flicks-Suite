@@ -23,6 +23,7 @@ import {
   UpdateLocationDto,
   UpdateWorkingHoursDto,
   CreateDesignationDto,
+  UpdateDesignationDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -159,6 +160,23 @@ export class SettingsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.settingsService.createDesignation(user.tenantId, user.sub, dto);
+  }
+
+  @Put('designations/:id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update a designation' })
+  @ApiResponse({ status: 200, description: 'Designation updated' })
+  async updateDesignation(
+    @Param('id') id: string,
+    @Body() dto: UpdateDesignationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.updateDesignation(
+      id,
+      user.tenantId,
+      user.sub,
+      dto,
+    );
   }
 
   // ─── Working hours ─────────────────────────────────────────────────────────

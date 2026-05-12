@@ -3,12 +3,15 @@ import {
   Logger,
   Inject,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
-import { eq, and, count } from 'drizzle-orm';
+import { eq, and, asc, count, sql } from 'drizzle-orm';
 import {
   tenants,
   locations,
   departments,
+  designations,
+  employees,
   memberships,
 } from '@flicks/db';
 import {
@@ -24,6 +27,7 @@ import type {
   UpdateLocationDto,
   UpdateWorkingHoursDto,
   CreateDesignationDto,
+  UpdateDesignationDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 
@@ -186,182 +190,447 @@ export class SettingsService {
 
   // ─── Departments ───────────────────────────────────────────────────────────
 
-  /**
-   * Lists all departments for the tenant.
-   * TODO: select from departments where tenant_id = $1 order by name.
-   */
   async listDepartments(tenantId: string) {
-    return {
-      data: [] as Array<{
-        id: string;
-        name: string;
-        code: string | null;
-        parentId: string | null;
-        isActive: boolean;
-      }>,
-      total: 0,
-    };
+    const rows = await this.dbAdmin
+      .select({
+        id: departments.id,
+        name: departments.name,
+        code: departments.code,
+        parentId: departments.parent_id,
+        headEmployeeId: departments.head_employee_id,
+        description: departments.description,
+        isActive: departments.is_active,
+        createdAt: departments.created_at,
+        // headcount = active employees in this department
+        headcount: sql<number>`(
+          SELECT COUNT(*)::int FROM ${employees}
+          WHERE ${employees.tenant_id} = ${departments.tenant_id}
+            AND ${employees.department_id} = ${departments.id}
+            AND ${employees.status} = 'active'
+        )`.as('headcount'),
+      })
+      .from(departments)
+      .where(eq(departments.tenant_id, tenantId))
+      .orderBy(asc(departments.name));
+
+    return { data: rows, total: rows.length };
   }
 
-  /**
-   * Creates a new department.
-   * TODO: insert into departments; ensure unique (tenant_id, name).
-   */
   async createDepartment(
     tenantId: string,
     actorUserId: string,
     dto: CreateDepartmentDto,
   ) {
-    await this.auditService.log({
-      tenantId,
-      actorUserId,
-      action: 'department.created',
-      resourceType: 'department',
-      afterState: { name: dto.name, code: dto.code },
-    });
+    try {
+      const [row] = await this.dbAdmin
+        .insert(departments)
+        .values({
+          tenant_id: tenantId,
+          name: dto.name,
+          code: dto.code ?? null,
+          parent_id: dto.parentId ?? null,
+          head_employee_id: dto.headEmployeeId ?? null,
+          description: dto.description ?? null,
+        })
+        .returning();
 
-    return {
-      id: '',
-      name: dto.name,
-      code: dto.code ?? null,
-      parentId: dto.parentId ?? null,
-      isActive: true,
-    };
+      await this.auditService.log({
+        tenantId,
+        actorUserId,
+        action: 'department.created',
+        resourceType: 'department',
+        resourceId: row.id,
+        afterState: {
+          name: row.name,
+          code: row.code,
+          parentId: row.parent_id,
+          headEmployeeId: row.head_employee_id,
+        },
+      });
+
+      return {
+        id: row.id,
+        name: row.name,
+        code: row.code,
+        parentId: row.parent_id,
+        headEmployeeId: row.head_employee_id,
+        description: row.description,
+        isActive: row.is_active,
+        createdAt: row.created_at,
+        headcount: 0,
+      };
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          `A department named "${dto.name}" already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
-  /**
-   * Updates an existing department.
-   * TODO: update departments set ... where id and tenant_id.
-   */
   async updateDepartment(
     departmentId: string,
     tenantId: string,
     actorUserId: string,
     dto: UpdateDepartmentDto,
   ) {
-    await this.auditService.log({
-      tenantId,
-      actorUserId,
-      action: 'department.updated',
-      resourceType: 'department',
-      resourceId: departmentId,
-      afterState: dto as Record<string, unknown>,
-    });
+    const [before] = await this.dbAdmin
+      .select()
+      .from(departments)
+      .where(
+        and(
+          eq(departments.id, departmentId),
+          eq(departments.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
 
-    return { id: departmentId, ...dto };
+    if (!before) {
+      throw new NotFoundException('Department not found');
+    }
+
+    try {
+      const [after] = await this.dbAdmin
+        .update(departments)
+        .set({
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.headEmployeeId !== undefined && {
+            head_employee_id: dto.headEmployeeId,
+          }),
+          ...(dto.description !== undefined && { description: dto.description }),
+          ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+          updated_at: new Date(),
+        })
+        .where(
+          and(
+            eq(departments.id, departmentId),
+            eq(departments.tenant_id, tenantId),
+          ),
+        )
+        .returning();
+
+      await this.auditService.log({
+        tenantId,
+        actorUserId,
+        action: 'department.updated',
+        resourceType: 'department',
+        resourceId: departmentId,
+        beforeState: {
+          name: before.name,
+          isActive: before.is_active,
+          headEmployeeId: before.head_employee_id,
+        },
+        afterState: {
+          name: after.name,
+          isActive: after.is_active,
+          headEmployeeId: after.head_employee_id,
+        },
+      });
+
+      return {
+        id: after.id,
+        name: after.name,
+        code: after.code,
+        parentId: after.parent_id,
+        headEmployeeId: after.head_employee_id,
+        description: after.description,
+        isActive: after.is_active,
+      };
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          `A department named "${dto.name}" already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
   // ─── Locations ─────────────────────────────────────────────────────────────
 
-  /**
-   * Lists all locations for the tenant.
-   * TODO: select from locations where tenant_id and is_active.
-   */
   async listLocations(tenantId: string) {
-    return {
-      data: [] as Array<{
-        id: string;
-        name: string;
-        city: string | null;
-        timezone: string;
-        isActive: boolean;
-      }>,
-      total: 0,
-    };
+    const rows = await this.dbAdmin
+      .select({
+        id: locations.id,
+        name: locations.name,
+        addressLine1: locations.address_line1,
+        addressLine2: locations.address_line2,
+        city: locations.city,
+        stateCode: locations.state_code,
+        postalCode: locations.postal_code,
+        countryCode: locations.country_code,
+        timezone: locations.timezone,
+        geofenceLat: locations.geofence_lat,
+        geofenceLng: locations.geofence_lng,
+        geofenceRadiusM: locations.geofence_radius_m,
+        ipAllowlist: locations.ip_allowlist,
+        isActive: locations.is_active,
+        createdAt: locations.created_at,
+        headcount: sql<number>`(
+          SELECT COUNT(*)::int FROM ${employees}
+          WHERE ${employees.tenant_id} = ${locations.tenant_id}
+            AND ${employees.location_id} = ${locations.id}
+            AND ${employees.status} = 'active'
+        )`.as('headcount'),
+      })
+      .from(locations)
+      .where(eq(locations.tenant_id, tenantId))
+      .orderBy(asc(locations.name));
+
+    return { data: rows, total: rows.length };
   }
 
-  /**
-   * Creates a new location with optional geofence + IP allowlist.
-   * TODO: insert into locations.
-   */
   async createLocation(
     tenantId: string,
     actorUserId: string,
     dto: CreateLocationDto,
   ) {
+    const stateCode =
+      dto.stateCode ?? (dto.countryCode === 'IN' ? null : null);
+
+    const [row] = await this.dbAdmin
+      .insert(locations)
+      .values({
+        tenant_id: tenantId,
+        name: dto.name,
+        address_line1: dto.addressLine1 ?? null,
+        address_line2: dto.addressLine2 ?? null,
+        city: dto.city ?? null,
+        state_code: stateCode,
+        postal_code: dto.postalCode ?? null,
+        country_code: dto.countryCode ?? 'IN',
+        timezone: dto.timezone ?? 'Asia/Kolkata',
+        geofence_lat: dto.geofenceLat ?? null,
+        geofence_lng: dto.geofenceLng ?? null,
+        geofence_radius_m: dto.geofenceRadiusM ?? null,
+        ip_allowlist: dto.ipAllowlist ?? null,
+      })
+      .returning();
+
     await this.auditService.log({
       tenantId,
       actorUserId,
       action: 'location.created',
       resourceType: 'location',
+      resourceId: row.id,
       afterState: {
-        name: dto.name,
-        city: dto.city,
-        countryCode: dto.countryCode,
+        name: row.name,
+        city: row.city,
+        countryCode: row.country_code,
       },
     });
 
     return {
-      id: '',
-      name: dto.name,
-      city: dto.city ?? null,
-      timezone: dto.timezone ?? 'Asia/Kolkata',
-      isActive: true,
+      id: row.id,
+      name: row.name,
+      addressLine1: row.address_line1,
+      addressLine2: row.address_line2,
+      city: row.city,
+      stateCode: row.state_code,
+      postalCode: row.postal_code,
+      countryCode: row.country_code,
+      timezone: row.timezone,
+      geofenceLat: row.geofence_lat,
+      geofenceLng: row.geofence_lng,
+      geofenceRadiusM: row.geofence_radius_m,
+      ipAllowlist: row.ip_allowlist,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+      headcount: 0,
     };
   }
 
-  /**
-   * Updates an existing location.
-   * TODO: update locations where id and tenant_id.
-   */
   async updateLocation(
     locationId: string,
     tenantId: string,
     actorUserId: string,
     dto: UpdateLocationDto,
   ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(locations)
+      .where(
+        and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Location not found');
+    }
+
+    const [after] = await this.dbAdmin
+      .update(locations)
+      .set({
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.addressLine1 !== undefined && {
+          address_line1: dto.addressLine1,
+        }),
+        ...(dto.city !== undefined && { city: dto.city }),
+        ...(dto.postalCode !== undefined && { postal_code: dto.postalCode }),
+        ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+      })
+      .where(
+        and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+      )
+      .returning();
+
     await this.auditService.log({
       tenantId,
       actorUserId,
       action: 'location.updated',
       resourceType: 'location',
       resourceId: locationId,
-      afterState: dto as Record<string, unknown>,
+      beforeState: {
+        name: before.name,
+        city: before.city,
+        isActive: before.is_active,
+      },
+      afterState: {
+        name: after.name,
+        city: after.city,
+        isActive: after.is_active,
+      },
     });
 
-    return { id: locationId, ...dto };
+    return {
+      id: after.id,
+      name: after.name,
+      city: after.city,
+      timezone: after.timezone,
+      isActive: after.is_active,
+    };
   }
 
   // ─── Designations ──────────────────────────────────────────────────────────
 
-  /**
-   * Lists tenant designations.
-   * TODO: select from designations.
-   */
   async listDesignations(tenantId: string) {
-    return {
-      data: [] as Array<{
-        id: string;
-        title: string;
-        level: number | null;
-        departmentId: string | null;
-      }>,
-      total: 0,
-    };
+    const rows = await this.dbAdmin
+      .select({
+        id: designations.id,
+        title: designations.title,
+        level: designations.level,
+        departmentId: designations.department_id,
+        departmentName: departments.name,
+        isActive: designations.is_active,
+        createdAt: designations.created_at,
+        headcount: sql<number>`(
+          SELECT COUNT(*)::int FROM ${employees}
+          WHERE ${employees.tenant_id} = ${designations.tenant_id}
+            AND ${employees.designation_id} = ${designations.id}
+            AND ${employees.status} = 'active'
+        )`.as('headcount'),
+      })
+      .from(designations)
+      .leftJoin(departments, eq(designations.department_id, departments.id))
+      .where(eq(designations.tenant_id, tenantId))
+      .orderBy(asc(designations.level), asc(designations.title));
+
+    return { data: rows, total: rows.length };
   }
 
-  /**
-   * Creates a new designation.
-   * TODO: insert into designations.
-   */
   async createDesignation(
     tenantId: string,
     actorUserId: string,
     dto: CreateDesignationDto,
   ) {
+    const [row] = await this.dbAdmin
+      .insert(designations)
+      .values({
+        tenant_id: tenantId,
+        title: dto.title,
+        level: dto.level ?? null,
+        department_id: dto.departmentId ?? null,
+      })
+      .returning();
+
     await this.auditService.log({
       tenantId,
       actorUserId,
       action: 'designation.created',
       resourceType: 'designation',
-      afterState: { title: dto.title, level: dto.level },
+      resourceId: row.id,
+      afterState: {
+        title: row.title,
+        level: row.level,
+        departmentId: row.department_id,
+      },
     });
 
     return {
-      id: '',
-      title: dto.title,
-      level: dto.level ?? null,
-      departmentId: dto.departmentId ?? null,
+      id: row.id,
+      title: row.title,
+      level: row.level,
+      departmentId: row.department_id,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+      headcount: 0,
+    };
+  }
+
+  async updateDesignation(
+    designationId: string,
+    tenantId: string,
+    actorUserId: string,
+    dto: UpdateDesignationDto,
+  ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(designations)
+      .where(
+        and(
+          eq(designations.id, designationId),
+          eq(designations.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Designation not found');
+    }
+
+    const [after] = await this.dbAdmin
+      .update(designations)
+      .set({
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.level !== undefined && { level: dto.level }),
+        ...(dto.departmentId !== undefined && {
+          department_id: dto.departmentId,
+        }),
+        ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+      })
+      .where(
+        and(
+          eq(designations.id, designationId),
+          eq(designations.tenant_id, tenantId),
+        ),
+      )
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'designation.updated',
+      resourceType: 'designation',
+      resourceId: designationId,
+      beforeState: {
+        title: before.title,
+        level: before.level,
+        isActive: before.is_active,
+      },
+      afterState: {
+        title: after.title,
+        level: after.level,
+        isActive: after.is_active,
+      },
+    });
+
+    return {
+      id: after.id,
+      title: after.title,
+      level: after.level,
+      departmentId: after.department_id,
+      isActive: after.is_active,
     };
   }
 
