@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, and, gt, isNull, lt } from 'drizzle-orm';
+import { eq, and, gt, isNull, lt, desc } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { Response } from 'express';
 import {
@@ -76,6 +76,20 @@ export class AuthService {
       .where(eq(users.email, normalizedEmail))
       .limit(1);
 
+    // Invalidate any prior unconsumed OTPs / magic links for this email so
+    // only the freshly-issued code (and its accompanying magic link) is valid.
+    // Without this, repeated requestOtp calls leave a trail of valid rows and
+    // the user's latest email can verify against the wrong one.
+    await this.db
+      .update(authOtps)
+      .set({ consumed_at: new Date() })
+      .where(
+        and(
+          eq(authOtps.email, normalizedEmail),
+          isNull(authOtps.consumed_at),
+        ),
+      );
+
     await this.db.insert(authOtps).values({
       email: normalizedEmail,
       user_id: existingUser[0]?.id ?? null,
@@ -137,6 +151,9 @@ export class AuthService {
     const normalizedEmail = email.toLowerCase().trim();
     const codeHash = sha256(code);
 
+    // Select the NEWEST unconsumed unexpired OTP. Sorting ascending here would
+    // return the oldest row, so a user who re-requests an OTP would see their
+    // freshly-mailed code mis-compared against an earlier row's hash → 401.
     const otpRecord = await this.db
       .select()
       .from(authOtps)
@@ -147,7 +164,7 @@ export class AuthService {
           gt(authOtps.expires_at, new Date()),
         ),
       )
-      .orderBy(authOtps.created_at)
+      .orderBy(desc(authOtps.created_at))
       .limit(1);
 
     if (!otpRecord[0]) {
