@@ -85,8 +85,28 @@ export class EmployeesService {
     }
 
     const result = await this.db
-      .select(SAFE_EMPLOYEE_FIELDS)
+      .select({
+        id: employees.id,
+        employeeCode: employees.employee_code,
+        status: employees.status,
+        employmentType: employees.employment_type,
+        dateOfJoining: employees.date_of_joining,
+        departmentId: employees.department_id,
+        departmentName: departments.name,
+        locationId: employees.location_id,
+        locationName: locations.name,
+        reportingManagerId: employees.reporting_manager_id,
+        designationId: employees.designation_id,
+        userId: employees.user_id,
+        fullName: users.full_name,
+        email: users.email,
+        avatarUrl: users.avatar_url,
+        createdAt: employees.created_at,
+      })
       .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
+      .leftJoin(locations, eq(employees.location_id, locations.id))
       .where(and(...conditions))
       .orderBy(desc(employees.created_at))
       .limit(limit)

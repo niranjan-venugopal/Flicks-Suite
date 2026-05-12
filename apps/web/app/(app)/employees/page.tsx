@@ -2,159 +2,237 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
-import { Search, UserPlus, Users } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { EmptyState } from '@/components/common/EmptyState'
-import { StatusBadge } from '@/components/common/StatusBadge'
+import { Loader2 } from 'lucide-react'
+import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { useEmployees, type Employee } from '@/lib/api/queries/use-employees'
-import { cn } from '@/lib/utils'
 
-const STATUS_FILTERS: Array<{ label: string; value: '' | 'active' | 'inactive' | 'on_leave' }> = [
-  { label: 'All', value: '' },
-  { label: 'Active', value: 'active' },
-  { label: 'On leave', value: 'on_leave' },
-  { label: 'Inactive', value: 'inactive' },
-]
+function statusPill(s: Employee['status']) {
+  switch (s) {
+    case 'active':   return <Pill tone="green" dot>Active</Pill>
+    case 'invited':  return <Pill tone="yellow" dot>Pending invite</Pill>
+    case 'on_leave': return <Pill tone="purple" dot>On leave</Pill>
+    case 'on_notice':return <Pill tone="coral" dot>On notice</Pill>
+    case 'inactive': return <Pill dot>Inactive</Pill>
+    default:         return <Pill>{s}</Pill>
+  }
+}
+
+function fmtJoin(iso: string | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(`${iso}T00:00:00`)
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
 
 export default function EmployeesPage() {
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<'' | 'active' | 'inactive' | 'on_leave'>('')
+  const [filterDept, setFilterDept] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('all')
+  const list = useEmployees({})
 
-  const { data, isLoading } = useEmployees({
-    search: search || undefined,
-    status: status || undefined,
+  // Client-side filter on top of the API list — search is local for now.
+  const all = list.data?.employees ?? []
+  const filtered = all.filter((e) => {
+    if (filterStatus !== 'all' && e.status !== filterStatus) return false
+    if (filterDept !== 'all' && (e.department ?? '') !== filterDept) return false
+    if (search) {
+      const q = search.toLowerCase()
+      if (!e.name.toLowerCase().includes(q) && !e.email.toLowerCase().includes(q)) return false
+    }
+    return true
   })
 
-  const employees: Employee[] = data?.employees ?? []
+  const allDepts = Array.from(new Set(all.map((e) => e.department).filter(Boolean))) as string[]
+
+  const counts = {
+    active: all.filter((e) => e.status === 'active').length,
+    invited: all.filter((e) => e.status === 'invited').length,
+  }
 
   return (
-    <div className="relative min-h-full">
-      <PageGlows />
-      <div className="relative z-10 p-8 max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-start justify-between gap-4 mb-8"
-        >
-          <div>
-            <h1 className="text-3xl font-bold text-white font-gilroy">Employees</h1>
-            <p className="text-brand-muted mt-1">
-              Manage your team, roles and reporting structure
-            </p>
-          </div>
-          <Button className="shrink-0">
-            <UserPlus className="w-4 h-4" />
-            Invite employee
-          </Button>
-        </motion.div>
+    <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
+        <SectionHead
+          title="Employees"
+          sub={
+            list.isLoading
+              ? 'Loading…'
+              : `${counts.active} active${counts.invited > 0 ? ` · ${counts.invited} pending invites` : ''}`
+          }
+          right={
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn kind="secondary" size="sm" icon={<Icon.upload size={13} />}>
+                Import CSV
+              </Btn>
+              <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
+                Export
+              </Btn>
+              <Link href="/employees/onboarding" style={{ textDecoration: 'none' }}>
+                <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
+                  Add employee
+                </Btn>
+              </Link>
+            </div>
+          }
+        />
 
-        <div className="glass rounded-xl p-5 mb-6">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name, email or code"
-                className="pl-10"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {STATUS_FILTERS.map((f) => (
-                <button
-                  key={f.label}
-                  onClick={() => setStatus(f.value)}
-                  className={cn(
-                    'px-3 py-1.5 rounded-full text-xs font-semibold font-gilroy transition-all duration-200 border',
-                    status === f.value
-                      ? 'bg-brand-blue/15 border-brand-blue/40 text-brand-blue'
-                      : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10'
-                  )}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+        {/* Filter bar */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
+            <Icon.search
+              size={14}
+              style={{
+                position: 'absolute',
+                left: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: 'var(--text-faint)',
+              }}
+            />
+            <input
+              className="input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, email…"
+              style={{ paddingLeft: 34, height: 38 }}
+            />
           </div>
+          <select
+            className="input"
+            value={filterDept}
+            onChange={(e) => setFilterDept(e.target.value)}
+            style={{ height: 38, width: 160 }}
+          >
+            <option value="all">All departments</option>
+            {allDepts.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          <select
+            className="input"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            style={{ height: 38, width: 140 }}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="invited">Pending</option>
+            <option value="inactive">Inactive</option>
+            <option value="on_leave">On leave</option>
+            <option value="on_notice">On notice</option>
+          </select>
         </div>
 
-        <div className="glass rounded-xl overflow-hidden">
-          {isLoading ? (
-            <div className="py-16 text-center text-white/50 font-gilroy text-sm">
-              Loading employees...
+        {/* List */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {list.isLoading ? (
+            <div
+              style={{
+                padding: 48,
+                textAlign: 'center',
+                color: 'var(--text-mute)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+              }}
+            >
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading employees…
             </div>
-          ) : employees.length === 0 ? (
-            <EmptyState
-              icon={Users}
-              title="No employees yet"
-              description="Invite your first teammate to get started building your workspace."
-            />
+          ) : list.isError ? (
+            <div
+              style={{
+                padding: 48,
+                textAlign: 'center',
+                color: 'var(--coral)',
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              Could not load employees. You may need manager-or-above permissions.
+            </div>
+          ) : filtered.length === 0 ? (
+            <div
+              style={{
+                padding: 60,
+                textAlign: 'center',
+                color: 'var(--text-mute)',
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {all.length === 0
+                ? 'No employees yet. Invite your first teammate.'
+                : `No employees match the current filters (${all.length} total).`}
+            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-white/[0.06] text-left">
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-                      Name
-                    </th>
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-                      Code
-                    </th>
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-                      Department
-                    </th>
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-                      Manager
-                    </th>
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-xs font-semibold text-white/40 font-gilroy uppercase tracking-wider text-right">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.map((emp) => (
-                    <tr
-                      key={emp.id}
-                      className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-white font-gilroy">
-                            {emp.name}
-                          </span>
-                          <span className="text-xs text-white/40 font-gilroy">{emp.email}</span>
+            <table className="tbl" style={{ width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Code</th>
+                  <th>Department</th>
+                  <th>Location</th>
+                  <th>Joined</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((e) => (
+                  <tr key={e.id} style={{ cursor: 'pointer' }}>
+                    <td>
+                      <Link
+                        href={`/employees/${e.id}`}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 11,
+                          textDecoration: 'none',
+                          color: 'inherit',
+                        }}
+                      >
+                        <Avatar name={e.name} size="sm" src={e.avatarUrl} />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '-0.01em' }}>
+                            {e.name}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: 'var(--text-mute)',
+                              fontFamily: 'var(--font-mono)',
+                            }}
+                          >
+                            {e.email || '—'}
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-white/70 font-gilroy">
-                        {emp.employeeCode ?? '—'}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-white/70 font-gilroy">
-                        {emp.department ?? '—'}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-white/70 font-gilroy">
-                        {emp.reportingManager?.name ?? '—'}
-                      </td>
-                      <td className="px-6 py-4">
-                        <StatusBadge status={emp.status} />
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <Link href={`/employees/${emp.id}`}>
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </Link>
+                    </td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                      {e.employeeCode ?? '—'}
+                    </td>
+                    <td>
+                      {e.department ? <Pill>{e.department}</Pill> : <span style={{ color: 'var(--text-faint)' }}>—</span>}
+                    </td>
+                    <td style={{ color: 'var(--text-2)' }}>{e.location ?? '—'}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                      {fmtJoin(e.joinDate)}
+                    </td>
+                    <td>{statusPill(e.status)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <Link href={`/employees/${e.id}`} style={{ textDecoration: 'none' }}>
+                        <Btn kind="ghost" size="sm" iconRight={<Icon.chevR size={12} />}>
+                          View
+                        </Btn>
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
