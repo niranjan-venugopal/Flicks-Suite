@@ -13,6 +13,10 @@ import {
   designations,
   employees,
   memberships,
+  shiftTemplates,
+  employeeShifts,
+  leaveTypes,
+  leaveRequests,
 } from '@flicks/db';
 import {
   DB_TENANT,
@@ -28,6 +32,10 @@ import type {
   UpdateWorkingHoursDto,
   CreateDesignationDto,
   UpdateDesignationDto,
+  CreateShiftTemplateDto,
+  UpdateShiftTemplateDto,
+  CreateLeavePolicyDto,
+  UpdateLeavePolicyDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 
@@ -634,49 +642,335 @@ export class SettingsService {
     };
   }
 
-  // ─── Working hours ─────────────────────────────────────────────────────────
+  // ─── Working hours / shift templates ───────────────────────────────────────
 
-  /**
-   * Returns the tenant's default working hours configuration.
-   * TODO: select working_days, default_work_start, default_work_end, timezone from tenants.
-   */
-  async getWorkingHours(tenantId: string) {
-    return {
-      workingDays: ['MON', 'TUE', 'WED', 'THU', 'FRI'],
-      startTime: '09:00',
-      endTime: '18:00',
-      timezone: 'Asia/Kolkata',
-    };
+  async listShifts(tenantId: string) {
+    const rows = await this.dbAdmin
+      .select({
+        id: shiftTemplates.id,
+        name: shiftTemplates.name,
+        description: shiftTemplates.description,
+        startTime: shiftTemplates.start_time,
+        endTime: shiftTemplates.end_time,
+        isOvernight: shiftTemplates.is_overnight,
+        breakMinutes: shiftTemplates.break_minutes,
+        breakPaid: shiftTemplates.break_paid,
+        workingDays: shiftTemplates.working_days,
+        timezone: shiftTemplates.timezone,
+        gracePeriodMinutes: shiftTemplates.grace_period_minutes,
+        halfDayThresholdMinutes: shiftTemplates.half_day_threshold_minutes,
+        fullDayThresholdMinutes: shiftTemplates.full_day_threshold_minutes,
+        isDefault: shiftTemplates.is_default,
+        isActive: shiftTemplates.is_active,
+        createdAt: shiftTemplates.created_at,
+        // assigned headcount = unique employees with an effective shift mapping
+        assigned: sql<number>`(
+          SELECT COUNT(DISTINCT ${employeeShifts.employee_id})::int FROM ${employeeShifts}
+          WHERE ${employeeShifts.tenant_id} = ${shiftTemplates.tenant_id}
+            AND ${employeeShifts.shift_template_id} = ${shiftTemplates.id}
+            AND (${employeeShifts.effective_to} IS NULL OR ${employeeShifts.effective_to} >= CURRENT_DATE)
+        )`.as('assigned'),
+      })
+      .from(shiftTemplates)
+      .where(eq(shiftTemplates.tenant_id, tenantId))
+      .orderBy(asc(shiftTemplates.name));
+
+    return { data: rows, total: rows.length };
   }
 
-  /**
-   * Updates tenant default working hours (admin only).
-   * TODO: update tenants set working_days/default_work_start/default_work_end/timezone.
-   */
-  async updateWorkingHours(
+  async createShift(
     tenantId: string,
     actorUserId: string,
-    dto: UpdateWorkingHoursDto,
+    dto: CreateShiftTemplateDto,
   ) {
+    // Only one default shift per tenant. If this one's default, clear others.
+    if (dto.isDefault) {
+      await this.dbAdmin
+        .update(shiftTemplates)
+        .set({ is_default: false })
+        .where(eq(shiftTemplates.tenant_id, tenantId));
+    }
+
+    const [row] = await this.dbAdmin
+      .insert(shiftTemplates)
+      .values({
+        tenant_id: tenantId,
+        name: dto.name,
+        description: dto.description ?? null,
+        start_time: dto.startTime,
+        end_time: dto.endTime,
+        is_overnight: dto.isOvernight ?? false,
+        break_minutes: dto.breakMinutes ?? 60,
+        break_paid: dto.breakPaid ?? false,
+        working_days: dto.workingDays,
+        timezone: dto.timezone ?? 'Asia/Kolkata',
+        grace_period_minutes: dto.gracePeriodMinutes ?? 15,
+        is_default: dto.isDefault ?? false,
+      })
+      .returning();
+
     await this.auditService.log({
       tenantId,
       actorUserId,
-      action: 'tenant.working_hours.updated',
-      resourceType: 'tenant',
-      resourceId: tenantId,
+      action: 'shift_template.created',
+      resourceType: 'shift_template',
+      resourceId: row.id,
       afterState: {
-        workingDays: dto.workingDays,
-        startTime: dto.startTime,
-        endTime: dto.endTime,
-        timezone: dto.timezone,
+        name: row.name,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        workingDays: row.working_days,
       },
     });
 
-    return {
-      workingDays: dto.workingDays,
-      startTime: dto.startTime,
-      endTime: dto.endTime,
-      timezone: dto.timezone ?? 'Asia/Kolkata',
-    };
+    return { ...row, assigned: 0 };
+  }
+
+  async updateShift(
+    shiftId: string,
+    tenantId: string,
+    actorUserId: string,
+    dto: UpdateShiftTemplateDto,
+  ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(shiftTemplates)
+      .where(
+        and(
+          eq(shiftTemplates.id, shiftId),
+          eq(shiftTemplates.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Shift template not found');
+    }
+
+    // Promoting to default clears default on all siblings first.
+    if (dto.isDefault === true && !before.is_default) {
+      await this.dbAdmin
+        .update(shiftTemplates)
+        .set({ is_default: false })
+        .where(eq(shiftTemplates.tenant_id, tenantId));
+    }
+
+    const [after] = await this.dbAdmin
+      .update(shiftTemplates)
+      .set({
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.startTime !== undefined && { start_time: dto.startTime }),
+        ...(dto.endTime !== undefined && { end_time: dto.endTime }),
+        ...(dto.isOvernight !== undefined && { is_overnight: dto.isOvernight }),
+        ...(dto.breakMinutes !== undefined && {
+          break_minutes: dto.breakMinutes,
+        }),
+        ...(dto.breakPaid !== undefined && { break_paid: dto.breakPaid }),
+        ...(dto.workingDays !== undefined && {
+          working_days: dto.workingDays,
+        }),
+        ...(dto.timezone !== undefined && { timezone: dto.timezone }),
+        ...(dto.gracePeriodMinutes !== undefined && {
+          grace_period_minutes: dto.gracePeriodMinutes,
+        }),
+        ...(dto.isDefault !== undefined && { is_default: dto.isDefault }),
+        ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+      })
+      .where(
+        and(
+          eq(shiftTemplates.id, shiftId),
+          eq(shiftTemplates.tenant_id, tenantId),
+        ),
+      )
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'shift_template.updated',
+      resourceType: 'shift_template',
+      resourceId: shiftId,
+      beforeState: {
+        name: before.name,
+        startTime: before.start_time,
+        endTime: before.end_time,
+        isActive: before.is_active,
+      },
+      afterState: {
+        name: after.name,
+        startTime: after.start_time,
+        endTime: after.end_time,
+        isActive: after.is_active,
+      },
+    });
+
+    return after;
+  }
+
+  // ─── Leave policies (leave_types CRUD) ─────────────────────────────────────
+
+  async listLeavePolicies(tenantId: string) {
+    const year = new Date().getFullYear();
+    const rows = await this.dbAdmin
+      .select({
+        id: leaveTypes.id,
+        name: leaveTypes.name,
+        code: leaveTypes.code,
+        description: leaveTypes.description,
+        defaultQuotaDays: leaveTypes.default_quota_days,
+        accrualMethod: leaveTypes.accrual_method,
+        carryForwardAllowed: leaveTypes.carry_forward_allowed,
+        maxCarryForwardDays: leaveTypes.max_carry_forward_days,
+        encashable: leaveTypes.encashable,
+        isPaid: leaveTypes.is_paid,
+        isLop: leaveTypes.is_lop,
+        allowHalfDay: leaveTypes.allow_half_day,
+        minNoticeDays: leaveTypes.min_notice_days,
+        color: leaveTypes.color,
+        displayOrder: leaveTypes.display_order,
+        isActive: leaveTypes.is_active,
+        // YTD usage = approved leave days against this policy this year
+        approvedYtd: sql<number>`COALESCE((
+          SELECT SUM(${leaveRequests.total_days})::numeric FROM ${leaveRequests}
+          WHERE ${leaveRequests.tenant_id} = ${leaveTypes.tenant_id}
+            AND ${leaveRequests.leave_type_id} = ${leaveTypes.id}
+            AND ${leaveRequests.status} = 'approved'
+            AND EXTRACT(YEAR FROM ${leaveRequests.start_date}) = ${year}
+        ), 0)`.as('approved_ytd'),
+      })
+      .from(leaveTypes)
+      .where(eq(leaveTypes.tenant_id, tenantId))
+      .orderBy(asc(leaveTypes.display_order), asc(leaveTypes.name));
+
+    return { data: rows, total: rows.length };
+  }
+
+  async createLeavePolicy(
+    tenantId: string,
+    actorUserId: string,
+    dto: CreateLeavePolicyDto,
+  ) {
+    try {
+      const [row] = await this.dbAdmin
+        .insert(leaveTypes)
+        .values({
+          tenant_id: tenantId,
+          name: dto.name,
+          code: dto.code,
+          description: dto.description ?? null,
+          default_quota_days: dto.defaultQuotaDays,
+          accrual_method: dto.accrualMethod ?? 'none',
+          carry_forward_allowed: dto.carryForwardAllowed ?? false,
+          max_carry_forward_days: dto.maxCarryForwardDays ?? 0,
+          encashable: dto.encashable ?? false,
+          is_paid: dto.isPaid ?? true,
+          is_lop: dto.isLop ?? false,
+          allow_half_day: dto.allowHalfDay ?? true,
+          min_notice_days: dto.minNoticeDays ?? 0,
+          color: dto.color ?? '#3E7BFA',
+        })
+        .returning();
+
+      await this.auditService.log({
+        tenantId,
+        actorUserId,
+        action: 'leave_policy.created',
+        resourceType: 'leave_type',
+        resourceId: row.id,
+        afterState: {
+          name: row.name,
+          code: row.code,
+          defaultQuotaDays: row.default_quota_days,
+        },
+      });
+
+      return { ...row, approvedYtd: 0 };
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          `A leave policy with code "${dto.code}" already exists.`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  async updateLeavePolicy(
+    policyId: string,
+    tenantId: string,
+    actorUserId: string,
+    dto: UpdateLeavePolicyDto,
+  ) {
+    const [before] = await this.dbAdmin
+      .select()
+      .from(leaveTypes)
+      .where(
+        and(
+          eq(leaveTypes.id, policyId),
+          eq(leaveTypes.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    if (!before) {
+      throw new NotFoundException('Leave policy not found');
+    }
+
+    const [after] = await this.dbAdmin
+      .update(leaveTypes)
+      .set({
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.defaultQuotaDays !== undefined && {
+          default_quota_days: dto.defaultQuotaDays,
+        }),
+        ...(dto.accrualMethod !== undefined && {
+          accrual_method: dto.accrualMethod,
+        }),
+        ...(dto.carryForwardAllowed !== undefined && {
+          carry_forward_allowed: dto.carryForwardAllowed,
+        }),
+        ...(dto.maxCarryForwardDays !== undefined && {
+          max_carry_forward_days: dto.maxCarryForwardDays,
+        }),
+        ...(dto.encashable !== undefined && { encashable: dto.encashable }),
+        ...(dto.isPaid !== undefined && { is_paid: dto.isPaid }),
+        ...(dto.allowHalfDay !== undefined && {
+          allow_half_day: dto.allowHalfDay,
+        }),
+        ...(dto.minNoticeDays !== undefined && {
+          min_notice_days: dto.minNoticeDays,
+        }),
+        ...(dto.color !== undefined && { color: dto.color }),
+        ...(dto.isActive !== undefined && { is_active: dto.isActive }),
+      })
+      .where(
+        and(
+          eq(leaveTypes.id, policyId),
+          eq(leaveTypes.tenant_id, tenantId),
+        ),
+      )
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'leave_policy.updated',
+      resourceType: 'leave_type',
+      resourceId: policyId,
+      beforeState: {
+        name: before.name,
+        defaultQuotaDays: before.default_quota_days,
+        isActive: before.is_active,
+      },
+      afterState: {
+        name: after.name,
+        defaultQuotaDays: after.default_quota_days,
+        isActive: after.is_active,
+      },
+    });
+
+    return after;
   }
 }

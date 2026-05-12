@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsUUID,
   IsArray,
+  IsEnum,
   Matches,
   MaxLength,
   Min,
@@ -245,6 +246,318 @@ export class UpdateDesignationDto {
   @IsUUID()
   @IsOptional()
   departmentId?: string;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}
+
+// ─── Shift templates (working hours) ─────────────────────────────────────────
+
+export class CreateShiftTemplateDto {
+  @ApiProperty({ example: 'General' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  description?: string;
+
+  @ApiProperty({ example: '09:00' })
+  @Matches(TIME_HHMM, { message: 'startTime must be HH:MM (24h)' })
+  startTime: string;
+
+  @ApiProperty({ example: '18:00' })
+  @Matches(TIME_HHMM, { message: 'endTime must be HH:MM (24h)' })
+  endTime: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  isOvernight?: boolean;
+
+  @ApiPropertyOptional({ default: 60 })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(240)
+  @Type(() => Number)
+  breakMinutes?: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  breakPaid?: boolean;
+
+  @ApiProperty({
+    description: 'Working days as 0–6 ints (0=Sun..6=Sat)',
+    example: [1, 2, 3, 4, 5],
+    isArray: true,
+  })
+  @IsArray()
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  workingDays: number[];
+
+  @ApiPropertyOptional({ default: 'Asia/Kolkata' })
+  @IsString()
+  @IsOptional()
+  timezone?: string;
+
+  @ApiPropertyOptional({ default: 15 })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(120)
+  @Type(() => Number)
+  gracePeriodMinutes?: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
+}
+
+export class UpdateShiftTemplateDto {
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(200)
+  description?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @Matches(TIME_HHMM)
+  startTime?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @Matches(TIME_HHMM)
+  endTime?: string;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isOvernight?: boolean;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(240)
+  @Type(() => Number)
+  breakMinutes?: number;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  breakPaid?: boolean;
+
+  @ApiPropertyOptional({ isArray: true })
+  @IsArray()
+  @IsOptional()
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  workingDays?: number[];
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  timezone?: string;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(120)
+  @Type(() => Number)
+  gracePeriodMinutes?: number;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isDefault?: boolean;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
+}
+
+// ─── Leave policies ──────────────────────────────────────────────────────────
+
+const LEAVE_ACCRUAL_VALUES = [
+  'none',
+  'monthly',
+  'quarterly',
+  'annually',
+  'per_working_day',
+] as const;
+
+export class CreateLeavePolicyDto {
+  @ApiProperty({ example: 'Casual Leave' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiProperty({ example: 'CL' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  @Matches(/^[A-Z0-9]+$/, { message: 'Code must be uppercase letters and digits' })
+  code: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(400)
+  description?: string;
+
+  @ApiProperty({ example: 12 })
+  @IsNumber()
+  @Min(0)
+  @Max(365)
+  @Type(() => Number)
+  defaultQuotaDays: number;
+
+  @ApiPropertyOptional({ default: 'none', enum: LEAVE_ACCRUAL_VALUES })
+  @IsString()
+  @IsOptional()
+  @IsEnum(LEAVE_ACCRUAL_VALUES)
+  accrualMethod?: (typeof LEAVE_ACCRUAL_VALUES)[number];
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  carryForwardAllowed?: boolean;
+
+  @ApiPropertyOptional({ default: 0 })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(365)
+  @Type(() => Number)
+  maxCarryForwardDays?: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  encashable?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsBoolean()
+  @IsOptional()
+  isPaid?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  isLop?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsBoolean()
+  @IsOptional()
+  allowHalfDay?: boolean;
+
+  @ApiPropertyOptional({ default: 0 })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(60)
+  @Type(() => Number)
+  minNoticeDays?: number;
+
+  @ApiPropertyOptional({ example: '#3E7BFA' })
+  @IsString()
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/, { message: 'Color must be a 6-digit hex like #3E7BFA' })
+  color?: string;
+}
+
+export class UpdateLeavePolicyDto {
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(400)
+  description?: string;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(365)
+  @Type(() => Number)
+  defaultQuotaDays?: number;
+
+  @ApiPropertyOptional({ enum: LEAVE_ACCRUAL_VALUES })
+  @IsString()
+  @IsOptional()
+  @IsEnum(LEAVE_ACCRUAL_VALUES)
+  accrualMethod?: (typeof LEAVE_ACCRUAL_VALUES)[number];
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  carryForwardAllowed?: boolean;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(365)
+  @Type(() => Number)
+  maxCarryForwardDays?: number;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  encashable?: boolean;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isPaid?: boolean;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  allowHalfDay?: boolean;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(60)
+  @Type(() => Number)
+  minNoticeDays?: number;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  color?: string;
 
   @ApiPropertyOptional()
   @IsBoolean()

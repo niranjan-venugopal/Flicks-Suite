@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Briefcase, Loader2, Plus, Users } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
-import { SettingsTabs } from '@/components/layout/SettingsTabs'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useDepartments,
   useDesignations,
@@ -118,19 +118,16 @@ export default function DesignationsSettingsPage() {
   }
 
   return (
-    <div className="relative min-h-full">
-      <div className="relative z-10 p-8 max-w-5xl mx-auto">
-        <SettingsTabs />
-        <SectionHead
-          eyebrow="Settings"
-          title="Designations"
-          sub="Job titles assigned to employees. Levels (L1–L10) drive seniority bands and pay grade reports."
-          right={
-            <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
-              Add designation
-            </Btn>
-          }
-        />
+    <SettingsLayout>
+      <SectionHead
+        title="Designations"
+        sub="Job titles assigned to employees. Levels (L1–L10) drive seniority bands and pay grade reports."
+        right={
+          <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
+            Add designation
+          </Btn>
+        }
+      />
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <div className="card p-4">
@@ -228,7 +225,6 @@ export default function DesignationsSettingsPage() {
             </table>
           </div>
         )}
-      </div>
 
       {/* Add dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -342,6 +338,6 @@ export default function DesignationsSettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </SettingsLayout>
   )
 }

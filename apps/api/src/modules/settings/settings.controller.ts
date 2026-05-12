@@ -21,9 +21,12 @@ import {
   UpdateDepartmentDto,
   CreateLocationDto,
   UpdateLocationDto,
-  UpdateWorkingHoursDto,
   CreateDesignationDto,
   UpdateDesignationDto,
+  CreateShiftTemplateDto,
+  UpdateShiftTemplateDto,
+  CreateLeavePolicyDto,
+  UpdateLeavePolicyDto,
   UpdateOrganizationDto,
 } from './settings.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -179,25 +182,79 @@ export class SettingsController {
     );
   }
 
-  // ─── Working hours ─────────────────────────────────────────────────────────
+  // ─── Working hours / shift templates ───────────────────────────────────────
 
-  @Get('working-hours')
-  @ApiOperation({ summary: 'Get tenant default working hours' })
-  @ApiResponse({ status: 200, description: 'Working hours config' })
-  async getWorkingHours(@CurrentUser() user: JwtPayload) {
-    return this.settingsService.getWorkingHours(user.tenantId);
+  @Get('shifts')
+  @ApiOperation({
+    summary: 'List shift templates',
+    description: 'Returns all shift templates for the tenant with current assigned headcount.',
+  })
+  @ApiResponse({ status: 200, description: 'Shift templates list' })
+  async listShifts(@CurrentUser() user: JwtPayload) {
+    return this.settingsService.listShifts(user.tenantId);
   }
 
-  @Put('working-hours')
+  @Post('shifts')
   @Roles('admin')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Update tenant default working hours' })
-  @ApiResponse({ status: 200, description: 'Working hours updated' })
-  async updateWorkingHours(
-    @Body() dto: UpdateWorkingHoursDto,
+  @ApiOperation({ summary: 'Create a shift template' })
+  @ApiResponse({ status: 201, description: 'Shift template created' })
+  async createShift(
+    @Body() dto: CreateShiftTemplateDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.settingsService.updateWorkingHours(
+    return this.settingsService.createShift(user.tenantId, user.sub, dto);
+  }
+
+  @Put('shifts/:id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update a shift template' })
+  @ApiResponse({ status: 200, description: 'Shift template updated' })
+  async updateShift(
+    @Param('id') id: string,
+    @Body() dto: UpdateShiftTemplateDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.updateShift(id, user.tenantId, user.sub, dto);
+  }
+
+  // ─── Leave policies ────────────────────────────────────────────────────────
+
+  @Get('leave-policies')
+  @ApiOperation({
+    summary: 'List leave policies',
+    description: 'Returns all leave types with YTD approved usage stats.',
+  })
+  @ApiResponse({ status: 200, description: 'Leave policies list' })
+  async listLeavePolicies(@CurrentUser() user: JwtPayload) {
+    return this.settingsService.listLeavePolicies(user.tenantId);
+  }
+
+  @Post('leave-policies')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Create a leave policy' })
+  @ApiResponse({ status: 201, description: 'Leave policy created' })
+  async createLeavePolicy(
+    @Body() dto: CreateLeavePolicyDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.createLeavePolicy(
+      user.tenantId,
+      user.sub,
+      dto,
+    );
+  }
+
+  @Put('leave-policies/:id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update a leave policy' })
+  @ApiResponse({ status: 200, description: 'Leave policy updated' })
+  async updateLeavePolicy(
+    @Param('id') id: string,
+    @Body() dto: UpdateLeavePolicyDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.updateLeavePolicy(
+      id,
       user.tenantId,
       user.sub,
       dto,

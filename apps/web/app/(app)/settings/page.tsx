@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Image as ImageIcon } from 'lucide-react'
 import { Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
-import { SettingsTabs } from '@/components/layout/SettingsTabs'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useOrganization,
   useUpdateOrganization,
@@ -199,9 +199,11 @@ export default function OrganizationSettingsPage() {
 
   if (isLoading || !org) {
     return (
-      <div className="p-8 flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
-      </div>
+      <SettingsLayout>
+        <div className="card p-12 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
+        </div>
+      </SettingsLayout>
     )
   }
 
@@ -213,15 +215,12 @@ export default function OrganizationSettingsPage() {
   })
 
   return (
-    <div className="relative min-h-full">
-      <div className="relative z-10 p-8 max-w-5xl mx-auto">
-        <SettingsTabs />
-        <SectionHead
-          eyebrow="Settings"
-          title="Organization"
-          sub="Your workspace identity, registered address, and tax IDs."
-          right={statusPill(org.status)}
-        />
+    <SettingsLayout>
+      <SectionHead
+        title="Organization"
+        sub="Your workspace identity, registered address, and tax IDs."
+        right={statusPill(org.status)}
+      />
 
         {/* ─── Overview card ──────────────────────────────────────────────── */}
         <div className="card mb-6 p-6 flex flex-wrap items-center gap-6">
@@ -453,7 +452,6 @@ export default function OrganizationSettingsPage() {
             </div>
           </div>
         </form>
-      </div>
-    </div>
+    </SettingsLayout>
   )
 }

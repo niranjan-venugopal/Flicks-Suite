@@ -289,3 +289,185 @@ export function useUpdateDesignation() {
       qc.invalidateQueries({ queryKey: ['settings', 'designations'] }),
   })
 }
+
+// ─── Shift templates (working hours) ─────────────────────────────────────────
+
+export interface ShiftTemplate {
+  id: string
+  name: string
+  description: string | null
+  startTime: string  // 'HH:MM'
+  endTime: string    // 'HH:MM'
+  isOvernight: boolean
+  breakMinutes: number
+  breakPaid: boolean
+  workingDays: number[]  // 0=Sun..6=Sat
+  timezone: string
+  gracePeriodMinutes: number
+  halfDayThresholdMinutes: number
+  fullDayThresholdMinutes: number
+  isDefault: boolean
+  isActive: boolean
+  createdAt: string
+  assigned: number
+}
+
+export interface CreateShiftTemplatePayload {
+  name: string
+  description?: string
+  startTime: string
+  endTime: string
+  isOvernight?: boolean
+  breakMinutes?: number
+  breakPaid?: boolean
+  workingDays: number[]
+  timezone?: string
+  gracePeriodMinutes?: number
+  isDefault?: boolean
+}
+
+export interface UpdateShiftTemplatePayload {
+  name?: string
+  description?: string
+  startTime?: string
+  endTime?: string
+  breakMinutes?: number
+  workingDays?: number[]
+  gracePeriodMinutes?: number
+  isDefault?: boolean
+  isActive?: boolean
+}
+
+export function useShifts() {
+  return useQuery({
+    queryKey: ['settings', 'shifts'],
+    queryFn: () =>
+      api.get<{ data: ShiftTemplate[]; total: number }>('/api/v1/settings/shifts'),
+    staleTime: 30_000,
+  })
+}
+
+export function useCreateShift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateShiftTemplatePayload) =>
+      api.post<ShiftTemplate>('/api/v1/settings/shifts', payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'shifts'] }),
+  })
+}
+
+export function useUpdateShift() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string
+      payload: UpdateShiftTemplatePayload
+    }) => api.put<ShiftTemplate>(`/api/v1/settings/shifts/${id}`, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings', 'shifts'] }),
+  })
+}
+
+// ─── Leave policies ──────────────────────────────────────────────────────────
+
+export type LeaveAccrualMethod =
+  | 'none'
+  | 'monthly'
+  | 'quarterly'
+  | 'annually'
+  | 'per_working_day'
+
+export interface LeavePolicy {
+  id: string
+  name: string
+  code: string
+  description: string | null
+  defaultQuotaDays: number
+  accrualMethod: LeaveAccrualMethod
+  carryForwardAllowed: boolean
+  maxCarryForwardDays: number
+  encashable: boolean
+  isPaid: boolean
+  isLop: boolean
+  allowHalfDay: boolean
+  minNoticeDays: number
+  color: string | null
+  displayOrder: number
+  isActive: boolean
+  approvedYtd: number
+}
+
+export interface CreateLeavePolicyPayload {
+  name: string
+  code: string
+  description?: string
+  defaultQuotaDays: number
+  accrualMethod?: LeaveAccrualMethod
+  carryForwardAllowed?: boolean
+  maxCarryForwardDays?: number
+  encashable?: boolean
+  isPaid?: boolean
+  isLop?: boolean
+  allowHalfDay?: boolean
+  minNoticeDays?: number
+  color?: string
+}
+
+export interface UpdateLeavePolicyPayload {
+  name?: string
+  description?: string
+  defaultQuotaDays?: number
+  accrualMethod?: LeaveAccrualMethod
+  carryForwardAllowed?: boolean
+  maxCarryForwardDays?: number
+  encashable?: boolean
+  isPaid?: boolean
+  allowHalfDay?: boolean
+  minNoticeDays?: number
+  color?: string
+  isActive?: boolean
+}
+
+export function useLeavePolicies() {
+  return useQuery({
+    queryKey: ['settings', 'leave-policies'],
+    queryFn: () =>
+      api.get<{ data: LeavePolicy[]; total: number }>(
+        '/api/v1/settings/leave-policies',
+      ),
+    staleTime: 30_000,
+  })
+}
+
+export function useCreateLeavePolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateLeavePolicyPayload) =>
+      api.post<LeavePolicy>('/api/v1/settings/leave-policies', payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'leave-policies'] })
+      // The Apply Leave dialog reads from leave types; refresh too.
+      qc.invalidateQueries({ queryKey: ['leave', 'types'] })
+    },
+  })
+}
+
+export function useUpdateLeavePolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: string
+      payload: UpdateLeavePolicyPayload
+    }) =>
+      api.put<LeavePolicy>(`/api/v1/settings/leave-policies/${id}`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'leave-policies'] })
+      qc.invalidateQueries({ queryKey: ['leave', 'types'] })
+    },
+  })
+}

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Loader2, MapPin, Plus, Users } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
-import { SettingsTabs } from '@/components/layout/SettingsTabs'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useLocations,
   useCreateLocation,
@@ -152,19 +152,16 @@ export default function LocationsSettingsPage() {
   }
 
   return (
-    <div className="relative min-h-full">
-      <div className="relative z-10 p-8 max-w-5xl mx-auto">
-        <SettingsTabs />
-        <SectionHead
-          eyebrow="Settings"
-          title="Locations"
-          sub="Offices and work sites employees can be assigned to. Used for attendance, payroll, and reports."
-          right={
-            <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
-              Add location
-            </Btn>
-          }
-        />
+    <SettingsLayout>
+      <SectionHead
+        title="Locations & geofence"
+        sub="Offices and work sites employees can be assigned to. Used for attendance, payroll, and reports."
+        right={
+          <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
+            Add location
+          </Btn>
+        }
+      />
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <div className="card p-4">
@@ -260,7 +257,6 @@ export default function LocationsSettingsPage() {
             </table>
           </div>
         )}
-      </div>
 
       {/* Add dialog */}
       <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); setOpen(o) }}>
@@ -405,6 +401,6 @@ export default function LocationsSettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </SettingsLayout>
   )
 }

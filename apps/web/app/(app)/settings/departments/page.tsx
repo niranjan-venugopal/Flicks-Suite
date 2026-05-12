@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Loader2, Plus, Users } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
-import { SettingsTabs } from '@/components/layout/SettingsTabs'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useDepartments,
   useCreateDepartment,
@@ -107,19 +107,16 @@ export default function DepartmentsSettingsPage() {
   }
 
   return (
-    <div className="relative min-h-full">
-      <div className="relative z-10 p-8 max-w-5xl mx-auto">
-        <SettingsTabs />
-        <SectionHead
-          eyebrow="Settings"
-          title="Departments"
-          sub="Organise your workforce into business units used for reports, approvals, and leave policies."
-          right={
-            <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
-              Add department
-            </Btn>
-          }
-        />
+    <SettingsLayout>
+      <SectionHead
+        title="Departments"
+        sub="Organise your workforce into business units used for reports, approvals, and leave policies."
+        right={
+          <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setOpen(true)}>
+            Add department
+          </Btn>
+        }
+      />
 
         {/* KPI strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
@@ -208,7 +205,6 @@ export default function DepartmentsSettingsPage() {
             </table>
           </div>
         )}
-      </div>
 
       {/* Add dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -288,6 +284,6 @@ export default function DepartmentsSettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </SettingsLayout>
   )
 }
