@@ -202,6 +202,18 @@ WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
   AND user_id   = '22222222-2222-2222-2222-222222222220'
   AND role <> 'owner';
 
+-- Mark every seeded employee as onboarding-complete so the (app) layout's
+-- guard doesn't redirect them to /onboarding/employee on login. Only fresh
+-- magic-link invitees go through the wizard.
+UPDATE employees
+SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || jsonb_build_object(
+  'onboarding_step', 5,
+  'onboarding_completed_at', to_char(date_of_joining, 'YYYY-MM-DD"T"00:00:00.000"Z"'),
+  'onboarding_submitted_for_review', true
+)
+WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+  AND (custom_fields IS NULL OR NOT (custom_fields ? 'onboarding_submitted_for_review'));
+
 -- ─── Leave types ─────────────────────────────────────────────────────────────
 -- Keep CL (existing); add 4 more standard Indian leave types so balances look realistic.
 INSERT INTO leave_types (tenant_id, name, code, default_quota_days, is_paid, color, display_order)

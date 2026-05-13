@@ -83,17 +83,20 @@ export default function MembersSettingsPage() {
 
   // ─── Invite dialog ───────────────────────────────────────────────────────
   //
-  // PLAN NOTE — Sprint 2 #7 (Employee self-onboarding wizard) supersedes the
-  // current shape of this CTA. Today the admin fills in firstName / lastName /
-  // employeeCode here and the employee inherits those values when they accept
-  // the magic-link. After #7 ships, the invite should be EMAIL ONLY:
-  //   1. Admin enters work email + role → POST /employees/invite-only
-  //   2. Employee receives magic-link, signs in, and runs through the 5-step
-  //      wizard themselves (Personal → Documents → Bank → Emergency → Review)
-  //   3. HR Admin sees the completed profile in /employees/onboarding queue
-  //      and approves it.
-  // When #7 lands, replace this form with a minimal { email, role } form and
-  // point useInviteEmployee at the new endpoint.
+  // The admin captures the minimum needed to create the user + employee
+  // shell row: name, email, and an employee code. Everything else (DOB,
+  // PAN, bank, emergency contact, address) is collected from the invitee
+  // through the 5-step self-onboarding wizard at /onboarding/employee:
+  //   1. Admin clicks 'Invite member' → POST /employees/invite
+  //   2. User + employee + membership(role=employee) created; magic-link
+  //      mailed.
+  //   3. Invitee follows the link, verify-otp logs them in.
+  //   4. (app) layout sees their role=EMPLOYEE + custom_fields lack
+  //      onboarding_submitted_for_review → redirects to /onboarding/employee.
+  //   5. They complete the 5-step wizard; the final step sets
+  //      submittedForReview=true and they're released into /dashboard.
+  //   6. Admin can promote them via the role select on this page once
+  //      they accept.
   //
   const [inviteOpen, setInviteOpen] = useState(false)
   const [invForm, setInvForm] = useState({

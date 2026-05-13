@@ -24,6 +24,7 @@ import {
   UpdateEmployeeDto,
   SelfUpdateEmployeeDto,
   OnboardingStepDto,
+  SubmitOnboardingStepDto,
   TransferEmployeeDto,
   TerminateEmployeeDto,
   EmployeeListQueryDto,
@@ -89,12 +90,16 @@ export class EmployeesController {
   }
 
   @Post('me/onboarding/:step')
-  @ApiOperation({ summary: 'Submit onboarding step (1-5)' })
+  @ApiOperation({
+    summary: 'Submit a self-onboarding step (1-5)',
+    description:
+      'Step 1 = personal info + emergency contact · Step 2 = identity · Step 3 = bank · Step 4 = documents (placeholder until R2 uploads ship) · Step 5 = review + submit. Each step writes through to the proper typed columns on the employee row and tracks progress in custom_fields.onboarding_step. Setting submitForReview=true on the final step flags the record as ready for HR approval.',
+  })
   @ApiParam({ name: 'step', type: Number })
-  @ApiResponse({ status: 200, description: 'Step submitted' })
+  @ApiResponse({ status: 200, description: 'Step saved' })
   async submitOnboardingStep(
     @Param('step', ParseIntPipe) step: number,
-    @Body() dto: OnboardingStepDto,
+    @Body() dto: SubmitOnboardingStepDto,
     @CurrentUser() user: JwtPayload,
   ) {
     const myRecord = await this.employeesService.getMyRecord(user.sub, user.tenantId);
@@ -103,7 +108,19 @@ export class EmployeesController {
       step,
       dto,
       user.tenantId,
+      user.sub,
     );
+  }
+
+  @Get('me/onboarding-status')
+  @ApiOperation({
+    summary: 'Get the current user\'s onboarding progress',
+    description:
+      'Returns { employeeId, onboardingStep, submittedAt, submittedForReview }. The web wizard reads this on mount to resume the user on the last completed step.',
+  })
+  @ApiResponse({ status: 200, description: 'Onboarding status' })
+  async getMyOnboardingStatus(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.getMyOnboardingStatus(user.sub, user.tenantId);
   }
 
   @Get(':id')

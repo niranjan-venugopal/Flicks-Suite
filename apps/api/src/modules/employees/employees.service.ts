@@ -34,6 +34,7 @@ import type {
   UpdateEmployeeDto,
   SelfUpdateEmployeeDto,
   OnboardingStepDto,
+  SubmitOnboardingStepDto,
   TransferEmployeeDto,
   TerminateEmployeeDto,
   EmployeeListQueryDto,
@@ -547,8 +548,9 @@ export class EmployeesService {
   async submitOnboardingStep(
     employeeId: string,
     step: number,
-    data: OnboardingStepDto,
+    data: SubmitOnboardingStepDto,
     tenantId: string,
+    actorUserId: string,
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
@@ -559,22 +561,126 @@ export class EmployeesService {
         ? existingCustom.onboarding_step
         : 0;
     const nextStep = Math.max(currentStep, step);
-    const allStepsComplete = nextStep >= 5;
+    const allStepsComplete = nextStep >= 5 || data.submitForReview === true;
 
-    const [updated] = await this.db
+    // ─── Project section data into typed employee columns ────────────────
+    const updateFields: Record<string, unknown> = {};
+
+    if (data.personalInfo) {
+      const p = data.personalInfo;
+      if (p.dateOfBirth !== undefined) updateFields.date_of_birth = p.dateOfBirth;
+      if (p.gender !== undefined) updateFields.gender = p.gender;
+      if (p.maritalStatus !== undefined)
+        updateFields.marital_status = p.maritalStatus;
+      if (p.bloodGroup !== undefined) updateFields.blood_group = p.bloodGroup;
+      // current_address is a JSONB blob. Merge with whatever's already there.
+      if (
+        p.addressLine1 !== undefined ||
+        p.addressLine2 !== undefined ||
+        p.city !== undefined ||
+        p.stateCode !== undefined ||
+        p.postalCode !== undefined
+      ) {
+        const prev =
+          (employee.currentAddress as Record<string, unknown> | null) ?? {};
+        updateFields.current_address = {
+          line1: p.addressLine1 ?? prev.line1 ?? null,
+          line2: p.addressLine2 ?? prev.line2 ?? null,
+          city: p.city ?? prev.city ?? null,
+          state: p.stateCode ?? prev.state ?? null,
+          postal_code: p.postalCode ?? prev.postal_code ?? null,
+          country: prev.country ?? 'IN',
+        };
+      }
+    }
+
+    if (data.identity) {
+      const i = data.identity;
+      // *_encrypted columns are named for the future; field-level encryption
+      // is a Sprint 4 hardening task. For now we write plain text.
+      if (i.pan !== undefined) updateFields.pan_encrypted = i.pan;
+      if (i.personalPhone !== undefined)
+        updateFields.personal_phone = i.personalPhone;
+      if (i.personalEmail !== undefined)
+        updateFields.personal_email = i.personalEmail;
+      if (i.nationality !== undefined) updateFields.nationality = i.nationality;
+    }
+
+    if (data.bank) {
+      const b = data.bank;
+      if (b.bankName !== undefined) updateFields.bank_name = b.bankName;
+      if (b.bankBranch !== undefined) updateFields.bank_branch = b.bankBranch;
+      if (b.bankIfsc !== undefined) updateFields.bank_ifsc = b.bankIfsc;
+      if (b.bankAccountType !== undefined)
+        updateFields.bank_account_type = b.bankAccountType;
+      if (b.bankAccountHolder !== undefined)
+        updateFields.bank_account_holder = b.bankAccountHolder;
+      if (b.bankAccountNumber !== undefined)
+        updateFields.bank_account_number_encrypted = b.bankAccountNumber;
+      if (b.pfUan !== undefined) updateFields.pf_uan = b.pfUan;
+    }
+
+    updateFields.custom_fields = {
+      ...existingCustom,
+      onboarding_step: nextStep,
+      onboarding_completed_at: allStepsComplete ? new Date().toISOString() : null,
+      onboarding_submitted_for_review: allStepsComplete,
+    };
+    updateFields.updated_at = new Date();
+
+    await this.db
       .update(employees)
-      .set({
-        custom_fields: {
-          ...existingCustom,
-          onboarding_step: nextStep,
-          onboarding_completed_at: allStepsComplete
-            ? new Date().toISOString()
-            : null,
-        },
-        updated_at: new Date(),
-      })
-      .where(eq(employees.id, employeeId))
-      .returning();
+      .set(updateFields)
+      .where(eq(employees.id, employeeId));
+
+    // ─── Emergency contact: upsert the primary row ───────────────────────
+    if (data.emergencyContact) {
+      const ec = data.emergencyContact;
+      const [existing] = await this.db
+        .select()
+        .from(emergencyContacts)
+        .where(
+          and(
+            eq(emergencyContacts.tenant_id, tenantId),
+            eq(emergencyContacts.employee_id, employeeId),
+            eq(emergencyContacts.is_primary, true),
+          ),
+        )
+        .limit(1);
+
+      if (existing) {
+        await this.db
+          .update(emergencyContacts)
+          .set({
+            name: ec.name,
+            relationship: ec.relationship,
+            phone: ec.phone,
+            email: ec.email ?? null,
+          })
+          .where(eq(emergencyContacts.id, existing.id));
+      } else {
+        await this.db.insert(emergencyContacts).values({
+          tenant_id: tenantId,
+          employee_id: employeeId,
+          name: ec.name,
+          relationship: ec.relationship,
+          phone: ec.phone,
+          email: ec.email ?? null,
+          is_primary: true,
+        });
+      }
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: allStepsComplete
+        ? 'employee.onboarding_submitted'
+        : 'employee.onboarding_step_saved',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      afterState: { step: nextStep, allStepsComplete },
+    });
 
     if (allStepsComplete) {
       this.eventEmitter.emit('employee.onboarding.submitted', {
@@ -584,14 +690,41 @@ export class EmployeesService {
       });
     }
 
-    const updatedCustom =
-      (updated.custom_fields as Record<string, unknown> | null) ?? {};
     return {
       employeeId,
       step,
-      onboardingStep: updatedCustom.onboarding_step ?? nextStep,
+      onboardingStep: nextStep,
       allStepsComplete,
     };
+  }
+
+  async getMyOnboardingStatus(userId: string, tenantId: string) {
+    const employeeId = await this.getEmployeeIdForUserOrNull(userId, tenantId);
+    if (!employeeId) {
+      return { employeeId: null, onboardingStep: 0, submittedAt: null, submittedForReview: false };
+    }
+    const employee = await this.getEmployee(employeeId, tenantId);
+    const custom =
+      (employee.customFields as Record<string, unknown> | null) ?? {};
+    return {
+      employeeId,
+      onboardingStep:
+        typeof custom.onboarding_step === 'number' ? custom.onboarding_step : 0,
+      submittedAt: (custom.onboarding_completed_at as string | undefined) ?? null,
+      submittedForReview:
+        custom.onboarding_submitted_for_review === true,
+    };
+  }
+
+  private async getEmployeeIdForUserOrNull(userId: string, tenantId: string) {
+    const [m] = await this.db
+      .select({ employeeId: memberships.employee_id })
+      .from(memberships)
+      .where(
+        and(eq(memberships.user_id, userId), eq(memberships.tenant_id, tenantId)),
+      )
+      .limit(1);
+    return m?.employeeId ?? null;
   }
 
   async approveOnboarding(
