@@ -8,7 +8,9 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -16,6 +18,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { OnboardingService } from './onboarding.service';
+import { AuthService } from '../auth/auth.service';
 import {
   CheckSlugDto,
   CreateTenantDto,
@@ -30,7 +33,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiTags('Onboarding')
 @Controller('onboarding')
 export class OnboardingController {
-  constructor(private readonly onboardingService: OnboardingService) {}
+  constructor(
+    private readonly onboardingService: OnboardingService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Public()
   @Post('check-slug')
@@ -46,15 +52,24 @@ export class OnboardingController {
   @ApiOperation({
     summary: 'Create a new tenant',
     description:
-      'Creates a tenant + primary location + Owner membership + EMP001 employee row for the founder. Caller must be authenticated (POST /auth/verify-otp first to get a tenant-less JWT).',
+      'Creates a tenant + primary location + Owner membership + EMP001 employee row for the founder. Caller must be authenticated (POST /auth/verify-otp first to get a tenant-less JWT). Re-issues the auth cookies with the new tenant/owner role baked in so the next request hits the right tenant context.',
   })
-  @ApiResponse({ status: 201, description: 'Tenant created' })
+  @ApiResponse({ status: 201, description: 'Tenant created + auth cookies refreshed' })
   @ApiResponse({ status: 409, description: 'Slug already taken or user already in a workspace' })
   async createTenant(
     @Body() dto: CreateTenantDto,
     @CurrentUser() user: JwtPayload,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.onboardingService.createTenant(dto, user.sub);
+    const result = await this.onboardingService.createTenant(dto, user.sub);
+
+    // Re-issue the auth cookies. The JWT created by /auth/verify-otp had
+    // tenantId='' because the user had no membership yet — every subsequent
+    // tenant-scoped query would explode with 'invalid input syntax for type
+    // uuid: ""'. Now that we've inserted the membership, mint a fresh pair
+    // with the real tenantId / membershipId / role and set them.
+    const refreshed = await this.authService.refreshAuthForUser(user.sub, res);
+    return { ...result, refreshed };
   }
 
   @Put('tenant-details')

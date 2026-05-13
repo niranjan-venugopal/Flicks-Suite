@@ -722,7 +722,61 @@ export class AuthService {
     res.clearCookie('refresh_token', { path: '/api/v1/auth' });
   }
 
-  private async issueTokenPair(
+  /**
+   * Mint a fresh token pair for a user whose membership set has changed and
+   * set them as cookies on the response. Used by the onboarding flow after
+   * createTenant — the JWT from verify-otp had no tenant_id, and every
+   * tenant-scoped query was 500-ing with 'invalid uuid'.
+   *
+   * Picks the user's first active membership (sufficient for the post-signup
+   * single-tenant case). For multi-tenant flips, the caller should use
+   * /auth/select-tenant instead.
+   */
+  async refreshAuthForUser(
+    userId: string,
+    res: Response,
+  ): Promise<{ tenantId: string | null; role: string | null }> {
+    const [user] = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const [activeMembership] = await this.dbAdmin
+      .select({
+        id: memberships.id,
+        tenantId: memberships.tenant_id,
+        role: memberships.role,
+      })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    const { accessToken, refreshToken } = await this.issueTokenPair(
+      user,
+      activeMembership?.tenantId ?? null,
+      activeMembership?.id ?? null,
+      (activeMembership?.role as UserRole | undefined) ?? null,
+    );
+
+    this.setAuthCookies(res, accessToken, refreshToken);
+
+    return {
+      tenantId: activeMembership?.tenantId ?? null,
+      role: activeMembership?.role ?? null,
+    };
+  }
+
+  async issueTokenPair(
     user: { id: string; email: string; is_platform_admin: boolean },
     tenantId: string | null,
     membershipId: string | null,
