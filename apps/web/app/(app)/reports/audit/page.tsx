@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead, type PillTone } from '@/components/proto'
 import { useAuditLog, type AuditLogEntry } from '@/lib/api/queries/use-reports'
@@ -222,9 +222,8 @@ export default function AuditLogReportPage() {
                     (e.beforeState && Object.keys(e.beforeState).length > 0) ||
                     (e.afterState && Object.keys(e.afterState).length > 0)
                   return (
-                    <>
+                    <Fragment key={e.id}>
                       <tr
-                        key={e.id}
                         style={{
                           borderBottom: '1px solid var(--bord)',
                           background: i % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent',
@@ -285,7 +284,7 @@ export default function AuditLogReportPage() {
                         </td>
                       </tr>
                       {isOpen && hasDiff && (
-                        <tr key={e.id + '_diff'} style={{ borderBottom: '1px solid var(--bord)' }}>
+                        <tr style={{ borderBottom: '1px solid var(--bord)' }}>
                           <td colSpan={7} style={{ padding: 14, background: 'var(--surf-1)' }}>
                             <div
                               style={{
@@ -334,7 +333,7 @@ export default function AuditLogReportPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>

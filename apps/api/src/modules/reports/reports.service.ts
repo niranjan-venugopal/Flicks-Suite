@@ -1,10 +1,11 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, eq, sql, desc, asc, count } from 'drizzle-orm';
+import { and, eq, inArray, sql, desc, asc, count } from 'drizzle-orm';
 import {
   attendanceRecords,
   employees,
   users,
   departments,
+  locations,
   leaveRequests,
   leaveTypes,
 } from '@flicks/db/schema';
@@ -508,11 +509,14 @@ export class ReportsService {
     const locationIds = locationsRows
       .map((r) => r.locationId)
       .filter((id): id is string => Boolean(id));
+    // Resolve names with a small lookup using proper Drizzle helpers.
+    // (The earlier raw-SQL approach failed at runtime — `from(sql\`locations\`)`
+    // isn't supported and `${ids}::uuid[]` interpolation was malformed.)
     const locationNames = locationIds.length
       ? await this.db
-          .select({ id: sql<string>`id`, name: sql<string>`name` })
-          .from(sql`locations`)
-          .where(sql`id = ANY(${locationIds}::uuid[])`)
+          .select({ id: locations.id, name: locations.name })
+          .from(locations)
+          .where(inArray(locations.id, locationIds))
       : [];
     const nameById = new Map(locationNames.map((n) => [n.id, n.name]));
     const byLocation = locationsRows
