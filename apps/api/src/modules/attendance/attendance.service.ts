@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { eq, and, gte, lte, isNull, or, sql, desc, asc } from 'drizzle-orm';
@@ -274,6 +275,19 @@ export class AttendanceService {
 
         let recordId: string;
         if (existing) {
+          // Day is already complete (both in + out logged). Reject — the
+          // user has to wait until tomorrow before they can punch in again.
+          // Multi-segment punches within the same day should use break_start
+          // / break_end, not a fresh punch-in.
+          if (
+            existing.first_punch_in_at !== null &&
+            existing.last_punch_out_at !== null
+          ) {
+            throw new ConflictException(
+              "You've already clocked out for today. Come back tomorrow!",
+            );
+          }
+
           // Update first_punch_in_at only if it's null
           if (existing.first_punch_in_at === null) {
             await tx
@@ -288,10 +302,10 @@ export class AttendanceService {
                 updated_at: new Date(),
               })
               .where(eq(attendanceRecords.id, existing.id));
-          } else {
-            // Already punched in earlier today; allow re-punch (lunch return etc.)
-            // but don't reset first_punch_in_at.
           }
+          // Else: punched in earlier today but not yet out — this is a
+          // re-punch (e.g. after a break that wasn't recorded properly).
+          // Don't reset first_punch_in_at. The punches table below logs it.
           recordId = existing.id;
         } else {
           const [created] = await tx
@@ -383,9 +397,14 @@ export class AttendanceService {
             ),
           )
           .limit(1);
-        if (!record) {
+        if (!record || record.first_punch_in_at === null) {
           throw new BadRequestException(
-            'No punch-in recorded for today — clock in first',
+            'No punch-in recorded for today — clock in first.',
+          );
+        }
+        if (record.last_punch_out_at !== null) {
+          throw new ConflictException(
+            "You've already clocked out for today. Come back tomorrow!",
           );
         }
 

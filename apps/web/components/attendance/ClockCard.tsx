@@ -82,6 +82,9 @@ export function ClockCard() {
   const workedMin = data ? liveWorkedMinutes(data, serverNowMs, clientNowMs) : 0
 
   const isClockedIn = !!data?.firstPunchInAt && !data.lastPunchOutAt
+  // Day complete = both timestamps set. The user has lived a full day and
+  // cannot punch in again until tomorrow's attendance_date rolls over.
+  const dayComplete = !!data?.firstPunchInAt && !!data?.lastPunchOutAt
   const isOnBreak = !!data?.isOnBreak
   const tz = data?.shift?.timezone ?? 'Asia/Kolkata'
   const nowStr = mounted
@@ -95,6 +98,13 @@ export function ClockCard() {
     : '--:--:--'
 
   const handlePunch = async () => {
+    if (dayComplete) {
+      toast({
+        title: 'Day already complete',
+        description: "You've already clocked out for today. See you tomorrow!",
+      })
+      return
+    }
     try {
       if (isClockedIn) {
         await punchOut.mutateAsync({})
@@ -104,10 +114,14 @@ export function ClockCard() {
         toast({ title: 'Clocked in', description: 'Have a productive day.' })
       }
     } catch (e) {
+      // The 409 from the backend carries the exact message we want to show;
+      // any other failure mode falls back to a generic destructive toast.
+      const msg = e instanceof Error ? e.message : 'Try again'
+      const isAlreadyDone = msg.toLowerCase().includes('clocked out')
       toast({
-        title: 'Could not record punch',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
+        title: isAlreadyDone ? 'Day already complete' : 'Could not record punch',
+        description: msg,
+        variant: isAlreadyDone ? 'default' : 'destructive',
       })
     }
   }
@@ -130,8 +144,20 @@ export function ClockCard() {
     }
   }
 
-  const statusTone: PillTone = isOnBreak ? 'yellow' : isClockedIn ? 'green' : 'yellow'
-  const statusLabel = isOnBreak ? 'On break' : isClockedIn ? 'Clocked in' : 'Not clocked in'
+  const statusTone: PillTone = dayComplete
+    ? 'green'
+    : isOnBreak
+      ? 'yellow'
+      : isClockedIn
+        ? 'green'
+        : 'yellow'
+  const statusLabel = dayComplete
+    ? 'Day complete'
+    : isOnBreak
+      ? 'On break'
+      : isClockedIn
+        ? 'Clocked in'
+        : 'Not clocked in'
 
   const shiftLabel = data?.shift
     ? `Working hours · ${data.shift.startTime}–${data.shift.endTime} ${data.shift.timezone.split('/')[1] ?? ''}`
@@ -223,13 +249,22 @@ export function ClockCard() {
 
         <div style={{ display: 'flex', gap: 10 }}>
           <Btn
-            kind={isClockedIn ? 'danger' : 'primary'}
+            kind={dayComplete ? 'secondary' : isClockedIn ? 'danger' : 'primary'}
             icon={<Icon.fingerprint size={16} />}
             onClick={handlePunch}
-            disabled={punchIn.isPending || punchOut.isPending || today.isLoading}
+            disabled={
+              dayComplete ||
+              punchIn.isPending ||
+              punchOut.isPending ||
+              today.isLoading
+            }
             style={{ flex: 1, justifyContent: 'center', height: 52, fontSize: 15 }}
           >
-            {isClockedIn ? 'Clock out' : 'Clock in'}
+            {dayComplete
+              ? 'Day complete · see you tomorrow'
+              : isClockedIn
+                ? 'Clock out'
+                : 'Clock in'}
           </Btn>
           <Btn
             kind="secondary"

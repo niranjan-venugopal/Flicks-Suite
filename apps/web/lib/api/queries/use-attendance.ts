@@ -208,15 +208,19 @@ export function usePunchIn() {
     // Optimistic update — flip the today snapshot to 'clocked in' immediately
     // so the button label changes before the server round-trip completes.
     // Refetch in onSuccess reconciles with authoritative server state.
+    //
+    // Important: do NOT clear lastPunchOutAt. If the day is already complete
+    // the backend will reject with 409, and we don't want the UI to flash a
+    // false 'Clocked in' state in the meantime.
     onMutate: () => {
       const key = ['attendance', 'me', 'today']
       const prev = qc.getQueryData<TodayAttendance>(key)
-      if (prev) {
+      if (prev && !prev.lastPunchOutAt) {
         qc.setQueryData<TodayAttendance>(key, {
           ...prev,
           firstPunchInAt: prev.firstPunchInAt ?? new Date().toISOString(),
-          lastPunchOutAt: null,
-          attendanceStatus: prev.attendanceStatus === 'absent' ? 'present' : prev.attendanceStatus,
+          attendanceStatus:
+            prev.attendanceStatus === 'absent' ? 'present' : prev.attendanceStatus,
         })
       }
       return { prev }
