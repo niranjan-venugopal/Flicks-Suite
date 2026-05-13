@@ -41,14 +41,15 @@ export class OnboardingController {
     return this.onboardingService.checkSlug(dto.slug);
   }
 
-  @Public()
   @Post('create-tenant')
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Create a new tenant',
-    description: 'Creates a tenant immediately after OTP verification for new users.',
+    description:
+      'Creates a tenant + primary location + Owner membership + EMP001 employee row for the founder. Caller must be authenticated (POST /auth/verify-otp first to get a tenant-less JWT).',
   })
   @ApiResponse({ status: 201, description: 'Tenant created' })
-  @ApiResponse({ status: 409, description: 'Slug already taken' })
+  @ApiResponse({ status: 409, description: 'Slug already taken or user already in a workspace' })
   async createTenant(
     @Body() dto: CreateTenantDto,
     @CurrentUser() user: JwtPayload,

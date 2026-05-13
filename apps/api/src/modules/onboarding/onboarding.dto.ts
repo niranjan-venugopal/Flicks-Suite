@@ -5,13 +5,16 @@ import {
   IsArray,
   IsEnum,
   IsNumber,
+  IsObject,
   MinLength,
   MaxLength,
   Matches,
   IsBoolean,
+  ValidateNested,
   Min,
   Max,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CheckSlugDto {
@@ -24,6 +27,31 @@ export class CheckSlugDto {
     message: 'Slug must contain only lowercase letters, numbers and hyphens',
   })
   slug: string;
+}
+
+export class PrimaryLocationDto {
+  @ApiProperty({ example: 'Bengaluru HQ' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
+  name: string;
+
+  @ApiPropertyOptional({ example: 'Bengaluru' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(80)
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'KA' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(2)
+  stateCode?: string;
+
+  @ApiPropertyOptional({ example: 'Asia/Kolkata' })
+  @IsString()
+  @IsOptional()
+  timezone?: string;
 }
 
 export class CreateTenantDto {
@@ -44,6 +72,16 @@ export class CreateTenantDto {
   })
   slug: string;
 
+  @ApiProperty({
+    example: 'Niranjan V',
+    description: 'Founder full name. Used to update the user record and seed the EMP001 employee row.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(160)
+  fullName: string;
+
   @ApiPropertyOptional({ example: 'Technology' })
   @IsString()
   @IsOptional()
@@ -53,6 +91,15 @@ export class CreateTenantDto {
   @IsString()
   @IsOptional()
   sizeBand?: string;
+
+  @ApiProperty({
+    description: 'Primary location — first office for the new tenant. Required so the seeded EMP001 employee has a workplace.',
+    type: PrimaryLocationDto,
+  })
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PrimaryLocationDto)
+  primaryLocation: PrimaryLocationDto;
 }
 
 export class UpdateTenantDetailsDto {

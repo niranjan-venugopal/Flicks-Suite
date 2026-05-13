@@ -11,10 +11,12 @@ import type { Db } from '@flicks/db';
 import {
   tenants,
   memberships,
+  users,
   leaveTypes,
   holidays,
   employees,
   departments,
+  locations,
   shiftTemplates,
 } from '@flicks/db/schema';
 import { AuditService } from '../audit/audit.service';
@@ -185,6 +187,38 @@ export class OnboardingService {
       throw new ConflictException('This slug is already taken. Please choose another.');
     }
 
+    // Load the user so we can use their email + update their name if the
+    // current value is still the email-prefix default (handleSuccessfulAuth
+    // seeds full_name = email.split('@')[0]).
+    const [foundingUser] = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!foundingUser) {
+      throw new BadRequestException('User not found — sign in before creating a workspace.');
+    }
+
+    // Don't let a single user own multiple tenants from this flow — they can
+    // be a member of many tenants, but each tenant gets its own signup path.
+    const existingMembership = await this.db
+      .select({ id: memberships.id })
+      .from(memberships)
+      .where(eq(memberships.user_id, userId))
+      .limit(1);
+    if (existingMembership[0]) {
+      throw new ConflictException(
+        'You already belong to a workspace. Sign out first to create a new one.',
+      );
+    }
+
+    // Parse fullName into first/last for the employee row.
+    const trimmedName = dto.fullName.trim().replace(/\s+/g, ' ');
+    const nameParts = trimmedName.split(' ');
+    const firstName = nameParts[0]!;
+    const lastName = nameParts.slice(1).join(' ') || firstName;
+
     // Create tenant with Indian defaults
     const trialEndsAt = new Date();
     trialEndsAt.setDate(trialEndsAt.getDate() + 14); // 14-day trial
@@ -197,7 +231,7 @@ export class OnboardingService {
         industry: dto.industry,
         size_band: dto.sizeBand,
         country_code: 'IN',
-        timezone: 'Asia/Kolkata',
+        timezone: dto.primaryLocation.timezone ?? 'Asia/Kolkata',
         currency: 'INR',
         fiscal_year_start_month: 4, // April
         date_format: 'DD/MM/YYYY',
@@ -206,11 +240,78 @@ export class OnboardingService {
       })
       .returning();
 
-    // Create super_admin membership
+    // Update the founding user's display name. Only overwrite if the current
+    // value looks like a placeholder (matches the email prefix); otherwise
+    // respect whatever they've already set elsewhere.
+    const emailPrefix = foundingUser.email.split('@')[0]!;
+    if (foundingUser.full_name === emailPrefix || !foundingUser.full_name) {
+      await this.db
+        .update(users)
+        .set({ full_name: trimmedName, updated_at: new Date() })
+        .where(eq(users.id, userId));
+    }
+
+    // Create the primary location FIRST so we can attach the founder
+    // employee to it.
+    const [primaryLocation] = await this.db
+      .insert(locations)
+      .values({
+        tenant_id: tenant.id,
+        name: dto.primaryLocation.name,
+        city: dto.primaryLocation.city ?? null,
+        state_code: dto.primaryLocation.stateCode ?? null,
+        country_code: 'IN',
+        timezone: dto.primaryLocation.timezone ?? 'Asia/Kolkata',
+        is_active: true,
+      })
+      .returning();
+
+    // Seed the default 'General' shift template (needed before the employee
+    // row so attendance can resolve a shift later).
+    const [defaultShift] = await this.db
+      .insert(shiftTemplates)
+      .values({
+        tenant_id: tenant.id,
+        name: 'General',
+        description: 'Default 9-to-6 shift, Mon–Fri, IST.',
+        start_time: '09:00',
+        end_time: '18:00',
+        is_overnight: false,
+        break_minutes: 60,
+        break_paid: false,
+        working_days: [1, 2, 3, 4, 5],
+        timezone: dto.primaryLocation.timezone ?? 'Asia/Kolkata',
+        grace_period_minutes: 15,
+        half_day_threshold_minutes: 240,
+        full_day_threshold_minutes: 480,
+        is_default: true,
+        is_active: true,
+      })
+      .returning();
+
+    // Seed the founder as employee EMP001.
+    const [founderEmployee] = await this.db
+      .insert(employees)
+      .values({
+        tenant_id: tenant.id,
+        user_id: userId,
+        employee_code: 'EMP001',
+        first_name: firstName,
+        last_name: lastName,
+        work_email: foundingUser.email,
+        location_id: primaryLocation.id,
+        employment_type: 'full_time',
+        date_of_joining: new Date().toISOString().slice(0, 10),
+        status: 'active',
+      })
+      .returning();
+
+    // Create the Owner membership, linked to the founder employee row.
     await this.db.insert(memberships).values({
       tenant_id: tenant.id,
       user_id: userId,
-      role: 'super_admin',
+      employee_id: founderEmployee.id,
+      role: 'owner',
       status: 'active',
       accepted_at: new Date(),
     });
@@ -234,27 +335,6 @@ export class OnboardingService {
       );
     }
 
-    // Seed the default "General" shift template (PRD §6.3)
-    // 09:00–18:00 IST, Mon–Fri, 60-min unpaid break, 15-min grace.
-    // Working days are 1=Mon..5=Fri (DB convention: 0=Sun..6=Sat).
-    await this.db.insert(shiftTemplates).values({
-      tenant_id: tenant.id,
-      name: 'General',
-      description: 'Default 9-to-6 shift, Mon–Fri, IST.',
-      start_time: '09:00',
-      end_time: '18:00',
-      is_overnight: false,
-      break_minutes: 60,
-      break_paid: false,
-      working_days: [1, 2, 3, 4, 5],
-      timezone: 'Asia/Kolkata',
-      grace_period_minutes: 15,
-      half_day_threshold_minutes: 240,
-      full_day_threshold_minutes: 480,
-      is_default: true,
-      is_active: true,
-    });
-
     // Write audit event
     await this.auditService.log({
       tenantId: tenant.id,
@@ -262,10 +342,17 @@ export class OnboardingService {
       action: 'tenant.created',
       resourceType: 'tenant',
       resourceId: tenant.id,
-      afterState: { name: tenant.name, slug: tenant.slug },
+      afterState: {
+        name: tenant.name,
+        slug: tenant.slug,
+        ownerEmployeeId: founderEmployee.id,
+        primaryLocationId: primaryLocation.id,
+      },
     });
 
-    this.logger.log(`Tenant created: ${tenant.slug} (${tenant.id}) by user ${userId}`);
+    this.logger.log(
+      `Tenant created: ${tenant.slug} (${tenant.id}) by user ${userId} as Owner`,
+    );
 
     return {
       id: tenant.id,
@@ -273,6 +360,9 @@ export class OnboardingService {
       slug: tenant.slug,
       status: tenant.status,
       trialEndsAt: tenant.trial_ends_at,
+      primaryLocationId: primaryLocation.id,
+      defaultShiftId: defaultShift.id,
+      ownerEmployeeId: founderEmployee.id,
     };
   }
 
