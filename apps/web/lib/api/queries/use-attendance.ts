@@ -192,8 +192,12 @@ export function usePendingRegularizations() {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
+// Awaitable so mutations don't resolve until the today snapshot has been
+// refetched — otherwise the calling component may re-render with the stale
+// cached state before React Query's background refetch lands, leaving the
+// Clock-In button on the wrong label even though the punch went through.
 function invalidateAttendance(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: ['attendance'] })
+  return qc.invalidateQueries({ queryKey: ['attendance'] })
 }
 
 export function usePunchIn() {
@@ -201,7 +205,28 @@ export function usePunchIn() {
   return useMutation({
     mutationFn: (payload: PunchPayload = {}) =>
       api.post<PunchInResponse>('/api/v1/attendance/punch-in', payload),
-    onSuccess: () => invalidateAttendance(qc),
+    // Optimistic update — flip the today snapshot to 'clocked in' immediately
+    // so the button label changes before the server round-trip completes.
+    // Refetch in onSuccess reconciles with authoritative server state.
+    onMutate: () => {
+      const key = ['attendance', 'me', 'today']
+      const prev = qc.getQueryData<TodayAttendance>(key)
+      if (prev) {
+        qc.setQueryData<TodayAttendance>(key, {
+          ...prev,
+          firstPunchInAt: prev.firstPunchInAt ?? new Date().toISOString(),
+          lastPunchOutAt: null,
+          attendanceStatus: prev.attendanceStatus === 'absent' ? 'present' : prev.attendanceStatus,
+        })
+      }
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
+    },
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
 
@@ -210,7 +235,23 @@ export function usePunchOut() {
   return useMutation({
     mutationFn: (payload: PunchPayload = {}) =>
       api.post<PunchOutResponse>('/api/v1/attendance/punch-out', payload),
-    onSuccess: () => invalidateAttendance(qc),
+    onMutate: () => {
+      const key = ['attendance', 'me', 'today']
+      const prev = qc.getQueryData<TodayAttendance>(key)
+      if (prev) {
+        qc.setQueryData<TodayAttendance>(key, {
+          ...prev,
+          lastPunchOutAt: new Date().toISOString(),
+        })
+      }
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
+    },
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
 
@@ -221,7 +262,9 @@ export function useBreakStart() {
       api.post<{ id: string; punchedAt: string; type: 'break_start' }>(
         '/api/v1/attendance/break-start',
       ),
-    onSuccess: () => invalidateAttendance(qc),
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
 
@@ -232,7 +275,9 @@ export function useBreakEnd() {
       api.post<{ id: string; punchedAt: string; type: 'break_end' }>(
         '/api/v1/attendance/break-end',
       ),
-    onSuccess: () => invalidateAttendance(qc),
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
 
@@ -250,7 +295,9 @@ export function useRequestRegularization() {
         '/api/v1/attendance/regularizations',
         payload,
       ),
-    onSuccess: () => invalidateAttendance(qc),
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
 
@@ -270,6 +317,8 @@ export function useReviewRegularization() {
         `/api/v1/attendance/regularizations/${id}/review`,
         { action, comment },
       ),
-    onSuccess: () => invalidateAttendance(qc),
+    onSuccess: async () => {
+      await invalidateAttendance(qc)
+    },
   })
 }
