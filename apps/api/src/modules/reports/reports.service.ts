@@ -333,4 +333,230 @@ export class ReportsService {
       })),
     };
   }
+
+  // ─── Headcount summary ────────────────────────────────────────────────────
+  //
+  // Snapshot of the workforce + a 12-month running headcount trend.
+  //   • totals       active / on_leave / notice_period / separated counts
+  //                  + joinedYTD + exitedYTD
+  //   • monthlyTrend { month, joined, exited, runningBalance } for the last
+  //                  12 months. runningBalance is computed in JS (no window
+  //                  function gymnastics) — start from the current active
+  //                  count and walk back month by month subtracting joins
+  //                  and re-adding exits.
+  //   • byDepartment dept name + active headcount
+  //   • byLocation   location name + active headcount
+  //   • byEmploymentType  full_time / part_time / contract / etc counts
+  //
+  async getHeadcountReport(tenantId: string) {
+    const today = new Date();
+    const year = today.getFullYear();
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+
+    const tenantWhere = eq(employees.tenant_id, tenantId);
+
+    // 1. Status counts (active / on_leave / notice_period / separated)
+    const statusRows = await this.db
+      .select({
+        status: employees.status,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(tenantWhere)
+      .groupBy(employees.status);
+
+    const statusCounts: Record<string, number> = {};
+    for (const r of statusRows) statusCounts[r.status] = Number(r.n);
+
+    const active = statusCounts['active'] ?? 0;
+    const onLeave = statusCounts['on_leave'] ?? 0;
+    const noticePeriod = statusCounts['notice_period'] ?? 0;
+    const separated = statusCounts['separated'] ?? 0;
+    const totalEverHired =
+      active + onLeave + noticePeriod + separated + (statusCounts['absconded'] ?? 0);
+
+    // 2. YTD joins / exits
+    const [joinedYtd] = await this.db
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(employees)
+      .where(
+        and(
+          tenantWhere,
+          sql`${employees.date_of_joining} >= ${yearStart}::date`,
+          sql`${employees.date_of_joining} <= ${yearEnd}::date`,
+        ),
+      );
+
+    const [exitedYtd] = await this.db
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(employees)
+      .where(
+        and(
+          tenantWhere,
+          sql`${employees.date_of_exit} IS NOT NULL`,
+          sql`${employees.date_of_exit} >= ${yearStart}::date`,
+          sql`${employees.date_of_exit} <= ${yearEnd}::date`,
+        ),
+      );
+
+    // 3. Monthly join/exit counts for the last 12 months (one row per month
+    //    that has any activity — we backfill missing months in JS).
+    const since = new Date(today);
+    since.setUTCMonth(since.getUTCMonth() - 11);
+    since.setUTCDate(1);
+    const sinceStr = since.toISOString().slice(0, 10);
+
+    const joinRows = await this.db
+      .select({
+        month: sql<string>`to_char(${employees.date_of_joining}, 'YYYY-MM')`,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(
+        and(
+          tenantWhere,
+          sql`${employees.date_of_joining} >= ${sinceStr}::date`,
+        ),
+      )
+      .groupBy(sql`to_char(${employees.date_of_joining}, 'YYYY-MM')`);
+
+    const exitRows = await this.db
+      .select({
+        month: sql<string>`to_char(${employees.date_of_exit}, 'YYYY-MM')`,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(
+        and(
+          tenantWhere,
+          sql`${employees.date_of_exit} IS NOT NULL`,
+          sql`${employees.date_of_exit} >= ${sinceStr}::date`,
+        ),
+      )
+      .groupBy(sql`to_char(${employees.date_of_exit}, 'YYYY-MM')`);
+
+    const joinMap = new Map(joinRows.map((r) => [r.month, Number(r.n)]));
+    const exitMap = new Map(exitRows.map((r) => [r.month, Number(r.n)]));
+
+    // Build month list (oldest → newest)
+    const months: string[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCMonth(d.getUTCMonth() - i);
+      d.setUTCDate(1);
+      months.push(d.toISOString().slice(0, 7)); // YYYY-MM
+    }
+
+    // Walk forward computing running balance.
+    // Start from headcount AS OF the start of `months[0]`:
+    //   activeNow - joinsAfterMonths[0] + exitsAfterMonths[0]
+    //
+    // Simpler: count of employees joined BEFORE months[0] and not exited
+    // before months[0].
+    const firstMonthStart = `${months[0]}-01`;
+    const [{ baseline }] = await this.db
+      .select({
+        baseline: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(
+        and(
+          tenantWhere,
+          sql`${employees.date_of_joining} < ${firstMonthStart}::date`,
+          sql`(${employees.date_of_exit} IS NULL OR ${employees.date_of_exit} >= ${firstMonthStart}::date)`,
+        ),
+      );
+
+    let running = Number(baseline ?? 0);
+    const monthlyTrend = months.map((m) => {
+      const joined = joinMap.get(m) ?? 0;
+      const exited = exitMap.get(m) ?? 0;
+      running = running + joined - exited;
+      return { month: m, joined, exited, headcount: running };
+    });
+
+    // 4. By department (active only)
+    const byDepartment = await this.db
+      .select({
+        departmentId: departments.id,
+        name: departments.name,
+        headcount: sql<number>`COUNT(${employees.id})::int`,
+      })
+      .from(departments)
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.department_id, departments.id),
+          eq(employees.status, 'active'),
+        ),
+      )
+      .where(eq(departments.tenant_id, tenantId))
+      .groupBy(departments.id, departments.name)
+      .orderBy(desc(sql`COUNT(${employees.id})`));
+
+    // 5. By location (active only)
+    const locationsRows = await this.db
+      .select({
+        locationId: employees.location_id,
+        headcount: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(and(tenantWhere, eq(employees.status, 'active')))
+      .groupBy(employees.location_id);
+    // Resolve names with a small lookup
+    const locationIds = locationsRows
+      .map((r) => r.locationId)
+      .filter((id): id is string => Boolean(id));
+    const locationNames = locationIds.length
+      ? await this.db
+          .select({ id: sql<string>`id`, name: sql<string>`name` })
+          .from(sql`locations`)
+          .where(sql`id = ANY(${locationIds}::uuid[])`)
+      : [];
+    const nameById = new Map(locationNames.map((n) => [n.id, n.name]));
+    const byLocation = locationsRows
+      .map((r) => ({
+        locationId: r.locationId,
+        name: r.locationId ? nameById.get(r.locationId) ?? 'Unknown' : 'Unassigned',
+        headcount: Number(r.headcount),
+      }))
+      .sort((a, b) => b.headcount - a.headcount);
+
+    // 6. By employment type (active only)
+    const empTypeRows = await this.db
+      .select({
+        type: employees.employment_type,
+        headcount: sql<number>`COUNT(*)::int`,
+      })
+      .from(employees)
+      .where(and(tenantWhere, eq(employees.status, 'active')))
+      .groupBy(employees.employment_type);
+
+    return {
+      asOf: today.toISOString().slice(0, 10),
+      year,
+      totals: {
+        totalEverHired,
+        active,
+        onLeave,
+        noticePeriod,
+        separated,
+        joinedYtd: Number(joinedYtd?.n ?? 0),
+        exitedYtd: Number(exitedYtd?.n ?? 0),
+        netChangeYtd: Number(joinedYtd?.n ?? 0) - Number(exitedYtd?.n ?? 0),
+      },
+      monthlyTrend,
+      byDepartment: byDepartment.map((d) => ({
+        departmentId: d.departmentId,
+        name: d.name,
+        headcount: Number(d.headcount),
+      })),
+      byLocation,
+      byEmploymentType: empTypeRows.map((r) => ({
+        type: r.type,
+        headcount: Number(r.headcount),
+      })),
+    };
+  }
 }

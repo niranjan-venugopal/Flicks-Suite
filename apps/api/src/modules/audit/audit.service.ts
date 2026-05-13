@@ -1,8 +1,8 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
-import { eq, and, gte, lte, ilike, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, ilike, desc, sql } from 'drizzle-orm';
 import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
-import { auditLog, auditLogPlatform } from '@flicks/db/schema';
+import { auditLog, auditLogPlatform, users } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 
 export interface AuditLogDto {
@@ -118,19 +118,33 @@ export class AuditService {
       conditions.push(lte(auditLog.created_at, filters.to));
     }
 
-    const [logs, countResult] = await this.databaseService.withTenant(
+    const [logs, totalRow] = await this.databaseService.withTenant(
       tenantId,
       async (tx) =>
         Promise.all([
           tx
-            .select()
+            .select({
+              id: auditLog.id,
+              actorUserId: auditLog.actor_user_id,
+              actorName: users.full_name,
+              actorEmail: users.email,
+              action: auditLog.action,
+              resourceType: auditLog.resource_type,
+              resourceId: auditLog.resource_id,
+              beforeState: auditLog.before_state,
+              afterState: auditLog.after_state,
+              ipAddress: auditLog.ip_address,
+              userAgent: auditLog.user_agent,
+              createdAt: auditLog.created_at,
+            })
             .from(auditLog)
+            .leftJoin(users, eq(auditLog.actor_user_id, users.id))
             .where(and(...conditions))
             .orderBy(desc(auditLog.created_at))
             .limit(limit)
             .offset(offset),
           tx
-            .select({ count: auditLog.id })
+            .select({ n: sql<number>`COUNT(*)::int` })
             .from(auditLog)
             .where(and(...conditions)),
         ]),
@@ -141,7 +155,7 @@ export class AuditService {
       pagination: {
         page,
         limit,
-        total: countResult.length,
+        total: Number(totalRow[0]?.n ?? 0),
       },
     };
   }

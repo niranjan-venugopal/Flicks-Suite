@@ -43,4 +43,17 @@ export class ReportsController {
   ) {
     return this.reportsService.getLeaveReport(user.tenantId, range);
   }
+
+  @Get('headcount')
+  @Roles('manager')
+  @Header('Cache-Control', 'private, max-age=60')
+  @ApiOperation({
+    summary: 'Headcount summary',
+    description:
+      'Active / on_leave / notice_period counts, joined-vs-exited 12-month trend with running balance, breakdown by department / location / employment type.',
+  })
+  @ApiResponse({ status: 200, description: 'Headcount report' })
+  async getHeadcount(@CurrentUser() user: JwtPayload) {
+    return this.reportsService.getHeadcountReport(user.tenantId);
+  }
 }

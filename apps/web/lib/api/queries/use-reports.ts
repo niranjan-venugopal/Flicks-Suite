@@ -125,3 +125,113 @@ export function useLeaveReport(filters: ReportFilters = {}) {
     staleTime: 60_000,
   })
 }
+
+// ─── Headcount report ────────────────────────────────────────────────────────
+
+export interface HeadcountTotals {
+  totalEverHired: number
+  active: number
+  onLeave: number
+  noticePeriod: number
+  separated: number
+  joinedYtd: number
+  exitedYtd: number
+  netChangeYtd: number
+}
+
+export interface HeadcountMonthRow {
+  month: string  // 'YYYY-MM'
+  joined: number
+  exited: number
+  headcount: number
+}
+
+export interface HeadcountDeptRow {
+  departmentId: string
+  name: string
+  headcount: number
+}
+
+export interface HeadcountLocationRow {
+  locationId: string | null
+  name: string
+  headcount: number
+}
+
+export interface HeadcountEmpTypeRow {
+  type: string
+  headcount: number
+}
+
+export interface HeadcountReport {
+  asOf: string
+  year: number
+  totals: HeadcountTotals
+  monthlyTrend: HeadcountMonthRow[]
+  byDepartment: HeadcountDeptRow[]
+  byLocation: HeadcountLocationRow[]
+  byEmploymentType: HeadcountEmpTypeRow[]
+}
+
+export function useHeadcountReport() {
+  return useQuery({
+    queryKey: ['reports', 'headcount'],
+    queryFn: () => api.get<HeadcountReport>('/api/v1/reports/headcount'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── Audit log ───────────────────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: string
+  actorUserId: string | null
+  actorName: string | null
+  actorEmail: string | null
+  action: string
+  resourceType: string
+  resourceId: string | null
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
+  ipAddress: string | null
+  userAgent: string | null
+  createdAt: string
+}
+
+export interface AuditSearchFilters {
+  page?: number
+  limit?: number
+  resourceType?: string
+  action?: string
+  from?: string
+  to?: string
+}
+
+export interface AuditSearchResult {
+  data: AuditLogEntry[]
+  pagination: {
+    page: number
+    limit: number
+    total: number
+  }
+}
+
+function auditQs(p: AuditSearchFilters): string {
+  const parts: string[] = []
+  if (p.page) parts.push(`page=${p.page}`)
+  if (p.limit) parts.push(`limit=${p.limit}`)
+  if (p.resourceType) parts.push(`resourceType=${encodeURIComponent(p.resourceType)}`)
+  if (p.action) parts.push(`action=${encodeURIComponent(p.action)}`)
+  if (p.from) parts.push(`from=${encodeURIComponent(p.from)}`)
+  if (p.to) parts.push(`to=${encodeURIComponent(p.to)}`)
+  return parts.length ? `?${parts.join('&')}` : ''
+}
+
+export function useAuditLog(filters: AuditSearchFilters = {}) {
+  return useQuery({
+    queryKey: ['audit', 'logs', filters],
+    queryFn: () =>
+      api.get<AuditSearchResult>(`/api/v1/audit/logs${auditQs(filters)}`),
+    staleTime: 30_000,
+  })
+}
