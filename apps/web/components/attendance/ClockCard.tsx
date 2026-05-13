@@ -63,8 +63,14 @@ export function ClockCard() {
   const breakEnd = useBreakEnd()
   const { toast } = useToast()
 
+  // Mount guard — Date.now() / new Date() during SSR produces a value that's
+  // a second or two stale by the time React hydrates on the client, which
+  // triggers a hydration-mismatch warning. Wait until after mount to render
+  // anything that depends on the current wall-clock time.
+  const [mounted, setMounted] = useState(false)
   const [tick, setTick] = useState(0)
   useEffect(() => {
+    setMounted(true)
     const t = setInterval(() => setTick((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [])
@@ -72,19 +78,21 @@ export function ClockCard() {
 
   const data = today.data
   const serverNowMs = data?.now ? new Date(data.now).getTime() : Date.now()
-  const clientNowMs = Date.now()
+  const clientNowMs = mounted ? Date.now() : serverNowMs
   const workedMin = data ? liveWorkedMinutes(data, serverNowMs, clientNowMs) : 0
 
   const isClockedIn = !!data?.firstPunchInAt && !data.lastPunchOutAt
   const isOnBreak = !!data?.isOnBreak
   const tz = data?.shift?.timezone ?? 'Asia/Kolkata'
-  const nowStr = new Date().toLocaleTimeString('en-IN', {
-    timeZone: tz,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
+  const nowStr = mounted
+    ? new Date().toLocaleTimeString('en-IN', {
+        timeZone: tz,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      })
+    : '--:--:--'
 
   const handlePunch = async () => {
     try {

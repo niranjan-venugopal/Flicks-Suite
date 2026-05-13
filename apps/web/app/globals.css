@@ -233,35 +233,3 @@ button { background: none; border: none; cursor: pointer; }
 /* ─── Progress ─── */
 .progress { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
 .progress > div { height: 100%; background: var(--blue); border-radius: 99px; }
-
-/* ─── react-big-calendar overrides ─── */
-@import "react-big-calendar/lib/css/react-big-calendar.css";
-
-.rbc-calendar { background: transparent; color: rgba(255, 255, 255, 0.85); font-family: var(--font); }
-.rbc-toolbar { color: rgba(255, 255, 255, 0.85); }
-.rbc-toolbar button {
-  background: var(--surf-1);
-  color: var(--text-2);
-  border: 1px solid var(--bord);
-}
-.rbc-toolbar button:hover,
-.rbc-toolbar button:focus,
-.rbc-toolbar button.rbc-active {
-  background: rgba(62, 123, 250, 0.15);
-  border-color: rgba(62, 123, 250, 0.4);
-  color: #fff;
-}
-.rbc-month-view, .rbc-time-view { border-color: var(--bord); }
-.rbc-header, .rbc-month-row + .rbc-month-row, .rbc-day-bg + .rbc-day-bg { border-color: var(--bord); }
-.rbc-header {
-  color: var(--text-mute);
-  font-weight: 800;
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  padding: 8px 4px;
-}
-.rbc-off-range-bg { background: rgba(255, 255, 255, 0.02); }
-.rbc-today { background: rgba(62, 123, 250, 0.08); }
-.rbc-date-cell { color: var(--text-2); padding: 4px 6px; font-weight: 600; }
-.rbc-event { border-radius: 4px; padding: 2px 6px; font-size: 11px; border: none; }
