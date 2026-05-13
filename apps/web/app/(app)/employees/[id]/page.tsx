@@ -1,25 +1,81 @@
 'use client'
 
-import { use } from 'react'
+import { use, useState } from 'react'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
-import {
-  ArrowLeft,
-  Briefcase,
-  Mail,
-  Phone,
-  MapPin,
-  Calendar,
-  FileText,
-  History,
-  User,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { EmptyState } from '@/components/common/EmptyState'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { useEmployee } from '@/lib/api/queries/use-employees'
+import { ArrowLeft, Loader2 } from 'lucide-react'
+import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
+import { useEmployee, type EmployeeDetail } from '@/lib/api/queries/use-employees'
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const TABS = [
+  'overview',
+  'timeline',
+  'attendance',
+  'leave',
+  'timesheet',
+  'documents',
+  'access',
+] as const
+type Tab = (typeof TABS)[number]
+
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return '—'
+  return new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
+function fmtAddress(a: EmployeeDetail['currentAddress']): string {
+  if (!a) return '—'
+  const parts = [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(
+    Boolean,
+  )
+  return parts.length ? parts.join(', ') : '—'
+}
+
+function fmtPhone(p: string | null | undefined): string {
+  return p && p.trim() ? p : '—'
+}
+
+function statusTone(s: EmployeeDetail['status']): PillTone {
+  switch (s) {
+    case 'active':         return 'green'
+    case 'on_leave':       return 'yellow'
+    case 'notice_period':  return 'coral'
+    case 'separated':
+    case 'absconded':      return 'coral'
+    default:               return ''
+  }
+}
+
+function statusLabel(s: EmployeeDetail['status']): string {
+  switch (s) {
+    case 'active':         return 'Active'
+    case 'on_leave':       return 'On leave'
+    case 'notice_period':  return 'Notice period'
+    case 'separated':      return 'Separated'
+    case 'absconded':      return 'Absconded'
+    case 'inactive':       return 'Inactive'
+    default:               return s
+  }
+}
+
+function employmentTypeLabel(t: EmployeeDetail['employmentType']): string {
+  switch (t) {
+    case 'full_time':  return 'Full-time'
+    case 'part_time':  return 'Part-time'
+    case 'contract':   return 'Contract'
+    case 'intern':     return 'Intern'
+    case 'consultant': return 'Consultant'
+    case 'probation':  return 'Probation'
+    default:           return t
+  }
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function EmployeeDetailPage({
   params,
@@ -27,139 +83,44 @@ export default function EmployeeDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = use(params)
-  const { data: employee, isLoading } = useEmployee(id)
+  const { data: e, isLoading, error } = useEmployee(id)
+  const [tab, setTab] = useState<Tab>('overview')
 
   return (
     <div className="relative min-h-full">
-      <PageGlows />
       <div className="relative z-10 p-8 max-w-6xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6"
-        >
+        <div style={{ marginBottom: 16 }}>
           <Link
             href="/employees"
-            className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-white/80 font-gilroy transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to employees
           </Link>
-        </motion.div>
+        </div>
 
         {isLoading ? (
-          <div className="glass rounded-xl py-16 text-center text-white/50 font-gilroy text-sm">
-            Loading employee...
+          <div className="card p-12 flex items-center justify-center">
+            <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
           </div>
-        ) : !employee ? (
-          <div className="glass rounded-xl">
-            <EmptyState
-              icon={User}
-              title="Employee not found"
-              description="The employee you’re looking for may have been removed."
-            />
+        ) : error || !e ? (
+          <div className="card p-12 text-center">
+            <div className="t-h3 mb-1">Employee not found</div>
+            <p className="t-mute">
+              They may have been removed, or you don&apos;t have access.
+            </p>
           </div>
         ) : (
           <>
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="glass rounded-xl p-6 mb-6 flex items-start justify-between gap-6 flex-wrap"
-            >
-              <div className="flex items-center gap-5">
-                <div className="w-16 h-16 rounded-xl bg-brand-blue/15 border border-brand-blue/30 flex items-center justify-center">
-                  <span className="text-2xl font-bold text-brand-blue font-gilroy">
-                    {employee.name.charAt(0)}
-                  </span>
-                </div>
-                <div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h1 className="text-2xl font-bold text-white font-gilroy">
-                      {employee.name}
-                    </h1>
-                    <StatusBadge status={employee.status} />
-                  </div>
-                  <p className="text-brand-muted text-sm mt-1">
-                    {employee.designation ?? 'Team member'}
-                    {employee.employeeCode ? ` · ${employee.employeeCode}` : ''}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm">
-                  Message
-                </Button>
-                <Button size="sm">Edit</Button>
-              </div>
-            </motion.div>
-
-            <Tabs defaultValue="profile" className="w-full">
-              <TabsList>
-                <TabsTrigger value="profile">
-                  <User className="w-3.5 h-3.5 mr-1.5" />
-                  Profile
-                </TabsTrigger>
-                <TabsTrigger value="documents">
-                  <FileText className="w-3.5 h-3.5 mr-1.5" />
-                  Documents
-                </TabsTrigger>
-                <TabsTrigger value="history">
-                  <History className="w-3.5 h-3.5 mr-1.5" />
-                  History
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="profile">
-                <div className="glass rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Field icon={Mail} label="Email" value={employee.email} />
-                  <Field
-                    icon={Phone}
-                    label="Phone"
-                    value={employee.phone ?? '—'}
-                  />
-                  <Field
-                    icon={Briefcase}
-                    label="Department"
-                    value={employee.department ?? '—'}
-                  />
-                  <Field
-                    icon={MapPin}
-                    label="Location"
-                    value={employee.location ?? '—'}
-                  />
-                  <Field
-                    icon={Calendar}
-                    label="Join date"
-                    value={employee.joinDate ?? '—'}
-                  />
-                  <Field
-                    icon={User}
-                    label="Reporting manager"
-                    value={employee.reportingManager?.name ?? '—'}
-                  />
-                </div>
-              </TabsContent>
-
-              <TabsContent value="documents">
-                <div className="glass rounded-xl">
-                  <EmptyState
-                    icon={FileText}
-                    title="No documents uploaded"
-                    description="Offer letters, ID proofs and contracts will appear here once added."
-                  />
-                </div>
-              </TabsContent>
-
-              <TabsContent value="history">
-                <div className="glass rounded-xl">
-                  <EmptyState
-                    icon={History}
-                    title="No history yet"
-                    description="Role changes, promotions and salary revisions will be tracked here."
-                  />
-                </div>
-              </TabsContent>
-            </Tabs>
+            <EmployeeHeader e={e} />
+            <TabsBar tab={tab} setTab={setTab} />
+            {tab === 'overview' && <OverviewTab e={e} />}
+            {tab === 'timeline' && <TimelinePlaceholder e={e} />}
+            {tab === 'attendance' && <ModuleLink href="/attendance" label="Attendance" />}
+            {tab === 'leave' && <ModuleLink href="/leave" label="Leave" />}
+            {tab === 'timesheet' && <ModuleLink href="/timesheets" label="Timesheets" />}
+            {tab === 'documents' && <ComingSoon title="Documents" desc="Offer letters, ID proofs, contracts and policies will land here once R2 file uploads ship (Sprint 4)." />}
+            {tab === 'access' && <ComingSoon title="Access" desc="Workspace role, IP allowlist, and SSO bindings move here in a future polish pass." />}
           </>
         )}
       </div>
@@ -167,28 +128,504 @@ export default function EmployeeDetailPage({
   )
 }
 
+// ─── Header ──────────────────────────────────────────────────────────────────
+
+function EmployeeHeader({ e }: { e: EmployeeDetail }) {
+  const name = [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || e.workEmail
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 18,
+        marginBottom: 24,
+        flexWrap: 'wrap',
+      }}
+    >
+      <Avatar name={name} size="lg" src={e.avatarUrl ?? undefined} />
+      <div style={{ flex: 1, minWidth: 240 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          <Pill tone={statusTone(e.status)} dot>
+            {statusLabel(e.status)}
+          </Pill>
+          <Pill>{e.employeeCode}</Pill>
+          <Pill>{employmentTypeLabel(e.employmentType)}</Pill>
+        </div>
+        <div className="t-h1" style={{ fontSize: 26, marginBottom: 4 }}>
+          {name}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--text-2)',
+            flexWrap: 'wrap',
+          }}
+        >
+          {e.designationTitle && (
+            <>
+              <span>{e.designationTitle}{e.designationLevel ? ` · L${e.designationLevel}` : ''}</span>
+              <span style={{ color: 'var(--text-faint)' }}>·</span>
+            </>
+          )}
+          {e.departmentName && (
+            <>
+              <span>{e.departmentName}</span>
+              <span style={{ color: 'var(--text-faint)' }}>·</span>
+            </>
+          )}
+          {e.locationName && (
+            <>
+              <span>{e.locationName}</span>
+              <span style={{ color: 'var(--text-faint)' }}>·</span>
+            </>
+          )}
+          <span>Joined {fmtDate(e.dateOfJoining)}</span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Btn kind="secondary" size="sm" icon={<Icon.mail size={13} />}>
+          Message
+        </Btn>
+        <Btn kind="secondary" size="sm" icon={<Icon.cog size={13} />}>
+          Edit profile
+        </Btn>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tabs bar ────────────────────────────────────────────────────────────────
+
+function TabsBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 2,
+        borderBottom: '1px solid var(--bord)',
+        marginBottom: 22,
+        overflowX: 'auto',
+      }}
+    >
+      {TABS.map((t) => (
+        <button
+          key={t}
+          onClick={() => setTab(t)}
+          style={{
+            padding: '10px 16px',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: 12.5,
+            fontWeight: tab === t ? 800 : 600,
+            letterSpacing: '-0.01em',
+            color: tab === t ? '#fff' : 'var(--text-mute)',
+            borderBottom: `2px solid ${tab === t ? 'var(--blue)' : 'transparent'}`,
+            marginBottom: -1,
+            textTransform: 'capitalize',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ─── Overview tab ────────────────────────────────────────────────────────────
+
+function OverviewTab({ e }: { e: EmployeeDetail }) {
+  const primaryEmergency = e.emergencyContacts.find((c) => c.isPrimary) ?? e.emergencyContacts[0]
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 18 }}>
+      {/* LEFT column ────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <Card title="Personal & contact">
+          <Grid cols={2}>
+            <Field label="Work email" value={e.workEmail || '—'} />
+            <Field label="Personal email" value={e.personalEmail || '—'} />
+            <Field label="Work phone" value={fmtPhone(e.workPhone)} />
+            <Field label="Personal phone" value={fmtPhone(e.personalPhone)} />
+            <Field label="Date of birth" value={fmtDate(e.dateOfBirth)} />
+            <Field
+              label="Gender"
+              value={e.gender ? e.gender.replace(/_/g, ' ') : '—'}
+              capitalize
+            />
+            <Field label="Marital status" value={e.maritalStatus ?? '—'} capitalize />
+            <Field label="Blood group" value={e.bloodGroup ?? '—'} />
+            <Field label="Current address" value={fmtAddress(e.currentAddress)} span={2} />
+            <Field
+              label="Emergency contact"
+              value={
+                primaryEmergency
+                  ? `${primaryEmergency.name} · ${primaryEmergency.relationship} · ${primaryEmergency.phone}`
+                  : '—'
+              }
+              span={2}
+            />
+          </Grid>
+        </Card>
+
+        <Card title="Employment">
+          <Grid cols={3}>
+            <Field label="Job title" value={e.designationTitle ?? '—'} />
+            <Field label="Department" value={e.departmentName ?? '—'} />
+            <Field label="Reporting manager" value={e.reportingManagerName ?? '—'} />
+            <Field label="Employment type" value={employmentTypeLabel(e.employmentType)} />
+            <Field
+              label="Work location"
+              value={
+                e.locationName
+                  ? `${e.locationName}${e.locationCity ? ` (${e.locationCity})` : ''}`
+                  : '—'
+              }
+            />
+            <Field label="Timezone" value={e.locationTimezone ?? '—'} mono />
+            <Field label="Date of joining" value={fmtDate(e.dateOfJoining)} />
+            <Field label="Probation ends" value={fmtDate(e.probationEndDate)} />
+            <Field label="Confirmed on" value={fmtDate(e.dateOfConfirmation)} />
+            <Field
+              label="Notice period"
+              value={e.noticePeriodDays ? `${e.noticePeriodDays} days` : '—'}
+            />
+            {e.dateOfExit && (
+              <Field label="Last working day" value={fmtDate(e.dateOfExit)} />
+            )}
+          </Grid>
+        </Card>
+
+        <Card title="Statutory & banking">
+          <Grid cols={2}>
+            <Field
+              label="PAN"
+              value={e.hasPan ? '•••• •••• ••••' : '—'}
+              mono
+              hint={e.hasPan ? 'Encrypted — view requires re-auth' : undefined}
+            />
+            <Field
+              label="Passport"
+              value={e.hasPassport ? '•••• •••• ••••' : 'Not on file'}
+              mono
+            />
+            <Field label="PF UAN" value={e.pfUan ?? '—'} mono />
+            <Field label="ESIC" value={e.esicNumber ?? (e.esiApplicable ? '—' : 'Not applicable')} mono />
+            <Field
+              label="Bank"
+              value={e.bankName ? `${e.bankName}${e.bankBranch ? ' · ' + e.bankBranch : ''}` : '—'}
+            />
+            <Field
+              label="Account"
+              value={e.hasBankAccount ? '•••• 0000' : '—'}
+              mono
+              hint={e.bankAccountType ? `${e.bankAccountType.replace('_', ' ')}` : undefined}
+            />
+            <Field label="IFSC" value={e.bankIfsc ?? '—'} mono />
+            <Field label="Account holder" value={e.bankAccountHolder ?? '—'} />
+          </Grid>
+        </Card>
+      </div>
+
+      {/* RIGHT column ───────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <Card title="This month">
+          <Grid cols={2}>
+            <Stat label="Days present" value={e.thisMonth.daysPresent.toString()} />
+            <Stat label="Late arrivals" value={e.thisMonth.lateArrivals.toString()} />
+            <Stat label="Hours logged" value={`${e.thisMonth.hoursWorked}h`} />
+            <Stat label="Leave taken" value={e.thisMonth.leaveTaken.toString()} />
+          </Grid>
+        </Card>
+
+        <Card title="Leave balance">
+          {e.leaveBalances.length === 0 ? (
+            <div className="t-mute" style={{ fontSize: 12 }}>No leave policies configured.</div>
+          ) : (
+            e.leaveBalances.slice(0, 4).map((b) => {
+              const total = b.opening + b.accrued
+              const usedRatio = total > 0 ? Math.min(1, b.used / total) : 0
+              const available = Math.max(0, total - b.used - b.pending)
+              return (
+                <div key={b.leaveTypeId} style={{ marginBottom: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: 6,
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>{b.leaveTypeName} ({b.code})</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      <strong>{available.toFixed(0)}</strong>
+                      <span style={{ color: 'var(--text-mute)' }}> / {total.toFixed(0)}</span>
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: '100%',
+                      height: 5,
+                      borderRadius: 99,
+                      background: 'var(--surf-2)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${usedRatio * 100}%`,
+                        height: '100%',
+                        background: b.color ?? '#3E7BFA',
+                        transition: 'width 200ms',
+                      }}
+                    />
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </Card>
+
+        <Card title="Emergency contacts">
+          {e.emergencyContacts.length === 0 ? (
+            <div className="t-mute" style={{ fontSize: 12 }}>None on file.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {e.emergencyContacts.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    padding: 10,
+                    background: 'var(--surf-1)',
+                    border: '1px solid var(--bord)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span style={{ fontSize: 12.5, fontWeight: 800 }}>{c.name}</span>
+                    {c.isPrimary && <Pill tone="green">Primary</Pill>}
+                  </div>
+                  <div className="t-mute" style={{ fontSize: 11.5 }}>
+                    {c.relationship} · {c.phone}
+                    {c.email && ` · ${c.email}`}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+// ─── Other tab views ─────────────────────────────────────────────────────────
+
+function TimelinePlaceholder({ e }: { e: EmployeeDetail }) {
+  // Lifecycle events derived from what we have today (joining +
+  // confirmation). A full timeline reads employment_history which we
+  // don't yet write to — that lands with the role-change / transfer flows.
+  const events: Array<{ date: string | null; title: string; what: string; color: string }> = [
+    {
+      date: e.dateOfJoining,
+      title: 'Joined',
+      what: `Started as ${e.designationTitle ?? 'team member'} · ${e.departmentName ?? '—'} · ${e.locationName ?? '—'}`,
+      color: 'var(--blue)',
+    },
+  ]
+  if (e.dateOfConfirmation) {
+    events.push({
+      date: e.dateOfConfirmation,
+      title: 'Probation cleared',
+      what: 'Confirmed in role',
+      color: 'var(--green)',
+    })
+  }
+  if (e.dateOfExit) {
+    events.push({
+      date: e.dateOfExit,
+      title: 'Last working day',
+      what: 'Separation in progress',
+      color: 'var(--coral)',
+    })
+  }
+
+  return (
+    <div className="card">
+      <div className="t-h3" style={{ marginBottom: 18 }}>Lifecycle timeline</div>
+      <div style={{ position: 'relative', paddingLeft: 22 }}>
+        <div
+          style={{
+            position: 'absolute',
+            left: 7,
+            top: 8,
+            bottom: 8,
+            width: 1.5,
+            background: 'var(--bord-2)',
+          }}
+        />
+        {events.map((ev, i) => (
+          <div key={i} style={{ position: 'relative', marginBottom: 18 }}>
+            <div
+              style={{
+                position: 'absolute',
+                left: -22,
+                top: 5,
+                width: 14,
+                height: 14,
+                borderRadius: 99,
+                background: ev.color,
+                boxShadow: `0 0 0 3px var(--surf-1)`,
+              }}
+            />
+            <div
+              className="t-caption"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}
+            >
+              {fmtDate(ev.date)}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 800, marginTop: 2 }}>{ev.title}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>{ev.what}</div>
+          </div>
+        ))}
+      </div>
+      <div
+        style={{
+          marginTop: 16,
+          padding: 12,
+          background: 'rgba(254, 216, 0, 0.07)',
+          border: '1px solid rgba(254, 216, 0, 0.18)',
+          borderRadius: 10,
+          fontSize: 11.5,
+          color: 'var(--text-mute)',
+        }}
+      >
+        Role changes, transfers, and pay revisions will appear here once those flows ship — they
+        write to the <code>employment_history</code> table which we read from today.
+      </div>
+    </div>
+  )
+}
+
+function ModuleLink({ href, label }: { href: string; label: string }) {
+  return (
+    <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+      <div className="t-h3" style={{ marginBottom: 8 }}>{label}</div>
+      <p className="t-mute" style={{ marginBottom: 16, fontSize: 13 }}>
+        Full {label.toLowerCase()} for this employee is available in the dedicated module.
+      </p>
+      <Link href={href}>
+        <Btn kind="secondary" iconRight={<Icon.arrow size={13} />}>
+          Open {label}
+        </Btn>
+      </Link>
+    </div>
+  )
+}
+
+function ComingSoon({ title, desc }: { title: string; desc: string }) {
+  return (
+    <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+      <div className="t-h3" style={{ marginBottom: 8 }}>{title}</div>
+      <p className="t-mute" style={{ fontSize: 13, maxWidth: 480, margin: '0 auto' }}>{desc}</p>
+    </div>
+  )
+}
+
+// ─── Re-usable bits ──────────────────────────────────────────────────────────
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="card">
+      <div className="t-h3" style={{ marginBottom: 14 }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function Grid({ cols, children }: { cols: 2 | 3; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: cols === 3 ? '1fr 1fr 1fr' : '1fr 1fr',
+        gap: 18,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function Field({
-  icon: Icon,
   label,
   value,
+  hint,
+  mono,
+  capitalize,
+  span,
 }: {
-  icon: React.ComponentType<{ className?: string }>
   label: string
   value: string
+  hint?: string
+  mono?: boolean
+  capitalize?: boolean
+  span?: 2
 }) {
   return (
-    <div className="flex items-start gap-3">
-      <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-        <Icon className="w-4 h-4 text-white/50" />
+    <div style={{ gridColumn: span === 2 ? 'span 2' : 'auto' }}>
+      <div
+        className="t-caption"
+        style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 4 }}
+      >
+        {label}
       </div>
-      <div className="min-w-0">
-        <div className="text-xs uppercase tracking-wider text-white/40 font-gilroy">
-          {label}
-        </div>
-        <div className="text-sm text-white font-gilroy mt-0.5 break-words">
-          {value}
-        </div>
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 700,
+          color: 'var(--text)',
+          fontFamily: mono ? 'var(--font-mono)' : undefined,
+          textTransform: capitalize ? 'capitalize' : undefined,
+          wordBreak: 'break-word',
+        }}
+      >
+        {value}
       </div>
+      {hint && (
+        <div className="t-mute" style={{ fontSize: 11, marginTop: 3 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: 12,
+        background: 'var(--surf-1)',
+        borderRadius: 10,
+        border: '1px solid var(--bord)',
+      }}
+    >
+      <div className="t-caption" style={{ marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>{value}</div>
     </div>
   )
 }

@@ -102,10 +102,105 @@ export function useEmployees(filters?: EmployeesFilters) {
   })
 }
 
+// ─── Rich employee detail (returned by GET /employees/:id) ──────────────────
+
+export interface EmergencyContact {
+  id: string
+  name: string
+  relationship: string
+  phone: string
+  email: string | null
+  isPrimary: boolean
+}
+
+export interface EmployeeLeaveBalance {
+  leaveTypeId: string
+  leaveTypeName: string
+  code: string
+  color: string | null
+  opening: number
+  accrued: number
+  used: number
+  pending: number
+  available: number
+}
+
+export interface EmployeeDetail {
+  // Identity
+  id: string
+  employeeCode: string
+  firstName: string
+  middleName: string | null
+  lastName: string
+  preferredName: string | null
+  // Email / phone
+  workEmail: string
+  personalEmail: string | null
+  workPhone: string | null
+  personalPhone: string | null
+  // FKs + joined names
+  userId: string | null
+  departmentId: string | null
+  departmentName: string | null
+  designationId: string | null
+  designationTitle: string | null
+  designationLevel: number | null
+  locationId: string | null
+  locationName: string | null
+  locationCity: string | null
+  locationTimezone: string | null
+  reportingManagerId: string | null
+  reportingManagerName: string | null
+  reportingManagerEmail: string | null
+  // Employment
+  employmentType: 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant' | 'probation'
+  dateOfJoining: string
+  dateOfConfirmation: string | null
+  probationEndDate: string | null
+  dateOfExit: string | null
+  noticePeriodDays: number | null
+  // Personal
+  dateOfBirth: string | null
+  gender: 'male' | 'female' | 'other' | 'prefer_not_to_say' | null
+  maritalStatus: string | null
+  nationality: string | null
+  bloodGroup: string | null
+  currentAddress: { line1?: string; line2?: string; city?: string; state?: string; postal_code?: string; country?: string } | null
+  permanentAddress: { line1?: string; line2?: string; city?: string; state?: string; postal_code?: string; country?: string } | null
+  // Statutory
+  hasPan: boolean
+  hasPassport: boolean
+  pfUan: string | null
+  esicNumber: string | null
+  pfApplicable: boolean
+  esiApplicable: boolean
+  // Banking
+  bankName: string | null
+  bankBranch: string | null
+  bankIfsc: string | null
+  bankAccountType: string | null
+  bankAccountHolder: string | null
+  hasBankAccount: boolean
+  // Status + identity
+  status: 'active' | 'inactive' | 'on_leave' | 'notice_period' | 'separated' | 'absconded'
+  avatarUrl: string | null
+  userFullName: string | null
+  userEmail: string | null
+  // Sibling collections
+  thisMonth: {
+    daysPresent: number
+    lateArrivals: number
+    hoursWorked: number
+    leaveTaken: number
+  }
+  emergencyContacts: EmergencyContact[]
+  leaveBalances: EmployeeLeaveBalance[]
+}
+
 export function useEmployee(id: string) {
   return useQuery({
     queryKey: ['employees', id],
-    queryFn: () => api.get<Employee>(`/api/v1/employees/${id}`),
+    queryFn: () => api.get<EmployeeDetail>(`/api/v1/employees/${id}`),
     enabled: !!id,
   })
 }

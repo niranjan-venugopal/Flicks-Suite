@@ -8,15 +8,22 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { eq, and, ilike, inArray, desc, asc, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
   employees,
   users,
   memberships,
   departments,
+  designations,
   employmentHistory,
   employeeDocuments,
+  emergencyContacts,
   locations,
+  attendanceRecords,
+  leaveBalances,
+  leaveTypes,
+  leaveRequests,
 } from '@flicks/db/schema';
 import { DB_TENANT } from '../../core/database/database.module';
 import type { Db } from '@flicks/db';
@@ -262,22 +269,200 @@ export class EmployeesService {
   }
 
   async getEmployee(employeeId: string, tenantId: string) {
-    const [employee] = await this.db
-      .select(SAFE_EMPLOYEE_FIELDS)
+    // Self-join alias for the reporting manager (manager is also an employee).
+    const manager = alias(employees, 'manager');
+    const managerUser = alias(users, 'manager_user');
+
+    // ─── Core profile with all joins ────────────────────────────────────────
+    const [row] = await this.db
+      .select({
+        // Identity
+        id: employees.id,
+        employeeCode: employees.employee_code,
+        firstName: employees.first_name,
+        middleName: employees.middle_name,
+        lastName: employees.last_name,
+        preferredName: employees.preferred_name,
+        // Email / phone
+        workEmail: employees.work_email,
+        personalEmail: employees.personal_email,
+        workPhone: employees.work_phone,
+        personalPhone: employees.personal_phone,
+        // FKs + joined names
+        userId: employees.user_id,
+        departmentId: employees.department_id,
+        departmentName: departments.name,
+        designationId: employees.designation_id,
+        designationTitle: designations.title,
+        designationLevel: designations.level,
+        locationId: employees.location_id,
+        locationName: locations.name,
+        locationCity: locations.city,
+        locationTimezone: locations.timezone,
+        reportingManagerId: employees.reporting_manager_id,
+        reportingManagerName: managerUser.full_name,
+        reportingManagerEmail: managerUser.email,
+        // Employment
+        employmentType: employees.employment_type,
+        dateOfJoining: employees.date_of_joining,
+        dateOfConfirmation: employees.date_of_confirmation,
+        probationEndDate: employees.probation_end_date,
+        dateOfExit: employees.date_of_exit,
+        noticePeriodDays: employees.notice_period_days,
+        // Personal
+        dateOfBirth: employees.date_of_birth,
+        gender: employees.gender,
+        maritalStatus: employees.marital_status,
+        nationality: employees.nationality,
+        bloodGroup: employees.blood_group,
+        currentAddress: employees.current_address,
+        permanentAddress: employees.permanent_address,
+        // Statutory (encrypted columns surfaced as flags only)
+        hasPan: sql<boolean>`${employees.pan_encrypted} IS NOT NULL`,
+        hasPassport: sql<boolean>`${employees.passport_number_encrypted} IS NOT NULL`,
+        pfUan: employees.pf_uan,
+        esicNumber: employees.esic_number,
+        pfApplicable: employees.pf_applicable,
+        esiApplicable: employees.esi_applicable,
+        // Banking (account number encrypted; show last-4 + bank name + ifsc)
+        bankName: employees.bank_name,
+        bankBranch: employees.bank_branch,
+        bankIfsc: employees.bank_ifsc,
+        bankAccountType: employees.bank_account_type,
+        bankAccountHolder: employees.bank_account_holder,
+        hasBankAccount: sql<boolean>`${employees.bank_account_number_encrypted} IS NOT NULL`,
+        // Status + avatar
+        status: employees.status,
+        avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+        customFields: employees.custom_fields,
+        createdAt: employees.created_at,
+        updatedAt: employees.updated_at,
+        // Linked user identity
+        userFullName: users.full_name,
+        userEmail: users.email,
+        // Keep snake_case mirrors of the columns that other service methods
+        // already reference, so this rewrite stays a non-breaking enrichment.
+        custom_fields: employees.custom_fields,
+        user_id: employees.user_id,
+      })
       .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
+      .leftJoin(designations, eq(employees.designation_id, designations.id))
+      .leftJoin(locations, eq(employees.location_id, locations.id))
+      .leftJoin(manager, eq(employees.reporting_manager_id, manager.id))
+      .leftJoin(managerUser, eq(manager.user_id, managerUser.id))
       .where(
-        and(
-          eq(employees.id, employeeId),
-          eq(employees.tenant_id, tenantId),
-        ),
+        and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
       )
       .limit(1);
 
-    if (!employee) {
+    if (!row) {
       throw new NotFoundException('Employee not found');
     }
 
-    return employee;
+    // ─── Sibling collections ────────────────────────────────────────────────
+    const [emergencyList, leaveBalanceRows, monthStats] = await Promise.all([
+      // Emergency contacts (primary first)
+      this.db
+        .select({
+          id: emergencyContacts.id,
+          name: emergencyContacts.name,
+          relationship: emergencyContacts.relationship,
+          phone: emergencyContacts.phone,
+          email: emergencyContacts.email,
+          isPrimary: emergencyContacts.is_primary,
+        })
+        .from(emergencyContacts)
+        .where(
+          and(
+            eq(emergencyContacts.tenant_id, tenantId),
+            eq(emergencyContacts.employee_id, employeeId),
+          ),
+        )
+        .orderBy(desc(emergencyContacts.is_primary)),
+
+      // Leave balances for the current year (with type metadata).
+      // Falls back to leave_types.default_quota_days when no balance row
+      // exists yet — matches the leave service's own getMyBalances shape.
+      this.db
+        .select({
+          leaveTypeId: leaveTypes.id,
+          leaveTypeName: leaveTypes.name,
+          code: leaveTypes.code,
+          color: leaveTypes.color,
+          defaultQuotaDays: leaveTypes.default_quota_days,
+          opening: leaveBalances.opening_balance,
+          accrued: leaveBalances.accrued,
+          used: leaveBalances.used,
+          pending: leaveBalances.pending,
+          available: leaveBalances.available,
+        })
+        .from(leaveTypes)
+        .leftJoin(
+          leaveBalances,
+          and(
+            eq(leaveBalances.leave_type_id, leaveTypes.id),
+            eq(leaveBalances.employee_id, employeeId),
+            eq(leaveBalances.leave_year, new Date().getFullYear()),
+          ),
+        )
+        .where(
+          and(
+            eq(leaveTypes.tenant_id, tenantId),
+            eq(leaveTypes.is_active, true),
+          ),
+        )
+        .orderBy(asc(leaveTypes.display_order)),
+
+      // 'This month' attendance summary — single row aggregate
+      this.db
+        .select({
+          daysPresent: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} IN ('present','late','work_from_home','on_duty'))::int`,
+          lateArrivals: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.is_late} = true)::int`,
+          minutesWorked: sql<number>`COALESCE(SUM(${attendanceRecords.total_worked_minutes}),0)::int`,
+          onLeave: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} = 'on_leave')::int`,
+        })
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.tenant_id, tenantId),
+            eq(attendanceRecords.employee_id, employeeId),
+            sql`${attendanceRecords.attendance_date} >= date_trunc('month', current_date)::date`,
+            sql`${attendanceRecords.attendance_date} <= current_date`,
+          ),
+        ),
+    ]);
+
+    const month = monthStats[0] ?? {
+      daysPresent: 0,
+      lateArrivals: 0,
+      minutesWorked: 0,
+      onLeave: 0,
+    };
+
+    return {
+      ...row,
+      // Synthesise the "this month" card from the aggregate.
+      thisMonth: {
+        daysPresent: Number(month.daysPresent ?? 0),
+        lateArrivals: Number(month.lateArrivals ?? 0),
+        hoursWorked: Math.round(Number(month.minutesWorked ?? 0) / 60),
+        leaveTaken: Number(month.onLeave ?? 0),
+      },
+      emergencyContacts: emergencyList,
+      leaveBalances: leaveBalanceRows.map((b) => ({
+        leaveTypeId: b.leaveTypeId,
+        leaveTypeName: b.leaveTypeName,
+        code: b.code,
+        color: b.color,
+        opening: Number(b.opening ?? b.defaultQuotaDays ?? 0),
+        accrued: Number(b.accrued ?? 0),
+        used: Number(b.used ?? 0),
+        pending: Number(b.pending ?? 0),
+        available: Number(b.available ?? b.defaultQuotaDays ?? 0),
+      })),
+    };
   }
 
   async getMyRecord(userId: string, tenantId: string) {
@@ -321,7 +506,7 @@ export class EmployeesService {
       action: 'employee.updated',
       resourceType: 'employee',
       resourceId: employeeId,
-      beforeState: { designationId: employee.designation_id },
+      beforeState: { designationId: employee.designationId },
       afterState: { fullName: dto.fullName, phone: dto.phone },
     });
 
@@ -471,16 +656,16 @@ export class EmployeesService {
     const employee = await this.getEmployee(employeeId, tenantId);
 
     const previousValue = {
-      departmentId: employee.department_id,
-      reportingManagerId: employee.reporting_manager_id,
-      locationId: employee.location_id,
-      designationId: employee.designation_id,
+      departmentId: employee.departmentId,
+      reportingManagerId: employee.reportingManagerId,
+      locationId: employee.locationId,
+      designationId: employee.designationId,
     };
     const newValue = {
-      departmentId: dto.departmentId ?? employee.department_id,
-      reportingManagerId: dto.managerId ?? employee.reporting_manager_id,
-      locationId: dto.locationId ?? employee.location_id,
-      designationId: dto.designationId ?? employee.designation_id,
+      departmentId: dto.departmentId ?? employee.departmentId,
+      reportingManagerId: dto.managerId ?? employee.reportingManagerId,
+      locationId: dto.locationId ?? employee.locationId,
+      designationId: dto.designationId ?? employee.designationId,
     };
 
     // Record history
@@ -500,10 +685,10 @@ export class EmployeesService {
     const [updated] = await this.db
       .update(employees)
       .set({
-        department_id: dto.departmentId ?? employee.department_id,
-        reporting_manager_id: dto.managerId ?? employee.reporting_manager_id,
-        location_id: dto.locationId ?? employee.location_id,
-        designation_id: dto.designationId ?? employee.designation_id,
+        department_id: dto.departmentId ?? employee.departmentId,
+        reporting_manager_id: dto.managerId ?? employee.reportingManagerId,
+        location_id: dto.locationId ?? employee.locationId,
+        designation_id: dto.designationId ?? employee.designationId,
         updated_at: new Date(),
       })
       .where(eq(employees.id, employeeId))
@@ -548,7 +733,7 @@ export class EmployeesService {
       change_type: 'separation',
       effective_from: lastWorkingDate,
       previous_value: {
-        designationId: employee.designation_id,
+        designationId: employee.designationId,
         status: employee.status,
       },
       new_value: { status: 'notice_period', separationType: dto.separationType },
