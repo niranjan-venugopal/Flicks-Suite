@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { LogoMark } from '@/components/proto'
+import { Btn, Icon } from '@/components/proto'
+import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { useToast } from '@/components/ui/use-toast'
-import { PageGlows } from '@/components/layout/PageGlows'
 import { useDebounce } from '@/lib/hooks/use-debounce'
 import { useRequestOtp, useVerifyOtp } from '@/lib/api/queries/use-auth'
 import { useCheckSlug, useCreateTenant } from '@/lib/api/queries/use-onboarding'
@@ -15,8 +15,8 @@ import { useCheckSlug, useCreateTenant } from '@/lib/api/queries/use-onboarding'
 const SIZE_BANDS = ['1–10', '11–50', '51–200', '201–500', '500+'] as const
 
 const INDUSTRIES = [
-  'Technology',
   'SaaS / Software',
+  'Technology',
   'Manufacturing',
   'Retail',
   'Financial Services',
@@ -26,13 +26,6 @@ const INDUSTRIES = [
   'Consulting',
   'Logistics',
   'Other',
-] as const
-
-const STATE_CODES = [
-  'AN', 'AP', 'AR', 'AS', 'BR', 'CG', 'CH', 'DD', 'DL', 'DN',
-  'GA', 'GJ', 'HP', 'HR', 'JH', 'JK', 'KA', 'KL', 'LA', 'LD',
-  'MH', 'ML', 'MN', 'MP', 'MZ', 'NL', 'OR', 'PB', 'PY', 'RJ',
-  'SK', 'TN', 'TR', 'TS', 'UK', 'UP', 'WB',
 ] as const
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -56,26 +49,31 @@ export default function OnboardingWizardPage() {
   const { toast } = useToast()
   const [step, setStep] = useState<Step>(1)
 
-  // Form state across all steps
+  // Step 1 state
   const [email, setEmail] = useState('')
-  const [fullName, setFullName] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [acceptedTerms, setAcceptedTerms] = useState(true)
+
+  // Step 2 state
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
+
+  // Step 3 state
   const [workspaceName, setWorkspaceName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugEdited, setSlugEdited] = useState(false)
   const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null)
   const [sizeBand, setSizeBand] = useState<string>('11–50')
-  const [industry, setIndustry] = useState<string>('Technology')
-  const [locationName, setLocationName] = useState('')
-  const [locationCity, setLocationCity] = useState('')
-  const [locationState, setLocationState] = useState<string>('')
-  const [acceptedTerms, setAcceptedTerms] = useState(true)
+  const [industry, setIndustry] = useState<string>('SaaS / Software')
+  const [primaryLocation, setPrimaryLocation] = useState('')
 
   // Mutations
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
   const checkSlug = useCheckSlug()
   const createTenant = useCreateTenant()
+
+  const fullName = `${firstName} ${lastName}`.trim()
 
   // Live slug check
   const debouncedSlug = useDebounce(slug, 300)
@@ -99,11 +97,14 @@ export default function OnboardingWizardPage() {
     if (!slugEdited) setSlug(toSlug(workspaceName))
   }, [workspaceName, slugEdited])
 
-  // ─── Step 1: send OTP ─────────────────────────────────────────────────
+  // ─── Step 1: Send OTP ─────────────────────────────────────────────────
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email.trim() || !fullName.trim()) {
-      toast({ title: 'Enter your email and name', variant: 'destructive' })
+    if (!email.trim() || !firstName.trim()) {
+      toast({
+        title: 'Email and first name are required',
+        variant: 'destructive',
+      })
       return
     }
     if (!acceptedTerms) {
@@ -126,7 +127,7 @@ export default function OnboardingWizardPage() {
     }
   }
 
-  // ─── Step 2: verify OTP ───────────────────────────────────────────────
+  // ─── Step 2: Verify OTP ───────────────────────────────────────────────
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault()
     const code = otp.join('')
@@ -139,9 +140,6 @@ export default function OnboardingWizardPage() {
         email: email.trim().toLowerCase(),
         code,
       })
-      // verify-otp returns the JWT cookie + user. If the user already has a
-      // tenant, the response includes membership info and we should bounce
-      // to /dashboard. Otherwise advance to step 3.
       setStep(3)
     } catch (e: any) {
       toast({
@@ -152,7 +150,7 @@ export default function OnboardingWizardPage() {
     }
   }
 
-  // ─── Step 3: create workspace ─────────────────────────────────────────
+  // ─── Step 3: Create workspace ─────────────────────────────────────────
   const handleCreateWorkspace = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!workspaceName.trim()) {
@@ -164,10 +162,14 @@ export default function OnboardingWizardPage() {
       return
     }
     if (slugAvailable === false) {
-      toast({ title: 'That URL is taken', description: 'Choose a different slug.', variant: 'destructive' })
+      toast({
+        title: 'That URL is taken',
+        description: 'Choose a different slug.',
+        variant: 'destructive',
+      })
       return
     }
-    if (!locationName.trim()) {
+    if (!primaryLocation.trim()) {
       toast({ title: 'Add a primary location', variant: 'destructive' })
       return
     }
@@ -175,13 +177,11 @@ export default function OnboardingWizardPage() {
       await createTenant.mutateAsync({
         name: workspaceName.trim(),
         slug,
-        fullName: fullName.trim(),
+        fullName,
         industry,
         sizeBand,
         primaryLocation: {
-          name: locationName.trim(),
-          city: locationCity.trim() || undefined,
-          stateCode: locationState || undefined,
+          name: primaryLocation.trim(),
           timezone: 'Asia/Kolkata',
         },
       })
@@ -189,7 +189,6 @@ export default function OnboardingWizardPage() {
         title: 'Workspace ready',
         description: `Welcome to ${workspaceName.trim()}!`,
       })
-      // Small delay so the toast renders before the route change tears it down.
       router.replace('/dashboard')
     } catch (e: any) {
       toast({
@@ -203,178 +202,251 @@ export default function OnboardingWizardPage() {
   // ─── Render ───────────────────────────────────────────────────────────
 
   return (
-    <div className="relative min-h-screen bg-brand-bg flex items-center justify-center overflow-hidden">
-      <PageGlows />
+    <AuthLayout
+      step={step >= 2 ? step + 1 : undefined}
+      total={4}
+      label={step === 2 ? 'OTP' : step === 3 ? 'Workspace' : undefined}
+    >
+      {step === 1 && (
+        <SignupStep
+          email={email}
+          setEmail={setEmail}
+          firstName={firstName}
+          setFirstName={setFirstName}
+          lastName={lastName}
+          setLastName={setLastName}
+          acceptedTerms={acceptedTerms}
+          setAcceptedTerms={setAcceptedTerms}
+          onSubmit={handleSendOtp}
+          submitting={requestOtp.isPending}
+        />
+      )}
 
-      <div className="relative z-10 w-full max-w-xl px-4 py-12">
-        {/* Logo + step counter */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="inline-flex items-center gap-2">
-            <LogoMark size={36} />
-            <span className="text-xl font-bold text-white">flicks<span className="text-brand-blue">.</span></span>
-          </div>
-          <div className="t-caption" style={{ fontSize: 11 }}>
-            Step {step} of 3 · Sign up
-          </div>
-        </div>
+      {step === 2 && (
+        <OtpStep
+          email={email}
+          otp={otp}
+          setOtp={setOtp}
+          onSubmit={handleVerifyOtp}
+          onBack={() => setStep(1)}
+          onResend={() => {
+            requestOtp.mutate({ email: email.trim().toLowerCase() })
+            toast({ title: 'New code sent', description: 'Check your inbox.' })
+          }}
+          submitting={verifyOtp.isPending}
+        />
+      )}
 
-        {/* Progress bar */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 32 }}>
-          {[1, 2, 3].map((s) => (
-            <div
-              key={s}
-              style={{
-                flex: 1,
-                height: 3,
-                borderRadius: 99,
-                background: s <= step ? 'var(--blue)' : 'var(--surf-2)',
-                transition: 'background 200ms',
-              }}
-            />
-          ))}
-        </div>
-
-        {step === 1 && (
-          <SignupStep
-            email={email}
-            setEmail={setEmail}
-            fullName={fullName}
-            setFullName={setFullName}
-            acceptedTerms={acceptedTerms}
-            setAcceptedTerms={setAcceptedTerms}
-            onSubmit={handleSendOtp}
-            submitting={requestOtp.isPending}
-          />
-        )}
-
-        {step === 2 && (
-          <OtpStep
-            email={email}
-            otp={otp}
-            setOtp={setOtp}
-            onSubmit={handleVerifyOtp}
-            onBack={() => setStep(1)}
-            onResend={() => {
-              requestOtp.mutate({ email: email.trim().toLowerCase() })
-              toast({ title: 'New code sent', description: 'Check your inbox.' })
-            }}
-            submitting={verifyOtp.isPending}
-          />
-        )}
-
-        {step === 3 && (
-          <WorkspaceStep
-            workspaceName={workspaceName}
-            setWorkspaceName={setWorkspaceName}
-            slug={slug}
-            setSlug={(v) => {
-              setSlugEdited(true)
-              setSlug(toSlug(v))
-            }}
-            slugAvailable={slugAvailable}
-            slugChecking={checkSlug.isPending}
-            sizeBand={sizeBand}
-            setSizeBand={setSizeBand}
-            industry={industry}
-            setIndustry={setIndustry}
-            locationName={locationName}
-            setLocationName={setLocationName}
-            locationCity={locationCity}
-            setLocationCity={setLocationCity}
-            locationState={locationState}
-            setLocationState={setLocationState}
-            onSubmit={handleCreateWorkspace}
-            onBack={() => setStep(2)}
-            submitting={createTenant.isPending}
-          />
-        )}
-
-        <div className="text-center mt-6">
-          <Link href="/login" className="text-xs text-brand-muted hover:text-white">
-            Already have a workspace? <span className="text-brand-blue font-semibold">Sign in</span>
-          </Link>
-        </div>
-      </div>
-    </div>
+      {step === 3 && (
+        <WorkspaceStep
+          workspaceName={workspaceName}
+          setWorkspaceName={setWorkspaceName}
+          slug={slug}
+          setSlug={(v) => {
+            setSlugEdited(true)
+            setSlug(toSlug(v))
+          }}
+          slugAvailable={slugAvailable}
+          slugChecking={checkSlug.isPending}
+          sizeBand={sizeBand}
+          setSizeBand={setSizeBand}
+          industry={industry}
+          setIndustry={setIndustry}
+          primaryLocation={primaryLocation}
+          setPrimaryLocation={setPrimaryLocation}
+          onSubmit={handleCreateWorkspace}
+          onBack={() => setStep(2)}
+          submitting={createTenant.isPending}
+        />
+      )}
+    </AuthLayout>
   )
 }
 
-// ─── Step 1: Signup ─────────────────────────────────────────────────────────
+// ─── Step 1: Sign-up (build your workspace) ─────────────────────────────────
 
 function SignupStep(props: {
   email: string
   setEmail: (v: string) => void
-  fullName: string
-  setFullName: (v: string) => void
+  firstName: string
+  setFirstName: (v: string) => void
+  lastName: string
+  setLastName: (v: string) => void
   acceptedTerms: boolean
   setAcceptedTerms: (v: boolean) => void
   onSubmit: (e: React.FormEvent) => void
   submitting: boolean
 }) {
   return (
-    <form onSubmit={props.onSubmit} className="card p-8 space-y-5">
-      <div className="text-center mb-2">
-        <div className="t-h1" style={{ fontSize: 28, marginBottom: 8 }}>
+    <AuthCard>
+      <div style={{ textAlign: 'center', marginBottom: 28 }}>
+        <div className="t-display" style={{ fontSize: 32, marginBottom: 10 }}>
           Build your workspace
         </div>
-        <p className="t-mute" style={{ fontSize: 13 }}>
-          HR for India&apos;s modern startups. Free for 14 days · no card required.
-        </p>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: 'var(--text-2)',
+            lineHeight: 1.5,
+          }}
+        >
+          HR for India&apos;s modern startups. Free for 14 days, no card needed.
+        </div>
       </div>
 
-      <div>
-        <label className="label">Work email</label>
-        <input
-          className="input"
-          type="email"
-          placeholder="you@company.com"
-          value={props.email}
-          onChange={(e) => props.setEmail(e.target.value)}
-          autoFocus
-          required
-        />
-      </div>
+      <form onSubmit={props.onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <label className="label">Work email</label>
+          <input
+            className="input"
+            type="email"
+            placeholder="you@company.com"
+            value={props.email}
+            onChange={(e) => props.setEmail(e.target.value)}
+            autoFocus
+            required
+          />
+        </div>
 
-      <div>
-        <label className="label">Your full name</label>
-        <input
-          className="input"
-          placeholder="Asha Patel"
-          value={props.fullName}
-          onChange={(e) => props.setFullName(e.target.value)}
-          required
-        />
-      </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">First name</label>
+            <input
+              className="input"
+              placeholder="Asha"
+              value={props.firstName}
+              onChange={(e) => props.setFirstName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">Last name</label>
+            <input
+              className="input"
+              placeholder="Patel"
+              value={props.lastName}
+              onChange={(e) => props.setLastName(e.target.value)}
+            />
+          </div>
+        </div>
 
-      <label className="flex items-start gap-2 text-xs text-brand-muted leading-relaxed cursor-pointer">
-        <input
-          type="checkbox"
-          checked={props.acceptedTerms}
-          onChange={(e) => props.setAcceptedTerms(e.target.checked)}
-          className="mt-0.5"
-          style={{ accentColor: 'var(--blue)' }}
-        />
-        <span>
-          I agree to the{' '}
-          <a href="#" className="text-brand-blue font-semibold">Terms of Service</a>{' '}
-          and{' '}
-          <a href="#" className="text-brand-blue font-semibold">DPDP-aligned Privacy Policy</a>.
-        </span>
-      </label>
+        <label
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            marginTop: 4,
+            fontSize: 12,
+            color: 'var(--text-2)',
+            lineHeight: 1.5,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={props.acceptedTerms}
+            onChange={(e) => props.setAcceptedTerms(e.target.checked)}
+            style={{ marginTop: 2, accentColor: 'var(--blue)' }}
+          />
+          <span>
+            I agree to the{' '}
+            <a href="#" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+              Terms of Service
+            </a>{' '}
+            and{' '}
+            <a href="#" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+              DPDP-aligned Privacy Policy
+            </a>
+            .
+          </span>
+        </label>
 
-      <button
-        type="submit"
-        disabled={props.submitting}
-        className="btn btn-primary w-full"
-        style={{ height: 48, fontSize: 14 }}
+        <Btn
+          kind="primary"
+          type="submit"
+          disabled={props.submitting}
+          style={{ height: 48, fontSize: 14, marginTop: 6, width: '100%', justifyContent: 'center' }}
+          iconRight={<Icon.arrow size={16} />}
+        >
+          {props.submitting ? 'Sending OTP…' : 'Send OTP & continue'}
+        </Btn>
+      </form>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          margin: '22px 0 16px',
+        }}
       >
-        {props.submitting ? 'Sending OTP…' : 'Send OTP & continue →'}
-      </button>
-    </form>
+        <div style={{ flex: 1, height: 1, background: 'var(--bord)' }} />
+        <span
+          style={{
+            fontSize: 11,
+            color: 'var(--text-faint)',
+            fontWeight: 700,
+            letterSpacing: '.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          or
+        </span>
+        <div style={{ flex: 1, height: 1, background: 'var(--bord)' }} />
+      </div>
+
+      <Btn
+        kind="secondary"
+        type="button"
+        disabled
+        style={{ width: '100%', height: 44, justifyContent: 'center' }}
+        icon={
+          <svg width="16" height="16" viewBox="0 0 48 48">
+            <path
+              fill="#FFC107"
+              d="M43.6 20.1H42V20H24v8h11.3a12 12 0 11-3.4-13l5.7-5.7A20 20 0 1044 24a20 20 0 00-.4-3.9z"
+            />
+            <path
+              fill="#FF3D00"
+              d="M6.3 14.7l6.6 4.8A12 12 0 0124 16c3 0 5.8 1.2 7.9 3l5.7-5.7A20 20 0 006.3 14.7z"
+            />
+            <path
+              fill="#4CAF50"
+              d="M24 44a20 20 0 0013.5-5.2l-6.2-5.3A12 12 0 0112.7 28l-6.5 5A20 20 0 0024 44z"
+            />
+            <path
+              fill="#1976D2"
+              d="M43.6 20.1H42V20H24v8h11.3a12 12 0 01-4.1 5.5l6.2 5.3a20 20 0 006.6-15a20 20 0 00-.4-3.7z"
+            />
+          </svg>
+        }
+      >
+        Continue with Google (soon)
+      </Btn>
+
+      <div
+        style={{
+          textAlign: 'center',
+          marginTop: 22,
+          fontSize: 13,
+          fontWeight: 600,
+          color: 'var(--text-2)',
+        }}
+      >
+        Already have an account?{' '}
+        <Link
+          href="/login"
+          style={{ color: 'var(--blue)', fontWeight: 800, textDecoration: 'none' }}
+        >
+          Sign in
+        </Link>
+      </div>
+    </AuthCard>
   )
 }
 
-// ─── Step 2: OTP ─────────────────────────────────────────────────────────────
+// ─── Step 2: OTP verification ───────────────────────────────────────────────
 
 function OtpStep(props: {
   email: string
@@ -415,16 +487,28 @@ function OtpStep(props: {
   }
 
   return (
-    <form onSubmit={props.onSubmit} className="card p-8 space-y-6">
+    <AuthCard>
       <button
         type="button"
         onClick={props.onBack}
-        className="flex items-center gap-1.5 text-xs text-brand-muted hover:text-white font-semibold"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          fontWeight: 700,
+          color: 'var(--text-mute)',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          marginBottom: 16,
+          padding: 0,
+        }}
       >
-        ← Back
+        <Icon.arrowL size={14} /> Back
       </button>
 
-      <div className="text-center">
+      <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <div
           style={{
             width: 60,
@@ -437,96 +521,137 @@ function OtpStep(props: {
             alignItems: 'center',
             justifyContent: 'center',
             color: 'var(--blue)',
-            fontSize: 24,
           }}
         >
-          ✉
+          <Icon.mail size={26} />
         </div>
-        <div className="t-h1" style={{ fontSize: 24, marginBottom: 6 }}>
-          Check your inbox
+        <div className="t-h2" style={{ marginBottom: 8 }}>
+          Check your email
         </div>
-        <p className="t-mute" style={{ fontSize: 13 }}>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: 'var(--text-2)',
+            lineHeight: 1.5,
+          }}
+        >
           We sent a 6-digit code to{' '}
-          <span className="text-white font-semibold">{props.email}</span>.
-          The code expires in 10 minutes.
-        </p>
+          <strong style={{ color: '#fff' }}>{props.email}</strong>. The code
+          expires in 10 minutes.
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-        {props.otp.map((v, i) => (
-          <input
-            key={i}
-            ref={(el) => {
-              refs.current[i] = el
-            }}
-            value={v}
-            onChange={(e) => handleChange(i, e.target.value)}
-            onKeyDown={(e) => handleKeyDown(i, e)}
-            onPaste={handlePaste}
-            inputMode="numeric"
-            maxLength={1}
-            autoFocus={i === 0}
-            style={{
-              width: 48,
-              height: 60,
-              textAlign: 'center',
-              fontSize: 24,
-              fontWeight: 800,
-              letterSpacing: '-0.02em',
-              background: 'var(--surf-2)',
-              border: `1.5px solid ${v ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
-              borderRadius: 12,
-              outline: 'none',
-              color: 'white',
-            }}
-          />
-        ))}
-      </div>
+      <form onSubmit={props.onSubmit}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            justifyContent: 'center',
+            marginBottom: 20,
+          }}
+        >
+          {props.otp.map((v, i) => (
+            <input
+              key={i}
+              ref={(el) => {
+                refs.current[i] = el
+              }}
+              value={v}
+              onChange={(e) => handleChange(i, e.target.value)}
+              onKeyDown={(e) => handleKeyDown(i, e)}
+              onPaste={handlePaste}
+              inputMode="numeric"
+              maxLength={1}
+              autoFocus={i === 0}
+              style={{
+                width: 48,
+                height: 60,
+                textAlign: 'center',
+                fontSize: 24,
+                fontWeight: 800,
+                letterSpacing: '-0.02em',
+                background: 'var(--surf-2)',
+                border: `1.5px solid ${v ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
+                borderRadius: 12,
+                outline: 'none',
+                color: 'white',
+                fontFamily: 'var(--font-mono)',
+              }}
+            />
+          ))}
+        </div>
 
-      <button
-        type="submit"
-        disabled={props.submitting}
-        className="btn btn-primary w-full"
-        style={{ height: 48, fontSize: 14 }}
+        <Btn
+          kind="primary"
+          type="submit"
+          disabled={props.submitting}
+          style={{ width: '100%', height: 48, fontSize: 14, justifyContent: 'center' }}
+          iconRight={<Icon.arrow size={16} />}
+        >
+          {props.submitting ? 'Verifying…' : 'Verify & continue'}
+        </Btn>
+      </form>
+
+      <div
+        style={{
+          textAlign: 'center',
+          marginTop: 18,
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: 'var(--text-mute)',
+        }}
       >
-        {props.submitting ? 'Verifying…' : 'Verify & continue →'}
-      </button>
-
-      <div className="text-center text-xs text-brand-muted">
         Didn&apos;t get it?{' '}
         <button
           type="button"
           onClick={props.onResend}
-          className="text-brand-blue font-semibold hover:underline"
+          style={{
+            color: 'var(--blue)',
+            fontWeight: 800,
+            cursor: 'pointer',
+            background: 'none',
+            border: 'none',
+            padding: 0,
+          }}
         >
-          Send another code
+          Resend code
         </button>
       </div>
 
       <div
         style={{
+          marginTop: 22,
           padding: 14,
           background: 'rgba(62, 123, 250, 0.06)',
           border: '1px solid rgba(62, 123, 250, 0.2)',
           borderRadius: 10,
           display: 'flex',
           gap: 10,
-          fontSize: 11.5,
-          color: 'var(--text-2)',
-          lineHeight: 1.5,
         }}
       >
-        <span style={{ color: 'var(--blue)', flexShrink: 0 }}>ℹ</span>
-        <span>
-          You can also tap the <strong className="text-white">magic link</strong> in the email
-          to sign in without entering the code.
-        </span>
+        <Icon.info
+          size={16}
+          style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }}
+        />
+        <div
+          style={{
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: 'var(--text-2)',
+            lineHeight: 1.5,
+          }}
+        >
+          You can also{' '}
+          <strong style={{ color: '#fff' }}>tap the magic link</strong> in the
+          email to sign in instantly.
+        </div>
       </div>
-    </form>
+    </AuthCard>
   )
 }
 
-// ─── Step 3: Workspace ───────────────────────────────────────────────────────
+// ─── Step 3: Workspace setup ────────────────────────────────────────────────
 
 function WorkspaceStep(props: {
   workspaceName: string
@@ -539,12 +664,8 @@ function WorkspaceStep(props: {
   setSizeBand: (v: string) => void
   industry: string
   setIndustry: (v: string) => void
-  locationName: string
-  setLocationName: (v: string) => void
-  locationCity: string
-  setLocationCity: (v: string) => void
-  locationState: string
-  setLocationState: (v: string) => void
+  primaryLocation: string
+  setPrimaryLocation: (v: string) => void
   onSubmit: (e: React.FormEvent) => void
   onBack: () => void
   submitting: boolean
@@ -552,181 +673,170 @@ function WorkspaceStep(props: {
   const slugStatus = useMemo(() => {
     if (!props.slug || props.slug.length < 3) return null
     if (props.slugChecking)
-      return <span className="text-brand-muted text-xs">Checking…</span>
+      return <span style={{ color: 'var(--text-mute)' }}>Checking…</span>
     if (props.slugAvailable === true)
-      return <span className="text-brand-green text-xs font-semibold">✓ Available</span>
+      return <span style={{ color: 'var(--green)', fontWeight: 700 }}>✓ Available</span>
     if (props.slugAvailable === false)
-      return <span className="text-brand-coral text-xs font-semibold">Already taken</span>
+      return <span style={{ color: 'var(--coral)', fontWeight: 700 }}>Already taken</span>
     return null
   }, [props.slug, props.slugAvailable, props.slugChecking])
 
   return (
-    <form onSubmit={props.onSubmit} className="card p-8 space-y-5">
-      <div>
-        <div className="t-h1" style={{ fontSize: 24, marginBottom: 6 }}>
+    <AuthCard width={560}>
+      <div style={{ marginBottom: 28 }}>
+        <div className="t-h1" style={{ marginBottom: 8 }}>
           Set up your company
         </div>
-        <p className="t-mute" style={{ fontSize: 13 }}>
-          This becomes your tenant. You can invite teammates and configure
-          everything else from settings later.
-        </p>
-      </div>
-
-      <div>
-        <label className="label">Company name</label>
-        <input
-          className="input"
-          placeholder="Acme Pvt Ltd"
-          value={props.workspaceName}
-          onChange={(e) => props.setWorkspaceName(e.target.value)}
-          autoFocus
-          required
-          maxLength={100}
-        />
-        <p className="text-xs text-brand-muted mt-2">
-          Workspace URL:{' '}
-          <span className="text-white font-mono">
-            {props.slug || 'your-workspace'}.flickssuite.com
-          </span>
-        </p>
-      </div>
-
-      <div>
-        <div className="flex justify-between items-center mb-1">
-          <label className="label">Workspace URL</label>
-          {slugStatus}
-        </div>
-        <input
-          className="input font-mono"
-          placeholder="acme-corp"
-          value={props.slug}
-          onChange={(e) => props.setSlug(e.target.value)}
-          required
-          minLength={3}
-          maxLength={50}
-          pattern="[a-z0-9-]+"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Team size</label>
-          <select
-            className="input"
-            value={props.sizeBand}
-            onChange={(e) => props.setSizeBand(e.target.value)}
-          >
-            {SIZE_BANDS.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label">Industry</label>
-          <select
-            className="input"
-            value={props.industry}
-            onChange={(e) => props.setIndustry(e.target.value)}
-          >
-            {INDUSTRIES.map((i) => (
-              <option key={i} value={i}>{i}</option>
-            ))}
-          </select>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+          This becomes your tenant. You can invite teammates after.
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: 6,
-          paddingTop: 14,
-          borderTop: '1px solid var(--bord)',
-        }}
+      <form
+        onSubmit={props.onSubmit}
+        style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
       >
-        <div className="t-caption" style={{ fontSize: 11, marginBottom: 12 }}>
-          Primary location
-        </div>
         <div>
-          <label className="label">Office name</label>
+          <label className="label">Company name</label>
           <input
             className="input"
-            placeholder="Bengaluru HQ"
-            value={props.locationName}
-            onChange={(e) => props.setLocationName(e.target.value)}
+            placeholder="Acme Pvt Ltd"
+            value={props.workspaceName}
+            onChange={(e) => props.setWorkspaceName(e.target.value)}
+            autoFocus
             required
-            maxLength={160}
+            maxLength={100}
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-mute)',
+              marginTop: 6,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <span>
+              Workspace URL:{' '}
+              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>
+                {props.slug || 'your-workspace'}.flickssuite.com
+              </span>
+            </span>
+            {slugStatus && <span style={{ fontSize: 11 }}>{slugStatus}</span>}
+          </div>
+        </div>
+
+        <div>
+          <label className="label">
+            Workspace slug{' '}
+            <span style={{ color: 'var(--text-faint)', fontWeight: 600, textTransform: 'none' }}>
+              (lowercase, hyphens)
+            </span>
+          </label>
+          <input
+            className="input"
+            placeholder="acme-corp"
+            value={props.slug}
+            onChange={(e) => props.setSlug(e.target.value)}
+            required
+            minLength={3}
+            maxLength={50}
+            pattern="[a-z0-9-]+"
+            style={{ fontFamily: 'var(--font-mono)' }}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3 mt-3">
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
-            <label className="label">City</label>
-            <input
-              className="input"
-              placeholder="Bengaluru"
-              value={props.locationCity}
-              onChange={(e) => props.setLocationCity(e.target.value)}
-              maxLength={80}
-            />
-          </div>
-          <div>
-            <label className="label">State</label>
+            <label className="label">Team size</label>
             <select
               className="input"
-              value={props.locationState}
-              onChange={(e) => props.setLocationState(e.target.value)}
+              value={props.sizeBand}
+              onChange={(e) => props.setSizeBand(e.target.value)}
             >
-              <option value="">Select…</option>
-              {STATE_CODES.map((s) => (
+              {SIZE_BANDS.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </div>
+          <div>
+            <label className="label">Industry</label>
+            <select
+              className="input"
+              value={props.industry}
+              onChange={(e) => props.setIndustry(e.target.value)}
+            >
+              {INDUSTRIES.map((i) => (
+                <option key={i} value={i}>{i}</option>
+              ))}
+            </select>
+          </div>
         </div>
-      </div>
 
-      <div
-        style={{
-          padding: 12,
-          background: 'rgba(39, 210, 128, 0.06)',
-          border: '1px solid rgba(39, 210, 128, 0.2)',
-          borderRadius: 10,
-          display: 'flex',
-          gap: 10,
-          fontSize: 11.5,
-          color: 'var(--text-2)',
-          lineHeight: 1.5,
-        }}
-      >
-        <span style={{ color: 'var(--green)', flexShrink: 0 }}>✓</span>
-        <span>
-          Your data lives in <strong className="text-white">Mumbai (ap-south-1)</strong>{' '}
-          and is DPDP 2023 compliant by default.
-        </span>
-      </div>
+        <div>
+          <label className="label">Primary location</label>
+          <input
+            className="input"
+            placeholder="Bengaluru, Karnataka"
+            value={props.primaryLocation}
+            onChange={(e) => props.setPrimaryLocation(e.target.value)}
+            required
+            maxLength={160}
+          />
+        </div>
 
-      <div className="flex gap-3 pt-2">
-        <button
-          type="button"
-          onClick={props.onBack}
-          className="btn btn-ghost"
+        <div
+          style={{
+            marginTop: 8,
+            padding: 14,
+            background: 'rgba(39, 210, 128, 0.06)',
+            border: '1px solid rgba(39, 210, 128, 0.2)',
+            borderRadius: 10,
+            display: 'flex',
+            gap: 10,
+          }}
         >
-          Back
-        </button>
-        <div className="flex-1" />
-        <button
-          type="submit"
-          disabled={
-            props.submitting ||
-            props.slugAvailable === false ||
-            !props.workspaceName ||
-            !props.slug ||
-            !props.locationName
-          }
-          className="btn btn-primary"
-          style={{ height: 44 }}
-        >
-          {props.submitting ? 'Creating workspace…' : 'Create workspace →'}
-        </button>
-      </div>
-    </form>
+          <Icon.shield
+            size={16}
+            style={{ color: 'var(--green)', marginTop: 1, flexShrink: 0 }}
+          />
+          <div
+            style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              color: 'var(--text-2)',
+              lineHeight: 1.5,
+            }}
+          >
+            Your data is hosted in{' '}
+            <strong style={{ color: '#fff' }}>Mumbai (ap-south-1)</strong>. DPDP
+            2023 compliant by default.
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <Btn kind="ghost" type="button" onClick={props.onBack} icon={<Icon.arrowL size={14} />}>
+            Back
+          </Btn>
+          <div style={{ flex: 1 }} />
+          <Btn
+            kind="primary"
+            type="submit"
+            disabled={
+              props.submitting ||
+              props.slugAvailable === false ||
+              !props.workspaceName ||
+              !props.slug ||
+              !props.primaryLocation
+            }
+            iconRight={<Icon.arrow size={16} />}
+          >
+            {props.submitting ? 'Creating workspace…' : 'Create workspace'}
+          </Btn>
+        </div>
+      </form>
+    </AuthCard>
   )
 }
