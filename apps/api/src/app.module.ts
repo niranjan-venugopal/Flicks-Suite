@@ -25,6 +25,7 @@ import { TimesheetModule } from './modules/timesheet/timesheet.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FamModule } from './modules/fam/fam.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { AuditModule } from './modules/audit/audit.module';
 
 // Gateways
@@ -123,6 +124,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     NotificationsModule,
     FamModule,
     SettingsModule,
+    ReportsModule,
     AuditModule,
   ],
   providers: [

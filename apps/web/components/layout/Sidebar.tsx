@@ -67,7 +67,7 @@ const ADMIN_NAV: NavSection[] = [
         label: 'Insights',
         icon: 'chart',
         children: [
-          { href: '/reports/headcount', label: 'Reports' },
+          { href: '/reports', label: 'Reports' },
           { href: '/reports/audit', label: 'Audit log' },
         ],
       },

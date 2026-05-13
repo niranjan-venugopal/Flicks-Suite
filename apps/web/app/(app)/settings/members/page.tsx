@@ -82,6 +82,19 @@ export default function MembersSettingsPage() {
   }, [items])
 
   // ─── Invite dialog ───────────────────────────────────────────────────────
+  //
+  // PLAN NOTE — Sprint 2 #7 (Employee self-onboarding wizard) supersedes the
+  // current shape of this CTA. Today the admin fills in firstName / lastName /
+  // employeeCode here and the employee inherits those values when they accept
+  // the magic-link. After #7 ships, the invite should be EMAIL ONLY:
+  //   1. Admin enters work email + role → POST /employees/invite-only
+  //   2. Employee receives magic-link, signs in, and runs through the 5-step
+  //      wizard themselves (Personal → Documents → Bank → Emergency → Review)
+  //   3. HR Admin sees the completed profile in /employees/onboarding queue
+  //      and approves it.
+  // When #7 lands, replace this form with a minimal { email, role } form and
+  // point useInviteEmployee at the new endpoint.
+  //
   const [inviteOpen, setInviteOpen] = useState(false)
   const [invForm, setInvForm] = useState({
     email: '',
