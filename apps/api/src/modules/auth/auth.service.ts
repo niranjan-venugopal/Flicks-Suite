@@ -76,10 +76,16 @@ export class AuthService {
       .where(eq(users.email, normalizedEmail))
       .limit(1);
 
-    // Invalidate any prior unconsumed OTPs / magic links for this email so
-    // only the freshly-issued code (and its accompanying magic link) is valid.
-    // Without this, repeated requestOtp calls leave a trail of valid rows and
-    // the user's latest email can verify against the wrong one.
+    // Invalidate any prior unconsumed SHORT-LIVED OTPs / magic links for
+    // this email so only the freshly-issued code is valid. Without this
+    // guard, repeated requestOtp calls leave a trail of valid rows and the
+    // verify step can match the wrong one.
+    //
+    // The expires_at < now + 1 day filter explicitly EXCLUDES long-lived
+    // invite tokens (7-day expiry, issued via issueInviteMagicLink). If we
+    // wiped those too, an invitee who casually visits /login while waiting
+    // for their email to arrive would silently nuke their invite link.
+    const shortLivedCutoff = new Date(Date.now() + 24 * 60 * 60 * 1000); // +1 day
     await this.db
       .update(authOtps)
       .set({ consumed_at: new Date() })
@@ -87,6 +93,7 @@ export class AuthService {
         and(
           eq(authOtps.email, normalizedEmail),
           isNull(authOtps.consumed_at),
+          lt(authOtps.expires_at, shortLivedCutoff),
         ),
       );
 
@@ -280,6 +287,22 @@ export class AuthService {
     }
 
     const currentUser = user[0];
+
+    // ─── Activate any pending invites ────────────────────────────────────
+    // When an admin invites someone, the membership is created with
+    // status='invited' (see EmployeesService.inviteEmployee). Successfully
+    // hitting either /verify-otp or /magic-link proves they own the email
+    // address — flip those memberships to 'active' so the subsequent
+    // membership lookup actually returns them.
+    await this.dbAdmin
+      .update(memberships)
+      .set({ status: 'active', accepted_at: new Date() })
+      .where(
+        and(
+          eq(memberships.user_id, currentUser.id),
+          eq(memberships.status, 'invited'),
+        ),
+      );
 
     // Get memberships across all tenants (uses admin client — RLS would
     // hide them all since no tenant context is set yet at login time).
@@ -720,6 +743,49 @@ export class AuthService {
   clearAuthCookies(res: Response): void {
     res.clearCookie('access_token', { path: '/' });
     res.clearCookie('refresh_token', { path: '/api/v1/auth' });
+  }
+
+  /**
+   * Issue a long-lived (7 days) magic link as part of the invite flow. The
+   * employee receives this URL in their welcome email; clicking it goes
+   * straight through verifyMagicLink → handleSuccessfulAuth → tenant
+   * context — no OTP entry required, no separate accept step.
+   *
+   * Unlike the magic link issued during requestOtp (10-min expiry), this
+   * one is intentionally durable so the invitee can take a few days to
+   * accept and isn't held to the speed of an OTP flow.
+   */
+  async issueInviteMagicLink(
+    userId: string,
+    email: string,
+  ): Promise<string> {
+    const normalizedEmail = email.toLowerCase().trim();
+    const magicLinkRawToken = generateSecureToken();
+    const magicLinkHash = sha256(magicLinkRawToken);
+    const dummyOtpHash = sha256(generateSecureToken()); // never used; required NOT NULL
+
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+    await this.db.insert(authOtps).values({
+      email: normalizedEmail,
+      user_id: userId,
+      otp_hash: dummyOtpHash,
+      magic_link_token: magicLinkHash,
+      attempt_count: 0,
+      expires_at: expiresAt,
+    });
+
+    const magicLinkBaseUrl = this.configService.get<string>(
+      'MAGIC_LINK_BASE_URL',
+      'http://localhost:3000/verify',
+    );
+    const url = `${magicLinkBaseUrl}?token=${magicLinkRawToken}`;
+
+    if (this.configService.get<string>('NODE_ENV') !== 'production') {
+      this.logger.warn(`[DEV] Invite magic link for ${normalizedEmail}: ${url}`);
+    }
+
+    return url;
   }
 
   /**

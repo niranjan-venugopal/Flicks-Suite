@@ -100,19 +100,22 @@ export class NotificationsService {
       }
 
       case 'welcome-employee': {
-        const { employeeName, companyName, onboardingUrl } = props as {
+        const { employeeName, companyName, magicLinkUrl } = props as {
           employeeName: string;
           companyName: string;
-          onboardingUrl: string;
+          magicLinkUrl: string;
         };
         return {
-          subject: `Welcome to ${String(companyName)} — Complete your onboarding`,
+          subject: `Welcome to ${String(companyName)} — Accept your invite`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #1a1a2e;">Welcome, ${String(employeeName)}!</h2>
-              <p>You've been invited to join ${String(companyName)} on ${appName}.</p>
-              <p>Please complete your onboarding to get started:</p>
-              <a href="${String(onboardingUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Complete Onboarding</a>
+              <p>You've been invited to join <strong>${String(companyName)}</strong> on ${appName}.</p>
+              <p>Click the secure link below to accept your invite and finish setting up your profile. The link is valid for 7 days.</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(magicLinkUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Accept invite & set up profile</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't expect this invite, you can safely ignore this email. The link will expire on its own.</p>
             </div>
           `,
         };

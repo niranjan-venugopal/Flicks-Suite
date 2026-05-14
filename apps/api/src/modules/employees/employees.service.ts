@@ -14,6 +14,7 @@ import {
   employees,
   users,
   memberships,
+  tenants,
   departments,
   designations,
   employmentHistory,
@@ -29,6 +30,7 @@ import { DB_TENANT } from '../../core/database/database.module';
 import type { Db } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuthService } from '../auth/auth.service';
 import type {
   InviteEmployeeDto,
   UpdateEmployeeDto,
@@ -73,6 +75,7 @@ export class EmployeesService {
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService,
+    private readonly authService: AuthService,
   ) {}
 
   async listEmployees(tenantId: string, query: EmployeeListQueryDto) {
@@ -241,16 +244,32 @@ export class EmployeesService {
       .limit(1);
 
     const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-    const onboardingUrl = `${appUrl}/onboarding`;
 
-    // Send welcome email
+    // Resolve tenant name for the email template.
+    const [tenantRow] = await this.db
+      .select({ name: tenants.name })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    const companyName = tenantRow?.name ?? 'Your Company';
+
+    // Generate a 7-day magic link so the invitee can sign in with one click,
+    // bypassing the OTP flow. The link routes through /verify → /auth/magic-link
+    // which calls handleSuccessfulAuth — and that activates their 'invited'
+    // membership before issuing the session cookies.
+    const magicLinkUrl = await this.authService.issueInviteMagicLink(
+      currentUser.id,
+      normalizedEmail,
+    );
+
+    // Send welcome email with the magic link as the primary CTA.
     await this.notificationsService.sendEmail(
       'welcome-employee',
       normalizedEmail,
       {
         employeeName: dto.fullName,
-        companyName: 'Your Company', // Would resolve from tenant
-        onboardingUrl,
+        companyName,
+        magicLinkUrl,
       },
     );
 
