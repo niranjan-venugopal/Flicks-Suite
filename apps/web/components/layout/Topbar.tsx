@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useAuthStore, roleLabel } from '@/lib/stores/auth.store'
 import { useLogout } from '@/lib/api/queries/use-auth'
 import { Avatar, Icon } from '@/components/proto'
+import { NotificationsBell } from './NotificationsBell'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,37 +77,7 @@ export function Topbar() {
       </div>
 
       {/* Notifications */}
-      <button
-        type="button"
-        title="Notifications"
-        style={{
-          position: 'relative',
-          width: 36,
-          height: 36,
-          borderRadius: 9,
-          background: 'var(--surf-1)',
-          border: '1px solid var(--bord)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'var(--text-2)',
-          cursor: 'pointer',
-        }}
-      >
-        <Icon.bell size={16} />
-        <div
-          style={{
-            position: 'absolute',
-            top: 7,
-            right: 7,
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            background: 'var(--coral)',
-            boxShadow: '0 0 0 2px var(--bg)',
-          }}
-        />
-      </button>
+      <NotificationsBell />
 
       {/* User dropdown */}
       <DropdownMenu>

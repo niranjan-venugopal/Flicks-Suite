@@ -19,6 +19,9 @@ export * from './timesheet';
 // ─── FAM (Fleet Administration & Monitoring) ──────────────────────────────────
 export * from './fam';
 
+// ─── Notifications ────────────────────────────────────────────────────────────
+export * from './notifications';
+
 // ─── Combined schema object (for Drizzle client) ─────────────────────────────
 import * as platformSchema from './platform';
 import * as authSchema from './auth';
@@ -27,6 +30,7 @@ import * as attendanceSchema from './attendance';
 import * as leaveSchema from './leave';
 import * as timesheetSchema from './timesheet';
 import * as famSchema from './fam';
+import * as notificationsSchema from './notifications';
 
 export const schema = {
   ...platformSchema,
@@ -36,6 +40,7 @@ export const schema = {
   ...leaveSchema,
   ...timesheetSchema,
   ...famSchema,
+  ...notificationsSchema,
 } as const;
 
 export type Schema = typeof schema;

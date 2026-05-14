@@ -1,20 +1,34 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
-import { eq, and, isNull } from 'drizzle-orm';
-import { DB_TENANT } from '../../core/database/database.module';
-import type { Db } from '@flicks/db';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { notifications } from '@flicks/db/schema';
+import type { Notification } from '@flicks/db/schema';
+import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
+import type { Db, DbAdmin } from '@flicks/db';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
-// Inline notifications table type (until added to schema)
+// API shape returned to the client. Snake → camel.
 export interface InAppNotification {
   id: string;
   userId: string;
   type: string;
   message: string;
-  linkUrl?: string;
-  readAt?: Date | null;
-  createdAt: Date;
+  linkUrl: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+function toDto(row: Notification): InAppNotification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    message: row.message,
+    linkUrl: row.link_url,
+    readAt: row.read_at?.toISOString() ?? null,
+    createdAt: row.created_at.toISOString(),
+  };
 }
 
 type EmailTemplate =
@@ -37,6 +51,7 @@ export class NotificationsService {
 
   constructor(
     @Inject(DB_TENANT) private readonly db: Db,
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
   ) {
@@ -269,27 +284,123 @@ export class NotificationsService {
     userId: string,
     type: string,
     message: string,
-    linkUrl?: string,
+    linkUrl?: string | null,
+    tenantId?: string | null,
   ): Promise<void> {
-    // Emit event for real-time push via WebSocket
+    await this.dbAdmin.insert(notifications).values({
+      user_id: userId,
+      type,
+      message,
+      link_url: linkUrl ?? null,
+      tenant_id: tenantId ?? null,
+    });
+
+    // Emit event for the future WebSocket bridge; current bell uses polling.
     this.eventEmitter.emit('notification.created', {
       userId,
       type,
       message,
       linkUrl,
+      tenantId,
       createdAt: new Date(),
     });
 
     this.logger.log(`In-app notification created for user ${userId}: ${type}`);
   }
 
-  async getUnread(userId: string): Promise<InAppNotification[]> {
-    // This would query a notifications table - returning empty for now
-    // as the notifications table schema needs to be added to @flicks/db
-    return [];
+  async getUnread(
+    userId: string,
+    limit = 10,
+  ): Promise<{ items: InAppNotification[]; total: number }> {
+    const safeLimit = Math.max(1, Math.min(limit, 50));
+    const [rows, [{ n }]] = await Promise.all([
+      this.dbAdmin
+        .select()
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.user_id, userId),
+            isNull(notifications.read_at),
+          ),
+        )
+        .orderBy(desc(notifications.created_at))
+        .limit(safeLimit),
+      this.dbAdmin
+        .select({ n: sql<number>`COUNT(*)::int` })
+        .from(notifications)
+        .where(
+          and(
+            eq(notifications.user_id, userId),
+            isNull(notifications.read_at),
+          ),
+        ),
+    ]);
+    return { items: rows.map(toDto), total: Number(n ?? 0) };
+  }
+
+  async listAll(
+    userId: string,
+    opts: { filter?: 'all' | 'unread'; page?: number; pageSize?: number } = {},
+  ): Promise<{
+    items: InAppNotification[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const filter = opts.filter ?? 'all';
+    const page = Math.max(1, opts.page ?? 1);
+    const pageSize = Math.max(1, Math.min(opts.pageSize ?? 20, 100));
+    const offset = (page - 1) * pageSize;
+
+    const where =
+      filter === 'unread'
+        ? and(eq(notifications.user_id, userId), isNull(notifications.read_at))
+        : eq(notifications.user_id, userId);
+
+    const [rows, [{ n }]] = await Promise.all([
+      this.dbAdmin
+        .select()
+        .from(notifications)
+        .where(where)
+        .orderBy(desc(notifications.created_at))
+        .limit(pageSize)
+        .offset(offset),
+      this.dbAdmin
+        .select({ n: sql<number>`COUNT(*)::int` })
+        .from(notifications)
+        .where(where),
+    ]);
+
+    return {
+      items: rows.map(toDto),
+      total: Number(n ?? 0),
+      page,
+      pageSize,
+    };
   }
 
   async markRead(notificationId: string, userId: string): Promise<void> {
-    this.logger.log(`Marking notification ${notificationId} as read for user ${userId}`);
+    await this.dbAdmin
+      .update(notifications)
+      .set({ read_at: new Date() })
+      .where(
+        and(
+          eq(notifications.id, notificationId),
+          eq(notifications.user_id, userId),
+          isNull(notifications.read_at),
+        ),
+      );
+  }
+
+  async markAllRead(userId: string): Promise<void> {
+    await this.dbAdmin
+      .update(notifications)
+      .set({ read_at: new Date() })
+      .where(
+        and(
+          eq(notifications.user_id, userId),
+          isNull(notifications.read_at),
+        ),
+      );
   }
 }

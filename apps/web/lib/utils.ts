@@ -52,3 +52,19 @@ export function formatCurrency(amount: number, currency = 'INR'): string {
     maximumFractionDigits: 0,
   }).format(amount)
 }
+
+/** Compact relative time for notification rows ("3m", "2h", "5d", "Apr 12"). */
+export function timeAgo(input: Date | string | null | undefined): string {
+  if (!input) return ''
+  const date = typeof input === 'string' ? new Date(input) : input
+  const diff = Math.max(0, Date.now() - date.getTime())
+  const sec = Math.floor(diff / 1000)
+  if (sec < 45) return 'just now'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h`
+  const day = Math.floor(hr / 24)
+  if (day < 7) return `${day}d`
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+}
