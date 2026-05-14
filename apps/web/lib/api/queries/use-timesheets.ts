@@ -8,6 +8,8 @@ import { api } from '../client'
 export interface TimesheetPeriod {
   id: string
   employeeId?: string
+  employeeCode?: string
+  employeeName?: string
   periodStart: string
   periodEnd: string
   status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'rework_requested'
