@@ -513,6 +513,67 @@ export class EmployeesService {
     return this.getEmployee(membership[0].employeeId, tenantId);
   }
 
+  async listMyTeam(userId: string, tenantId: string) {
+    const [membership] = await this.db
+      .select({ employeeId: memberships.employee_id })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+    if (!membership?.employeeId) {
+      // User has no employee row (e.g. plain admin user) → empty team.
+      return { data: [], total: 0 };
+    }
+
+    const managerEmployeeId = membership.employeeId;
+
+    const rows = await this.db
+      .select({
+        id: employees.id,
+        employeeCode: employees.employee_code,
+        firstName: employees.first_name,
+        lastName: employees.last_name,
+        fullName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
+        workEmail: employees.work_email,
+        status: employees.status,
+        employmentType: employees.employment_type,
+        dateOfJoining: employees.date_of_joining,
+        // Joined names
+        departmentId: employees.department_id,
+        departmentName: departments.name,
+        designationId: employees.designation_id,
+        designationTitle: designations.title,
+        locationId: employees.location_id,
+        locationName: locations.name,
+        avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+        // Submitted-for-review flag — managers should see which of their
+        // reports have finished self-onboarding.
+        onboardingComplete: sql<boolean>`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean`,
+      })
+      .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
+      .leftJoin(designations, eq(employees.designation_id, designations.id))
+      .leftJoin(locations, eq(employees.location_id, locations.id))
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.reporting_manager_id, managerEmployeeId),
+        ),
+      )
+      .orderBy(asc(employees.first_name));
+
+    return {
+      managerEmployeeId,
+      data: rows,
+      total: rows.length,
+    };
+  }
+
   async updateEmployee(
     employeeId: string,
     dto: UpdateEmployeeDto,

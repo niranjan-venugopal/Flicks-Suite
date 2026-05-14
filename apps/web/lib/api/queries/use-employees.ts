@@ -234,3 +234,39 @@ export function useUpdateEmployee() {
     },
   })
 }
+
+// ─── Manager: my direct reports ──────────────────────────────────────────────
+
+export interface TeamMember {
+  id: string
+  employeeCode: string | null
+  firstName: string
+  lastName: string
+  fullName: string
+  workEmail: string
+  status: string
+  employmentType: string
+  dateOfJoining: string
+  departmentId: string | null
+  departmentName: string | null
+  designationId: string | null
+  designationTitle: string | null
+  locationId: string | null
+  locationName: string | null
+  avatarUrl: string | null
+  onboardingComplete: boolean | null
+}
+
+export interface MyTeamResponse {
+  managerEmployeeId: string
+  data: TeamMember[]
+  total: number
+}
+
+export function useMyTeam() {
+  return useQuery({
+    queryKey: ['employees', 'team', 'me'],
+    queryFn: () => api.get<MyTeamResponse>('/api/v1/employees/team/me'),
+    staleTime: 30_000,
+  })
+}

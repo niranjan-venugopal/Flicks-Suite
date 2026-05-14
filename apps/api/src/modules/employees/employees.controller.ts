@@ -79,6 +79,18 @@ export class EmployeesController {
     return this.employeesService.getMyRecord(user.sub, user.tenantId);
   }
 
+  @Get('team/me')
+  @Roles('manager')
+  @ApiOperation({
+    summary: 'List my direct reports',
+    description:
+      'Returns active employees whose reporting_manager_id is the current user\'s employee row. Used by the Manager → Team views.',
+  })
+  @ApiResponse({ status: 200, description: 'Team roster' })
+  async listMyTeam(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.listMyTeam(user.sub, user.tenantId);
+  }
+
   @Put('me')
   @ApiOperation({ summary: 'Self-update limited fields' })
   @ApiResponse({ status: 200, description: 'Updated' })

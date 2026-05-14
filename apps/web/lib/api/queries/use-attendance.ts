@@ -14,6 +14,8 @@ export type AttendanceStatus =
   | 'holiday'
   | 'weekend'
   | 'work_from_home'
+  | 'on_duty'
+  | 'comp_off'
 
 export type PunchType = 'in' | 'out' | 'break_start' | 'break_end'
 
