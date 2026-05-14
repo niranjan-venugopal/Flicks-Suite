@@ -200,5 +200,12 @@ export function useVerifyMagicLinkQuery(token: string | null) {
     enabled: !!token,
     retry: false,
     staleTime: Infinity,
+    // One-shot query: never refetch in the background. Without these flags
+    // a dev-mode StrictMode mount cycle, a window focus, or a network
+    // reconnect would fire the GET a second time and the backend's
+    // idempotency window has to catch it.
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 }

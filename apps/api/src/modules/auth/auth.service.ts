@@ -218,29 +218,43 @@ export class AuthService {
   async verifyMagicLink(token: string, deviceId?: string, ip?: string, userAgent?: string) {
     const tokenHash = sha256(token);
 
-    const otpRecord = await this.db
+    // React Strict Mode (and aggressive prefetchers / browser previews)
+    // routinely fire the verify GET twice in quick succession. The first
+    // call consumes the token, the second sees consumed_at set and 401s.
+    // To survive that, look up the row regardless of consumed status and
+    // treat anything consumed within the last 60s as still valid — same
+    // user, same click, same outcome.
+    const idempotencyWindow = new Date(Date.now() - 60 * 1000);
+    const candidates = await this.db
       .select()
       .from(authOtps)
       .where(
         and(
           eq(authOtps.magic_link_token, tokenHash),
-          isNull(authOtps.consumed_at),
           gt(authOtps.expires_at, new Date()),
         ),
       )
+      .orderBy(desc(authOtps.created_at))
       .limit(1);
 
-    if (!otpRecord[0]) {
+    const otp = candidates[0];
+
+    if (!otp) {
       throw new UnauthorizedException('Invalid or expired magic link');
     }
 
-    const otp = otpRecord[0];
+    if (otp.consumed_at && otp.consumed_at < idempotencyWindow) {
+      throw new UnauthorizedException('Magic link has already been used');
+    }
 
-    // Mark OTP as consumed
-    await this.db
-      .update(authOtps)
-      .set({ consumed_at: new Date() })
-      .where(eq(authOtps.id, otp.id));
+    // First time through (or within the idempotency window) — mark it
+    // consumed. The UPDATE is a no-op when consumed_at is already set.
+    if (!otp.consumed_at) {
+      await this.db
+        .update(authOtps)
+        .set({ consumed_at: new Date() })
+        .where(eq(authOtps.id, otp.id));
+    }
 
     await this.writeAuthEvent({
       email: otp.email,
