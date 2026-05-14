@@ -154,7 +154,7 @@ function AdminDashboard() {
             <Btn kind="secondary" size="sm" icon={<Icon.download size={14} />}>
               Export
             </Btn>
-            <Link href="/employees/onboarding" style={{ textDecoration: 'none' }}>
+            <Link href="/employees/add" style={{ textDecoration: 'none' }}>
               <Btn kind="primary" icon={<Icon.plus size={14} />}>
                 Invite employee
               </Btn>

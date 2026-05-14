@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import Link from 'next/link'
 import { Loader2, Plus } from 'lucide-react'
 import { Avatar, Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
@@ -12,14 +13,7 @@ import {
   type Member,
   type MembershipRole,
 } from '@/lib/api/queries/use-settings'
-import { useInviteEmployee } from '@/lib/api/queries/use-employees'
 import { useAuthStore } from '@/lib/stores/auth.store'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -65,7 +59,6 @@ function displayName(m: Member): string {
 export default function MembersSettingsPage() {
   const { currentUser } = useAuthStore()
   const { data, isLoading } = useMembers()
-  const invite = useInviteEmployee()
   const updateRole = useUpdateMemberRole()
   const deactivate = useDeactivateMember()
   const reactivate = useReactivateMember()
@@ -81,74 +74,14 @@ export default function MembersSettingsPage() {
     return c
   }, [items])
 
-  // ─── Invite dialog ───────────────────────────────────────────────────────
+  // ─── Invite ─────────────────────────────────────────────────────────────
   //
-  // The admin captures the minimum needed to create the user + employee
-  // shell row: name, email, and an employee code. Everything else (DOB,
-  // PAN, bank, emergency contact, address) is collected from the invitee
-  // through the 5-step self-onboarding wizard at /onboarding/employee:
-  //   1. Admin clicks 'Invite member' → POST /employees/invite
-  //   2. User + employee + membership(role=employee) created; magic-link
-  //      mailed.
-  //   3. Invitee follows the link, verify-otp logs them in.
-  //   4. (app) layout sees their role=EMPLOYEE + custom_fields lack
-  //      onboarding_submitted_for_review → redirects to /onboarding/employee.
-  //   5. They complete the 5-step wizard; the final step sets
-  //      submittedForReview=true and they're released into /dashboard.
-  //   6. Admin can promote them via the role select on this page once
-  //      they accept.
-  //
-  const [inviteOpen, setInviteOpen] = useState(false)
-  const [invForm, setInvForm] = useState({
-    email: '',
-    firstName: '',
-    lastName: '',
-    employeeCode: '',
-    role: 'employee' as MembershipRole,
-  })
-
-  // Suggest the next employee code as EMP + (max existing numeric suffix + 1).
-  const suggestedCode = useMemo(() => {
-    const codes = items
-      .map((m) => m.employeeCode ?? '')
-      .map((c) => {
-        const match = c.match(/^EMP(\d+)$/)
-        return match ? parseInt(match[1], 10) : 0
-      })
-    const next = Math.max(0, ...codes) + 1
-    return `EMP${String(next).padStart(3, '0')}`
-  }, [items])
-
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!invForm.email.trim() || !invForm.firstName.trim()) {
-      toast({ title: 'Email and first name are required', variant: 'destructive' })
-      return
-    }
-    const fullName = `${invForm.firstName.trim()} ${invForm.lastName.trim()}`.trim()
-    try {
-      await invite.mutateAsync({
-        email: invForm.email.trim().toLowerCase(),
-        fullName,
-        employeeCode: (invForm.employeeCode || suggestedCode).trim().toUpperCase(),
-      })
-      toast({
-        title: 'Invitation sent',
-        description: `${invForm.email.trim()} will receive a magic-link to join.`,
-      })
-      // Note: invite endpoint creates an employee but defaults the membership
-      // role to 'employee'. Promoting them to a different role happens after
-      // they accept (via the role dropdown on this same page).
-      setInvForm({ email: '', firstName: '', lastName: '', employeeCode: '', role: 'employee' })
-      setInviteOpen(false)
-    } catch (err: any) {
-      toast({
-        title: 'Could not send invite',
-        description: err?.message,
-        variant: 'destructive',
-      })
-    }
-  }
+  // Inviting an employee is now a single full-page flow at /employees/add
+  // matching the prototype's ScrAddEmployee. The 'Invite employee' button
+  // in the header simply navigates to that page — no in-page dialog. After
+  // the admin sends the invite, the invitee receives a magic-link and the
+  // (app) layout's guard redirects them to /onboarding/employee for the
+  // 5-step self-onboarding wizard.
 
   // ─── Role / status mutations ─────────────────────────────────────────────
   const handleRoleChange = async (m: Member, role: MembershipRole) => {
@@ -204,14 +137,11 @@ export default function MembersSettingsPage() {
           title="Roles & permissions"
           sub={`${counts.total} member${counts.total === 1 ? '' : 's'} · ${counts.active} active · ${counts.invited} invited${counts.deactivated ? ` · ${counts.deactivated} deactivated` : ''}`}
           right={
-            <Btn
-              kind="primary"
-              size="sm"
-              icon={<Plus className="w-3.5 h-3.5" />}
-              onClick={() => setInviteOpen(true)}
-            >
-              Invite member
-            </Btn>
+            <Link href="/employees/add" style={{ textDecoration: 'none' }}>
+              <Btn kind="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />}>
+                Invite employee
+              </Btn>
+            </Link>
           }
         />
 
@@ -223,9 +153,11 @@ export default function MembersSettingsPage() {
           <div className="text-center py-10 px-6">
             <div className="t-h3 mb-1">No members yet</div>
             <p className="t-mute mb-4">Invite your first teammate to start collaborating.</p>
-            <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setInviteOpen(true)}>
-              Invite member
-            </Btn>
+            <Link href="/employees/add" style={{ textDecoration: 'none' }}>
+              <Btn kind="primary" icon={<Plus className="w-4 h-4" />}>
+                Invite employee
+              </Btn>
+            </Link>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -306,77 +238,6 @@ export default function MembersSettingsPage() {
           </table>
         )}
       </div>
-
-      {/* Invite dialog */}
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Invite a member</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleInvite} className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="label">First name</label>
-                <input
-                  className="input"
-                  value={invForm.firstName}
-                  onChange={(e) => setInvForm({ ...invForm, firstName: e.target.value })}
-                  placeholder="Asha"
-                  autoFocus
-                  required
-                  maxLength={80}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="label">Last name</label>
-                <input
-                  className="input"
-                  value={invForm.lastName}
-                  onChange={(e) => setInvForm({ ...invForm, lastName: e.target.value })}
-                  placeholder="Patel"
-                  maxLength={80}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="label">Work email</label>
-              <input
-                className="input"
-                type="email"
-                value={invForm.email}
-                onChange={(e) => setInvForm({ ...invForm, email: e.target.value })}
-                placeholder="asha@example.com"
-                required
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="label">Employee code</label>
-              <input
-                className="input font-mono uppercase"
-                value={invForm.employeeCode}
-                onChange={(e) =>
-                  setInvForm({ ...invForm, employeeCode: e.target.value.toUpperCase() })
-                }
-                placeholder={suggestedCode}
-                maxLength={20}
-              />
-              <p className="text-xs text-brand-muted">
-                Leave blank to use the suggested code <code className="text-white/70">{suggestedCode}</code>.
-                They&apos;ll receive a magic-link by email and join as <strong>Employee</strong> — promote them
-                here once they&apos;ve accepted.
-              </p>
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <Btn kind="ghost" type="button" onClick={() => setInviteOpen(false)}>
-                Cancel
-              </Btn>
-              <Btn kind="primary" type="submit" disabled={invite.isPending}>
-                {invite.isPending ? 'Sending…' : 'Send invite'}
-              </Btn>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </SettingsLayout>
   )
 }

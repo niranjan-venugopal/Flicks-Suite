@@ -64,6 +64,25 @@ export class InviteEmployeeDto {
   @IsString()
   @IsOptional()
   joiningDate?: string;
+
+  // ─── Optional pre-fills captured on the Invite form ────────────────────
+  // The prototype's ScrAddEmployee collects these so the invitee doesn't
+  // have to retype basics; the wizard still lets them edit them later.
+
+  @ApiPropertyOptional({ description: 'Free-text job title for the offer letter.' })
+  @IsString()
+  @IsOptional()
+  jobTitle?: string;
+
+  @ApiPropertyOptional({ description: 'Personal phone — pre-fills the wizard.' })
+  @IsString()
+  @IsOptional()
+  personalPhone?: string;
+
+  @ApiPropertyOptional({ example: '1995-03-14' })
+  @IsString()
+  @IsOptional()
+  dateOfBirth?: string;
 }
 
 export class UpdateEmployeeDto {

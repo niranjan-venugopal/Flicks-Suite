@@ -193,10 +193,19 @@ export class EmployeesService {
         department_id: dto.departmentId,
         location_id: dto.locationId,
         reporting_manager_id: dto.managerId,
-        employment_type: (dto.employmentType as typeof employees.$inferInsert['employment_type']) ?? 'full_time',
+        employment_type:
+          (dto.employmentType as typeof employees.$inferInsert['employment_type']) ??
+          'full_time',
         date_of_joining: joiningDate,
+        // Pre-fills from the Invite form — the wizard lets the employee
+        // edit them later but admins typically know phone + DOB up front.
+        ...(dto.personalPhone ? { personal_phone: dto.personalPhone } : {}),
+        ...(dto.dateOfBirth ? { date_of_birth: dto.dateOfBirth } : {}),
         status: 'inactive',
-        custom_fields: { onboarding_step: 0 },
+        custom_fields: {
+          onboarding_step: 0,
+          ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
+        },
       })
       .returning();
 

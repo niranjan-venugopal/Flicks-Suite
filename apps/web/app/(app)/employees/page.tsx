@@ -66,9 +66,9 @@ export default function EmployeesPage() {
               <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
                 Export
               </Btn>
-              <Link href="/employees/onboarding" style={{ textDecoration: 'none' }}>
+              <Link href="/employees/add" style={{ textDecoration: 'none' }}>
                 <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
-                  Add employee
+                  Invite employee
                 </Btn>
               </Link>
             </div>
