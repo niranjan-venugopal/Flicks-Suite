@@ -16,6 +16,10 @@ export interface TimesheetPeriod {
   totalHours: number
   totalBillableHours?: number
   submittedAt?: string
+  rejectedAt?: string | null
+  rejectionComment?: string | null
+  latestReworkAt?: string | null
+  latestReworkComment?: string | null
 }
 
 export interface TimesheetEntryRow {

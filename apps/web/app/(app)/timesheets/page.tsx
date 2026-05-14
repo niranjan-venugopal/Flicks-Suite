@@ -210,6 +210,25 @@ export default function TimesheetsPage() {
           }
         />
 
+        {current.data?.latestReworkComment && status === 'draft' && (
+          <ReviewBanner
+            tone="coral"
+            title="Your manager sent this back for changes"
+            comment={current.data.latestReworkComment}
+            when={current.data.latestReworkAt}
+            hint="Update the entries below and resubmit when you're done."
+          />
+        )}
+        {status === 'rejected' && current.data?.rejectionComment && (
+          <ReviewBanner
+            tone="coral"
+            title="This week was rejected"
+            comment={current.data.rejectionComment}
+            when={current.data.rejectedAt}
+            hint="Talk to your manager if you need to reopen it."
+          />
+        )}
+
         {/* KPIs */}
         <div
           style={{
@@ -249,8 +268,18 @@ export default function TimesheetsPage() {
           />
           <Kpi
             label="Status"
-            value={status.replace('_', ' ')}
-            delta={status === 'draft' ? 'Submit by Mon 11am' : undefined}
+            value={
+              current.data?.latestReworkComment && status === 'draft'
+                ? 'Needs rework'
+                : status.replace('_', ' ')
+            }
+            delta={
+              current.data?.latestReworkComment && status === 'draft'
+                ? 'See manager note above'
+                : status === 'draft'
+                  ? 'Submit by Mon 11am'
+                  : undefined
+            }
             icon={<Icon.spark size={14} />}
             accent="yellow"
           />
@@ -460,22 +489,69 @@ export default function TimesheetsPage() {
           </Btn>
         </div>
 
-        {!current.data?.id && !current.isLoading && (
-          <div
-            style={{
-              marginTop: 18,
-              padding: '12px 14px',
-              background: 'rgba(254,216,0,.06)',
-              border: '1px solid rgba(254,216,0,.25)',
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 600,
-              color: 'var(--text-2)',
-            }}
-          >
-            ⚠ The timesheet backend currently returns an empty period. The grid renders
-            so you can preview the UI, but saves won't persist until the API ships
-            (PRD §8, Gate 7).
+      </div>
+    </div>
+  )
+}
+
+function ReviewBanner({
+  tone,
+  title,
+  comment,
+  when,
+  hint,
+}: {
+  tone: 'coral' | 'yellow'
+  title: string
+  comment: string
+  when?: string | null
+  hint?: string
+}) {
+  const palette =
+    tone === 'coral'
+      ? { bg: 'rgba(248,120,107,.08)', border: 'rgba(248,120,107,.35)', accent: 'var(--coral)' }
+      : { bg: 'rgba(254,216,0,.08)', border: 'rgba(254,216,0,.35)', accent: 'var(--yellow)' }
+  const whenLabel = when
+    ? new Date(when).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+    : null
+  return (
+    <div
+      style={{
+        marginBottom: 18,
+        padding: '14px 16px',
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        borderLeft: `4px solid ${palette.accent}`,
+        borderRadius: 10,
+        display: 'flex',
+        gap: 14,
+        alignItems: 'flex-start',
+      }}
+    >
+      <Icon.warn size={18} style={{ color: palette.accent, flexShrink: 0, marginTop: 2 }} />
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-1)' }}>
+          {title}
+          {whenLabel && (
+            <span style={{ fontWeight: 600, color: 'var(--text-mute)', marginLeft: 8 }}>
+              · {whenLabel}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: 'var(--text-2)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          “{comment}”
+        </div>
+        {hint && (
+          <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+            {hint}
           </div>
         )}
       </div>

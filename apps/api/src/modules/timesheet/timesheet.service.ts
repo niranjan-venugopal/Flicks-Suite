@@ -6,7 +6,7 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
-import { and, eq, gte, lte, desc, asc, sql } from 'drizzle-orm';
+import { and, eq, gte, lte, desc, asc, sql, isNull } from 'drizzle-orm';
 import {
   timesheetPeriods,
   timesheetEntries,
@@ -87,7 +87,10 @@ export class TimesheetService {
     return { total, billable, nonBillable: total - billable };
   }
 
-  private shapePeriod(p: typeof timesheetPeriods.$inferSelect) {
+  private shapePeriod(
+    p: typeof timesheetPeriods.$inferSelect,
+    rework?: { comment: string; createdAt: Date } | null,
+  ) {
     return {
       id: p.id,
       employeeId: p.employee_id,
@@ -102,7 +105,28 @@ export class TimesheetService {
       approvedAt: p.approved_at?.toISOString() ?? null,
       rejectedAt: p.rejected_at?.toISOString() ?? null,
       rejectionComment: p.rejection_comment,
+      latestReworkComment: rework?.comment ?? null,
+      latestReworkAt: rework?.createdAt?.toISOString() ?? null,
     };
+  }
+
+  /** Latest open (unresolved) rework request for a period, or null. */
+  private async getLatestRework(periodId: string) {
+    const [r] = await this.db
+      .select({
+        comment: timesheetReworkRequests.comment,
+        createdAt: timesheetReworkRequests.created_at,
+      })
+      .from(timesheetReworkRequests)
+      .where(
+        and(
+          eq(timesheetReworkRequests.timesheet_period_id, periodId),
+          isNull(timesheetReworkRequests.resolved_at),
+        ),
+      )
+      .orderBy(desc(timesheetReworkRequests.created_at))
+      .limit(1);
+    return r ?? null;
   }
 
   // ─── 1. Get-or-create the caller's current week period ────────────────
@@ -127,7 +151,10 @@ export class TimesheetService {
       )
       .limit(1);
 
-    if (existing) return this.shapePeriod(existing);
+    if (existing) {
+      const rework = await this.getLatestRework(existing.id);
+      return this.shapePeriod(existing, rework);
+    }
 
     const [created] = await this.db
       .insert(timesheetPeriods)
@@ -189,8 +216,12 @@ export class TimesheetService {
         .where(and(...conditions)),
     ]);
 
+    const reworks = await Promise.all(
+      rows.map((r) => this.getLatestRework(r.id)),
+    );
+
     return {
-      data: rows.map((r) => this.shapePeriod(r)),
+      data: rows.map((r, i) => this.shapePeriod(r, reworks[i])),
       pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
     };
   }
@@ -230,9 +261,11 @@ export class TimesheetService {
       .where(eq(timesheetEntries.timesheet_period_id, timesheetPeriodId))
       .orderBy(asc(timesheetEntries.entry_date));
 
+    const rework = await this.getLatestRework(period.id);
+
     return {
       timesheetPeriodId,
-      period: this.shapePeriod(period),
+      period: this.shapePeriod(period, rework),
       entries: entries.map((e) => ({
         id: e.id,
         entryDate: e.entry_date,
@@ -399,6 +432,17 @@ export class TimesheetService {
         updated_at: submittedAt,
       })
       .where(eq(timesheetPeriods.id, period.id));
+
+    // Any open rework requests are addressed by this submission.
+    await this.db
+      .update(timesheetReworkRequests)
+      .set({ resolved_at: submittedAt })
+      .where(
+        and(
+          eq(timesheetReworkRequests.timesheet_period_id, period.id),
+          isNull(timesheetReworkRequests.resolved_at),
+        ),
+      );
 
     // Resolve approver email + name for the notification.
     const [approver] = await this.dbAdmin
@@ -581,6 +625,28 @@ export class TimesheetService {
       resourceId: period.id,
       metadata: { comment: dto.comment },
     });
+
+    // Push an in-app notification to the timesheet's owner so they see
+    // the manager's decision next time they open the app.
+    const [ownerUser] = await this.dbAdmin
+      .select({ userId: employees.user_id })
+      .from(employees)
+      .where(eq(employees.id, period.employee_id))
+      .limit(1);
+    if (ownerUser?.userId) {
+      const verb =
+        dto.action === 'approve'
+          ? 'approved'
+          : dto.action === 'reject'
+            ? 'rejected'
+            : 'sent back for changes';
+      await this.notificationsService.createInAppNotification(
+        ownerUser.userId,
+        `timesheet.${dto.action}`,
+        `Your timesheet for ${period.period_start} was ${verb}.`,
+        '/timesheets',
+      );
+    }
 
     return {
       id: period.id,
