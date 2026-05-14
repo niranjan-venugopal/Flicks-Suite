@@ -53,13 +53,14 @@ export function useCreateTenant() {
     mutationFn: (payload: CreateTenantPayload) =>
       api.post<CreateTenantResponse>('/api/v1/onboarding/create-tenant', payload),
     onSuccess: async () => {
-      // The server has set fresh cookies with tenantId baked in; force /me
-      // to refetch so the auth store picks up the Owner role + tenant
-      // BEFORE the wizard redirects. Without the await, the dashboard's
-      // initial queries fire against a stale auth-store snapshot (role
-      // still EMPLOYEE) and the Topbar pill flashes the wrong label for a
-      // moment.
-      await qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+      // The user might have just signed up while still holding cached data
+      // from a previous tenant (e.g. they had a session in another
+      // workspace open in this browser). Wiping every cached query
+      // guarantees the new workspace's dashboard, employee dropdowns,
+      // department list, etc. all fetch fresh against the new tenantId.
+      qc.clear()
+      // /auth/me has to be fetched fresh before the redirect to /dashboard
+      // so the auth store has the Owner role + tenantId in place.
       await qc.refetchQueries({ queryKey: ['auth', 'me'] })
     },
   })

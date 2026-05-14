@@ -83,6 +83,16 @@ export default function InviteEmployeePage() {
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((p) => ({ ...p, [k]: v }))
 
+  // class-validator's @IsUUID() rejects empty strings, so we must drop any
+  // optional UUID field that isn't a valid v4 (or earlier) UUID instead of
+  // passing through whatever HTML <select> happened to bind. The dropdowns
+  // SHOULD always carry real UUIDs as their value, but defensively scrubbing
+  // here keeps the invite endpoint responsive when the data layer hiccups.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const asUuid = (v: string): string | undefined =>
+    UUID_RE.test(v.trim()) ? v.trim() : undefined
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const firstName = form.firstName.trim()
@@ -98,20 +108,48 @@ export default function InviteEmployeePage() {
     }
 
     const fullName = `${firstName} ${lastName}`.trim()
+    const departmentId = asUuid(form.departmentId)
+    const locationId = asUuid(form.locationId)
+    const managerId = asUuid(form.managerId)
+    const shiftTemplateId = asUuid(form.shiftTemplateId)
+
     const payload: InviteEmployeePayload = {
       fullName,
       email,
       employeeCode: (form.employeeCode || suggestedCode).trim().toUpperCase(),
       ...(form.jobTitle.trim() ? { jobTitle: form.jobTitle.trim() } : {}),
-      ...(form.departmentId ? { departmentId: form.departmentId } : {}),
-      ...(form.locationId ? { locationId: form.locationId } : {}),
-      ...(form.managerId ? { managerId: form.managerId } : {}),
+      ...(departmentId ? { departmentId } : {}),
+      ...(locationId ? { locationId } : {}),
+      ...(managerId ? { managerId } : {}),
       ...(form.employmentType ? { employmentType: form.employmentType } : {}),
       ...(form.joiningDate ? { joiningDate: form.joiningDate } : {}),
       ...(form.personalPhone.trim()
         ? { personalPhone: form.personalPhone.trim() }
         : {}),
       ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
+    }
+
+    // Warn in the console if any UUID-shaped field was dropped — this is
+    // how we'll diagnose if a dropdown is somehow binding to a non-UUID
+    // string. Safe to remove once the dropdown-binding code is proven
+    // correct.
+    const dropped = [
+      form.departmentId && !departmentId && 'departmentId',
+      form.locationId && !locationId && 'locationId',
+      form.managerId && !managerId && 'managerId',
+      form.shiftTemplateId && !shiftTemplateId && 'shiftTemplateId',
+    ].filter(Boolean)
+    if (dropped.length) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[invite-employee] Dropped non-UUID fields: ${dropped.join(', ')} ·`,
+        {
+          departmentId: form.departmentId,
+          locationId: form.locationId,
+          managerId: form.managerId,
+          shiftTemplateId: form.shiftTemplateId,
+        },
+      )
     }
 
     try {
