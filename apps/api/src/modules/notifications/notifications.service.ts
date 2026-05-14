@@ -25,6 +25,7 @@ type EmailTemplate =
   | 'leave-request'
   | 'leave-approved'
   | 'leave-rejected'
+  | 'timesheet-submitted'
   | 'trial-ending-soon'
   | 'timesheet-submitted'
   | 'timesheet-approved';
@@ -225,6 +226,32 @@ export class NotificationsService {
               <p>Your ${appName} trial ends on <strong>${String(trialEndsAt)}</strong>.</p>
               <p>Upgrade now to continue without interruption:</p>
               <a href="${String(upgradeUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Upgrade Now</a>
+            </div>
+          `,
+        };
+      }
+
+      case 'timesheet-submitted': {
+        const { approverName, periodStart, periodEnd, totalHours } = props as {
+          approverName: string;
+          periodStart: string;
+          periodEnd: string;
+          totalHours: number;
+        };
+        return {
+          subject: `Timesheet awaiting your review — ${String(periodStart)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${String(approverName)},</h2>
+              <p>A new timesheet has been submitted for your review.</p>
+              <p style="background: #f4f6fa; border-radius: 8px; padding: 14px;">
+                <strong>Week:</strong> ${String(periodStart)} → ${String(periodEnd)}<br/>
+                <strong>Total hours:</strong> ${String(totalHours)}h
+              </p>
+              <p style="margin: 24px 0;">
+                <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}/team/timesheets" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review timesheet</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">If the link doesn't work, sign in to ${appName} and head to Team → Timesheets.</p>
             </div>
           `,
         };

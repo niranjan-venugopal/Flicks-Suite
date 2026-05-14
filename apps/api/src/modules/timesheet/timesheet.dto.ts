@@ -17,16 +17,19 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+// Must match timesheet_entry_category in packages/db/src/schema/timesheet.ts —
+// the values are written verbatim into the enum column.
 export const TIMESHEET_CATEGORIES = [
   'development',
   'design',
-  'meeting',
-  'research',
   'testing',
+  'management',
+  'meetings',
+  'research',
   'documentation',
   'support',
   'training',
-  'administrative',
+  'admin',
   'other',
 ] as const;
 export type TimesheetCategory = (typeof TIMESHEET_CATEGORIES)[number];
