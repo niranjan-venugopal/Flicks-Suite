@@ -195,12 +195,33 @@ VALUES
   ('11111111-1111-1111-1111-111111111111', '2222222a-2222-2222-2222-22222222222a', '3333333a-3333-3333-3333-33333333333a', 'employee', 'active')
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
 
--- Promote Niranjan to 'owner' even on subsequent runs (earlier seed used 'admin').
-UPDATE memberships
-SET role = 'owner'
-WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
-  AND user_id   = '22222222-2222-2222-2222-222222222220'
-  AND role <> 'owner';
+-- Force-reset roles on every re-run so testing artifacts (e.g. promoting
+-- Mira to 'admin' via the UI) don't bleed into the next demo session.
+-- Without this, ON CONFLICT DO NOTHING above would leave whatever role
+-- the row currently has in place.
+UPDATE memberships SET role = 'owner'
+  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND user_id IN ('22222222-2222-2222-2222-222222222220');  -- Niranjan
+
+UPDATE memberships SET role = 'manager'
+  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND user_id IN (
+      '22222222-2222-2222-2222-222222222221',  -- Mira  (Engineering)
+      '22222222-2222-2222-2222-222222222223'   -- Sarah (Sales)
+    );
+
+UPDATE memberships SET role = 'employee'
+  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND user_id IN (
+      '22222222-2222-2222-2222-222222222222',  -- Alice
+      '22222222-2222-2222-2222-222222222224',  -- Rohan
+      '22222222-2222-2222-2222-222222222225',  -- Diya
+      '22222222-2222-2222-2222-222222222226',  -- Kabir
+      '22222222-2222-2222-2222-222222222227',  -- Vikram
+      '22222222-2222-2222-2222-222222222228',  -- Ananya
+      '22222222-2222-2222-2222-222222222229',  -- Priya
+      '2222222a-2222-2222-2222-22222222222a'   -- Tanvi
+    );
 
 -- Mark every seeded employee as onboarding-complete so the (app) layout's
 -- guard doesn't redirect them to /onboarding/employee on login. Only fresh

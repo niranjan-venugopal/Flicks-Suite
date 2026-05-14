@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -11,14 +12,21 @@ import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onbo
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { isAuthenticated, currentUser } = useAuthStore()
-  const { isLoading, isError } = useCurrentUser()
+  const me = useCurrentUser()
+  const { isLoading, isError, data: meData } = me
 
   // Employees who haven't finished self-onboarding go to the wizard. Owners
   // and HR Admins skip this check — they're managing the workspace, not
   // joining it. Tracked in employees.custom_fields.onboarding_step.
-  const role = currentUser?.role
+  //
+  // Use the FRESH /me role for routing decisions (currentMembership.role),
+  // not the persisted auth-store snapshot. The store has the previous
+  // session's value on first paint and would mis-route the user for one
+  // tick otherwise.
+  const freshRole =
+    (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
   const isJoiningEmployee =
-    role === 'EMPLOYEE' || role === 'MANAGER'
+    freshRole === 'employee' || freshRole === 'manager'
   const onboarding = useEmployeeOnboardingStatus()
   const needsOnboarding =
     isJoiningEmployee &&
@@ -35,6 +43,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace('/onboarding/employee')
     }
   }, [isLoading, isError, isAuthenticated, needsOnboarding, router])
+
+  // Don't render the app shell until /me has resolved. Otherwise the
+  // persisted Zustand store re-hydrates with the PREVIOUS session's role
+  // and the dashboard / sidebar / topbar render the wrong navigation
+  // for ~half a second before the fresh data lands. Showing a centered
+  // spinner is better UX than flashing the wrong UI.
+  if (isLoading || (isAuthenticated && !meData)) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-brand-bg">
+        <Loader2 className="w-7 h-7 animate-spin text-brand-muted" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-brand-bg">
