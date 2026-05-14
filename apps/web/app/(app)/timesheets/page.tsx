@@ -11,9 +11,28 @@ import {
   type TimesheetPeriod,
 } from '@/lib/api/queries/use-timesheets'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const DEFAULT_CATEGORIES = ['Project work', 'Internal', 'Customer support', 'Onboarding']
+
+// Must mirror the DB `timesheet_entry_category` enum and the API DTO
+// (apps/api/src/modules/timesheet/timesheet.dto.ts).
+const CATEGORY_OPTIONS: ReadonlyArray<{ value: string; label: string; billable: boolean }> = [
+  { value: 'development',   label: 'Development',          billable: true  },
+  { value: 'design',        label: 'Design',               billable: true  },
+  { value: 'testing',       label: 'Testing / QA',         billable: true  },
+  { value: 'research',      label: 'Research',             billable: true  },
+  { value: 'support',       label: 'Customer support',     billable: true  },
+  { value: 'documentation', label: 'Documentation',        billable: false },
+  { value: 'meetings',      label: 'Meetings',             billable: false },
+  { value: 'management',    label: 'Management',           billable: false },
+  { value: 'training',      label: 'Training / learning',  billable: false },
+  { value: 'admin',         label: 'Admin / internal ops', billable: false },
+  { value: 'other',         label: 'Other',                billable: false },
+]
+const CATEGORY_DEFAULTS = ['development', 'meetings', 'documentation', 'other'] as const
+const isBillableCategory = (value: string) =>
+  CATEGORY_OPTIONS.find((c) => c.value === value)?.billable ?? false
 
 interface RowState {
   category: string
@@ -53,6 +72,11 @@ export default function TimesheetsPage() {
   const entries = useTimesheetEntries(current.data?.id || null)
   const saveEntries = useSaveTimesheetEntries()
   const submit = useSubmitTimesheet()
+  const role = useAuthStore((s) => s.currentUser?.role)
+  // Categories are workspace-level; per PRD §8 only admins curate them. Employees
+  // pick from what's already configured but cannot add new rows themselves.
+  const canManageCategories =
+    role === 'OWNER' || role === 'HR_ADMIN' || role === 'MANAGER' || role === 'SUPER_ADMIN'
 
   // Build week days based on the API's period if present, else current week.
   const weekStart = useMemo(() => {
@@ -85,10 +109,9 @@ export default function TimesheetsPage() {
     }
     const next: RowState[] = []
     for (const [category, hours] of byCategory) next.push({ category, hours })
-    while (next.length < DEFAULT_CATEGORIES.length) {
-      const c = DEFAULT_CATEGORIES[next.length]!
+    for (const c of CATEGORY_DEFAULTS) {
+      if (next.length >= CATEGORY_DEFAULTS.length) break
       if (!byCategory.has(c)) next.push({ category: c, hours: Array(7).fill(0) })
-      else break
     }
     setRows(next)
   }, [entries.data, weekDays])
@@ -110,7 +133,10 @@ export default function TimesheetsPage() {
     setRows((prev) => prev.map((r, i) => (i === rowIdx ? { ...r, category: name } : r)))
   }
   const addRow = () => {
-    setRows((prev) => [...prev, { category: 'New category', hours: Array(7).fill(0) }])
+    if (!canManageCategories) return
+    const used = new Set(rows.map((r) => r.category))
+    const next = CATEGORY_OPTIONS.find((c) => !used.has(c.value))?.value ?? 'other'
+    setRows((prev) => [...prev, { category: next, hours: Array(7).fill(0) }])
   }
 
   const handleSave = async () => {
@@ -125,7 +151,7 @@ export default function TimesheetsPage() {
                   entryDate: toISO(weekDays[i]!),
                   hours: h,
                   category: r.category,
-                  isBillable: r.category.toLowerCase().includes('project'),
+                  isBillable: isBillableCategory(r.category),
                 },
               ]
             : [],
@@ -204,12 +230,18 @@ export default function TimesheetsPage() {
           <Kpi
             label="Billable"
             value={`${rows
-              .filter((r) => r.category.toLowerCase().includes('project'))
+              .filter((r) => isBillableCategory(r.category))
               .reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0)
               .toFixed(1)}h`}
             delta={
               weekTotal > 0
-                ? `${Math.round((rows.filter((r) => r.category.toLowerCase().includes('project')).reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0) / weekTotal) * 100)}%`
+                ? `${Math.round(
+                    (rows
+                      .filter((r) => isBillableCategory(r.category))
+                      .reduce((s, r) => s + r.hours.reduce((a, b) => a + b, 0), 0) /
+                      weekTotal) *
+                      100,
+                  )}%`
                 : '—'
             }
             icon={<Icon.tag size={14} />}
@@ -277,7 +309,7 @@ export default function TimesheetsPage() {
               <tbody>
                 {rows.map((r, ri) => {
                   const rowTotal = r.hours.reduce((a, b) => a + b, 0)
-                  const billable = r.category.toLowerCase().includes('project')
+                  const billable = isBillableCategory(r.category)
                   return (
                     <tr key={ri}>
                       <td>
@@ -290,13 +322,23 @@ export default function TimesheetsPage() {
                               background: billable ? 'var(--blue)' : 'var(--purple)',
                             }}
                           />
-                          <input
+                          <select
                             className="input"
                             value={r.category}
                             onChange={(e) => updateCategory(ri, e.target.value)}
                             style={{ height: 34, fontSize: 12.5, fontWeight: 800, padding: '0 10px' }}
                             disabled={!isEditable}
-                          />
+                          >
+                            {CATEGORY_OPTIONS.find((c) => c.value === r.category) ? null : (
+                              <option value={r.category}>{r.category}</option>
+                            )}
+                            {CATEGORY_OPTIONS.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                                {c.billable ? ' · billable' : ''}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </td>
                       {r.hours.map((h, di) => (
@@ -335,7 +377,7 @@ export default function TimesheetsPage() {
                     </tr>
                   )
                 })}
-                {isEditable && (
+                {isEditable && canManageCategories && (
                   <tr>
                     <td
                       onClick={addRow}
@@ -346,7 +388,7 @@ export default function TimesheetsPage() {
                         cursor: 'pointer',
                       }}
                     >
-                      + Add category
+                      + Add category row
                     </td>
                     {weekDays.map((_, i) => <td key={i} />)}
                     <td />
