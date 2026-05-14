@@ -34,6 +34,20 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 1
 fi
 
+# Auto-source apps/api/.env if it exists and DATABASE_DIRECT_URL hasn't been
+# exported manually. Lets the user run `bash scripts/setup-demo.sh` without
+# having to remember `set -a; source apps/api/.env; set +a` first.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/apps/api/.env"
+if [[ -z "${DATABASE_DIRECT_URL:-}" && -z "${DATABASE_SERVICE_ROLE_URL:-}" && -f "$ENV_FILE" ]]; then
+  echo "  ↳ sourcing $ENV_FILE"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 # Prefer DATABASE_DIRECT_URL (Supabase / remote). Fall back to local PG* env vars.
 if [[ -n "${DATABASE_DIRECT_URL:-}" ]]; then
   CONN_TARGET=("$DATABASE_DIRECT_URL")
