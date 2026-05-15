@@ -31,9 +31,10 @@ export function useUnreadNotifications() {
   return useQuery({
     queryKey: ['notifications', 'unread'],
     queryFn: () => api.get<UnreadResponse>('/api/v1/notifications/unread?limit=10'),
-    refetchInterval: 45_000,
+    refetchInterval: 20_000,
     refetchOnWindowFocus: true,
-    staleTime: 20_000,
+    refetchOnMount: 'always',
+    staleTime: 5_000,
   })
 }
 

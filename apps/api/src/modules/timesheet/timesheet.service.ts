@@ -444,9 +444,10 @@ export class TimesheetService {
         ),
       );
 
-    // Resolve approver email + name for the notification.
+    // Resolve approver email + name + user_id for notifications.
     const [approver] = await this.dbAdmin
       .select({
+        userId: employees.user_id,
         email: users.email,
         fullName: users.full_name,
       })
@@ -454,6 +455,16 @@ export class TimesheetService {
       .leftJoin(users, eq(employees.user_id, users.id))
       .where(eq(employees.id, approverId))
       .limit(1);
+
+    // And the submitter's display name so the manager notification reads
+    // "Alice Sharma submitted her timesheet" not just "Someone submitted…".
+    const [submitter] = await this.dbAdmin
+      .select({ fullName: users.full_name })
+      .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .where(eq(employees.id, employeeId))
+      .limit(1);
+    const submitterName = submitter?.fullName ?? 'An employee';
 
     if (approver?.email) {
       try {
@@ -472,6 +483,18 @@ export class TimesheetService {
           `Could not send timesheet-submitted email to ${approver.email}: ${(e as Error).message}`,
         );
       }
+    }
+
+    // In-app notification for the approver — surfaces in the Topbar bell
+    // even when the email lands in spam or is disabled.
+    if (approver?.userId) {
+      await this.notificationsService.createInAppNotification(
+        approver.userId,
+        'timesheet.submitted',
+        `${submitterName} submitted a timesheet for ${period.period_start}.`,
+        '/team/timesheets',
+        tenantId,
+      );
     }
 
     await this.auditService.log({

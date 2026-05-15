@@ -33,6 +33,13 @@ export function NotificationsBell() {
   const markRead = useMarkRead()
   const markAllRead = useMarkAllRead()
 
+  // Force a refetch the moment the popover opens so the list reflects the
+  // very latest unread notifications, not whatever was cached 45s ago.
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next)
+    if (next) void unread.refetch()
+  }
+
   const items: NotificationItem[] = unread.data?.items ?? []
   const total = unread.data?.total ?? 0
 
@@ -47,7 +54,7 @@ export function NotificationsBell() {
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
