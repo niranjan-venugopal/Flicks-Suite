@@ -19,8 +19,9 @@ const PopoverContent = React.forwardRef<
       align={align}
       sideOffset={sideOffset}
       className={cn(
-        // Sits above the Topbar's backdrop-filter (zIndex 50).
-        'z-[60] outline-none',
+        // card-glass + border + shadow mirrors DropdownMenuContent so the
+        // panel reads opaque against the Topbar's backdrop-filter.
+        'card-glass z-[60] rounded-xl border border-white/10 text-white shadow-2xl outline-none',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',

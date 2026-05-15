@@ -100,13 +100,10 @@ export function NotificationsBell() {
         style={{
           width: 380,
           maxHeight: '70vh',
-          background: 'var(--surf-1)',
-          border: '1px solid var(--bord)',
-          borderRadius: 14,
-          boxShadow: 'var(--e2)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          padding: 0,
         }}
       >
         {/* Header */}
@@ -145,16 +142,20 @@ export function NotificationsBell() {
           ) : items.length === 0 ? (
             <div
               style={{
-                padding: '32px 20px',
+                padding: '36px 20px',
                 textAlign: 'center',
                 color: 'var(--text-mute)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 8,
               }}
             >
-              <Icon.success size={26} style={{ marginBottom: 10, opacity: 0.6 }} />
-              <div style={{ fontSize: 13, fontWeight: 700 }}>
+              <Icon.success size={28} style={{ opacity: 0.55 }} />
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>
                 You're all caught up.
               </div>
-              <div style={{ fontSize: 11.5, marginTop: 4 }}>
+              <div style={{ fontSize: 11.5, maxWidth: 240, lineHeight: 1.45 }}>
                 We'll ping you here when something needs your attention.
               </div>
             </div>
