@@ -129,9 +129,39 @@ const EMPLOYEE_NAV: NavSection[] = [
   },
 ]
 
+// FAM nav — Specflicks platform admin. Only SUPER_ADMIN sees this; they
+// live entirely under /fam/* and do not see customer-facing surfaces.
+const FAM_NAV: NavSection[] = [
+  {
+    section: 'main',
+    items: [
+      { id: 'fam-overview', label: 'Overview', icon: 'home', href: '/fam/overview' },
+      { id: 'fam-tenants', label: 'Tenants', icon: 'people', href: '/fam/tenants' },
+    ],
+  },
+  {
+    section: 'Insights',
+    items: [
+      { id: 'fam-revenue', label: 'Revenue', icon: 'chart', href: '/fam/revenue' },
+      { id: 'fam-funnel', label: 'Signup funnel', icon: 'spark', href: '/fam/funnel' },
+      { id: 'fam-usage', label: 'Feature usage', icon: 'tag', href: '/fam/features-usage' },
+      { id: 'fam-health', label: 'Tenant health', icon: 'shield', href: '/fam/health' },
+    ],
+  },
+  {
+    section: 'Platform',
+    items: [
+      { id: 'fam-flags', label: 'Feature flags', icon: 'cog', href: '/fam/features' },
+      { id: 'fam-verify', label: 'Verification queue', icon: 'success', href: '/fam/verify' },
+      { id: 'fam-audit', label: 'Audit log', icon: 'info', href: '/fam/audit' },
+    ],
+  },
+]
+
 function navFor(role: UserRole | undefined): NavSection[] {
   switch (role) {
     case 'SUPER_ADMIN':
+      return FAM_NAV
     case 'OWNER':
     case 'HR_ADMIN':
       // OWNER shares HR_ADMIN's nav for now; the prototype's OWNER_NAV
@@ -154,12 +184,10 @@ export function Sidebar() {
   const role = currentUser?.role
   const nav = useMemo(() => navFor(role), [role])
 
-  // Live approvals badge — only meaningful for admins/managers.
+  // Live approvals badge — only meaningful for the *tenant* approver roles.
+  // SUPER_ADMIN lives in FAM and has no tenant approvals queue.
   const showApprovalsBadge =
-    role === 'HR_ADMIN' ||
-    role === 'OWNER' ||
-    role === 'SUPER_ADMIN' ||
-    role === 'MANAGER'
+    role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER'
   const overview = useAdminOverview()
   const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 
@@ -202,7 +230,11 @@ export function Sidebar() {
     if (parentOfActive) setOpenGroups((g) => ({ ...g, [parentOfActive!]: true }))
   }, [parentOfActive])
 
-  const tenantName = currentTenant?.name ?? 'Workspace'
+  const isFam = role === 'SUPER_ADMIN'
+  const tenantName = isFam
+    ? 'Specflicks Platform'
+    : currentTenant?.name ?? 'Workspace'
+  const tenantPlan = isFam ? 'FAM console' : currentTenant?.plan ?? 'free'
 
   return (
     <aside
@@ -282,7 +314,7 @@ export function Sidebar() {
               {tenantName}
             </div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-              {currentTenant?.plan ?? 'free'}
+              {tenantPlan}
             </div>
           </div>
           <Icon.chevD size={14} style={{ color: 'var(--text-mute)' }} />

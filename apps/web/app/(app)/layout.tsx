@@ -25,6 +25,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // tick otherwise.
   const freshRole =
     (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
+  // Specflicks platform admins live entirely under /fam/*. They land in
+  // (app) only when they hit the post-verify default — bounce them out so
+  // they never see the customer dashboard.
+  const isPlatformAdmin = freshRole === 'super_admin'
   const isJoiningEmployee =
     freshRole === 'employee' || freshRole === 'manager'
   const onboarding = useEmployeeOnboardingStatus()
@@ -39,10 +43,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace('/login')
       return
     }
+    if (isPlatformAdmin) {
+      router.replace('/fam/overview')
+      return
+    }
     if (needsOnboarding) {
       router.replace('/onboarding/employee')
     }
-  }, [isLoading, isError, isAuthenticated, needsOnboarding, router])
+  }, [isLoading, isError, isAuthenticated, isPlatformAdmin, needsOnboarding, router])
 
   // Don't render the app shell until /me has resolved. Otherwise the
   // persisted Zustand store re-hydrates with the PREVIOUS session's role
