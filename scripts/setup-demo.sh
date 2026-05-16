@@ -72,10 +72,58 @@ psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
   "ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'owner';" >/dev/null
 
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
--- ─── Tenant ──────────────────────────────────────────────────────────────────
-INSERT INTO tenants (id, name, slug, status)
-VALUES ('11111111-1111-1111-1111-111111111111', 'Demo Co', 'demo-co', 'trialing')
+-- ─── Tenants ─────────────────────────────────────────────────────────────────
+-- Primary demo tenant + two extras so the FAM Overview screen reads
+-- realistic numbers (active count, signups this week, plan mix).
+INSERT INTO tenants (id, name, slug, status, created_at)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'Demo Co',  'demo-co',
+    'trialing', now() - interval '14 days'),
+  ('11111111-1111-1111-1111-111111111112', 'Acme Pvt', 'acme',
+    'active',   now() - interval '40 days'),
+  ('11111111-1111-1111-1111-111111111113', 'NorthStar Labs', 'northstar',
+    'active',   now() - interval '3 days')
 ON CONFLICT (id) DO NOTHING;
+
+-- ─── Subscriptions ───────────────────────────────────────────────────────────
+-- Lets the FAM Overview MRR card show real numbers. mrr_amount is the
+-- monthly value used directly in the SUM; per_user_price * user_count is
+-- kept consistent for the tenant-detail surfaces in C4.
+INSERT INTO subscriptions (
+  tenant_id, plan_code, status, per_user_price, user_count, mrr_amount,
+  billing_cycle, current_period_start, current_period_end, created_at
+) VALUES
+  ('11111111-1111-1111-1111-111111111111', 'starter',  'trialing',
+    149, 12, 149*12, 'monthly',
+    now() - interval '14 days', now() + interval '16 days',
+    now() - interval '14 days'),
+  ('11111111-1111-1111-1111-111111111112', 'growth',   'active',
+    249, 38, 249*38, 'monthly',
+    now() - interval '40 days', now() + interval '20 days',
+    now() - interval '40 days'),
+  ('11111111-1111-1111-1111-111111111113', 'starter',  'active',
+    149, 6,  149*6,  'monthly',
+    now() - interval '3 days', now() + interval '27 days',
+    now() - interval '3 days')
+ON CONFLICT (tenant_id) DO UPDATE SET
+  plan_code      = EXCLUDED.plan_code,
+  status         = EXCLUDED.status,
+  per_user_price = EXCLUDED.per_user_price,
+  user_count     = EXCLUDED.user_count,
+  mrr_amount     = EXCLUDED.mrr_amount,
+  updated_at     = now();
+
+-- ─── Tenant health snapshots ─────────────────────────────────────────────────
+-- Latest snapshot per tenant is what the FAM Overview health bucket reads.
+-- One row per tenant is enough for C2; C5 will backfill a 30-day history.
+INSERT INTO tenant_health_snapshots (
+  tenant_id, snapshot_date, health_score, active_users_7d, active_users_30d,
+  attendance_compliance, feature_adoption_score, support_tickets_open, signal
+) VALUES
+  ('11111111-1111-1111-1111-111111111111', current_date, 84,  9, 11, 0.92, 72, 0, 'healthy'),
+  ('11111111-1111-1111-1111-111111111112', current_date, 91, 34, 38, 0.95, 88, 0, 'expanding'),
+  ('11111111-1111-1111-1111-111111111113', current_date, 62,  3,  5, 0.80, 41, 1, 'new')
+ON CONFLICT DO NOTHING;
 
 -- ─── Locations ───────────────────────────────────────────────────────────────
 INSERT INTO locations (id, tenant_id, name, address_line1, city, state_code, country_code, timezone, is_active)

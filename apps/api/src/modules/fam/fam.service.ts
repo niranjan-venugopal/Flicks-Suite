@@ -1,4 +1,10 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import {
+  tenants,
+  subscriptions,
+  tenantHealthSnapshots,
+} from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
@@ -19,6 +25,158 @@ export class FamService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
   ) {}
+
+  // ─── Overview (platform-wide stats) ────────────────────────────────────────
+
+  /**
+   * Aggregated KPIs and breakdowns for the FAM Overview landing page.
+   * Returns:
+   *   - totals by tenant status + plan
+   *   - signups in the last 7 days + per-day trend
+   *   - MRR sum (active + trialing subscriptions)
+   *   - tenant health signal distribution from the latest snapshot per tenant
+   *   - recent signups (last 5 tenants)
+   */
+  async getPlatformOverview() {
+    const now = new Date();
+    const startOfDay = (d: Date) => {
+      const x = new Date(d);
+      x.setUTCHours(0, 0, 0, 0);
+      return x;
+    };
+    const sevenDaysAgo = startOfDay(new Date(now.getTime() - 7 * 86_400_000));
+
+    // 1. Tenants by status — single grouped aggregate.
+    const statusRows = await this.dbAdmin
+      .select({
+        status: tenants.status,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(tenants)
+      .where(isNull(tenants.deleted_at))
+      .groupBy(tenants.status);
+
+    const tenantsByStatus = {
+      trialing: 0,
+      active: 0,
+      past_due: 0,
+      canceled: 0,
+      suspended: 0,
+    } as Record<string, number>;
+    let totalTenants = 0;
+    for (const r of statusRows) {
+      tenantsByStatus[r.status] = Number(r.n);
+      totalTenants += Number(r.n);
+    }
+    const activeTenants =
+      (tenantsByStatus.active ?? 0) + (tenantsByStatus.trialing ?? 0);
+
+    // 2. Tenants by plan — from subscriptions (one row per tenant).
+    const planRows = await this.dbAdmin
+      .select({
+        plan: subscriptions.plan_code,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(subscriptions)
+      .groupBy(subscriptions.plan_code);
+    const tenantsByPlan: Record<string, number> = {};
+    for (const r of planRows) tenantsByPlan[r.plan] = Number(r.n);
+
+    // 3. Signups (tenants.created_at) — total this week + per-day series.
+    const signupsThisWeekRow = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(tenants)
+      .where(
+        and(isNull(tenants.deleted_at), gte(tenants.created_at, sevenDaysAgo)),
+      );
+    const signupsThisWeek = Number(signupsThisWeekRow[0]?.n ?? 0);
+
+    const signupsTrendRaw = await this.dbAdmin
+      .select({
+        d: sql<string>`to_char(date_trunc('day', ${tenants.created_at}), 'YYYY-MM-DD')`,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(tenants)
+      .where(
+        and(isNull(tenants.deleted_at), gte(tenants.created_at, sevenDaysAgo)),
+      )
+      .groupBy(sql`date_trunc('day', ${tenants.created_at})`);
+
+    const trendMap = new Map(signupsTrendRaw.map((r) => [r.d, Number(r.n)]));
+    const signupsTrend7d: Array<{ date: string; count: number }> = [];
+    for (let i = 6; i >= 0; i--) {
+      const day = new Date(now.getTime() - i * 86_400_000);
+      const key = startOfDay(day).toISOString().slice(0, 10);
+      signupsTrend7d.push({ date: key, count: trendMap.get(key) ?? 0 });
+    }
+
+    // 4. MRR — sum of mrr_amount over active + trialing subscriptions.
+    const mrrRow = await this.dbAdmin
+      .select({
+        mrr: sql<number>`COALESCE(SUM(${subscriptions.mrr_amount}), 0)::real`,
+      })
+      .from(subscriptions)
+      .where(
+        sql`${subscriptions.status} IN ('active', 'trialing')`,
+      );
+    const mrrAmount = Number(mrrRow[0]?.mrr ?? 0);
+
+    // 5. Latest health snapshot per tenant → bucket by signal.
+    const healthRows = await this.dbAdmin.execute<{
+      signal: string;
+      n: number;
+    }>(sql`
+      SELECT signal, COUNT(*)::int AS n
+      FROM (
+        SELECT DISTINCT ON (tenant_id) tenant_id, signal
+        FROM tenant_health_snapshots
+        ORDER BY tenant_id, snapshot_date DESC
+      ) AS latest
+      GROUP BY signal
+    `);
+    const healthByCount = {
+      healthy: 0,
+      at_risk: 0,
+      churning: 0,
+      expanding: 0,
+      new: 0,
+    } as Record<string, number>;
+    for (const r of (healthRows as unknown as Array<{ signal: string; n: number }>) ?? []) {
+      healthByCount[r.signal] = Number(r.n);
+    }
+
+    // 6. Recent signups — last 5 tenants.
+    const recentSignups = await this.dbAdmin
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        slug: tenants.slug,
+        status: tenants.status,
+        createdAt: tenants.created_at,
+      })
+      .from(tenants)
+      .where(isNull(tenants.deleted_at))
+      .orderBy(desc(tenants.created_at))
+      .limit(5);
+
+    return {
+      totalTenants,
+      activeTenants,
+      tenantsByStatus,
+      tenantsByPlan,
+      signupsThisWeek,
+      signupsTrend7d,
+      mrr: { amount: mrrAmount, currency: 'INR' },
+      health: healthByCount,
+      recentSignups: recentSignups.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  }
 
   // ─── Tenants ───────────────────────────────────────────────────────────────
 

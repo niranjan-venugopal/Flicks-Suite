@@ -35,6 +35,16 @@ import type { JwtPayload } from '@flicks/shared/types';
 export class FamController {
   constructor(private readonly famService: FamService) {}
 
+  // ─── Overview ──────────────────────────────────────────────────────────────
+
+  @Get('overview')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Aggregated platform-wide stats for the FAM landing page' })
+  @ApiResponse({ status: 200, description: 'Platform overview' })
+  async getOverview() {
+    return this.famService.getPlatformOverview();
+  }
+
   // ─── Tenants ───────────────────────────────────────────────────────────────
 
   @Get('tenants')
