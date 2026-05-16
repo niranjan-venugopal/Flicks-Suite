@@ -38,7 +38,7 @@ export class FamController {
   // ─── Tenants ───────────────────────────────────────────────────────────────
 
   @Get('tenants')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'List all tenants (platform admin)' })
   @ApiResponse({ status: 200, description: 'Tenants list' })
   async listTenants(@Query() query: TenantListQueryDto) {
@@ -46,7 +46,7 @@ export class FamController {
   }
 
   @Get('tenants/:id')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'Get tenant detail (platform admin)' })
   @ApiResponse({ status: 200, description: 'Tenant detail' })
   async getTenant(@Param('id') id: string) {
@@ -54,7 +54,7 @@ export class FamController {
   }
 
   @Post('tenants/:id/suspend')
-  @Roles('super_admin')
+  @Roles('fam')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Suspend a tenant' })
   @ApiResponse({ status: 200, description: 'Tenant suspended' })
@@ -67,7 +67,7 @@ export class FamController {
   }
 
   @Post('tenants/:id/extend-trial')
-  @Roles('super_admin')
+  @Roles('fam')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Extend tenant trial by N days' })
   @ApiResponse({ status: 200, description: 'Trial extended' })
@@ -80,7 +80,7 @@ export class FamController {
   }
 
   @Get('tenants/:id/health')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'Get tenant health snapshot history' })
   @ApiQuery({ name: 'days', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Health snapshots' })
@@ -94,7 +94,7 @@ export class FamController {
   // ─── Impersonation ─────────────────────────────────────────────────────────
 
   @Post('impersonate')
-  @Roles('super_admin')
+  @Roles('fam')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start impersonation session for a target user' })
   @ApiResponse({ status: 200, description: 'Impersonation token issued' })
@@ -108,7 +108,7 @@ export class FamController {
   // ─── Feature flags ─────────────────────────────────────────────────────────
 
   @Get('feature-flags')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'List all feature flags' })
   @ApiResponse({ status: 200, description: 'Feature flags' })
   async listFeatureFlags() {
@@ -116,7 +116,7 @@ export class FamController {
   }
 
   @Put('feature-flags')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'Upsert a feature flag (create or update by key)' })
   @ApiResponse({ status: 200, description: 'Feature flag upserted' })
   async upsertFeatureFlag(
@@ -129,7 +129,7 @@ export class FamController {
   // ─── Cohorts ───────────────────────────────────────────────────────────────
 
   @Get('cohorts')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'List tenant cohorts' })
   @ApiResponse({ status: 200, description: 'Cohorts' })
   async listCohorts() {
@@ -137,7 +137,7 @@ export class FamController {
   }
 
   @Put('cohorts')
-  @Roles('super_admin')
+  @Roles('fam')
   @ApiOperation({ summary: 'Upsert a tenant cohort (create or update by name)' })
   @ApiResponse({ status: 200, description: 'Cohort upserted' })
   async upsertCohort(

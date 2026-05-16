@@ -28,7 +28,7 @@ interface NavSection {
   items: NavItem[]
 }
 
-// Admin / Owner nav — used for HR_ADMIN and SUPER_ADMIN.
+// Admin / Owner nav — used for HR_ADMIN and OWNER.
 const ADMIN_NAV: NavSection[] = [
   {
     section: 'main',
@@ -129,7 +129,7 @@ const EMPLOYEE_NAV: NavSection[] = [
   },
 ]
 
-// FAM nav — Specflicks platform admin. Only SUPER_ADMIN sees this; they
+// FAM nav — Specflicks platform admin. Only FAM sees this; they
 // live entirely under /fam/* and do not see customer-facing surfaces.
 const FAM_NAV: NavSection[] = [
   {
@@ -160,7 +160,7 @@ const FAM_NAV: NavSection[] = [
 
 function navFor(role: UserRole | undefined): NavSection[] {
   switch (role) {
-    case 'SUPER_ADMIN':
+    case 'FAM':
       return FAM_NAV
     case 'OWNER':
     case 'HR_ADMIN':
@@ -185,7 +185,7 @@ export function Sidebar() {
   const nav = useMemo(() => navFor(role), [role])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.
-  // SUPER_ADMIN lives in FAM and has no tenant approvals queue.
+  // FAM admins live under /fam/* and have no tenant approvals queue.
   const showApprovalsBadge =
     role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER'
   const overview = useAdminOverview()
@@ -230,7 +230,7 @@ export function Sidebar() {
     if (parentOfActive) setOpenGroups((g) => ({ ...g, [parentOfActive!]: true }))
   }, [parentOfActive])
 
-  const isFam = role === 'SUPER_ADMIN'
+  const isFam = role === 'FAM'
   const tenantName = isFam
     ? 'Specflicks Platform'
     : currentTenant?.name ?? 'Workspace'

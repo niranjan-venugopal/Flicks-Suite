@@ -21,8 +21,12 @@ export const tenantStatusEnum = pgEnum('tenant_status', [
   'suspended',
 ]);
 
+// Note: 'super_admin' remains in the enum for backwards-compat (Postgres
+// cannot drop enum values without rewriting the column). New code should
+// use 'fam' — the Specflicks-internal platform admin role.
 export const membershipRoleEnum = pgEnum('membership_role', [
   'super_admin',
+  'fam',
   'owner',
   'admin',
   'manager',

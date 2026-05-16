@@ -76,7 +76,7 @@ export default function TimesheetsPage() {
   // Categories are workspace-level; per PRD §8 only admins curate them. Employees
   // pick from what's already configured but cannot add new rows themselves.
   const canManageCategories =
-    role === 'OWNER' || role === 'HR_ADMIN' || role === 'MANAGER' || role === 'SUPER_ADMIN'
+    role === 'OWNER' || role === 'HR_ADMIN' || role === 'MANAGER' || role === 'FAM'
 
   // Build week days based on the API's period if present, else current week.
   const weekStart = useMemo(() => {

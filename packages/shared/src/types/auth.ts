@@ -1,6 +1,8 @@
 // ─── Auth Types ──────────────────────────────────────────────────────────────
 
-export type UserRole = 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee';
+// 'super_admin' kept for backwards-compat with legacy rows; 'fam' is the
+// canonical name for the Specflicks-internal platform admin role.
+export type UserRole = 'fam' | 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee';
 
 export type TenantStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended';
 

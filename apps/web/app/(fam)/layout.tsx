@@ -9,10 +9,12 @@ import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 
 /**
- * Specflicks-internal FAM console layout. Only `super_admin` members are
+ * Specflicks-internal FAM console layout. Only role='fam' members are
  * allowed in; everyone else gets bounced back to the customer app shell.
  * Mirrors the (app) layout's spinner-while-/me-resolves pattern so we don't
- * render the wrong nav for half a second on hard refresh.
+ * render the wrong nav for half a second on hard refresh. The legacy
+ * 'super_admin' enum value is accepted as an alias until 0004_role_fam.sql
+ * has been applied everywhere.
  */
 export default function FamLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -22,7 +24,8 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
 
   const freshRole =
     (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
-  const isPlatformAdmin = freshRole === 'super_admin'
+  const isPlatformAdmin =
+    freshRole === 'fam' || freshRole === 'super_admin'
 
   useEffect(() => {
     if (isLoading) return

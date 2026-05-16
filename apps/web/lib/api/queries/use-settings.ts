@@ -475,7 +475,8 @@ export function useUpdateLeavePolicy() {
 // ─── Members (memberships / workspace access) ────────────────────────────────
 
 export type MembershipRole =
-  | 'super_admin'
+  | 'fam'
+  | 'super_admin' // legacy alias for pre-0004 rows
   | 'owner'
   | 'admin'
   | 'manager'

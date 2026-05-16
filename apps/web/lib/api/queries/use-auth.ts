@@ -62,8 +62,9 @@ interface MeResponse extends ApiUser {
 
 function normaliseRole(role: string | undefined | null): UserRole {
   switch ((role ?? '').toLowerCase()) {
-    case 'super_admin':
-      return 'SUPER_ADMIN'
+    case 'fam':
+    case 'super_admin': // legacy alias — pre-0004 migration rows still resolve
+      return 'FAM'
     case 'owner':
       return 'OWNER'
     case 'admin':

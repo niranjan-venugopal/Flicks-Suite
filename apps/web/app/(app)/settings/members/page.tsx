@@ -19,7 +19,8 @@ import { useToast } from '@/components/ui/use-toast'
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const ROLE_LABELS: Record<MembershipRole, string> = {
-  super_admin: 'Super Admin',
+  fam:         'FAM Admin',
+  super_admin: 'FAM Admin', // legacy alias — pre-0004 rows
   owner:       'Owner',
   admin:       'HR Admin',
   manager:     'Manager',
@@ -27,11 +28,12 @@ const ROLE_LABELS: Record<MembershipRole, string> = {
   employee:    'Employee',
 }
 
-// Roles a customer admin can assign (super_admin is Specflicks-internal only).
+// Roles a customer admin can assign (fam is Specflicks-internal only).
 const ASSIGNABLE_ROLES: MembershipRole[] = ['owner', 'admin', 'manager', 'employee']
 
 function roleTone(r: MembershipRole): PillTone {
   switch (r) {
+    case 'fam':         return 'purple'
     case 'super_admin': return 'purple'
     case 'owner':       return 'yellow'
     case 'admin':       return 'blue'
@@ -175,7 +177,7 @@ export default function MembersSettingsPage() {
               {items.map((m, i, arr) => {
                 const isMe = m.userId === currentUser?.id
                 const name = displayName(m)
-                const canEdit = m.role !== 'super_admin' && !isMe
+                const canEdit = m.role !== 'fam' && m.role !== 'super_admin' && !isMe
 
                 return (
                   <tr

@@ -568,6 +568,7 @@ export class UpdateLeavePolicyDto {
 // ─── Members (memberships / workspace access) ────────────────────────────────
 
 const MEMBER_ROLE_VALUES = [
+  'fam',
   'super_admin',
   'owner',
   'admin',

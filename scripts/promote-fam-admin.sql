@@ -1,17 +1,17 @@
--- Promote niranjan@demo.co to super_admin in the Demo workspace so you can
--- log in and exercise the new /fam/* shell (Sprint 3 C1).
+-- Promote niranjan@demo.co to the FAM platform admin role so you can
+-- log in and exercise /fam/* (Sprint 3 C1). Requires 0004_role_fam.sql
+-- to have been applied first (adds 'fam' to the membership_role enum).
 --
--- This is reversible — running scripts/setup-demo.sh again resets all
--- demo roles back to their seeded values.
+-- Reversible — re-running setup-demo.sh resets all demo roles to seeded
+-- values.
 --
--- Apply via Supabase SQL editor or:
+-- Apply via the Supabase SQL editor or:
 --   psql "$DATABASE_DIRECT_URL" -f scripts/promote-fam-admin.sql
 
 BEGIN;
 
 UPDATE memberships
-SET    role       = 'super_admin',
-       updated_at = now()
+SET    role = 'fam'
 WHERE  user_id = (SELECT id FROM users WHERE email = 'niranjan@demo.co');
 
 COMMIT;

@@ -25,10 +25,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // tick otherwise.
   const freshRole =
     (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
-  // Specflicks platform admins live entirely under /fam/*. They land in
-  // (app) only when they hit the post-verify default — bounce them out so
-  // they never see the customer dashboard.
-  const isPlatformAdmin = freshRole === 'super_admin'
+  // Specflicks platform admins (role='fam') live entirely under /fam/*.
+  // They land in (app) only when they hit the post-verify default —
+  // bounce them out so they never see the customer dashboard. The legacy
+  // 'super_admin' enum value is accepted as an alias until all rows are
+  // migrated by 0004_role_fam.sql.
+  const isPlatformAdmin =
+    freshRole === 'fam' || freshRole === 'super_admin'
   const isJoiningEmployee =
     freshRole === 'employee' || freshRole === 'manager'
   const onboarding = useEmployeeOnboardingStatus()

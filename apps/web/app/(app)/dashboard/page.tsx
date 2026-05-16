@@ -80,7 +80,8 @@ export default function DashboardPage() {
 
   if (role === 'EMPLOYEE') return <EmployeeHome />
   if (role === 'MANAGER') return <ManagerDashboard />
-  // HR_ADMIN, SUPER_ADMIN, undefined (during boot) → admin view
+  // HR_ADMIN, OWNER, undefined (during boot) → admin view. FAM never
+  // reaches here — (app)/layout.tsx bounces them to /fam/overview first.
   return <AdminDashboard />
 }
 

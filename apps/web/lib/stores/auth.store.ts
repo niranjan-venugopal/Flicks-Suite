@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type UserRole =
-  | 'SUPER_ADMIN'
+  | 'FAM'
   | 'OWNER'
   | 'HR_ADMIN'
   | 'MANAGER'
@@ -12,7 +12,7 @@ export type UserRole =
 // HR stays uppercase; everything else is title-cased.
 export function roleLabel(role: UserRole | string | null | undefined): string {
   switch (role) {
-    case 'SUPER_ADMIN': return 'Super Admin'
+    case 'FAM':         return 'FAM Admin'
     case 'OWNER':       return 'Owner'
     case 'HR_ADMIN':    return 'HR Admin'
     case 'MANAGER':     return 'Manager'

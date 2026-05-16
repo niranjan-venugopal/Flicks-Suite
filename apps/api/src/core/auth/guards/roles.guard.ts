@@ -36,6 +36,9 @@ export class RolesGuard implements CanActivate {
     }
 
     const roleHierarchy: Record<UserRole, number> = {
+      // FAM (Specflicks-internal) sits at the top; `super_admin` is the
+      // deprecated legacy name kept at the same level for compat.
+      fam: 6,
       super_admin: 6,
       owner: 5,
       admin: 4,
