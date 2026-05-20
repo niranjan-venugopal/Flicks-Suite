@@ -4,6 +4,8 @@ import {
   tenants,
   subscriptions,
   tenantHealthSnapshots,
+  memberships,
+  users,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -182,104 +184,131 @@ export class FamService {
 
   /**
    * Lists tenants across the platform (FAM view). Joins each tenant with
-   * its subscription row and the latest tenant_health_snapshots row to
-   * surface plan, MRR, and current health signal in one round trip.
+   * its subscription row to surface plan, MRR, and user count in one
+   * round trip; the latest health snapshot is loaded in a second batched
+   * query and merged in JS so we don't need a fragile DISTINCT ON subquery.
    */
   async listTenants(query: TenantListQueryDto) {
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const filters = [isNull(tenants.deleted_at)] as Array<ReturnType<typeof isNull>>;
+    // Build the WHERE clause. The status enum is narrowed before passing
+    // to `eq` so Drizzle generates a parameterized comparison; search is
+    // a case-insensitive LIKE over name + slug.
+    const conditions = [isNull(tenants.deleted_at)] as Array<ReturnType<typeof isNull>>;
     if (query.status) {
-      filters.push(
-        eq(tenants.status, query.status as 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended'),
+      conditions.push(
+        eq(
+          tenants.status,
+          query.status as 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended',
+        ) as never,
       );
     }
     if (query.search?.trim()) {
       const needle = `%${query.search.trim().toLowerCase()}%`;
-      filters.push(
+      conditions.push(
         sql`(lower(${tenants.name}) like ${needle} or lower(${tenants.slug}) like ${needle})` as never,
       );
     }
+    const where = and(...conditions);
 
-    // Latest health snapshot per tenant via DISTINCT ON.
-    const latestHealthSql = sql`(
-      SELECT DISTINCT ON (h.tenant_id)
-        h.tenant_id, h.signal, h.health_score, h.snapshot_date
-      FROM tenant_health_snapshots h
-      ORDER BY h.tenant_id, h.snapshot_date DESC
-    ) AS latest_health`;
+    const baseRows = await this.dbAdmin
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        slug: tenants.slug,
+        status: tenants.status,
+        createdAt: tenants.created_at,
+        trialEndsAt: tenants.trial_ends_at,
+        planCode: subscriptions.plan_code,
+        subStatus: subscriptions.status,
+        mrrAmount: subscriptions.mrr_amount,
+        userCount: subscriptions.user_count,
+      })
+      .from(tenants)
+      .leftJoin(subscriptions, eq(subscriptions.tenant_id, tenants.id))
+      .where(where)
+      .orderBy(desc(tenants.created_at))
+      .limit(limit)
+      .offset(offset);
 
-    const rows = await this.dbAdmin.execute<{
-      id: string;
-      name: string;
-      slug: string;
-      status: string;
-      created_at: Date;
-      trial_ends_at: Date | null;
-      plan_code: string | null;
-      sub_status: string | null;
-      mrr_amount: number | null;
-      user_count: number | null;
-      signal: string | null;
-      health_score: number | null;
-      member_count: number;
-    }>(sql`
-      SELECT
-        t.id, t.name, t.slug, t.status, t.created_at, t.trial_ends_at,
-        s.plan_code,
-        s.status     AS sub_status,
-        s.mrr_amount,
-        s.user_count,
-        lh.signal,
-        lh.health_score,
-        (SELECT COUNT(*)::int FROM memberships m
-           WHERE m.tenant_id = t.id) AS member_count
-      FROM tenants t
-      LEFT JOIN subscriptions s ON s.tenant_id = t.id
-      LEFT JOIN ${latestHealthSql} ON latest_health.tenant_id = t.id
-      WHERE ${and(...filters)}
-        ${query.signal ? sql`AND lh.signal = ${query.signal}` : sql``}
-      ORDER BY t.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `);
+    const tenantIds = baseRows.map((r) => r.id);
 
-    const totalRow = await this.dbAdmin.execute<{ n: number }>(sql`
-      SELECT COUNT(*)::int AS n
-      FROM tenants t
-      ${query.signal
-        ? sql`LEFT JOIN ${latestHealthSql} ON latest_health.tenant_id = t.id`
-        : sql``}
-      WHERE ${and(...filters)}
-        ${query.signal ? sql`AND lh.signal = ${query.signal}` : sql``}
-    `);
-    const total = Number(
-      (totalRow as unknown as Array<{ n: number }>)[0]?.n ?? 0,
-    );
+    // Latest health snapshot per tenant in one round trip.
+    const healthRows = tenantIds.length
+      ? await this.dbAdmin.execute<{
+          tenant_id: string;
+          signal: string;
+          health_score: number | null;
+        }>(sql`
+          SELECT DISTINCT ON (tenant_id) tenant_id, signal, health_score
+          FROM tenant_health_snapshots
+          WHERE tenant_id IN (${sql.join(
+            tenantIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+          ORDER BY tenant_id, snapshot_date DESC
+        `)
+      : [];
+    const healthByTenant = new Map<string, { signal: string; healthScore: number | null }>();
+    for (const r of (healthRows as unknown as Array<{ tenant_id: string; signal: string; health_score: number | null }>) ?? []) {
+      healthByTenant.set(r.tenant_id, {
+        signal: r.signal,
+        healthScore: r.health_score != null ? Number(r.health_score) : null,
+      });
+    }
+
+    // Member counts per tenant — one aggregate query.
+    const memberCountRows = tenantIds.length
+      ? await this.dbAdmin.execute<{ tenant_id: string; n: number }>(sql`
+          SELECT tenant_id, COUNT(*)::int AS n
+          FROM memberships
+          WHERE tenant_id IN (${sql.join(
+            tenantIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+          GROUP BY tenant_id
+        `)
+      : [];
+    const memberCountByTenant = new Map<string, number>();
+    for (const r of (memberCountRows as unknown as Array<{ tenant_id: string; n: number }>) ?? []) {
+      memberCountByTenant.set(r.tenant_id, Number(r.n));
+    }
+
+    // Total count for pagination — uses the same WHERE.
+    const totalRowResult = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(tenants)
+      .where(where);
+    const total = Number(totalRowResult[0]?.n ?? 0);
+
+    // Build the shaped response. If a signal filter was requested, drop
+    // tenants whose latest snapshot doesn't match — cheaper than a
+    // second SQL pass for the small page sizes the UI uses.
+    const data = baseRows
+      .map((r) => {
+        const h = healthByTenant.get(r.id);
+        return {
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          status: r.status,
+          createdAt: r.createdAt.toISOString(),
+          trialEndsAt: r.trialEndsAt?.toISOString() ?? null,
+          plan: r.planCode ?? null,
+          subStatus: r.subStatus ?? null,
+          mrr: r.mrrAmount != null ? Number(r.mrrAmount) : 0,
+          userCount: r.userCount ?? 0,
+          memberCount: memberCountByTenant.get(r.id) ?? 0,
+          signal: h?.signal ?? null,
+          healthScore: h?.healthScore ?? null,
+        };
+      })
+      .filter((t) => (query.signal ? t.signal === query.signal : true));
 
     return {
-      data: ((rows as unknown as Array<typeof rows extends Array<infer R> ? R : never>) ?? []).map((r) => ({
-        id: r.id,
-        name: r.name,
-        slug: r.slug,
-        status: r.status,
-        createdAt: r.created_at instanceof Date
-          ? r.created_at.toISOString()
-          : new Date(r.created_at as unknown as string).toISOString(),
-        trialEndsAt: r.trial_ends_at
-          ? (r.trial_ends_at instanceof Date
-              ? r.trial_ends_at.toISOString()
-              : new Date(r.trial_ends_at as unknown as string).toISOString())
-          : null,
-        plan: r.plan_code ?? null,
-        subStatus: r.sub_status ?? null,
-        mrr: r.mrr_amount != null ? Number(r.mrr_amount) : 0,
-        userCount: r.user_count ?? 0,
-        memberCount: Number(r.member_count ?? 0),
-        signal: r.signal ?? null,
-        healthScore: r.health_score != null ? Number(r.health_score) : null,
-      })),
+      data,
       pagination: { page, limit, total },
     };
   }
@@ -375,69 +404,47 @@ export class FamService {
    * page. Joins with users to surface email + display name + status.
    */
   async listTenantMembers(tenantId: string) {
-    const rows = await this.dbAdmin.execute<{
-      membership_id: string;
-      role: string;
-      m_status: string;
-      invited_at: Date | null;
-      accepted_at: Date | null;
-      user_id: string;
-      email: string;
-      full_name: string;
-    }>(sql`
-      SELECT
-        m.id         AS membership_id,
-        m.role,
-        m.status     AS m_status,
-        m.invited_at,
-        m.accepted_at,
-        u.id         AS user_id,
-        u.email,
-        u.full_name
-      FROM memberships m
-      LEFT JOIN users u ON u.id = m.user_id
-      WHERE m.tenant_id = ${tenantId}
-      ORDER BY
-        CASE m.role
-          WHEN 'fam' THEN 0
-          WHEN 'super_admin' THEN 0
-          WHEN 'owner' THEN 1
-          WHEN 'admin' THEN 2
-          WHEN 'manager' THEN 3
-          WHEN 'finance' THEN 4
-          WHEN 'employee' THEN 5
-          ELSE 9
-        END,
-        u.full_name
-    `);
+    // ORDER BY role-precedence is expressed inline; everything else is
+    // pure Drizzle so the placeholders bind correctly.
+    const rolePrecedence = sql`
+      CASE ${memberships.role}
+        WHEN 'fam'         THEN 0
+        WHEN 'super_admin' THEN 0
+        WHEN 'owner'       THEN 1
+        WHEN 'admin'       THEN 2
+        WHEN 'manager'     THEN 3
+        WHEN 'finance'     THEN 4
+        WHEN 'employee'    THEN 5
+        ELSE 9
+      END
+    `;
+
+    const rows = await this.dbAdmin
+      .select({
+        membershipId: memberships.id,
+        role: memberships.role,
+        status: memberships.status,
+        invitedAt: memberships.invited_at,
+        acceptedAt: memberships.accepted_at,
+        userId: users.id,
+        email: users.email,
+        fullName: users.full_name,
+      })
+      .from(memberships)
+      .leftJoin(users, eq(users.id, memberships.user_id))
+      .where(eq(memberships.tenant_id, tenantId))
+      .orderBy(rolePrecedence, users.full_name);
 
     return {
-      data: ((rows as unknown as Array<{
-        membership_id: string;
-        role: string;
-        m_status: string;
-        invited_at: Date | null;
-        accepted_at: Date | null;
-        user_id: string;
-        email: string;
-        full_name: string;
-      }>) ?? []).map((r) => ({
-        membershipId: r.membership_id,
-        userId: r.user_id,
-        email: r.email,
-        fullName: r.full_name,
+      data: rows.map((r) => ({
+        membershipId: r.membershipId,
+        userId: r.userId ?? '',
+        email: r.email ?? null,
+        fullName: r.fullName ?? null,
         role: r.role,
-        status: r.m_status,
-        invitedAt: r.invited_at
-          ? (r.invited_at instanceof Date
-              ? r.invited_at.toISOString()
-              : new Date(r.invited_at as unknown as string).toISOString())
-          : null,
-        acceptedAt: r.accepted_at
-          ? (r.accepted_at instanceof Date
-              ? r.accepted_at.toISOString()
-              : new Date(r.accepted_at as unknown as string).toISOString())
-          : null,
+        status: r.status,
+        invitedAt: r.invitedAt?.toISOString() ?? null,
+        acceptedAt: r.acceptedAt?.toISOString() ?? null,
       })),
     };
   }
