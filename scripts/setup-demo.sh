@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
 #
-# Flicks Suite — demo tenant + users + history (rich seed)
+# Flicks Suite — demo tenant + users + history + schema guards (rich seed)
 #
-# Creates a populated "Demo Co" tenant so every screen looks real:
-#   • 1 Founder/Admin     (niranjan@demo.co — placeholder until OWNER role lands)
-#   • 2 Managers          (manager@demo.co — Mira, sarah@demo.co — Sarah)
-#   • 8 Employees         (alice + 7 others) across 3 departments + 2 locations
-#   • 11 Indian leave types (copied from seed tenant if present, plus CL/SL/EL/ML/PL)
-#   • Default 9-to-6 shift template (Mon-Fri IST, 60-min unpaid break)
-#   • Attendance: last 30 days × 8 employees with realistic status mix
-#                 (mostly present, a few late, weekends + holidays auto-marked)
-#   • Leave requests: 4 in mixed states (pending / approved / rejected / cancelled)
-#   • Regularizations: 2 pending (one missing-punch, one wrong-time)
-#   • Holidays copied from default seed tenant for Calendar
+# Creates a populated "Demo Co" tenant so every screen looks real, AND
+# inline-applies any migration deltas that the migration files would
+# otherwise apply separately. One command brings a fresh Supabase to a
+# working state.
 #
-# Idempotent — safe to re-run; uses fixed UUIDs and ON CONFLICT DO NOTHING.
+# Personas (all sign in via OTP at http://localhost:3000/login):
+#   • fam@flickssuite.com  (FAM platform admin → /fam/*)
+#   • niranjan@demo.co     (Owner of Demo Co → customer dashboard)
+#   • manager@demo.co      (manager Mira — Engineering)
+#   • sarah@demo.co        (manager Sarah — Sales)
+#   • alice@demo.co        (employee, reports to Mira)
+#   • + 7 more employees across 3 departments + 2 locations
+#
+# Data:
+#   • 3 tenants total (Demo Co + Acme Pvt + NorthStar Labs) with
+#     subscriptions, latest health snapshots, and a few seed billing
+#     events + platform audit rows so every FAM screen has content.
+#   • 11 Indian leave types, default 9-to-6 Mon-Fri shift template
+#   • Last 30 days of attendance × 8 employees with realistic mix
+#   • 4 leave requests + 2 regularizations in mixed states
+#   • Holidays copied from the seed tenant for the Calendar
+#
+# Schema deltas applied inline (idempotent — IF NOT EXISTS everywhere):
+#   • ALTER TYPE membership_role ADD VALUE 'owner'
+#   • ALTER TYPE membership_role ADD VALUE 'fam'
+#   • CREATE TABLE notifications (matches drizzle/0003_notifications.sql)
+#
+# Idempotent — safe to re-run; uses fixed UUIDs, ON CONFLICT, and an
+# explicit role-reset block at the end so testing artefacts (promoting
+# Mira to admin via the UI, demoting niranjan, etc.) don't bleed across
+# sessions.
 #
 # Usage:
-#   set -a; source apps/api/.env; set +a
 #   bash scripts/setup-demo.sh
 #
-# Login at http://localhost:3000/login as any of:
-#   • niranjan@demo.co  (admin / future Owner)
-#   • manager@demo.co   (manager Mira)
-#   • sarah@demo.co     (manager Sarah)
-#   • alice@demo.co     (employee)
 # OTPs print to the API server log: search for [DEV] OTP for ...
 
 set -euo pipefail
@@ -63,13 +75,39 @@ else
   CONN_TARGET=(-h "$PGHOST" -p "$PGPORT" -U "$PGSUPERUSER" -d "$APP_DB_NAME")
 fi
 
-# ─── Schema guard: ensure 'owner' enum value exists ────────────────────────
-# Run as a separate psql call so the ALTER TYPE commits before the seed
-# below tries to use the new value. Without this, users who only run
-# setup-demo.sh (without setup-supabase.sh) would fail on the owner role.
-# Idempotent: IF NOT EXISTS makes re-runs a no-op.
+# ─── Schema guards (apply migration deltas inline) ──────────────────────────
+# Each runs as its own psql call so the ALTER/CREATE commits before the
+# seed below tries to use the new value or table. Without separate commits
+# the same transaction can't add an enum value and then reference it
+# (PG only sees added enum labels in subsequent transactions).
+echo "  ↳ schema guards"
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
   "ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'owner';" >/dev/null
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
+  "ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'fam';" >/dev/null
+
+# Notifications table — matches packages/db/drizzle/0003_notifications.sql.
+# Inlined so the schema is whole after a fresh setup-supabase + setup-demo.
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SCHEMA_SQL' >/dev/null
+CREATE TABLE IF NOT EXISTS "notifications" (
+  "id"        uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "tenant_id" uuid REFERENCES "tenants" ("id") ON DELETE CASCADE,
+  "user_id"   uuid NOT NULL REFERENCES "users"   ("id") ON DELETE CASCADE,
+  "type"      text NOT NULL,
+  "message"   text NOT NULL,
+  "link_url"  text,
+  "read_at"   timestamptz,
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS "notifications_user_read_idx"
+  ON "notifications" ("user_id", "read_at");
+CREATE INDEX IF NOT EXISTS "notifications_user_created_idx"
+  ON "notifications" ("user_id", "created_at" DESC);
+CREATE INDEX IF NOT EXISTS "notifications_tenant_id_idx"
+  ON "notifications" ("tenant_id");
+SCHEMA_SQL
+
+echo "  ↳ seeding demo data"
 
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
 -- ─── Tenants ─────────────────────────────────────────────────────────────────
@@ -181,10 +219,12 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- ─── Users ───────────────────────────────────────────────────────────────────
--- Founder + 2 managers + 8 employees = 11 users.
+-- 1 FAM admin (Specflicks internal, not tied to Demo Co) +
+-- 1 Founder/Owner + 2 Managers + 8 Employees = 12 users total.
 INSERT INTO users (id, email, full_name, status)
 VALUES
-  ('22222222-2222-2222-2222-222222222220', 'niranjan@demo.co', 'Niranjan V',     'active'), -- Founder/Admin (Owner placeholder)
+  ('2222222f-2222-2222-2222-22222222222f', 'fam@flickssuite.com', 'Flicks Platform Ops', 'active'), -- FAM (Specflicks internal)
+  ('22222222-2222-2222-2222-222222222220', 'niranjan@demo.co', 'Niranjan V',     'active'), -- Founder / Owner of Demo Co
   ('22222222-2222-2222-2222-222222222221', 'manager@demo.co',  'Mira Manager',   'active'), -- Manager (Engineering)
   ('22222222-2222-2222-2222-222222222223', 'sarah@demo.co',    'Sarah Lead',     'active'), -- Manager (Sales)
   ('22222222-2222-2222-2222-222222222222', 'alice@demo.co',    'Alice Sharma',   'active'), -- Engineer, reports to Mira
@@ -275,10 +315,17 @@ UPDATE departments SET head_employee_id = '3333333a-3333-3333-3333-33333333333a'
   WHERE id = '44444444-4444-4444-4444-444444444443';
 
 -- ─── Memberships ─────────────────────────────────────────────────────────────
--- Niranjan is the founder/Owner — has all permissions of an admin plus
--- billing and tenant-level controls (Sprint 2 B0).
+-- Niranjan is the founder / Owner of Demo Co — has all permissions of
+-- an admin plus billing and tenant-level controls.
+--
+-- fam@flickssuite.com is Specflicks-internal. We attach the membership
+-- to Demo Co for routing purposes (the JWT needs *some* tenant context),
+-- but the (app)/layout.tsx redirect bounces role='fam' to /fam/overview
+-- so they never see customer-side surfaces. No employee_id since they
+-- are not an employee of Demo Co.
 INSERT INTO memberships (tenant_id, user_id, employee_id, role, status)
 VALUES
+  ('11111111-1111-1111-1111-111111111111', '2222222f-2222-2222-2222-22222222222f', NULL,                                   'fam',      'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220', '33333333-3333-3333-3333-333333333330', 'owner',    'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '33333333-3333-3333-3333-333333333331', 'manager',  'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222223', '33333333-3333-3333-3333-333333333333', 'manager',  'active'),
@@ -293,9 +340,13 @@ VALUES
 ON CONFLICT (tenant_id, user_id) DO NOTHING;
 
 -- Force-reset roles on every re-run so testing artifacts (e.g. promoting
--- Mira to 'admin' via the UI) don't bleed into the next demo session.
--- Without this, ON CONFLICT DO NOTHING above would leave whatever role
--- the row currently has in place.
+-- Mira to 'admin' via the UI, demoting niranjan from owner) don't bleed
+-- across demo sessions. Without this, ON CONFLICT DO NOTHING above would
+-- leave whatever role the row currently has in place.
+UPDATE memberships SET role = 'fam'
+  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND user_id IN ('2222222f-2222-2222-2222-22222222222f');  -- Specflicks FAM
+
 UPDATE memberships SET role = 'owner'
   WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
     AND user_id IN ('22222222-2222-2222-2222-222222222220');  -- Niranjan
