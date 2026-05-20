@@ -86,6 +86,13 @@ psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
   "ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'fam';" >/dev/null
 
+# Migrate any legacy 'super_admin' memberships to 'fam' so long-lived
+# databases that were ever promoted via the old promote-fam-admin.sql
+# converge on the canonical role name. Mirrors the data step in
+# packages/db/drizzle/0004_role_fam.sql. No-op on fresh installs.
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc -c \
+  "UPDATE memberships SET role = 'fam' WHERE role = 'super_admin';" >/dev/null
+
 # Notifications table — matches packages/db/drizzle/0003_notifications.sql.
 # Inlined so the schema is whole after a fresh setup-supabase + setup-demo.
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SCHEMA_SQL' >/dev/null
