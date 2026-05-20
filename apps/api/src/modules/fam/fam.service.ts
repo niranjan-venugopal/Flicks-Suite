@@ -4,7 +4,13 @@ import {
   Inject,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, ne, sql } from 'drizzle-orm';
+
+// The Specflicks-internal "platform tenant" that exists only to give the
+// FAM admin a JWT tenant_id without making them a member of any customer
+// workspace. Hidden from /fam/tenants and the platform-wide aggregates;
+// seeded by scripts/setup-demo.sh.
+const SPECFLICKS_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 import {
   tenants,
   subscriptions,
@@ -56,6 +62,14 @@ export class FamService {
     };
     const sevenDaysAgo = startOfDay(new Date(now.getTime() - 7 * 86_400_000));
 
+    // Customer-tenant filter — everywhere we count or list workspaces,
+    // we exclude the Specflicks platform tenant since it's not a real
+    // customer; it exists only to host the FAM admin's membership.
+    const customerOnly = and(
+      isNull(tenants.deleted_at),
+      ne(tenants.id, SPECFLICKS_TENANT_ID),
+    );
+
     // 1. Tenants by status — single grouped aggregate.
     const statusRows = await this.dbAdmin
       .select({
@@ -63,7 +77,7 @@ export class FamService {
         n: sql<number>`COUNT(*)::int`,
       })
       .from(tenants)
-      .where(isNull(tenants.deleted_at))
+      .where(customerOnly)
       .groupBy(tenants.status);
 
     const tenantsByStatus = {
@@ -82,12 +96,16 @@ export class FamService {
       (tenantsByStatus.active ?? 0) + (tenantsByStatus.trialing ?? 0);
 
     // 2. Tenants by plan — from subscriptions (one row per tenant).
+    // The Specflicks platform tenant has no subscription, so no filter
+    // is strictly needed here, but join-and-filter keeps things honest
+    // in case someone accidentally seeds one.
     const planRows = await this.dbAdmin
       .select({
         plan: subscriptions.plan_code,
         n: sql<number>`COUNT(*)::int`,
       })
       .from(subscriptions)
+      .where(ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID))
       .groupBy(subscriptions.plan_code);
     const tenantsByPlan: Record<string, number> = {};
     for (const r of planRows) tenantsByPlan[r.plan] = Number(r.n);
@@ -96,9 +114,7 @@ export class FamService {
     const signupsThisWeekRow = await this.dbAdmin
       .select({ n: sql<number>`COUNT(*)::int` })
       .from(tenants)
-      .where(
-        and(isNull(tenants.deleted_at), gte(tenants.created_at, sevenDaysAgo)),
-      );
+      .where(and(customerOnly, gte(tenants.created_at, sevenDaysAgo)));
     const signupsThisWeek = Number(signupsThisWeekRow[0]?.n ?? 0);
 
     const signupsTrendRaw = await this.dbAdmin
@@ -107,9 +123,7 @@ export class FamService {
         n: sql<number>`COUNT(*)::int`,
       })
       .from(tenants)
-      .where(
-        and(isNull(tenants.deleted_at), gte(tenants.created_at, sevenDaysAgo)),
-      )
+      .where(and(customerOnly, gte(tenants.created_at, sevenDaysAgo)))
       .groupBy(sql`date_trunc('day', ${tenants.created_at})`);
 
     const trendMap = new Map(signupsTrendRaw.map((r) => [r.d, Number(r.n)]));
@@ -127,7 +141,10 @@ export class FamService {
       })
       .from(subscriptions)
       .where(
-        sql`${subscriptions.status} IN ('active', 'trialing')`,
+        and(
+          sql`${subscriptions.status} IN ('active', 'trialing')`,
+          ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID),
+        ),
       );
     const mrrAmount = Number(mrrRow[0]?.mrr ?? 0);
 
@@ -140,6 +157,7 @@ export class FamService {
       FROM (
         SELECT DISTINCT ON (tenant_id) tenant_id, signal
         FROM tenant_health_snapshots
+        WHERE tenant_id <> ${SPECFLICKS_TENANT_ID}
         ORDER BY tenant_id, snapshot_date DESC
       ) AS latest
       GROUP BY signal
@@ -165,7 +183,7 @@ export class FamService {
         createdAt: tenants.created_at,
       })
       .from(tenants)
-      .where(isNull(tenants.deleted_at))
+      .where(customerOnly)
       .orderBy(desc(tenants.created_at))
       .limit(5);
 
@@ -204,7 +222,10 @@ export class FamService {
     // Build the WHERE clause. The status enum is narrowed before passing
     // to `eq` so Drizzle generates a parameterized comparison; search is
     // a case-insensitive LIKE over name + slug.
-    const conditions = [isNull(tenants.deleted_at)] as Array<ReturnType<typeof isNull>>;
+    const conditions = [
+      isNull(tenants.deleted_at),
+      ne(tenants.id, SPECFLICKS_TENANT_ID),
+    ] as Array<ReturnType<typeof isNull>>;
     if (query.status) {
       conditions.push(
         eq(
@@ -326,6 +347,11 @@ export class FamService {
    * + member/employee counts. Used by /fam/tenants/[id] Overview tab.
    */
   async getTenant(tenantId: string) {
+    // Block direct access to the Specflicks platform tenant — it's not a
+    // customer workspace and shouldn't appear in any FAM tenant view.
+    if (tenantId === SPECFLICKS_TENANT_ID) {
+      return null;
+    }
     const [tenant] = await this.dbAdmin
       .select()
       .from(tenants)

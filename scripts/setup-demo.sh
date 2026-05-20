@@ -118,10 +118,17 @@ echo "  ↳ seeding demo data"
 
 psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
 -- ─── Tenants ─────────────────────────────────────────────────────────────────
+-- Specflicks-internal "platform tenant" so the FAM admin has a JWT
+-- tenant_id to attach to without being a member of any customer
+-- workspace. Hidden from the FAM tenants list and the platform-wide
+-- aggregates by id (see fam.service.ts SPECFLICKS_TENANT_ID).
+--
 -- Primary demo tenant + two extras so the FAM Overview screen reads
 -- realistic numbers (active count, signups this week, plan mix).
 INSERT INTO tenants (id, name, slug, status, created_at)
 VALUES
+  ('00000000-0000-0000-0000-000000000001', 'Specflicks Platform', 'specflicks',
+    'active',   now() - interval '365 days'),
   ('11111111-1111-1111-1111-111111111111', 'Demo Co',  'demo-co',
     'trialing', now() - interval '14 days'),
   ('11111111-1111-1111-1111-111111111112', 'Acme Pvt', 'acme',
@@ -325,14 +332,15 @@ UPDATE departments SET head_employee_id = '3333333a-3333-3333-3333-33333333333a'
 -- Niranjan is the founder / Owner of Demo Co — has all permissions of
 -- an admin plus billing and tenant-level controls.
 --
--- fam@flickssuite.com is Specflicks-internal. We attach the membership
--- to Demo Co for routing purposes (the JWT needs *some* tenant context),
--- but the (app)/layout.tsx redirect bounces role='fam' to /fam/overview
--- so they never see customer-side surfaces. No employee_id since they
--- are not an employee of Demo Co.
+-- fam@flickssuite.com is Specflicks-internal. Membership is attached
+-- to the dedicated Specflicks Platform tenant (not Demo Co), so they
+-- never appear in any customer workspace's member list. The (app)
+-- layout's redirect bounces role='fam' to /fam/overview, and the FAM
+-- service filters the Specflicks tenant out of /fam/tenants and the
+-- platform-wide aggregates.
 INSERT INTO memberships (tenant_id, user_id, employee_id, role, status)
 VALUES
-  ('11111111-1111-1111-1111-111111111111', '2222222f-2222-2222-2222-22222222222f', NULL,                                   'fam',      'active'),
+  ('00000000-0000-0000-0000-000000000001', '2222222f-2222-2222-2222-22222222222f', NULL,                                   'fam',      'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222220', '33333333-3333-3333-3333-333333333330', 'owner',    'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222221', '33333333-3333-3333-3333-333333333331', 'manager',  'active'),
   ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222223', '33333333-3333-3333-3333-333333333333', 'manager',  'active'),
@@ -351,8 +359,14 @@ ON CONFLICT (tenant_id, user_id) DO NOTHING;
 -- across demo sessions. Without this, ON CONFLICT DO NOTHING above would
 -- leave whatever role the row currently has in place.
 UPDATE memberships SET role = 'fam'
-  WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+  WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
     AND user_id IN ('2222222f-2222-2222-2222-22222222222f');  -- Specflicks FAM
+
+-- Sweep up any FAM admin row that may still be parked on Demo Co from
+-- a prior version of this script. Idempotent: deletes 0 rows on fresh.
+DELETE FROM memberships
+WHERE  user_id = '2222222f-2222-2222-2222-22222222222f'
+  AND  tenant_id <> '00000000-0000-0000-0000-000000000001';
 
 UPDATE memberships SET role = 'owner'
   WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
