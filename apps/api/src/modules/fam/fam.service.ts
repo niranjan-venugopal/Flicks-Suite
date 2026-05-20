@@ -6,6 +6,7 @@ import {
   tenantHealthSnapshots,
   memberships,
   users,
+  employees,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -341,17 +342,26 @@ export class FamService {
       .orderBy(desc(tenantHealthSnapshots.snapshot_date))
       .limit(1);
 
-    const counts = await this.dbAdmin.execute<{
-      member_count: number;
-      employee_count: number;
-    }>(sql`
-      SELECT
-        (SELECT COUNT(*)::int FROM memberships m WHERE m.tenant_id = ${tenantId}) AS member_count,
-        (SELECT COUNT(*)::int FROM employees e   WHERE e.tenant_id = ${tenantId} AND e.deleted_at IS NULL) AS employee_count
-    `);
-    const c =
-      (counts as unknown as Array<{ member_count: number; employee_count: number }>)[0] ??
-      { member_count: 0, employee_count: 0 };
+    // Member + employee counts via two cheap aggregates. The employees
+    // table has no soft-delete column; "active workforce" is anyone who
+    // hasn't been moved to 'separated' or 'absconded'.
+    const [memberRow] = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(memberships)
+      .where(eq(memberships.tenant_id, tenantId));
+    const [employeeRow] = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          sql`${employees.status} NOT IN ('separated', 'absconded')`,
+        ),
+      );
+    const c = {
+      member_count: Number(memberRow?.n ?? 0),
+      employee_count: Number(employeeRow?.n ?? 0),
+    };
 
     return {
       id: tenant.id,
