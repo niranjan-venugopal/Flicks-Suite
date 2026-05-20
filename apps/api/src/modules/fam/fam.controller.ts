@@ -101,6 +101,14 @@ export class FamController {
     return this.famService.getTenantHealth(id, days ? Number(days) : undefined);
   }
 
+  @Get('tenants/:id/members')
+  @Roles('fam')
+  @ApiOperation({ summary: 'List members (memberships) of a tenant' })
+  @ApiResponse({ status: 200, description: 'Membership rows + user details' })
+  async listTenantMembers(@Param('id') id: string) {
+    return this.famService.listTenantMembers(id);
+  }
+
   // ─── Impersonation ─────────────────────────────────────────────────────────
 
   @Post('impersonate')
