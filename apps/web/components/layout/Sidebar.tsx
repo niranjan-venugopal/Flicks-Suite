@@ -131,29 +131,48 @@ const EMPLOYEE_NAV: NavSection[] = [
 
 // FAM nav — Specflicks platform admin. Only FAM sees this; they
 // live entirely under /fam/* and do not see customer-facing surfaces.
+// Mirrors the prototype's NAV_BY_ROLE.FAM: a flat "Overview" row up top,
+// then three two-level collapsible groups (Tenants / Revenue / Platform).
 const FAM_NAV: NavSection[] = [
   {
     section: 'main',
     items: [
       { id: 'fam-overview', label: 'Overview', icon: 'home', href: '/fam/overview' },
-      { id: 'fam-tenants', label: 'Tenants', icon: 'people', href: '/fam/tenants' },
     ],
   },
   {
-    section: 'Insights',
+    section: 'main',
     items: [
-      { id: 'fam-revenue', label: 'Revenue', icon: 'chart', href: '/fam/revenue' },
-      { id: 'fam-funnel', label: 'Signup funnel', icon: 'spark', href: '/fam/funnel' },
-      { id: 'fam-usage', label: 'Feature usage', icon: 'tag', href: '/fam/features-usage' },
-      { id: 'fam-health', label: 'Tenant health', icon: 'shield', href: '/fam/health' },
-    ],
-  },
-  {
-    section: 'Platform',
-    items: [
-      { id: 'fam-flags', label: 'Feature flags', icon: 'cog', href: '/fam/features' },
-      { id: 'fam-verify', label: 'Verification queue', icon: 'success', href: '/fam/verify' },
-      { id: 'fam-audit', label: 'Audit log', icon: 'info', href: '/fam/audit' },
+      {
+        id: 'fam-tenants-group',
+        label: 'Tenants',
+        icon: 'building',
+        children: [
+          { href: '/fam/tenants',  label: 'All tenants' },
+          { href: '/fam/verify',   label: 'Verification queue' },
+          { href: '/fam/cohorts',  label: 'Beta cohorts' },
+        ],
+      },
+      {
+        id: 'fam-revenue-group',
+        label: 'Revenue',
+        icon: 'trend',
+        children: [
+          { href: '/fam/revenue',         label: 'MRR & ARR' },
+          { href: '/fam/funnel',          label: 'Signup funnel' },
+          { href: '/fam/features-usage',  label: 'Feature usage' },
+        ],
+      },
+      {
+        id: 'fam-platform-group',
+        label: 'Platform',
+        icon: 'zap',
+        children: [
+          { href: '/fam/health',   label: 'System health' },
+          { href: '/fam/features', label: 'Feature flags' },
+          { href: '/fam/audit',    label: 'Audit log' },
+        ],
+      },
     ],
   },
 ]
@@ -231,18 +250,26 @@ export function Sidebar() {
   }, [parentOfActive])
 
   const isFam = role === 'FAM'
-  const tenantName = isFam
-    ? 'Specflicks Platform'
+  // Brand area: customer workspaces see the Flicks Suite mark with the
+  // tenant name underneath; FAM operators see "FAM Console · Specflicks
+  // Internal" since they're not inside any single tenant.
+  const brandTitle = isFam ? 'FAM Console' : 'Flicks Suite'
+  const brandSub = isFam
+    ? 'Specflicks Internal · admin.flickssuite.com'
     : currentTenant?.name ?? 'Workspace'
-  const tenantPlan = isFam ? 'FAM console' : currentTenant?.plan ?? 'free'
+  const tenantName = currentTenant?.name ?? 'Workspace'
+  const tenantPlan = currentTenant?.plan ?? 'free'
 
   return (
     <aside
       style={{
         width: 252,
         flexShrink: 0,
-        background:
-          'linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,0) 100%)',
+        // Match the prototype's FAM sidebar: a darker purple-tinted
+        // gradient that distinguishes platform admin from tenant chrome.
+        background: isFam
+          ? 'linear-gradient(180deg, #0d0a18 0%, #01010D 100%)'
+          : 'linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,0) 100%)',
         borderRight: '1px solid var(--bord)',
         display: 'flex',
         flexDirection: 'column',
@@ -264,7 +291,7 @@ export function Sidebar() {
         <LogoMark size={32} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: '-0.02em' }}>
-            Flicks Suite
+            {brandTitle}
           </div>
           <div
             style={{
@@ -277,49 +304,51 @@ export function Sidebar() {
               textOverflow: 'ellipsis',
             }}
           >
-            {tenantName}
+            {brandSub}
           </div>
         </div>
       </div>
 
-      {/* Workspace switcher (display-only single-tenant for now) */}
-      <div style={{ padding: '12px 12px 0' }}>
-        <button
-          type="button"
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '9px 11px',
-            borderRadius: 10,
-            background: 'var(--surf-1)',
-            border: '1px solid var(--bord)',
-            cursor: 'pointer',
-          }}
-        >
-          <div className="avatar sm" style={{ background: avBg(tenantName) }}>
-            {initials(tenantName)}
-          </div>
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {tenantName}
+      {/* Workspace switcher — hidden for FAM, who isn't inside any tenant. */}
+      {!isFam && (
+        <div style={{ padding: '12px 12px 0' }}>
+          <button
+            type="button"
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '9px 11px',
+              borderRadius: 10,
+              background: 'var(--surf-1)',
+              border: '1px solid var(--bord)',
+              cursor: 'pointer',
+            }}
+          >
+            <div className="avatar sm" style={{ background: avBg(tenantName) }}>
+              {initials(tenantName)}
             </div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-              {tenantPlan}
+            <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 800,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {tenantName}
+              </div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                {tenantPlan}
+              </div>
             </div>
-          </div>
-          <Icon.chevD size={14} style={{ color: 'var(--text-mute)' }} />
-        </button>
-      </div>
+            <Icon.chevD size={14} style={{ color: 'var(--text-mute)' }} />
+          </button>
+        </div>
+      )}
 
       {/* Nav */}
       <nav style={{ flex: 1, overflow: 'auto', padding: '8px 8px 12px' }}>

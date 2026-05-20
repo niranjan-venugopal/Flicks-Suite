@@ -17,6 +17,7 @@ import {
 export function Topbar() {
   const { currentUser } = useAuthStore()
   const logoutMutation = useLogout()
+  const isFam = currentUser?.role === 'FAM'
 
   return (
     <header
@@ -53,7 +54,7 @@ export function Topbar() {
         />
         <input
           className="input with-icon"
-          placeholder="Search employees, requests…"
+          placeholder={isFam ? 'Search tenants…' : 'Search employees, requests…'}
           style={{ height: 36, fontSize: 12.5, paddingLeft: 35 }}
         />
         <div
