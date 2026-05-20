@@ -125,6 +125,41 @@ INSERT INTO tenant_health_snapshots (
   ('11111111-1111-1111-1111-111111111113', current_date, 62,  3,  5, 0.80, 41, 1, 'new')
 ON CONFLICT DO NOTHING;
 
+-- ─── Subscription events ─────────────────────────────────────────────────────
+-- A few signal-of-life rows so the FAM tenant detail Billing tab shows
+-- a non-empty history. Real rows land via Razorpay webhooks in prod.
+INSERT INTO subscription_events (tenant_id, subscription_id, event_type, metadata, created_at)
+SELECT s.tenant_id, s.id, e.event_type, e.metadata::jsonb, now() - e.age
+FROM subscriptions s
+CROSS JOIN (
+  VALUES
+    ('subscription.created', '{"channel":"signup"}',                interval '14 days'),
+    ('plan.changed',         '{"from":"starter","to":"growth"}',    interval '7 days'),
+    ('payment.success',      '{"amount":12500,"currency":"INR"}',   interval '3 days')
+) AS e(event_type, metadata, age)
+WHERE s.tenant_id IN (
+  '11111111-1111-1111-1111-111111111111',
+  '11111111-1111-1111-1111-111111111112'
+)
+ON CONFLICT DO NOTHING;
+
+-- ─── Platform audit log (demo) ───────────────────────────────────────────────
+-- Two seed rows per active tenant so the FAM tenant detail Audit tab is
+-- populated on first load. Real entries fire from suspend / extend trial /
+-- impersonate / flag-toggle actions.
+INSERT INTO audit_log_platform (actor_user_id, action, target_tenant_id, metadata, created_at)
+SELECT
+  (SELECT id FROM users WHERE email = 'niranjan@demo.co'),
+  e.action, e.target, e.metadata::jsonb, now() - e.age
+FROM (
+  VALUES
+    ('tenant.trial.extended', '11111111-1111-1111-1111-111111111111'::uuid, '{"days":7,"reason":"Onboarding goodwill"}',                 interval '5 days'),
+    ('tenant.verified',       '11111111-1111-1111-1111-111111111112'::uuid, '{"gstin":"29ABCDE1234F2Z5"}',                                 interval '20 days'),
+    ('tenant.plan.upgraded',  '11111111-1111-1111-1111-111111111112'::uuid, '{"from":"starter","to":"growth"}',                            interval '7 days'),
+    ('tenant.note.added',     '11111111-1111-1111-1111-111111111113'::uuid, '{"note":"First-time founder, watching activation"}',         interval '2 days')
+) AS e(action, target, metadata, age)
+ON CONFLICT DO NOTHING;
+
 -- ─── Locations ───────────────────────────────────────────────────────────────
 INSERT INTO locations (id, tenant_id, name, address_line1, city, state_code, country_code, timezone, is_active)
 VALUES

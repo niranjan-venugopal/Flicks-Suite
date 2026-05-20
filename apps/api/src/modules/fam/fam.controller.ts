@@ -109,6 +109,50 @@ export class FamController {
     return this.famService.listTenantMembers(id);
   }
 
+  @Get('tenants/:id/usage')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Per-tenant activity rollups (last 30d)' })
+  @ApiResponse({ status: 200, description: 'Usage aggregates' })
+  async getTenantUsage(@Param('id') id: string) {
+    return this.famService.getTenantUsage(id);
+  }
+
+  @Get('tenants/:id/billing')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Subscription + recent billing events for a tenant' })
+  @ApiResponse({ status: 200, description: 'Billing payload' })
+  async getTenantBilling(@Param('id') id: string) {
+    return this.famService.getTenantBilling(id);
+  }
+
+  @Get('tenants/:id/audit')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform audit log entries scoped to a tenant' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getTenantAudit(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.famService.getTenantAudit(id, {
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 50,
+    });
+  }
+
+  @Post('tenants/:id/reactivate')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Lift a suspension and flip the tenant back to active' })
+  @ApiResponse({ status: 200, description: 'Tenant reactivated' })
+  async reactivateTenant(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.famService.reactivateTenant(id, user.sub);
+  }
+
   // ─── Impersonation ─────────────────────────────────────────────────────────
 
   @Post('impersonate')

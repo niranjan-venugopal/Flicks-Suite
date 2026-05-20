@@ -1,9 +1,16 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import {
   tenants,
   subscriptions,
+  subscriptionEvents,
   tenantHealthSnapshots,
+  auditLogPlatform,
   memberships,
   users,
   employees,
@@ -468,6 +475,17 @@ export class FamService {
     actorUserId: string,
     dto: SuspendTenantDto,
   ) {
+    const now = new Date();
+    const [updated] = await this.dbAdmin
+      .update(tenants)
+      .set({ status: 'suspended', updated_at: now })
+      .where(eq(tenants.id, tenantId))
+      .returning({ id: tenants.id, status: tenants.status });
+
+    if (!updated) {
+      throw new NotFoundException('Tenant not found');
+    }
+
     await this.auditService.logPlatform({
       actorUserId,
       action: 'tenant.suspended',
@@ -475,33 +493,262 @@ export class FamService {
       metadata: { reason: dto.reason },
     });
 
-    return { id: tenantId, status: 'suspended' as const };
+    return { id: updated.id, status: updated.status };
   }
 
   /**
-   * Extends a tenant's trial by N days. Admin action.
-   * TODO: update tenants.trial_ends_at and subscriptions.current_period_end.
+   * Reverses a suspension by flipping the tenant back to 'active'.
+   * Pairs with suspendTenant; same audit pattern.
+   */
+  async reactivateTenant(tenantId: string, actorUserId: string) {
+    const now = new Date();
+    const [updated] = await this.dbAdmin
+      .update(tenants)
+      .set({ status: 'active', updated_at: now })
+      .where(eq(tenants.id, tenantId))
+      .returning({ id: tenants.id, status: tenants.status });
+
+    if (!updated) {
+      throw new NotFoundException('Tenant not found');
+    }
+
+    await this.auditService.logPlatform({
+      actorUserId,
+      action: 'tenant.reactivated',
+      targetTenantId: tenantId,
+    });
+
+    return { id: updated.id, status: updated.status };
+  }
+
+  /**
+   * Extends a tenant's trial by N days. Updates tenants.trial_ends_at and,
+   * if a subscription exists, slides subscriptions.current_period_end by
+   * the same number of days so the billing surface stays consistent.
    */
   async extendTrial(
     tenantId: string,
     actorUserId: string,
     dto: ExtendTrialDto,
   ) {
+    const now = new Date();
+    const [tenantRow] = await this.dbAdmin
+      .select({ trialEndsAt: tenants.trial_ends_at })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+
+    if (!tenantRow) {
+      throw new NotFoundException('Tenant not found');
+    }
+
+    const base = tenantRow.trialEndsAt ?? now;
     const newTrialEndsAt = new Date(
-      Date.now() + dto.days * 24 * 60 * 60 * 1000,
+      base.getTime() + dto.days * 24 * 60 * 60 * 1000,
     );
+
+    await this.dbAdmin
+      .update(tenants)
+      .set({ trial_ends_at: newTrialEndsAt, updated_at: now })
+      .where(eq(tenants.id, tenantId));
+
+    // Slide the subscription's current_period_end if there is one. We
+    // don't touch billing cycle or MRR — the trial extension is a
+    // free-of-charge runway grant, not a plan change.
+    const [sub] = await this.dbAdmin
+      .select({
+        id: subscriptions.id,
+        currentPeriodEnd: subscriptions.current_period_end,
+      })
+      .from(subscriptions)
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .limit(1);
+    if (sub?.currentPeriodEnd) {
+      const slid = new Date(
+        sub.currentPeriodEnd.getTime() + dto.days * 24 * 60 * 60 * 1000,
+      );
+      await this.dbAdmin
+        .update(subscriptions)
+        .set({ current_period_end: slid, updated_at: now })
+        .where(eq(subscriptions.id, sub.id));
+    }
 
     await this.auditService.logPlatform({
       actorUserId,
       action: 'tenant.trial.extended',
       targetTenantId: tenantId,
-      metadata: { days: dto.days, reason: dto.reason },
+      metadata: { days: dto.days, reason: dto.reason, newTrialEndsAt: newTrialEndsAt.toISOString() },
     });
 
     return {
       id: tenantId,
       trialEndsAt: newTrialEndsAt.toISOString(),
       extendedByDays: dto.days,
+    };
+  }
+
+  // ─── Usage / Billing / Audit (C4 tabs) ─────────────────────────────────────
+
+  /**
+   * Per-tenant activity rollups for the Usage tab. All counts are scoped
+   * to the last 30 days unless noted otherwise.
+   */
+  async getTenantUsage(tenantId: string) {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [punches] = await this.dbAdmin.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n
+      FROM attendance_punches
+      WHERE tenant_id = ${tenantId} AND punched_at >= ${since.toISOString()}
+    `) as unknown as Array<{ n: number }>;
+
+    const [leaves] = await this.dbAdmin.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n
+      FROM leave_requests
+      WHERE tenant_id = ${tenantId} AND applied_at >= ${since.toISOString()}
+    `) as unknown as Array<{ n: number }>;
+
+    const [submittedTimesheets] = await this.dbAdmin.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n
+      FROM timesheet_periods
+      WHERE tenant_id = ${tenantId}
+        AND submitted_at IS NOT NULL
+        AND submitted_at >= ${since.toISOString()}
+    `) as unknown as Array<{ n: number }>;
+
+    const [activeEmployees] = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          sql`${employees.status} NOT IN ('separated', 'absconded')`,
+        ),
+      );
+
+    const [latestHealth] = await this.dbAdmin
+      .select()
+      .from(tenantHealthSnapshots)
+      .where(eq(tenantHealthSnapshots.tenant_id, tenantId))
+      .orderBy(desc(tenantHealthSnapshots.snapshot_date))
+      .limit(1);
+
+    return {
+      windowDays: 30,
+      attendancePunches: Number(punches?.n ?? 0),
+      leaveRequests: Number(leaves?.n ?? 0),
+      timesheetsSubmitted: Number(submittedTimesheets?.n ?? 0),
+      activeEmployees: Number(activeEmployees?.n ?? 0),
+      activeUsers7d: latestHealth?.active_users_7d ?? 0,
+      activeUsers30d: latestHealth?.active_users_30d ?? 0,
+      attendanceCompliance: latestHealth?.attendance_compliance ?? null,
+      featureAdoptionScore: latestHealth?.feature_adoption_score ?? null,
+      healthScore: latestHealth?.health_score ?? null,
+    };
+  }
+
+  /**
+   * Subscription + recent subscription_events for the Billing tab.
+   */
+  async getTenantBilling(tenantId: string) {
+    const [sub] = await this.dbAdmin
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .limit(1);
+
+    if (!sub) {
+      return { subscription: null, events: [] };
+    }
+
+    const events = await this.dbAdmin
+      .select({
+        id: subscriptionEvents.id,
+        eventType: subscriptionEvents.event_type,
+        metadata: subscriptionEvents.metadata,
+        createdAt: subscriptionEvents.created_at,
+      })
+      .from(subscriptionEvents)
+      .where(eq(subscriptionEvents.subscription_id, sub.id))
+      .orderBy(desc(subscriptionEvents.created_at))
+      .limit(50);
+
+    return {
+      subscription: {
+        id: sub.id,
+        planCode: sub.plan_code,
+        status: sub.status,
+        perUserPrice: Number(sub.per_user_price ?? 0),
+        userCount: Number(sub.user_count ?? 0),
+        mrr: Number(sub.mrr_amount ?? 0),
+        billingCycle: sub.billing_cycle,
+        trialEndsAt: sub.trial_ends_at?.toISOString() ?? null,
+        currentPeriodStart: sub.current_period_start?.toISOString() ?? null,
+        currentPeriodEnd: sub.current_period_end?.toISOString() ?? null,
+        cancelAtPeriodEnd: sub.cancel_at_period_end,
+        canceledAt: sub.canceled_at?.toISOString() ?? null,
+        razorpaySubscriptionId: sub.razorpay_subscription_id,
+        createdAt: sub.created_at.toISOString(),
+      },
+      events: events.map((e) => ({
+        id: e.id,
+        eventType: e.eventType,
+        metadata: e.metadata as Record<string, unknown> | null,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Platform audit log entries scoped to a single tenant for the Audit
+   * tab. Joined with users to surface the actor's display name.
+   */
+  async getTenantAudit(
+    tenantId: string,
+    opts: { page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+    const offset = (page - 1) * limit;
+
+    const rows = await this.dbAdmin
+      .select({
+        id: auditLogPlatform.id,
+        action: auditLogPlatform.action,
+        actorUserId: auditLogPlatform.actor_user_id,
+        targetUserId: auditLogPlatform.target_user_id,
+        metadata: auditLogPlatform.metadata,
+        ipAddress: auditLogPlatform.ip_address,
+        userAgent: auditLogPlatform.user_agent,
+        createdAt: auditLogPlatform.created_at,
+        actorEmail: users.email,
+        actorName: users.full_name,
+      })
+      .from(auditLogPlatform)
+      .leftJoin(users, eq(users.id, auditLogPlatform.actor_user_id))
+      .where(eq(auditLogPlatform.target_tenant_id, tenantId))
+      .orderBy(desc(auditLogPlatform.created_at))
+      .limit(limit)
+      .offset(offset);
+
+    const [{ n }] = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(auditLogPlatform)
+      .where(eq(auditLogPlatform.target_tenant_id, tenantId));
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        actor: r.actorName ?? r.actorEmail ?? 'system',
+        actorEmail: r.actorEmail,
+        actorUserId: r.actorUserId,
+        targetUserId: r.targetUserId,
+        metadata: r.metadata as Record<string, unknown> | null,
+        ipAddress: r.ipAddress,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      pagination: { page, limit, total: Number(n ?? 0) },
     };
   }
 

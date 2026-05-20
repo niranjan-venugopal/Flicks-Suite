@@ -371,8 +371,8 @@ export default function FamOverviewPage() {
                 { id: 'C1', label: 'Shell + role + (fam) route group', status: 'done' },
                 { id: 'C2', label: 'Overview — platform-wide stats wired', status: 'done' },
                 { id: 'C3', label: 'Tenants list + detail (Overview / Members)', status: 'done' },
-                { id: 'C4', label: 'Tenant detail (Usage / Billing / Audit / Settings)', status: 'next' },
-                { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'pending' },
+                { id: 'C4', label: 'Tenant detail (Usage / Billing / Audit / Settings)', status: 'done' },
+                { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'next' },
                 { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'pending' },
               ].map((r) => {
                 const tone =

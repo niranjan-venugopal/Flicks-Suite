@@ -15,19 +15,32 @@ import {
 import {
   useFamTenant,
   useFamTenantMembers,
+  useFamTenantUsage,
+  useFamTenantBilling,
+  useFamTenantAudit,
+  useSuspendTenant,
+  useReactivateTenant,
+  useExtendTrial,
   type FamTenantMember,
 } from '@/lib/api/queries/use-fam'
 import { formatCurrency, formatDate, timeAgo } from '@/lib/utils'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { useToast } from '@/components/ui/use-toast'
 
 type TabKey = 'overview' | 'members' | 'usage' | 'billing' | 'audit' | 'settings'
 
-const TABS: Array<{ key: TabKey; label: string; sprint?: string }> = [
+const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'members',  label: 'Members' },
-  { key: 'usage',    label: 'Usage',    sprint: 'C4' },
-  { key: 'billing',  label: 'Billing',  sprint: 'C4' },
-  { key: 'audit',    label: 'Audit',    sprint: 'C4' },
-  { key: 'settings', label: 'Settings', sprint: 'C4' },
+  { key: 'usage',    label: 'Usage' },
+  { key: 'billing',  label: 'Billing' },
+  { key: 'audit',    label: 'Audit' },
+  { key: 'settings', label: 'Settings' },
 ]
 
 function statusTone(s: string) {
@@ -169,11 +182,21 @@ export default function FamTenantDetailPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <Btn kind="secondary" size="sm" icon={<Icon.warn size={13} />} disabled>
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon.warn size={13} />}
+              onClick={() => setTab('settings')}
+            >
               Extend trial
             </Btn>
-            <Btn kind="ghost" size="sm" icon={<Icon.shield size={13} />} disabled>
-              Suspend
+            <Btn
+              kind="ghost"
+              size="sm"
+              icon={<Icon.shield size={13} />}
+              onClick={() => setTab('settings')}
+            >
+              {t.status === 'suspended' ? 'Reactivate' : 'Suspend'}
             </Btn>
           </div>
         </div>
@@ -211,21 +234,6 @@ export default function FamTenantDetailPage() {
                 }}
               >
                 {t.label}
-                {t.sprint && (
-                  <span
-                    style={{
-                      fontSize: 9,
-                      fontWeight: 800,
-                      padding: '1px 5px',
-                      borderRadius: 4,
-                      background: 'var(--surf-2)',
-                      color: 'var(--text-faint)',
-                      fontFamily: 'var(--font-mono)',
-                    }}
-                  >
-                    {t.sprint}
-                  </span>
-                )}
               </button>
             )
           })}
@@ -233,8 +241,11 @@ export default function FamTenantDetailPage() {
 
         {tab === 'overview' && <OverviewTab tenant={t} />}
         {tab === 'members'  && id && <MembersTab tenantId={id} />}
-        {tab !== 'overview' && tab !== 'members' && (
-          <ComingSoon tab={tab} />
+        {tab === 'usage'    && id && <UsageTab tenantId={id} currency={t.currency} />}
+        {tab === 'billing'  && id && <BillingTab tenantId={id} currency={t.currency} />}
+        {tab === 'audit'    && id && <AuditTab tenantId={id} />}
+        {tab === 'settings' && id && (
+          <SettingsTab tenantId={id} tenant={t} />
         )}
       </div>
     </div>
@@ -425,9 +436,513 @@ function MembersTab({ tenantId }: { tenantId: string }) {
   )
 }
 
-// ─── Placeholder tabs (Usage / Billing / Audit / Settings) ──────────────────
+// ─── Usage tab ───────────────────────────────────────────────────────────────
 
-function ComingSoon({ tab }: { tab: TabKey }) {
+function UsageTab({ tenantId, currency }: { tenantId: string; currency: string }) {
+  void currency
+  const usage = useFamTenantUsage(tenantId)
+  const u = usage.data
+
+  if (usage.isLoading) {
+    return <CenteredSpinner label="Loading usage…" />
+  }
+  if (!u) {
+    return <EmptyCard icon={<Icon.warn size={22} />} message="No usage data yet." />
+  }
+
+  const compliance =
+    u.attendanceCompliance != null ? `${Math.round(u.attendanceCompliance * 100)}%` : '—'
+  const adoption =
+    u.featureAdoptionScore != null ? `${Math.round(u.featureAdoptionScore)}` : '—'
+
+  return (
+    <>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 14,
+          marginBottom: 18,
+        }}
+      >
+        <Kpi
+          label={`Attendance punches · ${u.windowDays}d`}
+          value={String(u.attendancePunches)}
+          icon={<Icon.fingerprint size={14} />}
+          accent="blue"
+        />
+        <Kpi
+          label={`Leave requests · ${u.windowDays}d`}
+          value={String(u.leaveRequests)}
+          icon={<Icon.cal size={14} />}
+          accent="yellow"
+        />
+        <Kpi
+          label={`Timesheets submitted · ${u.windowDays}d`}
+          value={String(u.timesheetsSubmitted)}
+          icon={<Icon.sheet size={14} />}
+          accent="green"
+        />
+        <Kpi
+          label="Active employees"
+          value={String(u.activeEmployees)}
+          delta={`${u.activeUsers7d} active in 7d`}
+          icon={<Icon.people size={14} />}
+          accent="purple"
+        />
+      </div>
+
+      <div className="card" style={{ padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
+          Adoption signals
+        </div>
+        <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: 10, columnGap: 14, fontSize: 12.5 }}>
+          <DetailRow k="Attendance compliance"  v={compliance} />
+          <DetailRow k="Feature adoption score" v={`${adoption} / 100`} />
+          <DetailRow
+            k="Health score"
+            v={u.healthScore != null ? String(Math.round(u.healthScore)) : '—'}
+          />
+          <DetailRow k="Active users · 7d"  v={String(u.activeUsers7d)} />
+          <DetailRow k="Active users · 30d" v={String(u.activeUsers30d)} />
+        </dl>
+      </div>
+    </>
+  )
+}
+
+// ─── Billing tab ─────────────────────────────────────────────────────────────
+
+function BillingTab({ tenantId, currency }: { tenantId: string; currency: string }) {
+  const billing = useFamTenantBilling(tenantId)
+  const data = billing.data
+
+  if (billing.isLoading) return <CenteredSpinner label="Loading billing…" />
+  if (!data?.subscription) {
+    return (
+      <EmptyCard
+        icon={<Icon.chart size={22} />}
+        message="No subscription on file for this tenant."
+      />
+    )
+  }
+  const s = data.subscription
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
+      <div className="card" style={{ padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
+          Subscription
+        </div>
+        <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '170px 1fr', rowGap: 10, columnGap: 14, fontSize: 12.5 }}>
+          <DetailRow k="Plan"          v={<span style={{ textTransform: 'capitalize', fontWeight: 800 }}>{s.planCode}</span>} />
+          <DetailRow k="Status"        v={<Pill tone={statusTone(s.status)} dot>{s.status.replace('_', ' ')}</Pill>} />
+          <DetailRow k="Billing cycle" v={s.billingCycle} />
+          <DetailRow k="Per user"      v={formatCurrency(s.perUserPrice, currency)} />
+          <DetailRow k="Users"         v={String(s.userCount)} />
+          <DetailRow k="MRR"           v={<strong style={{ fontFamily: 'var(--font-mono)' }}>{formatCurrency(s.mrr, currency)}</strong>} />
+          <DetailRow
+            k="Current period"
+            v={
+              s.currentPeriodStart && s.currentPeriodEnd
+                ? `${formatDate(s.currentPeriodStart)} → ${formatDate(s.currentPeriodEnd)}`
+                : '—'
+            }
+          />
+          <DetailRow k="Trial ends"     v={s.trialEndsAt ? formatDate(s.trialEndsAt) : '—'} />
+          <DetailRow k="Razorpay sub"   v={s.razorpaySubscriptionId ?? '—'} />
+          {s.cancelAtPeriodEnd && (
+            <DetailRow k="" v={<span style={{ color: 'var(--coral)', fontWeight: 700 }}>Will cancel at period end</span>} />
+          )}
+        </dl>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bord)', fontSize: 12, fontWeight: 800, color: 'var(--text-2)' }}>
+          Billing history
+        </div>
+        {data.events.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', fontSize: 12, color: 'var(--text-mute)' }}>
+            No billing events yet.
+          </div>
+        ) : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {data.events.map((e) => (
+              <li
+                key={e.id}
+                style={{
+                  display: 'flex',
+                  gap: 11,
+                  padding: '12px 18px',
+                  borderBottom: '1px solid var(--bord)',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div
+                  style={{
+                    flex: '0 0 28px',
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
+                    background: 'var(--surf-2)',
+                    border: '1px solid var(--bord)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--text-2)',
+                  }}
+                >
+                  <Icon.tag size={14} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800 }}>{e.eventType}</div>
+                  {e.metadata && (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--text-mute)',
+                        fontFamily: 'var(--font-mono)',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {JSON.stringify(e.metadata)}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: 'var(--text-faint)' }}>
+                    {timeAgo(e.createdAt)}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Audit tab ───────────────────────────────────────────────────────────────
+
+function AuditTab({ tenantId }: { tenantId: string }) {
+  const [page, setPage] = useState(1)
+  const limit = 25
+  const audit = useFamTenantAudit(tenantId, page, limit)
+  const rows = audit.data?.data ?? []
+  const total = audit.data?.pagination.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+
+  if (audit.isLoading) return <CenteredSpinner label="Loading audit log…" />
+  if (rows.length === 0) {
+    return <EmptyCard icon={<Icon.info size={22} />} message="No audit events for this tenant yet." />
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <table className="tbl" style={{ width: '100%' }}>
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Actor</th>
+            <th>Metadata</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td>
+                <Pill tone="purple" dot>
+                  {r.action}
+                </Pill>
+              </td>
+              <td>
+                <div style={{ fontSize: 12.5, fontWeight: 700 }}>{r.actor}</div>
+                {r.actorEmail && (
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
+                    {r.actorEmail}
+                  </div>
+                )}
+              </td>
+              <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-2)', wordBreak: 'break-word', maxWidth: 380 }}>
+                {r.metadata ? JSON.stringify(r.metadata) : '—'}
+              </td>
+              <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                {timeAgo(r.createdAt)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {totalPages > 1 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 14px',
+            borderTop: '1px solid var(--bord)',
+            background: 'var(--surf-0)',
+          }}
+        >
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+            Page {page} of {totalPages} · {total} events
+          </span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Btn kind="ghost" size="sm" icon={<Icon.chevL size={12} />} disabled={page <= 1 || audit.isFetching} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              Prev
+            </Btn>
+            <Btn kind="ghost" size="sm" iconRight={<Icon.chevR size={12} />} disabled={page >= totalPages || audit.isFetching} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+              Next
+            </Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Settings tab ────────────────────────────────────────────────────────────
+
+function SettingsTab({
+  tenantId,
+  tenant,
+}: {
+  tenantId: string
+  tenant: NonNullable<ReturnType<typeof useFamTenant>['data']>
+}) {
+  const { toast } = useToast()
+  const suspendMut = useSuspendTenant()
+  const reactivateMut = useReactivateTenant()
+  const extendMut = useExtendTrial()
+
+  const [suspendOpen, setSuspendOpen] = useState(false)
+  const [extendOpen, setExtendOpen] = useState(false)
+  const [reason, setReason] = useState('')
+  const [days, setDays] = useState(14)
+  const [extendReason, setExtendReason] = useState('')
+
+  const isSuspended = tenant.status === 'suspended'
+
+  const submitSuspend = async () => {
+    if (!reason.trim()) {
+      toast({ title: 'Reason required', variant: 'destructive' })
+      return
+    }
+    try {
+      await suspendMut.mutateAsync({ id: tenantId, reason: reason.trim() })
+      toast({ title: 'Tenant suspended', description: `${tenant.name} is now suspended.` })
+      setSuspendOpen(false)
+      setReason('')
+    } catch (e) {
+      toast({ title: 'Could not suspend', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+    }
+  }
+  const submitReactivate = async () => {
+    try {
+      await reactivateMut.mutateAsync(tenantId)
+      toast({ title: 'Tenant reactivated', description: `${tenant.name} is back to active.` })
+    } catch (e) {
+      toast({ title: 'Could not reactivate', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+    }
+  }
+  const submitExtend = async () => {
+    if (!days || days < 1 || days > 180) {
+      toast({ title: 'Pick 1–180 days', variant: 'destructive' })
+      return
+    }
+    try {
+      await extendMut.mutateAsync({ id: tenantId, days, reason: extendReason.trim() || undefined })
+      toast({ title: 'Trial extended', description: `${tenant.name} trial extended by ${days} days.` })
+      setExtendOpen(false)
+      setExtendReason('')
+    } catch (e) {
+      toast({ title: 'Could not extend trial', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+    }
+  }
+
+  return (
+    <>
+      <div style={{ display: 'grid', gap: 14 }}>
+        <SettingsCard
+          title="Trial runway"
+          desc={
+            tenant.trialEndsAt
+              ? `Current trial ends ${formatDate(tenant.trialEndsAt)}.`
+              : 'No trial currently active for this tenant.'
+          }
+          action={
+            <Btn kind="primary" size="sm" icon={<Icon.warn size={13} />} onClick={() => setExtendOpen(true)}>
+              Extend trial
+            </Btn>
+          }
+        />
+
+        <SettingsCard
+          title={isSuspended ? 'Lift suspension' : 'Suspend workspace'}
+          desc={
+            isSuspended
+              ? 'This tenant is currently suspended. Lifting the suspension flips them back to active and unblocks logins.'
+              : 'Suspending freezes all customer logins and writes a platform audit entry. Reversible.'
+          }
+          action={
+            isSuspended ? (
+              <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={submitReactivate} disabled={reactivateMut.isPending}>
+                {reactivateMut.isPending ? 'Reactivating…' : 'Reactivate'}
+              </Btn>
+            ) : (
+              <Btn kind="danger" size="sm" icon={<Icon.shield size={13} />} onClick={() => setSuspendOpen(true)}>
+                Suspend
+              </Btn>
+            )
+          }
+        />
+
+        <SettingsCard
+          title="Verification"
+          desc={
+            tenant.verifiedAt
+              ? `Verified ${formatDate(tenant.verifiedAt)}.`
+              : 'GST + PAN verification not yet completed.'
+          }
+          action={
+            <Btn kind="ghost" size="sm" icon={<Icon.arrow size={13} />} disabled>
+              Open verification (C5)
+            </Btn>
+          }
+        />
+      </div>
+
+      <Dialog open={suspendOpen} onOpenChange={setSuspendOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Suspend {tenant.name}</DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
+            All logins for this workspace will be blocked. The action is recorded in the platform audit log.
+          </p>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+            Reason <span style={{ color: 'var(--coral)' }}>*</span>
+          </label>
+          <textarea
+            className="input"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why is this tenant being suspended?"
+            maxLength={500}
+            style={{ width: '100%', padding: 10, fontSize: 12.5 }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <Btn kind="ghost" onClick={() => setSuspendOpen(false)} disabled={suspendMut.isPending}>
+              Cancel
+            </Btn>
+            <Btn kind="danger" onClick={submitSuspend} disabled={suspendMut.isPending}>
+              {suspendMut.isPending ? 'Suspending…' : 'Suspend tenant'}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extendOpen} onOpenChange={setExtendOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Extend trial for {tenant.name}</DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
+            Adds N days to the existing trial end date (or starts the trial today if none is set). Both tenants.trial_ends_at and subscriptions.current_period_end slide forward.
+          </p>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+            Days (1–180)
+          </label>
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={180}
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            style={{ width: 120, padding: 10, fontSize: 13, marginBottom: 12 }}
+          />
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+            Reason (optional)
+          </label>
+          <textarea
+            className="input"
+            rows={3}
+            value={extendReason}
+            onChange={(e) => setExtendReason(e.target.value)}
+            placeholder="e.g. Onboarding goodwill, finalising contract"
+            maxLength={500}
+            style={{ width: '100%', padding: 10, fontSize: 12.5 }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <Btn kind="ghost" onClick={() => setExtendOpen(false)} disabled={extendMut.isPending}>
+              Cancel
+            </Btn>
+            <Btn kind="primary" onClick={submitExtend} disabled={extendMut.isPending}>
+              {extendMut.isPending ? 'Extending…' : `Extend by ${days} days`}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+// ─── Shared bits ─────────────────────────────────────────────────────────────
+
+function SettingsCard({
+  title,
+  desc,
+  action,
+}: {
+  title: string
+  desc: string
+  action: React.ReactNode
+}) {
+  return (
+    <div
+      className="card"
+      style={{
+        padding: 20,
+        display: 'flex',
+        gap: 16,
+        alignItems: 'center',
+      }}
+    >
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 800 }}>{title}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)', marginTop: 4, lineHeight: 1.5 }}>
+          {desc}
+        </div>
+      </div>
+      {action}
+    </div>
+  )
+}
+
+function CenteredSpinner({ label }: { label: string }) {
+  return (
+    <div
+      className="card"
+      style={{
+        padding: 48,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        color: 'var(--text-mute)',
+      }}
+    >
+      <Loader2 className="w-4 h-4 animate-spin" /> {label}
+    </div>
+  )
+}
+
+function EmptyCard({ icon, message }: { icon: React.ReactNode; message: string }) {
   return (
     <div
       className="card"
@@ -437,27 +952,11 @@ function ComingSoon({ tab }: { tab: TabKey }) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 10,
+        gap: 8,
       }}
     >
-      <Icon.warn size={22} style={{ opacity: 0.6 }} />
-      <div style={{ fontSize: 13, fontWeight: 800 }}>{capitalize(tab)} wires up in C4</div>
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: 'var(--text-mute)',
-          maxWidth: 420,
-          lineHeight: 1.5,
-        }}
-      >
-        The {tab} tab will hydrate from the existing /api/v1/fam/*
-        endpoints in the next FAM commit (Sprint 3 · C4).
-      </div>
+      {icon}
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>{message}</div>
     </div>
   )
-}
-
-function capitalize(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }

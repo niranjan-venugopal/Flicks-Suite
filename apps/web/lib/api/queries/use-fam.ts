@@ -1,6 +1,6 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 
 export interface FamOverview {
@@ -154,5 +154,150 @@ export function useFamTenantMembers(id: string | null) {
       api.get<{ data: FamTenantMember[] }>(`/api/v1/fam/tenants/${id}/members`),
     enabled: !!id,
     staleTime: 30_000,
+  })
+}
+
+// ─── Tenant usage (C4) ────────────────────────────────────────────────────
+
+export interface FamTenantUsage {
+  windowDays: number
+  attendancePunches: number
+  leaveRequests: number
+  timesheetsSubmitted: number
+  activeEmployees: number
+  activeUsers7d: number
+  activeUsers30d: number
+  attendanceCompliance: number | null
+  featureAdoptionScore: number | null
+  healthScore: number | null
+}
+
+export function useFamTenantUsage(id: string | null) {
+  return useQuery({
+    queryKey: ['fam', 'tenant-usage', id],
+    queryFn: () =>
+      api.get<FamTenantUsage>(`/api/v1/fam/tenants/${id}/usage`),
+    enabled: !!id,
+    staleTime: 60_000,
+  })
+}
+
+// ─── Tenant billing (C4) ──────────────────────────────────────────────────
+
+export interface FamSubscriptionEvent {
+  id: string
+  eventType: string
+  metadata: Record<string, unknown> | null
+  createdAt: string
+}
+
+export interface FamTenantBilling {
+  subscription: null | {
+    id: string
+    planCode: string
+    status: string
+    perUserPrice: number
+    userCount: number
+    mrr: number
+    billingCycle: string
+    trialEndsAt: string | null
+    currentPeriodStart: string | null
+    currentPeriodEnd: string | null
+    cancelAtPeriodEnd: boolean
+    canceledAt: string | null
+    razorpaySubscriptionId: string | null
+    createdAt: string
+  }
+  events: FamSubscriptionEvent[]
+}
+
+export function useFamTenantBilling(id: string | null) {
+  return useQuery({
+    queryKey: ['fam', 'tenant-billing', id],
+    queryFn: () =>
+      api.get<FamTenantBilling>(`/api/v1/fam/tenants/${id}/billing`),
+    enabled: !!id,
+    staleTime: 60_000,
+  })
+}
+
+// ─── Tenant audit (C4) ────────────────────────────────────────────────────
+
+export interface FamPlatformAuditEntry {
+  id: string
+  action: string
+  actor: string
+  actorEmail: string | null
+  actorUserId: string | null
+  targetUserId: string | null
+  metadata: Record<string, unknown> | null
+  ipAddress: string | null
+  createdAt: string
+}
+
+export function useFamTenantAudit(id: string | null, page = 1, limit = 50) {
+  return useQuery({
+    queryKey: ['fam', 'tenant-audit', id, page, limit],
+    queryFn: () =>
+      api.get<{
+        data: FamPlatformAuditEntry[]
+        pagination: { page: number; limit: number; total: number }
+      }>(`/api/v1/fam/tenants/${id}/audit?page=${page}&limit=${limit}`),
+    enabled: !!id,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+// ─── Tenant lifecycle mutations (C4 Settings) ─────────────────────────────
+
+export function useSuspendTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post<{ id: string; status: string }>(
+        `/api/v1/fam/tenants/${id}/suspend`,
+        { reason },
+      ),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant-audit', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenants'] })
+      qc.invalidateQueries({ queryKey: ['fam', 'overview'] })
+    },
+  })
+}
+
+export function useReactivateTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ id: string; status: string }>(
+        `/api/v1/fam/tenants/${id}/reactivate`,
+        {},
+      ),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant-audit', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenants'] })
+      qc.invalidateQueries({ queryKey: ['fam', 'overview'] })
+    },
+  })
+}
+
+export function useExtendTrial() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, days, reason }: { id: string; days: number; reason?: string }) =>
+      api.post<{ id: string; trialEndsAt: string; extendedByDays: number }>(
+        `/api/v1/fam/tenants/${id}/extend-trial`,
+        { days, reason },
+      ),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant-billing', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant-audit', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenants'] })
+    },
   })
 }
