@@ -20,6 +20,8 @@ import {
   memberships,
   users,
   employees,
+  featureFlags,
+  tenantCohorts,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -804,30 +806,51 @@ export class FamService {
 
   // ─── Feature flags ─────────────────────────────────────────────────────────
 
-  /**
-   * Lists all feature flags.
-   * TODO: select from feature_flags ordered by flag_key.
-   */
   async listFeatureFlags() {
+    const rows = await this.dbAdmin
+      .select()
+      .from(featureFlags)
+      .orderBy(featureFlags.flag_key);
     return {
-      data: [] as Array<{
-        id: string;
-        flagKey: string;
-        isEnabledGlobally: boolean;
-        rolloutPercentage: number;
-      }>,
-      total: 0,
+      data: rows.map((f) => ({
+        id: f.id,
+        flagKey: f.flag_key,
+        description: f.description,
+        isEnabledGlobally: f.is_enabled_globally,
+        enabledTenantIds: f.enabled_tenant_ids ?? [],
+        rolloutPercentage: f.rollout_percentage,
+        updatedAt: f.updated_at.toISOString(),
+      })),
+      total: rows.length,
     };
   }
 
-  /**
-   * Upserts a feature flag (create-or-update by flag_key).
-   * TODO: ON CONFLICT (flag_key) DO UPDATE.
-   */
   async upsertFeatureFlag(
     actorUserId: string,
     dto: UpsertFeatureFlagDto,
   ) {
+    const now = new Date();
+    const [row] = await this.dbAdmin
+      .insert(featureFlags)
+      .values({
+        flag_key: dto.flagKey,
+        description: dto.description ?? null,
+        is_enabled_globally: dto.isEnabledGlobally ?? false,
+        enabled_tenant_ids: dto.enabledTenantIds ?? [],
+        rollout_percentage: dto.rolloutPercentage ?? 0,
+      })
+      .onConflictDoUpdate({
+        target: featureFlags.flag_key,
+        set: {
+          description: dto.description ?? null,
+          is_enabled_globally: dto.isEnabledGlobally ?? false,
+          enabled_tenant_ids: dto.enabledTenantIds ?? [],
+          rollout_percentage: dto.rolloutPercentage ?? 0,
+          updated_at: now,
+        },
+      })
+      .returning();
+
     await this.auditService.logPlatform({
       actorUserId,
       action: 'feature_flag.upserted',
@@ -839,36 +862,51 @@ export class FamService {
     });
 
     return {
-      id: '',
-      flagKey: dto.flagKey,
-      isEnabledGlobally: dto.isEnabledGlobally ?? false,
-      enabledTenantIds: dto.enabledTenantIds ?? [],
-      rolloutPercentage: dto.rolloutPercentage ?? 0,
+      id: row.id,
+      flagKey: row.flag_key,
+      isEnabledGlobally: row.is_enabled_globally,
+      enabledTenantIds: row.enabled_tenant_ids ?? [],
+      rolloutPercentage: row.rollout_percentage,
     };
   }
 
   // ─── Cohorts ───────────────────────────────────────────────────────────────
 
-  /**
-   * Lists tenant cohorts.
-   * TODO: select tenant_cohorts with tenant counts.
-   */
   async listCohorts() {
+    const rows = await this.dbAdmin
+      .select()
+      .from(tenantCohorts)
+      .orderBy(tenantCohorts.name);
     return {
-      data: [] as Array<{
-        id: string;
-        name: string;
-        tenantCount: number;
-      }>,
-      total: 0,
+      data: rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        tenantIds: c.tenant_ids ?? [],
+        tenantCount: (c.tenant_ids ?? []).length,
+        createdAt: c.created_at.toISOString(),
+      })),
+      total: rows.length,
     };
   }
 
-  /**
-   * Upserts a cohort (create-or-update by name).
-   * TODO: ON CONFLICT (name) DO UPDATE.
-   */
   async upsertCohort(actorUserId: string, dto: UpsertCohortDto) {
+    const [row] = await this.dbAdmin
+      .insert(tenantCohorts)
+      .values({
+        name: dto.name,
+        description: dto.description ?? null,
+        tenant_ids: dto.tenantIds,
+      })
+      .onConflictDoUpdate({
+        target: tenantCohorts.name,
+        set: {
+          description: dto.description ?? null,
+          tenant_ids: dto.tenantIds,
+        },
+      })
+      .returning();
+
     await this.auditService.logPlatform({
       actorUserId,
       action: 'cohort.upserted',
@@ -876,29 +914,454 @@ export class FamService {
     });
 
     return {
-      id: '',
-      name: dto.name,
-      tenantIds: dto.tenantIds,
+      id: row.id,
+      name: row.name,
+      tenantIds: row.tenant_ids ?? [],
     };
   }
 
   // ─── Health ────────────────────────────────────────────────────────────────
 
   /**
-   * Returns the tenant health snapshot stream (last 30 days by default).
-   * TODO: select tenant_health_snapshots ordered by snapshot_date desc.
+   * Health snapshots for a single tenant — last N days, newest first.
    */
   async getTenantHealth(tenantId: string, days = 30) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await this.dbAdmin
+      .select()
+      .from(tenantHealthSnapshots)
+      .where(
+        and(
+          eq(tenantHealthSnapshots.tenant_id, tenantId),
+          gte(tenantHealthSnapshots.snapshot_date, since.toISOString().slice(0, 10)),
+        ),
+      )
+      .orderBy(desc(tenantHealthSnapshots.snapshot_date));
     return {
       tenantId,
       windowDays: days,
-      snapshots: [] as Array<{
-        snapshotDate: string;
-        healthScore: number | null;
-        signal: string;
-        activeUsers7d: number;
-        activeUsers30d: number;
-      }>,
+      snapshots: rows.map((s) => ({
+        snapshotDate: s.snapshot_date,
+        healthScore: s.health_score,
+        signal: s.signal,
+        activeUsers7d: s.active_users_7d,
+        activeUsers30d: s.active_users_30d,
+        attendanceCompliance: s.attendance_compliance,
+        featureAdoptionScore: s.feature_adoption_score,
+      })),
+    };
+  }
+
+  // ─── C5: Revenue / Funnel / Feature usage / System health ─────────────────
+
+  /**
+   * Platform-wide revenue snapshot. MRR + breakdown by plan and status,
+   * plus the top tenants by MRR for the recent-payments feed.
+   */
+  async getRevenue() {
+    const [{ mrr }] = await this.dbAdmin
+      .select({
+        mrr: sql<number>`COALESCE(SUM(${subscriptions.mrr_amount}), 0)::real`,
+      })
+      .from(subscriptions)
+      .where(
+        and(
+          sql`${subscriptions.status} IN ('active', 'trialing')`,
+          ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID),
+        ),
+      );
+
+    const byPlan = await this.dbAdmin
+      .select({
+        plan: subscriptions.plan_code,
+        n: sql<number>`COUNT(*)::int`,
+        mrr: sql<number>`COALESCE(SUM(${subscriptions.mrr_amount}), 0)::real`,
+      })
+      .from(subscriptions)
+      .where(ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID))
+      .groupBy(subscriptions.plan_code);
+
+    const byStatus = await this.dbAdmin
+      .select({
+        status: subscriptions.status,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(subscriptions)
+      .where(ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID))
+      .groupBy(subscriptions.status);
+
+    const topPaying = await this.dbAdmin
+      .select({
+        tenantId: tenants.id,
+        tenantName: tenants.name,
+        slug: tenants.slug,
+        planCode: subscriptions.plan_code,
+        mrr: subscriptions.mrr_amount,
+        userCount: subscriptions.user_count,
+        status: subscriptions.status,
+      })
+      .from(subscriptions)
+      .innerJoin(tenants, eq(tenants.id, subscriptions.tenant_id))
+      .where(
+        and(
+          ne(subscriptions.tenant_id, SPECFLICKS_TENANT_ID),
+          sql`${subscriptions.status} IN ('active', 'trialing')`,
+        ),
+      )
+      .orderBy(desc(subscriptions.mrr_amount))
+      .limit(10);
+
+    return {
+      mrr: { amount: Number(mrr ?? 0), currency: 'INR' },
+      arr: { amount: Number(mrr ?? 0) * 12, currency: 'INR' },
+      byPlan: byPlan.map((r) => ({
+        plan: r.plan,
+        tenants: Number(r.n),
+        mrr: Number(r.mrr ?? 0),
+      })),
+      byStatus: byStatus.map((r) => ({ status: r.status, n: Number(r.n) })),
+      topPaying: topPaying.map((r) => ({
+        tenantId: r.tenantId,
+        tenantName: r.tenantName,
+        slug: r.slug,
+        planCode: r.planCode,
+        mrr: Number(r.mrr ?? 0),
+        userCount: Number(r.userCount ?? 0),
+        status: r.status,
+      })),
+    };
+  }
+
+  /**
+   * Signup funnel — 5 stages. Each stage is a strict subset of the one
+   * before. Built off the demo schema:
+   *   1. signedUp: tenant row exists (not deleted, not Specflicks)
+   *   2. workspaceConfigured: tenant has ≥1 location AND ≥1 department
+   *   3. firstInviteSent: tenant has ≥1 employee_invitation row
+   *   4. firstEmployeeAccepted: tenant has ≥2 active memberships (Owner + 1)
+   *   5. firstActivity: tenant has at least one attendance_punch, leave
+   *      request, or timesheet entry.
+   */
+  async getFunnel() {
+    const totals = await this.dbAdmin.execute<{ stage: string; n: number }>(sql`
+      WITH t AS (
+        SELECT id FROM tenants
+        WHERE deleted_at IS NULL AND id <> ${SPECFLICKS_TENANT_ID}::uuid
+      )
+      SELECT 'signedUp'::text AS stage, COUNT(*)::int AS n FROM t
+      UNION ALL
+      SELECT 'workspaceConfigured', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM locations   l WHERE l.tenant_id = t.id)
+          AND EXISTS (SELECT 1 FROM departments d WHERE d.tenant_id = t.id)
+      UNION ALL
+      SELECT 'firstInviteSent', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM employee_invitations i WHERE i.tenant_id = t.id)
+           OR (SELECT COUNT(*) FROM memberships m WHERE m.tenant_id = t.id) > 1
+      UNION ALL
+      SELECT 'firstEmployeeAccepted', COUNT(*)::int FROM t
+        WHERE (SELECT COUNT(*) FROM memberships m
+                WHERE m.tenant_id = t.id AND m.status = 'active') >= 2
+      UNION ALL
+      SELECT 'firstActivity', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM attendance_punches a WHERE a.tenant_id = t.id)
+           OR EXISTS (SELECT 1 FROM leave_requests     l WHERE l.tenant_id = t.id)
+           OR EXISTS (SELECT 1 FROM timesheet_entries  e
+                       JOIN timesheet_periods p ON p.id = e.timesheet_period_id
+                      WHERE p.tenant_id = t.id)
+    `);
+
+    const map = new Map<string, number>();
+    for (const r of (totals as unknown as Array<{ stage: string; n: number }>) ?? []) {
+      map.set(r.stage, Number(r.n));
+    }
+
+    const total = map.get('signedUp') ?? 0;
+    const stages = [
+      { id: 'signedUp',              label: 'Signed up' },
+      { id: 'workspaceConfigured',   label: 'Workspace configured' },
+      { id: 'firstInviteSent',       label: 'First invite sent' },
+      { id: 'firstEmployeeAccepted', label: 'First employee accepted' },
+      { id: 'firstActivity',         label: 'First activity' },
+    ];
+    return {
+      total,
+      stages: stages.map((s) => {
+        const count = map.get(s.id) ?? 0;
+        return {
+          id: s.id,
+          label: s.label,
+          count,
+          rate: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Per-tenant module adoption matrix. "Using" means at least one row in
+   * the last 30 days for the relevant table.
+   */
+  async getFeatureUsage() {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rows = await this.dbAdmin.execute<{
+      tenant_id: string;
+      tenant_name: string;
+      slug: string;
+      attendance_users: number;
+      leave_users: number;
+      timesheet_users: number;
+      employee_count: number;
+    }>(sql`
+      SELECT
+        t.id           AS tenant_id,
+        t.name         AS tenant_name,
+        t.slug,
+        (SELECT COUNT(DISTINCT a.employee_id)::int
+           FROM attendance_punches a
+          WHERE a.tenant_id = t.id AND a.punched_at >= ${since.toISOString()}) AS attendance_users,
+        (SELECT COUNT(DISTINCT l.employee_id)::int
+           FROM leave_requests l
+          WHERE l.tenant_id = t.id AND l.applied_at >= ${since.toISOString()}) AS leave_users,
+        (SELECT COUNT(DISTINCT p.employee_id)::int
+           FROM timesheet_periods p
+          WHERE p.tenant_id = t.id
+            AND p.submitted_at IS NOT NULL
+            AND p.submitted_at >= ${since.toISOString()}) AS timesheet_users,
+        (SELECT COUNT(*)::int
+           FROM employees e
+          WHERE e.tenant_id = t.id
+            AND e.status NOT IN ('separated', 'absconded')) AS employee_count
+      FROM tenants t
+      WHERE t.deleted_at IS NULL
+        AND t.id <> ${SPECFLICKS_TENANT_ID}::uuid
+      ORDER BY t.name
+    `);
+
+    return {
+      windowDays: 30,
+      tenants:
+        ((rows as unknown as Array<{
+          tenant_id: string;
+          tenant_name: string;
+          slug: string;
+          attendance_users: number;
+          leave_users: number;
+          timesheet_users: number;
+          employee_count: number;
+        }>) ?? []).map((r) => {
+          const empl = Number(r.employee_count ?? 0) || 1;
+          return {
+            tenantId: r.tenant_id,
+            tenantName: r.tenant_name,
+            slug: r.slug,
+            employeeCount: Number(r.employee_count ?? 0),
+            attendance: {
+              users: Number(r.attendance_users ?? 0),
+              adoption: Math.min(1, Number(r.attendance_users ?? 0) / empl),
+            },
+            leave: {
+              users: Number(r.leave_users ?? 0),
+              adoption: Math.min(1, Number(r.leave_users ?? 0) / empl),
+            },
+            timesheet: {
+              users: Number(r.timesheet_users ?? 0),
+              adoption: Math.min(1, Number(r.timesheet_users ?? 0) / empl),
+            },
+          };
+        }),
+    };
+  }
+
+  /**
+   * Cross-tenant health distribution + the top at-risk tenants.
+   */
+  async getSystemHealth() {
+    const bucketRows = await this.dbAdmin.execute<{ signal: string; n: number }>(sql`
+      SELECT signal, COUNT(*)::int AS n
+      FROM (
+        SELECT DISTINCT ON (tenant_id) tenant_id, signal
+        FROM tenant_health_snapshots
+        WHERE tenant_id <> ${SPECFLICKS_TENANT_ID}::uuid
+        ORDER BY tenant_id, snapshot_date DESC
+      ) AS latest
+      GROUP BY signal
+    `);
+
+    const buckets = {
+      healthy: 0,
+      at_risk: 0,
+      churning: 0,
+      expanding: 0,
+      new: 0,
+    } as Record<string, number>;
+    for (const r of (bucketRows as unknown as Array<{ signal: string; n: number }>) ?? []) {
+      buckets[r.signal] = Number(r.n);
+    }
+
+    const atRisk = await this.dbAdmin.execute<{
+      tenant_id: string;
+      tenant_name: string;
+      slug: string;
+      signal: string;
+      health_score: number | null;
+      support_tickets_open: number;
+    }>(sql`
+      SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug,
+             h.signal, h.health_score, h.support_tickets_open
+      FROM tenants t
+      JOIN LATERAL (
+        SELECT signal, health_score, support_tickets_open
+        FROM tenant_health_snapshots
+        WHERE tenant_id = t.id
+        ORDER BY snapshot_date DESC
+        LIMIT 1
+      ) h ON true
+      WHERE t.deleted_at IS NULL
+        AND t.id <> ${SPECFLICKS_TENANT_ID}::uuid
+        AND h.signal IN ('at_risk', 'churning')
+      ORDER BY h.health_score ASC NULLS LAST
+      LIMIT 10
+    `);
+
+    return {
+      buckets,
+      atRiskTenants:
+        ((atRisk as unknown as Array<{
+          tenant_id: string;
+          tenant_name: string;
+          slug: string;
+          signal: string;
+          health_score: number | null;
+          support_tickets_open: number;
+        }>) ?? []).map((r) => ({
+          tenantId: r.tenant_id,
+          tenantName: r.tenant_name,
+          slug: r.slug,
+          signal: r.signal,
+          healthScore: r.health_score != null ? Number(r.health_score) : null,
+          supportTicketsOpen: Number(r.support_tickets_open ?? 0),
+        })),
+    };
+  }
+
+  /**
+   * Tenants that have not yet been GST + PAN verified.
+   */
+  async getVerificationQueue() {
+    const rows = await this.dbAdmin
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        slug: tenants.slug,
+        legalName: tenants.legal_name,
+        gstin: tenants.gstin,
+        pan: tenants.pan,
+        cin: tenants.cin,
+        industry: tenants.industry,
+        sizeBand: tenants.size_band,
+        createdAt: tenants.created_at,
+      })
+      .from(tenants)
+      .where(
+        and(
+          isNull(tenants.deleted_at),
+          isNull(tenants.verified_at),
+          ne(tenants.id, SPECFLICKS_TENANT_ID),
+        ),
+      )
+      .orderBy(desc(tenants.created_at));
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        legalName: r.legalName,
+        gstin: r.gstin,
+        pan: r.pan,
+        cin: r.cin,
+        industry: r.industry,
+        sizeBand: r.sizeBand,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      total: rows.length,
+    };
+  }
+
+  /**
+   * Marks a tenant as verified (sets tenants.verified_at = now()).
+   */
+  async verifyTenant(tenantId: string, actorUserId: string) {
+    if (tenantId === SPECFLICKS_TENANT_ID) {
+      throw new NotFoundException('Tenant not found');
+    }
+    const now = new Date();
+    const [row] = await this.dbAdmin
+      .update(tenants)
+      .set({ verified_at: now, verified_by_user_id: actorUserId, updated_at: now })
+      .where(eq(tenants.id, tenantId))
+      .returning({ id: tenants.id, verifiedAt: tenants.verified_at });
+
+    if (!row) {
+      throw new NotFoundException('Tenant not found');
+    }
+
+    await this.auditService.logPlatform({
+      actorUserId,
+      action: 'tenant.verified',
+      targetTenantId: tenantId,
+    });
+
+    return {
+      id: row.id,
+      verifiedAt: row.verifiedAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * Platform-wide audit log (not tenant-filtered). Powers /fam/audit.
+   */
+  async getPlatformAudit(opts: { page?: number; limit?: number } = {}) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
+    const offset = (page - 1) * limit;
+
+    const rows = await this.dbAdmin
+      .select({
+        id: auditLogPlatform.id,
+        action: auditLogPlatform.action,
+        targetTenantId: auditLogPlatform.target_tenant_id,
+        targetUserId: auditLogPlatform.target_user_id,
+        metadata: auditLogPlatform.metadata,
+        createdAt: auditLogPlatform.created_at,
+        actorEmail: users.email,
+        actorName: users.full_name,
+        tenantName: tenants.name,
+      })
+      .from(auditLogPlatform)
+      .leftJoin(users, eq(users.id, auditLogPlatform.actor_user_id))
+      .leftJoin(tenants, eq(tenants.id, auditLogPlatform.target_tenant_id))
+      .orderBy(desc(auditLogPlatform.created_at))
+      .limit(limit)
+      .offset(offset);
+
+    const [{ n }] = await this.dbAdmin
+      .select({ n: sql<number>`COUNT(*)::int` })
+      .from(auditLogPlatform);
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        actor: r.actorName ?? r.actorEmail ?? 'system',
+        actorEmail: r.actorEmail,
+        targetTenantId: r.targetTenantId,
+        targetTenantName: r.tenantName,
+        targetUserId: r.targetUserId,
+        metadata: r.metadata as Record<string, unknown> | null,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      pagination: { page, limit, total: Number(n ?? 0) },
     };
   }
 }

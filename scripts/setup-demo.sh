@@ -212,6 +212,68 @@ FROM (
 ) AS e(action, target, metadata, age)
 ON CONFLICT DO NOTHING;
 
+-- ─── Verification status ─────────────────────────────────────────────────────
+-- Acme Pvt was verified during onboarding (matches the audit row above);
+-- Demo Co + NorthStar Labs sit in the FAM verification queue.
+UPDATE tenants
+SET    legal_name = 'Acme Private Limited',
+       gstin      = '29ABCDE1234F2Z5',
+       pan        = 'ABCDE1234F',
+       industry   = 'SaaS',
+       size_band  = '11-50',
+       verified_at = now() - interval '20 days'
+WHERE  id = '11111111-1111-1111-1111-111111111112';
+
+UPDATE tenants
+SET    legal_name = 'Demo INC',
+       gstin      = '33XYZAB1234C1Z5',
+       pan        = 'XYZAB1234C',
+       industry   = 'Technology',
+       size_band  = '11-50',
+       city       = 'Chennai',
+       state_code = 'TN'
+WHERE  id = '11111111-1111-1111-1111-111111111111';
+
+UPDATE tenants
+SET    legal_name = 'NorthStar Labs LLP',
+       gstin      = '07PQRST9876D2Z1',
+       pan        = 'PQRST9876D',
+       industry   = 'Manufacturing',
+       size_band  = '1-10'
+WHERE  id = '11111111-1111-1111-1111-111111111113';
+
+-- ─── Feature flags ───────────────────────────────────────────────────────────
+-- A few representative flags so /fam/features renders content on first load.
+INSERT INTO feature_flags (flag_key, description, is_enabled_globally, enabled_tenant_ids, rollout_percentage)
+VALUES
+  ('beta.timesheets_v2',
+   'New weekly timesheet grid with project association.',
+   false,
+   ARRAY['11111111-1111-1111-1111-111111111112']::uuid[],
+   25),
+  ('beta.org_chart',
+   'Tree-style org chart with drag-to-reassign reporting lines.',
+   true,
+   ARRAY[]::uuid[],
+   100),
+  ('beta.fam_impersonation',
+   'Specflicks staff can impersonate any tenant user (dual audit log).',
+   false,
+   ARRAY[]::uuid[],
+   0)
+ON CONFLICT (flag_key) DO NOTHING;
+
+-- ─── Tenant cohorts ──────────────────────────────────────────────────────────
+INSERT INTO tenant_cohorts (name, description, tenant_ids)
+VALUES
+  ('early-adopters',
+   'First 50 paying customers — get new features 2 weeks early.',
+   ARRAY['11111111-1111-1111-1111-111111111112']::uuid[]),
+  ('startup-india',
+   'Companies registered under the Startup India scheme — pricing perks.',
+   ARRAY['11111111-1111-1111-1111-111111111113']::uuid[])
+ON CONFLICT (name) DO NOTHING;
+
 -- ─── Locations ───────────────────────────────────────────────────────────────
 INSERT INTO locations (id, tenant_id, name, address_line1, city, state_code, country_code, timezone, is_active)
 VALUES

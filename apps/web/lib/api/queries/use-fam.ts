@@ -301,3 +301,234 @@ export function useExtendTrial() {
     },
   })
 }
+
+// ─── C5: Revenue ──────────────────────────────────────────────────────────
+
+export interface FamRevenue {
+  mrr: { amount: number; currency: string }
+  arr: { amount: number; currency: string }
+  byPlan: Array<{ plan: string; tenants: number; mrr: number }>
+  byStatus: Array<{ status: string; n: number }>
+  topPaying: Array<{
+    tenantId: string
+    tenantName: string
+    slug: string
+    planCode: string
+    mrr: number
+    userCount: number
+    status: string
+  }>
+}
+
+export function useFamRevenue() {
+  return useQuery({
+    queryKey: ['fam', 'revenue'],
+    queryFn: () => api.get<FamRevenue>('/api/v1/fam/revenue'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── C5: Signup funnel ────────────────────────────────────────────────────
+
+export interface FamFunnel {
+  total: number
+  stages: Array<{ id: string; label: string; count: number; rate: number }>
+}
+
+export function useFamFunnel() {
+  return useQuery({
+    queryKey: ['fam', 'funnel'],
+    queryFn: () => api.get<FamFunnel>('/api/v1/fam/funnel'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── C5: Feature usage ────────────────────────────────────────────────────
+
+export interface FamFeatureUsage {
+  windowDays: number
+  tenants: Array<{
+    tenantId: string
+    tenantName: string
+    slug: string
+    employeeCount: number
+    attendance: { users: number; adoption: number }
+    leave: { users: number; adoption: number }
+    timesheet: { users: number; adoption: number }
+  }>
+}
+
+export function useFamFeatureUsage() {
+  return useQuery({
+    queryKey: ['fam', 'feature-usage'],
+    queryFn: () => api.get<FamFeatureUsage>('/api/v1/fam/feature-usage'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── C5: System health ────────────────────────────────────────────────────
+
+export interface FamSystemHealth {
+  buckets: {
+    healthy: number
+    at_risk: number
+    churning: number
+    expanding: number
+    new: number
+  }
+  atRiskTenants: Array<{
+    tenantId: string
+    tenantName: string
+    slug: string
+    signal: string
+    healthScore: number | null
+    supportTicketsOpen: number
+  }>
+}
+
+export function useFamSystemHealth() {
+  return useQuery({
+    queryKey: ['fam', 'health'],
+    queryFn: () => api.get<FamSystemHealth>('/api/v1/fam/health'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── C5: Verification queue ───────────────────────────────────────────────
+
+export interface FamVerificationTenant {
+  id: string
+  name: string
+  slug: string
+  legalName: string | null
+  gstin: string | null
+  pan: string | null
+  cin: string | null
+  industry: string | null
+  sizeBand: string | null
+  createdAt: string
+}
+
+export function useFamVerificationQueue() {
+  return useQuery({
+    queryKey: ['fam', 'verify'],
+    queryFn: () =>
+      api.get<{ data: FamVerificationTenant[]; total: number }>(
+        '/api/v1/fam/verify',
+      ),
+    staleTime: 30_000,
+  })
+}
+
+export function useVerifyTenant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ id: string; verifiedAt: string | null }>(
+        `/api/v1/fam/tenants/${id}/verify`,
+        {},
+      ),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['fam', 'verify'] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+    },
+  })
+}
+
+// ─── C5: Platform audit log ───────────────────────────────────────────────
+
+export interface FamPlatformAuditRow {
+  id: string
+  action: string
+  actor: string
+  actorEmail: string | null
+  targetTenantId: string | null
+  targetTenantName: string | null
+  targetUserId: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
+}
+
+export function useFamPlatformAudit(page = 1, limit = 50) {
+  return useQuery({
+    queryKey: ['fam', 'audit-platform', page, limit],
+    queryFn: () =>
+      api.get<{
+        data: FamPlatformAuditRow[]
+        pagination: { page: number; limit: number; total: number }
+      }>(`/api/v1/fam/audit?page=${page}&limit=${limit}`),
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+// ─── C5: Feature flags ────────────────────────────────────────────────────
+
+export interface FamFeatureFlag {
+  id: string
+  flagKey: string
+  description: string | null
+  isEnabledGlobally: boolean
+  enabledTenantIds: string[]
+  rolloutPercentage: number
+  updatedAt: string
+}
+
+export function useFamFeatureFlags() {
+  return useQuery({
+    queryKey: ['fam', 'feature-flags'],
+    queryFn: () =>
+      api.get<{ data: FamFeatureFlag[]; total: number }>('/api/v1/fam/feature-flags'),
+    staleTime: 30_000,
+  })
+}
+
+export function useUpsertFeatureFlag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dto: {
+      flagKey: string
+      description?: string | null
+      isEnabledGlobally?: boolean
+      enabledTenantIds?: string[]
+      rolloutPercentage?: number
+    }) => api.put<FamFeatureFlag>('/api/v1/fam/feature-flags', dto),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fam', 'feature-flags'] })
+      qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+    },
+  })
+}
+
+// ─── C5: Cohorts ──────────────────────────────────────────────────────────
+
+export interface FamCohort {
+  id: string
+  name: string
+  description: string | null
+  tenantIds: string[]
+  tenantCount: number
+  createdAt: string
+}
+
+export function useFamCohorts() {
+  return useQuery({
+    queryKey: ['fam', 'cohorts'],
+    queryFn: () =>
+      api.get<{ data: FamCohort[]; total: number }>('/api/v1/fam/cohorts'),
+    staleTime: 30_000,
+  })
+}
+
+export function useUpsertCohort() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dto: { name: string; description?: string; tenantIds: string[] }) =>
+      api.put<FamCohort>('/api/v1/fam/cohorts', dto),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fam', 'cohorts'] })
+      qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+    },
+  })
+}

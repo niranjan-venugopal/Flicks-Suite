@@ -372,8 +372,8 @@ export default function FamOverviewPage() {
                 { id: 'C2', label: 'Overview — platform-wide stats wired', status: 'done' },
                 { id: 'C3', label: 'Tenants list + detail (Overview / Members)', status: 'done' },
                 { id: 'C4', label: 'Tenant detail (Usage / Billing / Audit / Settings)', status: 'done' },
-                { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'next' },
-                { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'pending' },
+                { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'done' },
+                { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'next' },
               ].map((r) => {
                 const tone =
                   r.status === 'done' ? 'green' : r.status === 'next' ? 'blue' : 'yellow'

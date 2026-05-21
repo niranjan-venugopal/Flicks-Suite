@@ -208,4 +208,67 @@ export class FamController {
   ) {
     return this.famService.upsertCohort(user.sub, dto);
   }
+
+  // ─── C5: Revenue / Funnel / Feature usage / System health / Verify / Audit ─
+
+  @Get('revenue')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform-wide revenue snapshot (MRR + breakdowns)' })
+  async getRevenue() {
+    return this.famService.getRevenue();
+  }
+
+  @Get('funnel')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Signup funnel counts across the 5 onboarding stages' })
+  async getFunnel() {
+    return this.famService.getFunnel();
+  }
+
+  @Get('feature-usage')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Per-tenant module adoption (last 30d)' })
+  async getFeatureUsage() {
+    return this.famService.getFeatureUsage();
+  }
+
+  @Get('health')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform health distribution + at-risk tenants' })
+  async getSystemHealth() {
+    return this.famService.getSystemHealth();
+  }
+
+  @Get('verify')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Tenants pending GST + PAN verification' })
+  async getVerificationQueue() {
+    return this.famService.getVerificationQueue();
+  }
+
+  @Post('tenants/:id/verify')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark a tenant as verified' })
+  async verifyTenant(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.famService.verifyTenant(id, user.sub);
+  }
+
+  @Get('audit')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform-wide audit log' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getPlatformAudit(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.famService.getPlatformAudit({
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 50,
+    });
+  }
 }
