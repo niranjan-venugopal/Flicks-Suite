@@ -21,6 +21,7 @@ import {
   useSuspendTenant,
   useReactivateTenant,
   useExtendTrial,
+  useVerifyTenant,
   type FamTenantMember,
 } from '@/lib/api/queries/use-fam'
 import { formatCurrency, formatDate, timeAgo } from '@/lib/utils'
@@ -308,6 +309,26 @@ function OverviewTab({ tenant }: { tenant: NonNullable<ReturnType<typeof useFamT
           </div>
           <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '160px 1fr', rowGap: 10, columnGap: 14, fontSize: 12.5 }}>
             <DetailRow k="Legal name" v={t.legalName ?? '—'} />
+            <DetailRow
+              k="GSTIN"
+              v={
+                t.gstin ? (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.gstin}</span>
+                ) : (
+                  '—'
+                )
+              }
+            />
+            <DetailRow
+              k="PAN"
+              v={
+                t.pan ? (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.pan}</span>
+                ) : (
+                  '—'
+                )
+              }
+            />
             <DetailRow k="Industry"   v={t.industry ?? '—'} />
             <DetailRow k="Size band"  v={t.sizeBand ?? '—'} />
             <DetailRow k="Location"   v={[t.city, t.stateCode, t.country].filter(Boolean).join(', ') || '—'} />
@@ -716,6 +737,7 @@ function SettingsTab({
   const suspendMut = useSuspendTenant()
   const reactivateMut = useReactivateTenant()
   const extendMut = useExtendTrial()
+  const verifyMut = useVerifyTenant()
 
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [extendOpen, setExtendOpen] = useState(false)
@@ -761,6 +783,14 @@ function SettingsTab({
       toast({ title: 'Could not extend trial', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
     }
   }
+  const submitVerify = async () => {
+    try {
+      await verifyMut.mutateAsync(tenantId)
+      toast({ title: 'Verified', description: `${tenant.name} is now verified.` })
+    } catch (e) {
+      toast({ title: 'Could not verify', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+    }
+  }
 
   return (
     <>
@@ -803,13 +833,38 @@ function SettingsTab({
           title="Verification"
           desc={
             tenant.verifiedAt
-              ? `Verified ${formatDate(tenant.verifiedAt)}.`
-              : 'GST + PAN verification not yet completed.'
+              ? `Verified ${formatDate(tenant.verifiedAt)}. Cannot be undone from this surface.`
+              : `GST + PAN not yet verified. ${
+                  tenant.gstin || tenant.industry
+                    ? 'Onboarding details look complete — review and mark as verified.'
+                    : 'Workspace has not submitted onboarding details yet.'
+                }`
           }
           action={
-            <Btn kind="ghost" size="sm" icon={<Icon.arrow size={13} />} disabled>
-              Open verification (C5)
-            </Btn>
+            tenant.verifiedAt ? (
+              <Link href="/fam/verify" style={{ textDecoration: 'none' }}>
+                <Btn kind="ghost" size="sm" iconRight={<Icon.arrow size={13} />}>
+                  Open verification queue
+                </Btn>
+              </Link>
+            ) : (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Link href="/fam/verify" style={{ textDecoration: 'none' }}>
+                  <Btn kind="ghost" size="sm" iconRight={<Icon.arrow size={13} />}>
+                    Queue
+                  </Btn>
+                </Link>
+                <Btn
+                  kind="primary"
+                  size="sm"
+                  icon={<Icon.check size={13} />}
+                  onClick={submitVerify}
+                  disabled={verifyMut.isPending}
+                >
+                  {verifyMut.isPending ? 'Verifying…' : 'Verify now'}
+                </Btn>
+              </div>
+            )
           }
         />
       </div>

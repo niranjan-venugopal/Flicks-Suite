@@ -90,6 +90,9 @@ export interface FamTenantDetail {
   slug: string
   status: FamTenantRow['status']
   legalName: string | null
+  gstin: string | null
+  pan: string | null
+  cin: string | null
   industry: string | null
   sizeBand: string | null
   city: string | null
