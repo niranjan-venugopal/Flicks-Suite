@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
+import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
@@ -30,8 +31,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // bounce them out so they never see the customer dashboard. The legacy
   // 'super_admin' enum value is accepted as an alias until all rows are
   // migrated by 0004_role_fam.sql.
+  //
+  // EXCEPT when impersonating: the JWT carries impersonatorUserId, /me
+  // returns the target user (role=employee/manager/owner) — we want them
+  // to stay inside (app) so the FAM admin can see what the customer
+  // sees. The ImpersonationBanner identifies the session as a Specflicks
+  // staff impersonation.
+  const isImpersonating = !!meData?.impersonatorUserId
   const isPlatformAdmin =
-    freshRole === 'fam' || freshRole === 'super_admin'
+    !isImpersonating && (freshRole === 'fam' || freshRole === 'super_admin')
   const isJoiningEmployee =
     freshRole === 'employee' || freshRole === 'manager'
   const onboarding = useEmployeeOnboardingStatus()
@@ -69,11 +77,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-brand-bg">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
-        <Topbar />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-brand-bg">
+      {isImpersonating && (
+        <ImpersonationBanner targetEmail={meData?.email ?? null} />
+      )}
+      <div className="flex flex-1 min-h-0">
+        <Sidebar />
+        <div className="flex flex-col flex-1 min-w-0">
+          <Topbar />
+          <main className="flex-1 overflow-y-auto">{children}</main>
+        </div>
       </div>
     </div>
   )

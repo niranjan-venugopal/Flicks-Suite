@@ -58,6 +58,9 @@ interface VerifyAuthResponse {
 interface MeResponse extends ApiUser {
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
+  // Set only when the current session is a FAM impersonation. The web
+  // app shows the ImpersonationBanner whenever this is present.
+  impersonatorUserId?: string
 }
 
 function normaliseRole(role: string | undefined | null): UserRole {

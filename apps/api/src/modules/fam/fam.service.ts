@@ -26,6 +26,8 @@ import {
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
+import { AuthService } from '../auth/auth.service';
+import type { UserRole } from '@flicks/shared/types';
 import type {
   SuspendTenantDto,
   ExtendTrialDto,
@@ -42,6 +44,7 @@ export class FamService {
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
+    private readonly authService: AuthService,
   ) {}
 
   // ─── Overview (platform-wide stats) ────────────────────────────────────────
@@ -786,25 +789,157 @@ export class FamService {
   // ─── Impersonation ─────────────────────────────────────────────────────────
 
   /**
-   * Starts an impersonation session for a target user; returns a short-lived JWT.
-   * TODO: validate target, mint JWT with impersonatorUserId set, log platform audit.
+   * Starts an impersonation session for a target user. Mints a fresh JWT
+   * with `impersonatorUserId` set to the FAM admin's user id; the
+   * controller swaps the response cookies to that pair so the next
+   * request reads /me as the target user.
+   *
+   * Audits the action on BOTH the platform audit log (FAM-side) and the
+   * tenant's audit log (so the customer can see who logged in as them).
    */
   async startImpersonation(
     actorUserId: string,
     dto: StartImpersonationDto,
   ) {
+    // Resolve the target user + their primary tenant + role.
+    const [target] = await this.dbAdmin
+      .select({
+        userId: users.id,
+        email: users.email,
+        isPlatformAdmin: users.is_platform_admin,
+        membershipId: memberships.id,
+        tenantId: memberships.tenant_id,
+        role: memberships.role,
+      })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.user_id, users.id))
+      .where(
+        and(
+          eq(users.id, dto.targetUserId),
+          eq(memberships.status, 'active'),
+          ne(memberships.tenant_id, SPECFLICKS_TENANT_ID),
+        ),
+      )
+      .orderBy(memberships.created_at)
+      .limit(1);
+
+    if (!target) {
+      throw new NotFoundException('Target user has no active tenant membership');
+    }
+
+    // Mint the impersonation JWT (15 min). impersonatorUserId carries the
+    // FAM admin's identity through every downstream request so /me can
+    // surface the banner and the audit log can attribute writes.
+    const { accessToken, refreshToken } = await this.authService.issueTokenPair(
+      {
+        id: target.userId,
+        email: target.email,
+        is_platform_admin: target.isPlatformAdmin,
+      },
+      target.tenantId,
+      target.membershipId,
+      target.role as UserRole,
+      undefined,
+      undefined,
+      undefined,
+      actorUserId,
+    );
+
+    // Platform audit (FAM-side) — visible in /fam/audit + tenant audit tab.
     await this.auditService.logPlatform({
       actorUserId,
-      action: 'impersonation.started',
-      targetUserId: dto.targetUserId,
-      metadata: { reason: dto.reason },
+      action: 'fam.tenant.impersonate.start',
+      targetTenantId: target.tenantId,
+      targetUserId: target.userId,
+      metadata: { reason: dto.reason, targetEmail: target.email },
+    });
+
+    // Tenant audit (customer-side) so the workspace can see staff logins.
+    await this.auditService.log({
+      tenantId: target.tenantId,
+      actorUserId,
+      action: 'impersonation.session.started',
+      resourceType: 'user',
+      resourceId: target.userId,
+      metadata: {
+        impersonatorUserId: actorUserId,
+        targetEmail: target.email,
+        reason: dto.reason,
+      },
     });
 
     return {
-      impersonationToken: '',
-      targetUserId: dto.targetUserId,
+      accessToken,
+      refreshToken,
+      targetUserId: target.userId,
+      targetEmail: target.email,
+      tenantId: target.tenantId,
       expiresIn: 15 * 60,
     };
+  }
+
+  /**
+   * Ends the current impersonation session. Re-issues the original FAM
+   * admin's token pair using their canonical Specflicks membership, and
+   * writes matching audit rows on both sides.
+   */
+  async endImpersonation(
+    impersonatedUserId: string,
+    impersonatorUserId: string,
+    currentTenantId: string,
+  ) {
+    // Restore the FAM admin's identity.
+    const [impersonator] = await this.dbAdmin
+      .select({
+        userId: users.id,
+        email: users.email,
+        isPlatformAdmin: users.is_platform_admin,
+        membershipId: memberships.id,
+        tenantId: memberships.tenant_id,
+        role: memberships.role,
+      })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.user_id, users.id))
+      .where(
+        and(
+          eq(users.id, impersonatorUserId),
+          eq(memberships.role, 'fam'),
+        ),
+      )
+      .limit(1);
+
+    if (!impersonator) {
+      throw new NotFoundException('Impersonator user no longer has a FAM membership');
+    }
+
+    const { accessToken, refreshToken } = await this.authService.issueTokenPair(
+      {
+        id: impersonator.userId,
+        email: impersonator.email,
+        is_platform_admin: impersonator.isPlatformAdmin,
+      },
+      impersonator.tenantId,
+      impersonator.membershipId,
+      impersonator.role as UserRole,
+    );
+
+    await this.auditService.logPlatform({
+      actorUserId: impersonatorUserId,
+      action: 'fam.tenant.impersonate.end',
+      targetTenantId: currentTenantId,
+      targetUserId: impersonatedUserId,
+    });
+
+    await this.auditService.log({
+      tenantId: currentTenantId,
+      actorUserId: impersonatorUserId,
+      action: 'impersonation.session.ended',
+      resourceType: 'user',
+      resourceId: impersonatedUserId,
+      metadata: { impersonatorUserId },
+    });
+
+    return { accessToken, refreshToken };
   }
 
   // ─── Feature flags ─────────────────────────────────────────────────────────

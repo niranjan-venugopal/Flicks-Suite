@@ -6,9 +6,11 @@ import {
   Body,
   Param,
   Query,
+  Res,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Response as ExpressResponse } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -17,6 +19,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { FamService } from './fam.service';
+import { AuthService } from '../auth/auth.service';
 import {
   SuspendTenantDto,
   ExtendTrialDto,
@@ -33,7 +36,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiBearerAuth('access-token')
 @Controller('fam')
 export class FamController {
-  constructor(private readonly famService: FamService) {}
+  constructor(
+    private readonly famService: FamService,
+    private readonly authService: AuthService,
+  ) {}
 
   // ─── Overview ──────────────────────────────────────────────────────────────
 
@@ -159,12 +165,40 @@ export class FamController {
   @Roles('fam')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start impersonation session for a target user' })
-  @ApiResponse({ status: 200, description: 'Impersonation token issued' })
+  @ApiResponse({ status: 200, description: 'Impersonation token issued + cookies set' })
   async startImpersonation(
     @Body() dto: StartImpersonationDto,
     @CurrentUser() user: JwtPayload,
+    @Res({ passthrough: true }) res: ExpressResponse,
   ) {
-    return this.famService.startImpersonation(user.sub, dto);
+    const result = await this.famService.startImpersonation(user.sub, dto);
+    this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return {
+      targetUserId: result.targetUserId,
+      targetEmail: result.targetEmail,
+      tenantId: result.tenantId,
+      expiresIn: result.expiresIn,
+    };
+  }
+
+  @Post('impersonate/end')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'End the current impersonation session and restore FAM session' })
+  async endImpersonation(
+    @CurrentUser() user: JwtPayload,
+    @Res({ passthrough: true }) res: ExpressResponse,
+  ) {
+    if (!user.impersonatorUserId) {
+      // Not impersonating — no-op so the frontend can call this safely.
+      return { ok: true };
+    }
+    const { accessToken, refreshToken } = await this.famService.endImpersonation(
+      user.sub,
+      user.impersonatorUserId,
+      user.tenantId,
+    );
+    this.authService.setAuthCookies(res, accessToken, refreshToken);
+    return { ok: true };
   }
 
   // ─── Feature flags ─────────────────────────────────────────────────────────

@@ -864,6 +864,7 @@ export class AuthService {
     deviceId?: string,
     ip?: string,
     userAgent?: string,
+    impersonatorUserId?: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     // iss/aud are set globally by JwtModule.registerAsync in app.module.ts —
     // including them in the payload conflicts with sign() options.
@@ -875,6 +876,7 @@ export class AuthService {
       role: role ?? 'employee',
       isPlatformAdmin: user.is_platform_admin,
       deviceId: deviceId ?? '',
+      ...(impersonatorUserId ? { impersonatorUserId } : {}),
     };
 
     const accessToken = this.jwtService.sign(payload);

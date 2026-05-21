@@ -535,3 +535,38 @@ export function useUpsertCohort() {
     },
   })
 }
+
+// ─── C6: Impersonation ────────────────────────────────────────────────────
+
+export interface StartImpersonationPayload {
+  targetUserId: string
+  reason: string
+}
+
+export function useStartImpersonation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dto: StartImpersonationPayload) =>
+      api.post<{
+        targetUserId: string
+        targetEmail: string
+        tenantId: string
+        expiresIn: number
+      }>('/api/v1/fam/impersonate', dto),
+    onSuccess: () => {
+      // Cookies have been swapped server-side. Clear every query so the
+      // next paint reflects the target user, not the cached FAM context.
+      qc.clear()
+    },
+  })
+}
+
+export function useEndImpersonation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ ok: boolean }>('/api/v1/fam/impersonate/end', {}),
+    onSuccess: () => {
+      qc.clear()
+    },
+  })
+}

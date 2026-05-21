@@ -207,7 +207,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user', description: 'Returns current user info and memberships.' })
   @ApiResponse({ status: 200, description: 'Current user data' })
   async getMe(@CurrentUser() user: JwtPayload) {
-    return this.authService.getMe(user.sub, user.tenantId);
+    const me = await this.authService.getMe(user.sub, user.tenantId);
+    // Surface the impersonation marker so the web app can render the banner.
+    return user.impersonatorUserId
+      ? { ...me, impersonatorUserId: user.impersonatorUserId }
+      : me;
   }
 
   @Post('select-tenant')

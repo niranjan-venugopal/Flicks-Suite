@@ -373,7 +373,7 @@ export default function FamOverviewPage() {
                 { id: 'C3', label: 'Tenants list + detail (Overview / Members)', status: 'done' },
                 { id: 'C4', label: 'Tenant detail (Usage / Billing / Audit / Settings)', status: 'done' },
                 { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'done' },
-                { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'next' },
+                { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'done' },
               ].map((r) => {
                 const tone =
                   r.status === 'done' ? 'green' : r.status === 'next' ? 'blue' : 'yellow'

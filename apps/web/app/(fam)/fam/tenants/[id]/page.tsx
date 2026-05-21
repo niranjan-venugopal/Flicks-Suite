@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import {
@@ -22,8 +22,10 @@ import {
   useReactivateTenant,
   useExtendTrial,
   useVerifyTenant,
+  useStartImpersonation,
   type FamTenantMember,
 } from '@/lib/api/queries/use-fam'
+import { ImpersonateModal } from '@/components/fam/ImpersonateModal'
 import { formatCurrency, formatDate, timeAgo } from '@/lib/utils'
 import {
   Dialog,
@@ -387,8 +389,36 @@ function DetailRow({ k, v }: { k: string; v: React.ReactNode }) {
 // ─── Members tab ─────────────────────────────────────────────────────────────
 
 function MembersTab({ tenantId }: { tenantId: string }) {
+  const router = useRouter()
+  const { toast } = useToast()
   const members = useFamTenantMembers(tenantId)
+  const startImpMut = useStartImpersonation()
+  const [target, setTarget] = useState<FamTenantMember | null>(null)
   const rows: FamTenantMember[] = members.data?.data ?? []
+
+  const handleImpersonate = async (payload: { reason: string; ticket?: string }) => {
+    if (!target) return
+    try {
+      await startImpMut.mutateAsync({
+        targetUserId: target.userId,
+        reason: payload.ticket
+          ? `${payload.reason} · ticket=${payload.ticket}`
+          : payload.reason,
+      })
+      toast({
+        title: 'Impersonating',
+        description: `${target.email ?? target.fullName}. Banner shows on every page until you exit.`,
+      })
+      setTarget(null)
+      router.replace('/dashboard')
+    } catch (e) {
+      toast({
+        title: 'Could not start impersonation',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
 
   if (members.isLoading) {
     return (
@@ -406,54 +436,82 @@ function MembersTab({ tenantId }: { tenantId: string }) {
     )
   }
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <table className="tbl" style={{ width: '100%' }}>
-        <thead>
-          <tr>
-            <th>Member</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Invited</th>
-            <th>Accepted</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((m) => (
-            <tr key={m.membershipId}>
-              <td>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                  <Avatar name={m.fullName ?? m.email ?? '?'} size="sm" />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 800 }}>
-                      {m.fullName ?? '—'}
-                    </div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
-                      {m.email ?? '—'}
-                    </div>
-                  </div>
-                </div>
-              </td>
-              <td>
-                <Pill tone={roleTone(m.role)} dot>
-                  {m.role.replace('_', ' ')}
-                </Pill>
-              </td>
-              <td>
-                <Pill tone={memberStatusTone(m.status)} dot>
-                  {m.status}
-                </Pill>
-              </td>
-              <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                {m.invitedAt ? timeAgo(m.invitedAt) : '—'}
-              </td>
-              <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                {m.acceptedAt ? timeAgo(m.acceptedAt) : '—'}
-              </td>
+    <>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table className="tbl" style={{ width: '100%' }}>
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Invited</th>
+              <th>Accepted</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((m) => {
+              // Owners are the only role we let FAM impersonate by default
+              // (clean read of "the customer view"). Employees / managers
+              // are reachable too — useful for reproducing a reported bug.
+              const canImpersonate = m.status === 'active' && m.role !== 'fam'
+              return (
+                <tr key={m.membershipId}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                      <Avatar name={m.fullName ?? m.email ?? '?'} size="sm" />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          {m.fullName ?? '—'}
+                        </div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
+                          {m.email ?? '—'}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <Pill tone={roleTone(m.role)} dot>
+                      {m.role.replace('_', ' ')}
+                    </Pill>
+                  </td>
+                  <td>
+                    <Pill tone={memberStatusTone(m.status)} dot>
+                      {m.status}
+                    </Pill>
+                  </td>
+                  <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                    {m.invitedAt ? timeAgo(m.invitedAt) : '—'}
+                  </td>
+                  <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                    {m.acceptedAt ? timeAgo(m.acceptedAt) : '—'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Btn
+                      kind="ghost"
+                      size="sm"
+                      icon={<Icon.shield size={12} />}
+                      disabled={!canImpersonate}
+                      onClick={() => setTarget(m)}
+                    >
+                      Impersonate
+                    </Btn>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <ImpersonateModal
+        open={!!target}
+        onOpenChange={(o) => !o && setTarget(null)}
+        targetEmail={target?.email ?? target?.fullName ?? ''}
+        onConfirm={handleImpersonate}
+        isPending={startImpMut.isPending}
+      />
+    </>
   )
 }
 
