@@ -35,6 +35,11 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
+// Lazy UUID v4-ish regex — enough to keep `targetUserId must be a UUID`
+// errors from reaching the API when a membership row has a malformed
+// user_id reference.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 type TabKey = 'overview' | 'members' | 'usage' | 'billing' | 'audit' | 'settings'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -454,7 +459,12 @@ function MembersTab({ tenantId }: { tenantId: string }) {
               // Owners are the only role we let FAM impersonate by default
               // (clean read of "the customer view"). Employees / managers
               // are reachable too — useful for reproducing a reported bug.
-              const canImpersonate = m.status === 'active' && m.role !== 'fam'
+              // Also guard against orphaned membership rows whose user_id
+              // doesn't resolve to a real users row — sending '' as the
+              // targetUserId would fail the @IsUUID validation.
+              const userIdLooksValid = UUID_RE.test(m.userId)
+              const canImpersonate =
+                m.status === 'active' && m.role !== 'fam' && userIdLooksValid
               return (
                 <tr key={m.membershipId}>
                   <td>

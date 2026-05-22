@@ -477,7 +477,11 @@ export class FamService {
         status: memberships.status,
         invitedAt: memberships.invited_at,
         acceptedAt: memberships.accepted_at,
-        userId: users.id,
+        // memberships.user_id is the FK and is NOT NULL — always present.
+        // Using users.id here was fragile: a leftJoin on a soft-broken
+        // row would return null, which I was mapping to '' and breaking
+        // the @IsUUID validation when the FAM admin tried to impersonate.
+        userId: memberships.user_id,
         email: users.email,
         fullName: users.full_name,
       })
@@ -489,7 +493,7 @@ export class FamService {
     return {
       data: rows.map((r) => ({
         membershipId: r.membershipId,
-        userId: r.userId ?? '',
+        userId: r.userId,
         email: r.email ?? null,
         fullName: r.fullName ?? null,
         role: r.role,
