@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   Inject,
+  BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, gte, isNull, ne, sql } from 'drizzle-orm';
@@ -805,7 +806,25 @@ export class FamService {
     actorUserId: string,
     dto: StartImpersonationDto,
   ) {
-    // Resolve the target user + their primary tenant + role.
+    if (!dto.membershipId && !dto.targetUserId) {
+      throw new BadRequestException(
+        'Either membershipId or targetUserId is required',
+      );
+    }
+
+    // Resolve the target user + their primary tenant + role. Prefer
+    // membershipId because it pins us to an exact row from the FAM
+    // tenant detail page; fall back to targetUserId for backwards-compat.
+    const filters = [
+      eq(memberships.status, 'active'),
+      ne(memberships.tenant_id, SPECFLICKS_TENANT_ID),
+    ];
+    if (dto.membershipId) {
+      filters.push(eq(memberships.id, dto.membershipId));
+    } else if (dto.targetUserId) {
+      filters.push(eq(users.id, dto.targetUserId));
+    }
+
     const [target] = await this.dbAdmin
       .select({
         userId: users.id,
@@ -817,13 +836,7 @@ export class FamService {
       })
       .from(users)
       .innerJoin(memberships, eq(memberships.user_id, users.id))
-      .where(
-        and(
-          eq(users.id, dto.targetUserId),
-          eq(memberships.status, 'active'),
-          ne(memberships.tenant_id, SPECFLICKS_TENANT_ID),
-        ),
-      )
+      .where(and(...filters))
       .orderBy(memberships.created_at)
       .limit(1);
 

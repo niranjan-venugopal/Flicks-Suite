@@ -538,8 +538,13 @@ export function useUpsertCohort() {
 
 // ─── C6: Impersonation ────────────────────────────────────────────────────
 
+// Either membershipId or targetUserId is required. We send membershipId
+// because it's the rock-solid PK of the row the FAM admin clicked; that
+// dodges every shape of "what if the user_id projection in the response
+// came back wrong" bug class.
 export interface StartImpersonationPayload {
-  targetUserId: string
+  membershipId?: string
+  targetUserId?: string
   reason: string
 }
 

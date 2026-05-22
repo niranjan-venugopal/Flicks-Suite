@@ -62,9 +62,18 @@ export class ExtendTrialDto {
 // ─── Impersonation ────────────────────────────────────────────────────────────
 
 export class StartImpersonationDto {
-  @ApiProperty()
+  // membershipId is now the canonical input — the FAM tenant detail page
+  // always has a real membership row to point at. targetUserId is kept as
+  // a backwards-compat alternative; one of the two must be provided.
+  @ApiPropertyOptional()
   @IsUUID()
-  targetUserId: string;
+  @IsOptional()
+  membershipId?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  targetUserId?: string;
 
   @ApiProperty({ example: 'Investigating reported attendance bug' })
   @IsString()

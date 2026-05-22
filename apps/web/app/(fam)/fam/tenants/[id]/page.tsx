@@ -35,11 +35,6 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
-// Lazy UUID v4-ish regex — enough to keep `targetUserId must be a UUID`
-// errors from reaching the API when a membership row has a malformed
-// user_id reference.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 type TabKey = 'overview' | 'members' | 'usage' | 'billing' | 'audit' | 'settings'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -404,8 +399,10 @@ function MembersTab({ tenantId }: { tenantId: string }) {
   const handleImpersonate = async (payload: { reason: string; ticket?: string }) => {
     if (!target) return
     try {
+      // Send membershipId (PK of the row we clicked) — server resolves
+      // user_id from that row, immune to any stale-userId projection bugs.
       await startImpMut.mutateAsync({
-        targetUserId: target.userId,
+        membershipId: target.membershipId,
         reason: payload.ticket
           ? `${payload.reason} · ticket=${payload.ticket}`
           : payload.reason,
@@ -459,12 +456,10 @@ function MembersTab({ tenantId }: { tenantId: string }) {
               // Owners are the only role we let FAM impersonate by default
               // (clean read of "the customer view"). Employees / managers
               // are reachable too — useful for reproducing a reported bug.
-              // Also guard against orphaned membership rows whose user_id
-              // doesn't resolve to a real users row — sending '' as the
-              // targetUserId would fail the @IsUUID validation.
-              const userIdLooksValid = UUID_RE.test(m.userId)
-              const canImpersonate =
-                m.status === 'active' && m.role !== 'fam' && userIdLooksValid
+              // membershipId is the row's PK so we don't need a userId
+              // sanity check here anymore — the server resolves user_id
+              // from the membership row.
+              const canImpersonate = m.status === 'active' && m.role !== 'fam'
               return (
                 <tr key={m.membershipId}>
                   <td>
