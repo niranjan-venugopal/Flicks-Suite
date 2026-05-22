@@ -41,8 +41,8 @@ type EmailTemplate =
   | 'leave-rejected'
   | 'timesheet-submitted'
   | 'trial-ending-soon'
-  | 'timesheet-submitted'
-  | 'timesheet-approved';
+  | 'timesheet-approved'
+  | 'impersonation-started';
 
 @Injectable()
 export class NotificationsService {
@@ -267,6 +267,29 @@ export class NotificationsService {
                 <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}/team/timesheets" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review timesheet</a>
               </p>
               <p style="color: #666; font-size: 12px; margin-top: 32px;">If the link doesn't work, sign in to ${appName} and head to Team → Timesheets.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'impersonation-started': {
+        const { targetName, reason, endsAt } = props as {
+          targetName: string;
+          reason: string;
+          endsAt: string;
+        };
+        return {
+          subject: `Specflicks staff signed in as you — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${String(targetName)},</h2>
+              <p>For your transparency, a Specflicks staff member just signed in to ${appName} as you.</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #f4f6fa; border-radius: 8px;">
+                <tr><td style="padding: 12px 14px; color: #666; width: 130px;">Reason</td><td style="padding: 12px 14px;">${String(reason)}</td></tr>
+                <tr><td style="padding: 12px 14px; color: #666;">Session ends</td><td style="padding: 12px 14px;">${String(endsAt)} (15 min hard cap)</td></tr>
+              </table>
+              <p>Every action this staff member performs is recorded in your workspace's audit log and on Specflicks's platform audit log. You can review it under Settings → Audit log.</p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't request support and this looks wrong, reply to this email or contact your workspace admin immediately.</p>
             </div>
           `,
         };

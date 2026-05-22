@@ -78,6 +78,13 @@ export const refreshTokens = pgTable(
     expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
     revoked_at: timestamp('revoked_at', { withTimezone: true }),
     rotated_to: uuid('rotated_to'), // points to the replacement token id
+    // When set, this refresh token belongs to a FAM impersonation session.
+    // The refresh handler uses it to look up the matching impersonation_sessions
+    // row and refuse the refresh if the session has ended or expired — that's
+    // what enforces the real 15-minute hard cap.
+    impersonator_user_id: uuid('impersonator_user_id').references(() => users.id, {
+      onDelete: 'cascade',
+    }),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -88,6 +95,7 @@ export const refreshTokens = pgTable(
     index('refresh_tokens_token_hash_idx').on(t.token_hash),
     index('refresh_tokens_tenant_id_idx').on(t.tenant_id),
     index('refresh_tokens_expires_at_idx').on(t.expires_at),
+    index('refresh_tokens_impersonator_idx').on(t.impersonator_user_id),
   ],
 );
 

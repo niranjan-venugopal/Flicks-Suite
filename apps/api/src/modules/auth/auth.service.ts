@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, and, gt, isNull, lt, desc } from 'drizzle-orm';
+import { eq, and, gt, isNull, lt, desc, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { Response } from 'express';
 import {
@@ -19,6 +19,7 @@ import {
   users,
   memberships,
   tenants,
+  impersonationSessions,
 } from '@flicks/db/schema';
 import {
   DB_TENANT,
@@ -492,6 +493,27 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token has expired');
     }
 
+    // Impersonation refresh: validate the session is still active.
+    // Without this, a leaked impersonation refresh-token could mint
+    // clean access tokens (no impersonatorUserId) past the session end.
+    if (token.impersonator_user_id) {
+      const [activeSession] = await this.dbAdmin.execute<{ id: string }>(sql`
+        SELECT id
+        FROM impersonation_sessions
+        WHERE impersonator_user_id = ${token.impersonator_user_id}
+          AND target_user_id        = ${token.user_id}
+          AND ended_at IS NULL
+          AND ends_at > now()
+        ORDER BY started_at DESC
+        LIMIT 1
+      `) as unknown as Array<{ id: string }>;
+      if (!activeSession) {
+        throw new UnauthorizedException(
+          'Impersonation session has ended or expired',
+        );
+      }
+    }
+
     const user = await this.db
       .select()
       .from(users)
@@ -525,7 +547,8 @@ export class AuthService {
       .set({ revoked_at: new Date() })
       .where(eq(refreshTokens.id, token.id));
 
-    // Issue new pair
+    // Issue new pair — preserve the impersonator marker so the next
+    // access token still surfaces the banner and audit trail.
     const { accessToken, refreshToken: newRefreshToken } =
       await this.issueTokenPair(
         user[0],
@@ -535,6 +558,7 @@ export class AuthService {
         deviceId ?? token.device_id ?? undefined,
         ip,
         userAgent,
+        token.impersonator_user_id ?? undefined,
       );
 
     await this.writeAuthEvent({
@@ -621,6 +645,50 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken, expiresIn: 900 };
+  }
+
+  /**
+   * Active impersonation session for an (impersonator, target) pair, or
+   * null. Used by /me so the banner can render a real countdown from
+   * impersonation_sessions.ends_at instead of the hard-coded "15 min".
+   */
+  async getActiveImpersonationSession(
+    impersonatorUserId: string,
+    targetUserId: string,
+  ) {
+    const [row] = await this.dbAdmin
+      .select({
+        id: impersonationSessions.id,
+        startedAt: impersonationSessions.started_at,
+        endsAt: impersonationSessions.ends_at,
+      })
+      .from(impersonationSessions)
+      .where(
+        and(
+          eq(impersonationSessions.impersonator_user_id, impersonatorUserId),
+          eq(impersonationSessions.target_user_id, targetUserId),
+          isNull(impersonationSessions.ended_at),
+          sql`${impersonationSessions.ends_at} > now()`,
+        ),
+      )
+      .orderBy(desc(impersonationSessions.started_at))
+      .limit(1);
+
+    if (!row) return null;
+
+    const [imp] = await this.dbAdmin
+      .select({ email: users.email, fullName: users.full_name })
+      .from(users)
+      .where(eq(users.id, impersonatorUserId))
+      .limit(1);
+
+    return {
+      sessionId: row.id,
+      startedAt: row.startedAt.toISOString(),
+      endsAt: row.endsAt.toISOString(),
+      impersonatorEmail: imp?.email ?? null,
+      impersonatorName: imp?.fullName ?? null,
+    };
   }
 
   async getMe(userId: string, tenantId?: string) {
@@ -883,7 +951,11 @@ export class AuthService {
 
     const rawRefreshToken = generateSecureToken(48);
     const refreshTokenHash = sha256(rawRefreshToken);
-    const refreshExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Impersonation refreshes are short-lived (15 min cap matches the
+    // access token); normal sessions get the standard 7-day window.
+    const refreshExpiry = impersonatorUserId
+      ? new Date(Date.now() + 15 * 60 * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await this.db.insert(refreshTokens).values({
       user_id: user.id,
@@ -894,6 +966,7 @@ export class AuthService {
       user_agent: userAgent,
       expires_at: refreshExpiry,
       last_used_at: new Date(),
+      impersonator_user_id: impersonatorUserId ?? null,
     });
 
     return { accessToken, refreshToken: rawRefreshToken };

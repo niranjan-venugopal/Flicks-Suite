@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Icon } from '@/components/proto'
 import { useEndImpersonation } from '@/lib/api/queries/use-fam'
@@ -7,30 +8,56 @@ import { useEndImpersonation } from '@/lib/api/queries/use-fam'
 /**
  * Sticky top banner shown across the customer app whenever the current
  * JWT carries an `impersonatorUserId` — i.e. a Specflicks FAM admin is
- * logged in as a customer user. Matches the prototype's red→yellow
- * gradient + audit-log copy.
+ * logged in as a customer user. Counts down to the session's real
+ * ends_at timestamp; auto-exits when it hits zero.
  */
 export function ImpersonationBanner({
   targetEmail,
+  endsAt,
+  impersonatorEmail,
   onExited,
 }: {
   targetEmail: string | null
+  endsAt: string | null
+  impersonatorEmail: string | null
   onExited?: () => void
 }) {
   const router = useRouter()
   const endMut = useEndImpersonation()
+  const [remaining, setRemaining] = useState(() => msUntil(endsAt))
+
+  useEffect(() => {
+    if (!endsAt) return
+    const tick = () => setRemaining(msUntil(endsAt))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [endsAt])
+
+  // Hard exit when the countdown hits zero. The server already refuses
+  // any refresh past ends_at so the session is effectively dead — but
+  // we proactively bounce the user so they don't keep poking at stale UI.
+  useEffect(() => {
+    if (remaining > 0 || !endsAt) return
+    handleExit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remaining, endsAt])
 
   const handleExit = async () => {
     try {
       await endMut.mutateAsync()
       onExited?.()
-      // Cookies are now the FAM admin's again. (app)/layout reads the
-      // fresh /me on next mount and bounces FAM admins to /fam/overview.
       router.replace('/fam/overview')
     } catch {
-      // Worst case the FAM admin can just sign out manually.
+      /* best effort */
     }
   }
+
+  const min = Math.max(0, Math.floor(remaining / 60_000))
+  const sec = Math.max(0, Math.floor((remaining % 60_000) / 1000))
+  const remainingLabel =
+    remaining <= 0 ? 'expired' : `${min}:${String(sec).padStart(2, '0')} left`
+  const warn = remaining <= 60_000
 
   return (
     <div
@@ -52,13 +79,23 @@ export function ImpersonationBanner({
     >
       <Icon.shield size={16} />
       <span>
-        You are impersonating{' '}
-        <strong>{targetEmail ?? 'this user'}</strong> as a Specflicks staff.
-        All actions are audit-logged.
+        You are impersonating <strong>{targetEmail ?? 'this user'}</strong>
+        {impersonatorEmail ? ` as ${impersonatorEmail}` : ''}. All actions are
+        audit-logged on both sides.
       </span>
       <div style={{ flex: 1 }} />
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, opacity: 0.7 }}>
-        Session expires in 15 min
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          opacity: warn ? 1 : 0.75,
+          color: warn ? '#0A0612' : 'inherit',
+          background: warn ? 'rgba(0,0,0,.18)' : 'transparent',
+          padding: warn ? '2px 8px' : 0,
+          borderRadius: 5,
+        }}
+      >
+        {remainingLabel}
       </span>
       <button
         onClick={handleExit}
@@ -78,4 +115,9 @@ export function ImpersonationBanner({
       </button>
     </div>
   )
+}
+
+function msUntil(iso: string | null): number {
+  if (!iso) return 0
+  return Math.max(0, new Date(iso).getTime() - Date.now())
 }

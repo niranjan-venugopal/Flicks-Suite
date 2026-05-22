@@ -208,10 +208,19 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Current user data' })
   async getMe(@CurrentUser() user: JwtPayload) {
     const me = await this.authService.getMe(user.sub, user.tenantId);
-    // Surface the impersonation marker so the web app can render the banner.
-    return user.impersonatorUserId
-      ? { ...me, impersonatorUserId: user.impersonatorUserId }
-      : me;
+    if (!user.impersonatorUserId) return me;
+
+    // Surface impersonation session details so the banner can render a
+    // real countdown + the impersonator's identity.
+    const session = await this.authService.getActiveImpersonationSession(
+      user.impersonatorUserId,
+      user.sub,
+    );
+    return {
+      ...me,
+      impersonatorUserId: user.impersonatorUserId,
+      impersonation: session,
+    };
   }
 
   @Post('select-tenant')

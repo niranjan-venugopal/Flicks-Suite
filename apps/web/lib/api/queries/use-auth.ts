@@ -61,6 +61,13 @@ interface MeResponse extends ApiUser {
   // Set only when the current session is a FAM impersonation. The web
   // app shows the ImpersonationBanner whenever this is present.
   impersonatorUserId?: string
+  impersonation?: {
+    sessionId: string
+    startedAt: string
+    endsAt: string
+    impersonatorEmail: string | null
+    impersonatorName: string | null
+  } | null
 }
 
 function normaliseRole(role: string | undefined | null): UserRole {

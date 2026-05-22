@@ -79,7 +79,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-brand-bg">
       {isImpersonating && (
-        <ImpersonationBanner targetEmail={meData?.email ?? null} />
+        <ImpersonationBanner
+          targetEmail={meData?.email ?? null}
+          endsAt={meData?.impersonation?.endsAt ?? null}
+          impersonatorEmail={meData?.impersonation?.impersonatorEmail ?? null}
+        />
       )}
       <div className="flex flex-1 min-h-0">
         <Sidebar />

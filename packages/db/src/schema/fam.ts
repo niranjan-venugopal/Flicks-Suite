@@ -210,6 +210,47 @@ export const tenantHealthSnapshots = pgTable(
   ],
 );
 
+// ─── impersonation_sessions ───────────────────────────────────────────────────
+// One row per FAM admin → tenant-user impersonation session. Tracks the
+// 15-minute hard cap (ends_at), the manual exit (ended_at), and the
+// audit metadata (reason, ticket, IP). The refresh handler joins against
+// this table to refuse refreshes once a session is over — closes the
+// "refresh token escape" hole where an impersonation refresh could
+// otherwise mint clean access tokens without the impersonator marker.
+
+export const impersonationSessions = pgTable(
+  'impersonation_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    impersonator_user_id: uuid('impersonator_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    target_user_id: uuid('target_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    target_tenant_id: uuid('target_tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    reason: text('reason').notNull(),
+    support_ticket: text('support_ticket'),
+    started_at: timestamp('started_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    ends_at: timestamp('ends_at', { withTimezone: true }).notNull(),
+    ended_at: timestamp('ended_at', { withTimezone: true }),
+    ip_address: text('ip_address'),
+    user_agent: text('user_agent'),
+  },
+  (t) => [
+    index('impersonation_sessions_target_idx').on(t.target_user_id, t.ended_at),
+    index('impersonation_sessions_impersonator_idx').on(
+      t.impersonator_user_id,
+      t.ended_at,
+    ),
+    index('impersonation_sessions_active_idx').on(t.ended_at, t.ends_at),
+  ],
+);
+
 // ─── feature_flags ────────────────────────────────────────────────────────────
 
 export const featureFlags = pgTable(

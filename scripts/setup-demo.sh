@@ -112,6 +112,35 @@ CREATE INDEX IF NOT EXISTS "notifications_user_created_idx"
   ON "notifications" ("user_id", "created_at" DESC);
 CREATE INDEX IF NOT EXISTS "notifications_tenant_id_idx"
   ON "notifications" ("tenant_id");
+
+-- impersonation_sessions + refresh_tokens.impersonator_user_id —
+-- matches packages/db/drizzle/0005_impersonation_sessions.sql. The
+-- FAM impersonation flow needs the table to exist before it'll work.
+CREATE TABLE IF NOT EXISTS "impersonation_sessions" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "impersonator_user_id" uuid NOT NULL REFERENCES "users"("id")   ON DELETE CASCADE,
+  "target_user_id"       uuid NOT NULL REFERENCES "users"("id")   ON DELETE CASCADE,
+  "target_tenant_id"     uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+  "reason"               text NOT NULL,
+  "support_ticket"       text,
+  "started_at"           timestamptz NOT NULL DEFAULT now(),
+  "ends_at"              timestamptz NOT NULL,
+  "ended_at"             timestamptz,
+  "ip_address"           text,
+  "user_agent"           text
+);
+CREATE INDEX IF NOT EXISTS "impersonation_sessions_target_idx"
+  ON "impersonation_sessions" ("target_user_id", "ended_at");
+CREATE INDEX IF NOT EXISTS "impersonation_sessions_impersonator_idx"
+  ON "impersonation_sessions" ("impersonator_user_id", "ended_at");
+CREATE INDEX IF NOT EXISTS "impersonation_sessions_active_idx"
+  ON "impersonation_sessions" ("ended_at", "ends_at");
+
+ALTER TABLE "refresh_tokens"
+  ADD COLUMN IF NOT EXISTS "impersonator_user_id"
+    uuid REFERENCES "users"("id") ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS "refresh_tokens_impersonator_idx"
+  ON "refresh_tokens" ("impersonator_user_id");
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"

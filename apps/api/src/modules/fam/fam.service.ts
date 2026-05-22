@@ -23,11 +23,13 @@ import {
   employees,
   featureFlags,
   tenantCohorts,
+  impersonationSessions,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { UserRole } from '@flicks/shared/types';
 import type {
   SuspendTenantDto,
@@ -46,6 +48,7 @@ export class FamService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
     private readonly authService: AuthService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ─── Overview (platform-wide stats) ────────────────────────────────────────
@@ -844,6 +847,25 @@ export class FamService {
       throw new NotFoundException('Target user has no active tenant membership');
     }
 
+    // Open the session row first — gives us a hard 15-minute cap that's
+    // enforced server-side in the refresh handler. Without this, a leaked
+    // refresh cookie could mint clean access tokens (no impersonator
+    // marker) for the full 7-day refresh window.
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + 15 * 60 * 1000);
+    const [session] = await this.dbAdmin
+      .insert(impersonationSessions)
+      .values({
+        impersonator_user_id: actorUserId,
+        target_user_id: target.userId,
+        target_tenant_id: target.tenantId,
+        reason: dto.reason,
+        support_ticket: null,
+        started_at: now,
+        ends_at: endsAt,
+      })
+      .returning({ id: impersonationSessions.id, endsAt: impersonationSessions.ends_at });
+
     // Mint the impersonation JWT (15 min). impersonatorUserId carries the
     // FAM admin's identity through every downstream request so /me can
     // surface the banner and the audit log can attribute writes.
@@ -882,15 +904,52 @@ export class FamService {
         impersonatorUserId: actorUserId,
         targetEmail: target.email,
         reason: dto.reason,
+        sessionId: session.id,
+        endsAt: endsAt.toISOString(),
       },
     });
+
+    // In-app notification to the impersonated user so they can see this
+    // immediately on next login. DPDP-flavoured: the customer knows.
+    try {
+      await this.notificationsService.createInAppNotification(
+        target.userId,
+        'impersonation.session.started',
+        'Specflicks staff has signed in as you for support. The session expires in 15 minutes.',
+        '/profile',
+        target.tenantId,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Could not write impersonation in-app notification for ${target.userId}: ${(e as Error).message}`,
+      );
+    }
+
+    // Email the impersonated user — best-effort, never blocks the flow.
+    try {
+      await this.notificationsService.sendEmail(
+        'impersonation-started',
+        target.email,
+        {
+          targetName: target.email.split('@')[0],
+          reason: dto.reason,
+          endsAt: endsAt.toUTCString(),
+        },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Could not send impersonation-started email to ${target.email}: ${(e as Error).message}`,
+      );
+    }
 
     return {
       accessToken,
       refreshToken,
+      sessionId: session.id,
       targetUserId: target.userId,
       targetEmail: target.email,
       tenantId: target.tenantId,
+      endsAt: endsAt.toISOString(),
       expiresIn: 15 * 60,
     };
   }
@@ -928,6 +987,21 @@ export class FamService {
     if (!impersonator) {
       throw new NotFoundException('Impersonator user no longer has a FAM membership');
     }
+
+    // Close the live session row so the refresh handler refuses any
+    // outstanding refresh attempts. Idempotent: if there's no active
+    // row this just updates zero rows.
+    const now = new Date();
+    await this.dbAdmin
+      .update(impersonationSessions)
+      .set({ ended_at: now })
+      .where(
+        and(
+          eq(impersonationSessions.impersonator_user_id, impersonatorUserId),
+          eq(impersonationSessions.target_user_id, impersonatedUserId),
+          isNull(impersonationSessions.ended_at),
+        ),
+      );
 
     const { accessToken, refreshToken } = await this.authService.issueTokenPair(
       {
