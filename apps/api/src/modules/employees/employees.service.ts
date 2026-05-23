@@ -25,7 +25,12 @@ import {
   leaveBalances,
   leaveTypes,
   leaveRequests,
+  dataConsents,
 } from '@flicks/db/schema';
+
+// Bump when the privacy policy / consent copy materially changes so we can
+// tell which version each principal agreed to (DPDP audit requirement).
+const CONSENT_VERSION = '2026-05-v1';
 import { DB_TENANT } from '../../core/database/database.module';
 import type { Db } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
@@ -640,6 +645,7 @@ export class EmployeesService {
     data: SubmitOnboardingStepDto,
     tenantId: string,
     actorUserId: string,
+    ctx?: { ip?: string; userAgent?: string },
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
@@ -760,6 +766,33 @@ export class EmployeesService {
       }
     }
 
+    // ─── DPDP consents ───────────────────────────────────────────────────
+    // Record each granted/withheld consent as its own immutable row, with
+    // the policy version + IP + UA for the audit trail. We re-grant on
+    // every submit that carries consents (idempotent enough for the MVP —
+    // the rows are timestamped so the latest one wins on read).
+    if (data.consents?.length) {
+      const now = new Date();
+      await this.db.insert(dataConsents).values(
+        data.consents.map((c) => ({
+          tenant_id: tenantId,
+          user_id: actorUserId,
+          consent_type: c.type as
+            | 'data_processing'
+            | 'marketing'
+            | 'background_check'
+            | 'biometric_data'
+            | 'third_party_sharing',
+          purpose: c.purpose ?? null,
+          granted: c.granted,
+          consent_version: CONSENT_VERSION,
+          ip_address: ctx?.ip ?? null,
+          user_agent: ctx?.userAgent ?? null,
+          granted_at: c.granted ? now : null,
+        })),
+      );
+    }
+
     await this.auditService.log({
       tenantId,
       actorUserId,
@@ -768,7 +801,11 @@ export class EmployeesService {
         : 'employee.onboarding_step_saved',
       resourceType: 'employee',
       resourceId: employeeId,
-      afterState: { step: nextStep, allStepsComplete },
+      afterState: {
+        step: nextStep,
+        allStepsComplete,
+        consentsRecorded: data.consents?.length ?? 0,
+      },
     });
 
     if (allStepsComplete) {

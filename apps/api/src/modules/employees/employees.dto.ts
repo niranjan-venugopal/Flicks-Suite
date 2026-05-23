@@ -176,6 +176,35 @@ export class OnboardingBankDto {
   @IsString() @IsOptional() pfUan?: string;
 }
 
+export class OnboardingConsentDto {
+  @ApiProperty({
+    enum: [
+      'data_processing',
+      'marketing',
+      'background_check',
+      'biometric_data',
+      'third_party_sharing',
+    ],
+  })
+  @IsIn([
+    'data_processing',
+    'marketing',
+    'background_check',
+    'biometric_data',
+    'third_party_sharing',
+  ])
+  type: string;
+
+  @ApiProperty()
+  @IsBoolean()
+  granted: boolean;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  purpose?: string;
+}
+
 export class SubmitOnboardingStepDto {
   @ApiProperty({ minimum: 1, maximum: 5 })
   @IsNumber()
@@ -188,6 +217,13 @@ export class SubmitOnboardingStepDto {
   @IsObject() @IsOptional() emergencyContact?: OnboardingEmergencyContactDto;
   @IsObject() @IsOptional() identity?: OnboardingIdentityDto;
   @IsObject() @IsOptional() bank?: OnboardingBankDto;
+
+  @ApiPropertyOptional({ type: [OnboardingConsentDto], description: 'DPDP consents — captured on the final review step' })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OnboardingConsentDto)
+  @IsOptional()
+  consents?: OnboardingConsentDto[];
 
   @ApiPropertyOptional({ description: 'True only on the final review step' })
   @IsBoolean() @IsOptional()

@@ -6,10 +6,12 @@ import {
   Body,
   Param,
   Query,
+  Req,
   HttpCode,
   HttpStatus,
   ParseIntPipe,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -113,6 +115,7 @@ export class EmployeesController {
     @Param('step', ParseIntPipe) step: number,
     @Body() dto: SubmitOnboardingStepDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
     const myRecord = await this.employeesService.getMyRecord(user.sub, user.tenantId);
     return this.employeesService.submitOnboardingStep(
@@ -121,6 +124,10 @@ export class EmployeesController {
       dto,
       user.tenantId,
       user.sub,
+      {
+        ip: req.ip ?? req.socket?.remoteAddress ?? undefined,
+        userAgent: req.headers['user-agent'] ?? undefined,
+      },
     );
   }
 

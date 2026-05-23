@@ -59,12 +59,24 @@ export interface BankData {
   pfUan?: string
 }
 
+export interface OnboardingConsent {
+  type:
+    | 'data_processing'
+    | 'marketing'
+    | 'background_check'
+    | 'biometric_data'
+    | 'third_party_sharing'
+  granted: boolean
+  purpose?: string
+}
+
 export interface SubmitOnboardingStepPayload {
   step: number
   personalInfo?: PersonalInfoData
   emergencyContact?: EmergencyContactData
   identity?: IdentityData
   bank?: BankData
+  consents?: OnboardingConsent[]
   submitForReview?: boolean
 }
 

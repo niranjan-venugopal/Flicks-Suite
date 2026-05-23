@@ -103,6 +103,9 @@ export default function EmployeeOnboardingPage() {
 
   const [stepIdx, setStepIdx] = useState(0) // 0-based
   const [form, setForm] = useState<FormState>(EMPTY)
+  // DPDP: required data-processing consent + optional comms consent.
+  const [consentData, setConsentData] = useState(false)
+  const [consentComms, setConsentComms] = useState(false)
 
   // Resume on whatever step the user left off on
   useEffect(() => {
@@ -223,7 +226,32 @@ export default function EmployeeOnboardingPage() {
     }
 
     if (step === 5) {
-      return { step, submitForReview: true }
+      if (!consentData) {
+        toast({
+          title: 'Consent required',
+          description:
+            'Please agree to the processing of your personal data to submit.',
+          variant: 'destructive',
+        })
+        return null
+      }
+      return {
+        step,
+        submitForReview: true,
+        consents: [
+          {
+            type: 'data_processing' as const,
+            granted: true,
+            purpose:
+              'HR, payroll and statutory compliance (PAN, Aadhaar last-4, bank, attendance).',
+          },
+          {
+            type: 'marketing' as const,
+            granted: consentComms,
+            purpose: 'Product updates and tips via email.',
+          },
+        ],
+      }
     }
 
     return { step }
@@ -464,7 +492,16 @@ export default function EmployeeOnboardingPage() {
           {stepIdx === 1 && <IdentityStep form={form} set={setField} />}
           {stepIdx === 2 && <BankStep form={form} set={setField} />}
           {stepIdx === 3 && <DocumentsStep />}
-          {stepIdx === 4 && <ReviewStep form={form} userName={userName} />}
+          {stepIdx === 4 && (
+            <ReviewStep
+              form={form}
+              userName={userName}
+              consentData={consentData}
+              setConsentData={setConsentData}
+              consentComms={consentComms}
+              setConsentComms={setConsentComms}
+            />
+          )}
 
           {/* Footer */}
           <div
@@ -972,7 +1009,21 @@ function DocumentsStep() {
 
 // ─── Step 5: Review ──────────────────────────────────────────────────────────
 
-function ReviewStep({ form, userName }: { form: FormState; userName: string }) {
+function ReviewStep({
+  form,
+  userName,
+  consentData,
+  setConsentData,
+  consentComms,
+  setConsentComms,
+}: {
+  form: FormState
+  userName: string
+  consentData: boolean
+  setConsentData: (v: boolean) => void
+  consentComms: boolean
+  setConsentComms: (v: boolean) => void
+}) {
   const summary: Array<{ title: string; value: string }> = [
     {
       title: 'Personal info',
@@ -1074,6 +1125,84 @@ function ReviewStep({ form, userName }: { form: FormState; userName: string }) {
           </div>
         </div>
       ))}
+
+      {/* DPDP consent */}
+      <div
+        style={{
+          marginTop: 20,
+          paddingTop: 18,
+          borderTop: '1px solid var(--bord)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}
+      >
+        <div className="t-caption">Data &amp; privacy consent</div>
+        <ConsentRow
+          checked={consentData}
+          onChange={setConsentData}
+          required
+        >
+          I consent to Flicks Suite processing my personal and statutory data
+          (PAN, Aadhaar last-4, bank details, attendance) for HR, payroll and
+          compliance, as described in the{' '}
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: 'var(--blue)', fontWeight: 700 }}
+          >
+            Privacy Policy
+          </a>
+          .
+        </ConsentRow>
+        <ConsentRow checked={consentComms} onChange={setConsentComms}>
+          I&apos;d like to receive occasional product updates and tips by email
+          (optional).
+        </ConsentRow>
+        <div style={{ fontSize: 11, color: 'var(--text-mute)', lineHeight: 1.5 }}>
+          You can withdraw consent any time from your profile. Withdrawing the
+          first consent may limit payroll and statutory features.
+        </div>
+      </div>
     </div>
+  )
+}
+
+function ConsentRow({
+  checked,
+  onChange,
+  required,
+  children,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  required?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'flex-start',
+        cursor: 'pointer',
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: 'var(--text-2)',
+        lineHeight: 1.5,
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ marginTop: 2, flexShrink: 0, width: 16, height: 16, accentColor: 'var(--blue)' }}
+      />
+      <span>
+        {children}
+        {required && <span style={{ color: 'var(--coral)' }}> *</span>}
+      </span>
+    </label>
   )
 }
