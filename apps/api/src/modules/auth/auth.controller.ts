@@ -223,6 +223,45 @@ export class AuthController {
     };
   }
 
+  // ─── DPDP self-service ────────────────────────────────────────────────────
+
+  @Get('me/export')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Export all of my personal data (DPDP right to access)' })
+  async exportMyData(@CurrentUser() user: JwtPayload) {
+    return this.authService.exportMyData(user.sub, user.tenantId);
+  }
+
+  @Get('me/delete-account')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Current pending account-deletion request, if any' })
+  async getDeletionRequest(@CurrentUser() user: JwtPayload) {
+    return { request: await this.authService.getDeletionRequest(user.sub) };
+  }
+
+  @Post('me/delete-account')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Request account deletion (DPDP right to erasure, 7-day cool-off)' })
+  async requestAccountDeletion(
+    @CurrentUser() user: JwtPayload,
+    @Body() body: { reason?: string },
+    @Req() req: Request,
+  ) {
+    return this.authService.requestAccountDeletion(user.sub, user.tenantId, body?.reason, {
+      ip: req.ip ?? req.socket?.remoteAddress ?? undefined,
+      userAgent: req.headers['user-agent'] ?? undefined,
+    });
+  }
+
+  @Post('me/delete-account/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Cancel a pending account-deletion request' })
+  async cancelAccountDeletion(@CurrentUser() user: JwtPayload) {
+    return this.authService.cancelAccountDeletion(user.sub, user.tenantId);
+  }
+
   @Post('select-tenant')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')

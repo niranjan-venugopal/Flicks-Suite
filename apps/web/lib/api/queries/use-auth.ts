@@ -220,3 +220,63 @@ export function useVerifyMagicLinkQuery(token: string | null) {
     refetchOnReconnect: false,
   })
 }
+
+// ─── DPDP self-service (D2) ────────────────────────────────────────────────
+
+export interface DeletionRequest {
+  id: string
+  status: string
+  requestedAt: string
+  scheduledFor: string
+  reason: string | null
+}
+
+/** Right to access — fetches the full data export and triggers a download. */
+export function useExportMyData() {
+  return useMutation({
+    mutationFn: async () => {
+      const data = await api.get<Record<string, unknown>>('/api/v1/auth/me/export')
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `flicks-data-export-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      return data
+    },
+  })
+}
+
+export function useDeletionRequest() {
+  return useQuery({
+    queryKey: ['me', 'deletion-request'],
+    queryFn: () =>
+      api.get<{ request: DeletionRequest | null }>('/api/v1/auth/me/delete-account'),
+    staleTime: 30_000,
+  })
+}
+
+export function useRequestDeletion() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (reason?: string) =>
+      api.post<{ id: string; status: string; scheduledFor: string }>(
+        '/api/v1/auth/me/delete-account',
+        { reason },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'deletion-request'] }),
+  })
+}
+
+export function useCancelDeletion() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ ok: boolean }>('/api/v1/auth/me/delete-account/cancel', {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me', 'deletion-request'] }),
+  })
+}

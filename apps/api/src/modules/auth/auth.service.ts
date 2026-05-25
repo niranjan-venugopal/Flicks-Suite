@@ -20,6 +20,12 @@ import {
   memberships,
   tenants,
   impersonationSessions,
+  accountDeletionRequests,
+  employees,
+  emergencyContacts,
+  dataConsents,
+  leaveRequests,
+  timesheetPeriods,
 } from '@flicks/db/schema';
 import {
   DB_TENANT,
@@ -28,6 +34,7 @@ import {
 import type { Db, DbAdmin } from '@flicks/db';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditService } from '../audit/audit.service';
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -51,6 +58,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
     private readonly notificationsService: NotificationsService,
+    private readonly auditService: AuditService,
   ) {}
 
   async requestOtp(
@@ -689,6 +697,210 @@ export class AuthService {
       impersonatorEmail: imp?.email ?? null,
       impersonatorName: imp?.fullName ?? null,
     };
+  }
+
+  // ─── DPDP: right to access (data export) ──────────────────────────────────
+
+  /**
+   * Collects the principal's personal data across tables into a single
+   * JSON document for download. DPDP "right to access". Scoped to the
+   * caller's own user_id + their current tenant.
+   */
+  async exportMyData(userId: string, tenantId: string) {
+    const [user] = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    const userMemberships = await this.dbAdmin
+      .select({
+        tenantId: memberships.tenant_id,
+        role: memberships.role,
+        status: memberships.status,
+        invitedAt: memberships.invited_at,
+        acceptedAt: memberships.accepted_at,
+      })
+      .from(memberships)
+      .where(eq(memberships.user_id, userId));
+
+    const [employee] = await this.dbAdmin
+      .select()
+      .from(employees)
+      .where(and(eq(employees.user_id, userId), eq(employees.tenant_id, tenantId)))
+      .limit(1);
+
+    const contacts = employee
+      ? await this.dbAdmin
+          .select()
+          .from(emergencyContacts)
+          .where(eq(emergencyContacts.employee_id, employee.id))
+      : [];
+
+    const leaves = employee
+      ? await this.dbAdmin
+          .select()
+          .from(leaveRequests)
+          .where(eq(leaveRequests.employee_id, employee.id))
+      : [];
+
+    const timesheets = employee
+      ? await this.dbAdmin
+          .select()
+          .from(timesheetPeriods)
+          .where(eq(timesheetPeriods.employee_id, employee.id))
+      : [];
+
+    const consents = await this.dbAdmin
+      .select()
+      .from(dataConsents)
+      .where(eq(dataConsents.user_id, userId));
+
+    // Mask sensitive fields even in the principal's own export — the raw
+    // values were collected for statutory use, not casual re-download.
+    const maskedEmployee = employee
+      ? {
+          ...employee,
+          pan_encrypted: employee.pan_encrypted
+            ? `••••••${String(employee.pan_encrypted).slice(-4)}`
+            : null,
+          bank_account_number_encrypted: employee.bank_account_number_encrypted
+            ? `••••${String(employee.bank_account_number_encrypted).slice(-4)}`
+            : null,
+        }
+      : null;
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'user.data_exported',
+      resourceType: 'user',
+      resourceId: userId,
+    });
+
+    return {
+      exportedAt: new Date().toISOString(),
+      consentVersion: '2026-05-v1',
+      user: user
+        ? {
+            id: user.id,
+            email: user.email,
+            fullName: user.full_name,
+            status: user.status,
+            createdAt: user.created_at?.toISOString?.() ?? null,
+          }
+        : null,
+      memberships: userMemberships.map((m) => ({
+        ...m,
+        invitedAt: m.invitedAt?.toISOString() ?? null,
+        acceptedAt: m.acceptedAt?.toISOString() ?? null,
+      })),
+      employee: maskedEmployee,
+      emergencyContacts: contacts,
+      leaveRequests: leaves,
+      timesheets,
+      consents: consents.map((c) => ({
+        type: c.consent_type,
+        granted: c.granted,
+        purpose: c.purpose,
+        version: c.consent_version,
+        grantedAt: c.granted_at?.toISOString() ?? null,
+        withdrawnAt: c.withdrawn_at?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  // ─── DPDP: right to erasure (account deletion with cool-off) ──────────────
+
+  async getDeletionRequest(userId: string) {
+    const [req] = await this.dbAdmin
+      .select()
+      .from(accountDeletionRequests)
+      .where(
+        and(
+          eq(accountDeletionRequests.user_id, userId),
+          eq(accountDeletionRequests.status, 'pending'),
+        ),
+      )
+      .orderBy(desc(accountDeletionRequests.requested_at))
+      .limit(1);
+    if (!req) return null;
+    return {
+      id: req.id,
+      status: req.status,
+      requestedAt: req.requested_at.toISOString(),
+      scheduledFor: req.scheduled_for.toISOString(),
+      reason: req.reason,
+    };
+  }
+
+  async requestAccountDeletion(
+    userId: string,
+    tenantId: string,
+    reason: string | undefined,
+    ctx?: { ip?: string; userAgent?: string },
+  ) {
+    const existing = await this.getDeletionRequest(userId);
+    if (existing) {
+      throw new BadRequestException(
+        'A deletion request is already pending. Cancel it first to change it.',
+      );
+    }
+    const scheduledFor = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const [row] = await this.dbAdmin
+      .insert(accountDeletionRequests)
+      .values({
+        tenant_id: tenantId,
+        user_id: userId,
+        reason: reason ?? null,
+        status: 'pending',
+        scheduled_for: scheduledFor,
+        ip_address: ctx?.ip ?? null,
+        user_agent: ctx?.userAgent ?? null,
+      })
+      .returning({ id: accountDeletionRequests.id });
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'user.deletion_requested',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: { scheduledFor: scheduledFor.toISOString(), reason },
+    });
+
+    return {
+      id: row.id,
+      status: 'pending' as const,
+      scheduledFor: scheduledFor.toISOString(),
+    };
+  }
+
+  async cancelAccountDeletion(userId: string, tenantId: string) {
+    const result = await this.dbAdmin
+      .update(accountDeletionRequests)
+      .set({ status: 'cancelled', processed_at: new Date() })
+      .where(
+        and(
+          eq(accountDeletionRequests.user_id, userId),
+          eq(accountDeletionRequests.status, 'pending'),
+        ),
+      )
+      .returning({ id: accountDeletionRequests.id });
+
+    if (result.length === 0) {
+      throw new BadRequestException('No pending deletion request to cancel');
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'user.deletion_cancelled',
+      resourceType: 'user',
+      resourceId: userId,
+    });
+
+    return { ok: true };
   }
 
   async getMe(userId: string, tenantId?: string) {

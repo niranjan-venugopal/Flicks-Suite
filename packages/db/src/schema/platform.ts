@@ -161,6 +161,39 @@ export const memberships = pgTable(
   ],
 );
 
+// ─── account_deletion_requests ─────────────────────────────────────────────────
+// DPDP right-to-erasure. A request opens a 7-day cool-off (scheduled_for),
+// during which the principal can cancel. The actual erasure honours the
+// employer's statutory retention obligations (8-yr employee records), so a
+// "completed" request soft-deletes the personal login, not the employment
+// ledger — processed by an admin/cron step (deferred past MVP).
+
+export const accountDeletionRequests = pgTable(
+  'account_deletion_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    reason: text('reason'),
+    status: text('status').notNull().default('pending'), // pending | cancelled | completed
+    requested_at: timestamp('requested_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    scheduled_for: timestamp('scheduled_for', { withTimezone: true }).notNull(),
+    processed_at: timestamp('processed_at', { withTimezone: true }),
+    ip_address: text('ip_address'),
+    user_agent: text('user_agent'),
+  },
+  (t) => [
+    index('account_deletion_requests_user_idx').on(t.user_id, t.status),
+    index('account_deletion_requests_tenant_idx').on(t.tenant_id),
+  ],
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const tenantsRelations = relations(tenants, ({ many }) => ({

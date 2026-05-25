@@ -141,6 +141,25 @@ ALTER TABLE "refresh_tokens"
     uuid REFERENCES "users"("id") ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS "refresh_tokens_impersonator_idx"
   ON "refresh_tokens" ("impersonator_user_id");
+
+-- account_deletion_requests (DPDP right-to-erasure) —
+-- matches packages/db/drizzle/0006_account_deletion_requests.sql.
+CREATE TABLE IF NOT EXISTS "account_deletion_requests" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "tenant_id"    uuid NOT NULL REFERENCES "tenants"("id") ON DELETE CASCADE,
+  "user_id"      uuid NOT NULL REFERENCES "users"("id")   ON DELETE CASCADE,
+  "reason"       text,
+  "status"       text NOT NULL DEFAULT 'pending',
+  "requested_at" timestamptz NOT NULL DEFAULT now(),
+  "scheduled_for" timestamptz NOT NULL,
+  "processed_at" timestamptz,
+  "ip_address"   text,
+  "user_agent"   text
+);
+CREATE INDEX IF NOT EXISTS "account_deletion_requests_user_idx"
+  ON "account_deletion_requests" ("user_id", "status");
+CREATE INDEX IF NOT EXISTS "account_deletion_requests_tenant_idx"
+  ON "account_deletion_requests" ("tenant_id");
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"
