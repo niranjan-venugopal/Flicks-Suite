@@ -3,7 +3,7 @@ import 'dotenv/config';
 // auto-instrumentation can patch them. No-op when SENTRY_DSN is unset.
 import './instrument';
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -46,8 +46,11 @@ async function bootstrap() {
   // Cookie parser
   app.use(cookieParser());
 
-  // Global prefix
-  app.setGlobalPrefix('api/v1');
+  // Global prefix — /healthz stays at the root so the uptime monitor URL is
+  // a clean https://api.flickssuite.com/healthz.
+  app.setGlobalPrefix('api/v1', {
+    exclude: [{ path: 'healthz', method: RequestMethod.GET }],
+  });
 
   // Global pipes
   app.useGlobalPipes(

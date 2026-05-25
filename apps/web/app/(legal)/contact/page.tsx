@@ -59,6 +59,36 @@ export default function ContactPage() {
         <ContactCard title="Security disclosures" lines={['security@flickssuite.com', 'Responsible disclosure welcomed']} />
       </div>
 
+      {/* System status — Better Stack hosted status page + uptime history. */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '14px 18px',
+          background: 'var(--surf-1)',
+          border: '1px solid var(--bord)',
+          borderRadius: 10,
+          marginBottom: 18,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>System status</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-mute)', marginTop: 2 }}>
+            Live uptime &amp; incident history
+          </div>
+        </div>
+        <a
+          href="https://status.flickssuite.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: 'var(--blue)', fontWeight: 700, fontSize: 12.5 }}
+        >
+          status.flickssuite.com →
+        </a>
+      </div>
+
       <div style={{ fontSize: 12.5, color: 'var(--text-mute)' }}>
         See also our{' '}
         <Link href="/privacy" style={{ color: 'var(--blue)', fontWeight: 700 }}>

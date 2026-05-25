@@ -13,6 +13,7 @@ import { PassportModule } from '@nestjs/passport';
 import { configValidationSchema } from './core/config/config.schema';
 import { DatabaseModule } from './core/database/database.module';
 import { AnalyticsModule } from './core/analytics/analytics.module';
+import { HealthController } from './health.controller';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
 
@@ -134,6 +135,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     ReportsModule,
     AuditModule,
   ],
+  controllers: [HealthController],
   providers: [
     // Capture unhandled exceptions into Sentry, then let the existing
     // HttpExceptionFilter (registered in main.ts) format the response.
