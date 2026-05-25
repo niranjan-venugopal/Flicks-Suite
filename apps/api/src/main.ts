@@ -1,4 +1,7 @@
 import 'dotenv/config';
+// Sentry init MUST run before any other module is imported so its
+// auto-instrumentation can patch them. No-op when SENTRY_DSN is unset.
+import './instrument';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';

@@ -1,4 +1,6 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ClsModule } from 'nestjs-cls';
@@ -38,6 +40,9 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
 
 @Module({
   imports: [
+    // Sentry root — wires the NestJS error/perf instrumentation. The SDK
+    // itself is initialised in instrument.ts (imported first in main.ts).
+    SentryModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: configValidationSchema,
@@ -128,6 +133,9 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     AuditModule,
   ],
   providers: [
+    // Capture unhandled exceptions into Sentry, then let the existing
+    // HttpExceptionFilter (registered in main.ts) format the response.
+    { provide: APP_FILTER, useClass: SentryGlobalFilter },
     JwtStrategy,
     NotificationsGateway,
     DailySnapshotsJob,
