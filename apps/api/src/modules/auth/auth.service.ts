@@ -2,6 +2,8 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
   Logger,
   Inject,
 } from '@nestjs/common';
@@ -35,6 +37,7 @@ import type { Db, DbAdmin } from '@flicks/db';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
+import { TotpService } from './totp.service';
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -59,6 +62,7 @@ export class AuthService {
     private readonly eventEmitter: EventEmitter2,
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
+    private readonly totpService: TotpService,
   ) {}
 
   async requestOtp(
@@ -419,6 +423,63 @@ export class AuthService {
         needsOnboarding: true,
         accessToken,
         refreshToken,
+        user: {
+          id: currentUser.id,
+          email: currentUser.email,
+          fullName: currentUser.full_name,
+          avatarUrl: currentUser.avatar_url,
+        },
+      };
+    }
+
+    // ─── FAM second factor (PRD §11.6) ───────────────────────────────────
+    // Platform admins must clear a TOTP step after the email factor. Only
+    // enforced when TOTP_SECRET is configured (production).
+    if (currentUser.is_platform_admin && this.totpService.isEnforced()) {
+      if (!currentUser.totp_enrolled_at) {
+        // Not enrolled yet — let them in so they can enrol, but flag it so
+        // the FAM shell routes them to /totp-setup.
+        const tokens = await this.issueTokenPair(
+          currentUser,
+          activeMembership.tenantId,
+          activeMembership.id,
+          activeMembership.role as UserRole,
+          deviceId,
+          ip,
+          userAgent,
+        );
+        return {
+          requiresTenantSelection: false,
+          requiresTotpEnrollment: true,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresIn: 900,
+          user: {
+            id: currentUser.id,
+            email: currentUser.email,
+            fullName: currentUser.full_name,
+            avatarUrl: currentUser.avatar_url,
+          },
+        };
+      }
+
+      // Enrolled — issue a short-lived challenge token instead of a session.
+      // The client posts it with a TOTP code to /auth/totp/verify to finish.
+      const challengeToken = this.jwtService.sign(
+        {
+          sub: currentUser.id,
+          scope: 'totp_challenge',
+          tenantId: activeMembership.tenantId,
+          membershipId: activeMembership.id,
+          role: activeMembership.role,
+          deviceId: deviceId ?? '',
+        },
+        { expiresIn: '5m' },
+      );
+      return {
+        requiresTenantSelection: false,
+        requiresTotp: true,
+        challengeToken,
         user: {
           id: currentUser.id,
           email: currentUser.email,
@@ -1198,6 +1259,129 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken: rawRefreshToken };
+  }
+
+  // ─── FAM TOTP enrolment + challenge (PRD §11.6) ───────────────────────────
+
+  /** Generate (and store, pending confirmation) a TOTP secret for a FAM user. */
+  async enrollTotp(userId: string): Promise<{ secret: string; otpauthUrl: string }> {
+    const [user] = await this.dbAdmin
+      .select({ email: users.email, isPlatformAdmin: users.is_platform_admin })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.isPlatformAdmin) {
+      throw new ForbiddenException('TOTP enrolment is for platform admins only');
+    }
+
+    const secret = this.totpService.generateSecret();
+    // Store encrypted, but leave totp_enrolled_at null until a code is verified.
+    await this.dbAdmin
+      .update(users)
+      .set({ totp_secret: this.totpService.encrypt(secret), updated_at: new Date() })
+      .where(eq(users.id, userId));
+
+    return { secret, otpauthUrl: this.totpService.keyUri(user.email, secret) };
+  }
+
+  /** Confirm enrolment by verifying the first code. Sets totp_enrolled_at. */
+  async confirmTotpEnrollment(userId: string, code: string): Promise<{ ok: true }> {
+    const [user] = await this.dbAdmin
+      .select({ secret: users.totp_secret })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user?.secret) {
+      throw new BadRequestException('Start enrolment first (no pending secret).');
+    }
+    const secret = this.totpService.decrypt(user.secret);
+    if (!this.totpService.verify(code, secret)) {
+      throw new UnauthorizedException('Invalid code. Check your authenticator and try again.');
+    }
+    await this.dbAdmin
+      .update(users)
+      .set({ totp_enrolled_at: new Date(), updated_at: new Date() })
+      .where(eq(users.id, userId));
+    return { ok: true };
+  }
+
+  /** Complete a login challenge: verify the TOTP code and issue the session. */
+  async completeTotpChallenge(
+    challengeToken: string,
+    code: string,
+    deviceId?: string,
+    ip?: string,
+    userAgent?: string,
+  ) {
+    let payload: {
+      sub: string;
+      scope: string;
+      tenantId: string;
+      membershipId: string;
+      role: string;
+      deviceId?: string;
+    };
+    try {
+      payload = this.jwtService.verify(challengeToken);
+    } catch {
+      throw new UnauthorizedException('Challenge expired. Sign in again.');
+    }
+    if (payload.scope !== 'totp_challenge') {
+      throw new UnauthorizedException('Invalid challenge.');
+    }
+
+    const [user] = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.id, payload.sub))
+      .limit(1);
+    if (!user?.totp_secret || !user.totp_enrolled_at) {
+      throw new UnauthorizedException('TOTP is not set up for this account.');
+    }
+    if (!this.totpService.verify(code, this.totpService.decrypt(user.totp_secret))) {
+      await this.writeAuthEvent({
+        email: user.email,
+        userId: user.id,
+        eventType: 'login_failed',
+        ip,
+        userAgent,
+        deviceId,
+      });
+      throw new UnauthorizedException('Invalid authentication code.');
+    }
+
+    const { accessToken, refreshToken } = await this.issueTokenPair(
+      user,
+      payload.tenantId || null,
+      payload.membershipId || null,
+      (payload.role as UserRole) ?? null,
+      deviceId ?? payload.deviceId,
+      ip,
+      userAgent,
+    );
+
+    await this.writeAuthEvent({
+      email: user.email,
+      userId: user.id,
+      eventType: 'login_success',
+      ip,
+      userAgent,
+      deviceId,
+    });
+
+    return {
+      requiresTenantSelection: false,
+      accessToken,
+      refreshToken,
+      expiresIn: 900,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        avatarUrl: user.avatar_url,
+      },
+    };
   }
 
   private async upsertTrustedDevice(

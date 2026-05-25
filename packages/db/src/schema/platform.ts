@@ -115,6 +115,10 @@ export const users = pgTable(
     locale: text('locale').notNull().default('en-IN'),
     timezone: text('timezone').notNull().default('Asia/Kolkata'),
     is_platform_admin: boolean('is_platform_admin').notNull().default(false),
+    // FAM (platform-admin) second factor. Base32 TOTP secret, set at enrolment.
+    // FAM logins are gated on this being non-null (PRD §11.6).
+    totp_secret: text('totp_secret'),
+    totp_enrolled_at: timestamp('totp_enrolled_at', { withTimezone: true }),
     status: userStatusEnum('status').notNull().default('active'),
     last_login_at: timestamp('last_login_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true })

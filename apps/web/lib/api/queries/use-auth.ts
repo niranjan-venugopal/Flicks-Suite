@@ -49,10 +49,17 @@ interface ApiMembership {
 // Returned by /verify-otp and /magic-link
 interface VerifyAuthResponse {
   requiresTenantSelection: false
-  accessToken: string
-  refreshToken: string
-  expiresIn: number
+  accessToken?: string
+  refreshToken?: string
+  expiresIn?: number
   user: ApiUser
+  // FAM second factor (PRD §11.6). When the user is an enrolled platform
+  // admin, no session is issued yet — the client must complete the TOTP step.
+  requiresTotp?: boolean
+  challengeToken?: string
+  // Platform admin who hasn't enrolled TOTP yet — session is issued, but the
+  // FAM shell routes them to /totp-setup.
+  requiresTotpEnrollment?: boolean
 }
 
 // Returned by /me
@@ -220,6 +227,39 @@ export function useVerifyMagicLinkQuery(token: string | null) {
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  })
+}
+
+// ─── FAM TOTP (PRD §11.6) ──────────────────────────────────────────────────
+
+/** Complete a FAM login challenge: exchange challengeToken + code for a session. */
+export function useCompleteTotp() {
+  const { setUser } = useAuthStore()
+  return useMutation({
+    mutationFn: (payload: { challengeToken: string; code: string }) =>
+      api.post<VerifyAuthResponse>('/api/v1/auth/totp/verify', payload),
+    onSuccess: (data) => {
+      setUser(adaptUser(data.user, null))
+    },
+  })
+}
+
+/** Begin FAM TOTP enrolment — returns the secret + otpauth URL for a QR. */
+export function useEnrollTotp() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ secret: string; otpauthUrl: string }>(
+        '/api/v1/auth/totp/enroll',
+        {},
+      ),
+  })
+}
+
+/** Confirm enrolment with the first code from the authenticator app. */
+export function useConfirmTotp() {
+  return useMutation({
+    mutationFn: (code: string) =>
+      api.post<{ ok: true }>('/api/v1/auth/totp/confirm', { code }),
   })
 }
 

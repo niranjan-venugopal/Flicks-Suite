@@ -43,6 +43,11 @@ export const configValidationSchema = Joi.object({
   R2_BUCKET_NAME: Joi.string().default('flicks-suite-uploads'),
   R2_PUBLIC_URL: Joi.string().uri().optional(),
 
+  // FAM second factor (TOTP). Application-level key used to encrypt per-user
+  // TOTP secrets at rest. Optional in dev — FAM TOTP enforcement no-ops when
+  // unset so local FAM logins still work.
+  TOTP_SECRET: Joi.string().allow('').optional(),
+
   // Observability
   SENTRY_DSN: Joi.string().allow('').optional(),
   POSTHOG_KEY: Joi.string().allow('').optional(),

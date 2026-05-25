@@ -160,6 +160,10 @@ CREATE INDEX IF NOT EXISTS "account_deletion_requests_user_idx"
   ON "account_deletion_requests" ("user_id", "status");
 CREATE INDEX IF NOT EXISTS "account_deletion_requests_tenant_idx"
   ON "account_deletion_requests" ("tenant_id");
+
+-- FAM second factor (TOTP) — matches packages/db/drizzle/0007_totp.sql.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_secret" text;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_enrolled_at" timestamptz;
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"

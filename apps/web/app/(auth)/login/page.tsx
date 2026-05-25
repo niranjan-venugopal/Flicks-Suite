@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/use-toast'
 import { PageGlows } from '@/components/layout/PageGlows'
 import { LogoMark } from '@/components/proto'
-import { useRequestOtp, useVerifyOtp } from '@/lib/api/queries/use-auth'
+import { useRequestOtp, useVerifyOtp, useCompleteTotp } from '@/lib/api/queries/use-auth'
 
 const emailSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -30,14 +30,17 @@ type OtpForm = z.infer<typeof otpSchema>
 
 export default function LoginPage() {
   const { toast } = useToast()
-  const [step, setStep] = useState<'email' | 'otp'>('email')
+  const [step, setStep] = useState<'email' | 'otp' | 'totp'>('email')
   const [email, setEmail] = useState('')
   const [countdown, setCountdown] = useState(0)
   const otpInputsRef = useRef<(HTMLInputElement | null)[]>([])
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
+  const [challengeToken, setChallengeToken] = useState('')
+  const [totpCode, setTotpCode] = useState('')
 
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
+  const completeTotp = useCompleteTotp()
 
   const emailForm = useForm<EmailForm>({
     resolver: zodResolver(emailSchema),
@@ -92,7 +95,19 @@ export default function LoginPage() {
 
   const handleOtpSubmit = async (code: string) => {
     try {
-      await verifyOtp.mutateAsync({ email, code })
+      const result = await verifyOtp.mutateAsync({ email, code })
+      // FAM enrolled in TOTP — no session yet, collect the second factor.
+      if (result.requiresTotp && result.challengeToken) {
+        setChallengeToken(result.challengeToken)
+        setTotpCode('')
+        setStep('totp')
+        return
+      }
+      // FAM not yet enrolled — they have a session; send them to set up TOTP.
+      if (result.requiresTotpEnrollment) {
+        window.location.assign('/totp-setup')
+        return
+      }
       // Hard navigation so the protected layout sees the fresh auth cookies
       // and useCurrentUser runs against a clean tree (router.push alone can
       // race with the cookie being committed to the jar).
@@ -105,6 +120,25 @@ export default function LoginPage() {
       })
       setOtpDigits(['', '', '', '', '', ''])
       otpInputsRef.current[0]?.focus()
+    }
+  }
+
+  const handleTotpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!/^\d{6}$/.test(totpCode)) {
+      toast({ title: 'Enter the 6-digit code', variant: 'destructive' })
+      return
+    }
+    try {
+      await completeTotp.mutateAsync({ challengeToken, code: totpCode })
+      window.location.assign('/fam/overview')
+    } catch {
+      toast({
+        title: 'Invalid authentication code',
+        description: 'Check your authenticator app and try again.',
+        variant: 'destructive',
+      })
+      setTotpCode('')
     }
   }
 
@@ -147,7 +181,53 @@ export default function LoginPage() {
           className="glass rounded-xl p-8"
         >
           <AnimatePresence mode="wait">
-            {step === 'email' ? (
+            {step === 'totp' ? (
+              <motion.div
+                key="totp-step"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-8 h-8 bg-brand-purple/20 rounded-full flex items-center justify-center">
+                    <Shield className="w-4 h-4 text-brand-purple" />
+                  </div>
+                  <h1 className="text-2xl font-bold text-white">Two-factor</h1>
+                </div>
+                <p className="text-brand-muted text-sm mb-8">
+                  Enter the 6-digit code from your authenticator app to finish
+                  signing in.
+                </p>
+                <form onSubmit={handleTotpSubmit} className="space-y-5">
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    autoFocus
+                    value={totpCode}
+                    onChange={(e) =>
+                      setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    }
+                    placeholder="123456"
+                    className="text-center tracking-[0.5em] text-xl bg-white/5 border-white/10 text-white h-14"
+                  />
+                  <Button
+                    type="submit"
+                    className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold"
+                    disabled={completeTotp.isPending}
+                  >
+                    {completeTotp.isPending ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        Verify
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                </form>
+              </motion.div>
+            ) : step === 'email' ? (
               <motion.div
                 key="email-step"
                 initial={{ opacity: 0, x: -20 }}

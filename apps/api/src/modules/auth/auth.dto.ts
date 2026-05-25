@@ -71,3 +71,29 @@ export class LogoutDto {
   @IsOptional()
   refreshToken?: string;
 }
+
+export class TotpCodeDto {
+  @ApiProperty({ example: '123456', description: '6-digit TOTP code' })
+  @IsString()
+  @Length(6, 6)
+  @Matches(/^\d{6}$/, { message: 'Code must be 6 digits' })
+  code: string;
+}
+
+export class TotpVerifyDto {
+  @ApiProperty({ description: 'Challenge token from the OTP/magic-link step' })
+  @IsString()
+  @IsNotEmpty()
+  challengeToken: string;
+
+  @ApiProperty({ example: '123456', description: '6-digit TOTP code' })
+  @IsString()
+  @Length(6, 6)
+  @Matches(/^\d{6}$/, { message: 'Code must be 6 digits' })
+  code: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  deviceId?: string;
+}
