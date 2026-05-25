@@ -224,14 +224,101 @@ export function useInviteEmployee() {
   })
 }
 
+export interface UpdateEmployeePayload {
+  id: string
+  fullName?: string
+  workPhone?: string
+  personalPhone?: string
+  designationId?: string
+  avatarUrl?: string
+}
+
 export function useUpdateEmployee() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ id, ...data }: Partial<Employee> & { id: string }) =>
-      api.patch<Employee>(`/api/v1/employees/${id}`, data),
+    // Backend route is PUT /api/v1/employees/:id (HR/Owner only).
+    mutationFn: ({ id, ...data }: UpdateEmployeePayload) =>
+      api.put<Employee>(`/api/v1/employees/${id}`, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['employees', variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
+// ─── Org chart ───────────────────────────────────────────────────────────────
+
+export interface OrgNode {
+  id: string
+  employeeCode: string | null
+  fullName: string | null
+  email: string | null
+  avatarUrl: string | null
+  designationTitle: string | null
+  departmentName: string | null
+  managerId: string | null
+  status: string
+  children: OrgNode[]
+}
+
+export function useOrgChart() {
+  return useQuery({
+    queryKey: ['employees', 'org-chart'],
+    queryFn: () =>
+      api.get<{ tree: OrgNode[]; total: number }>('/api/v1/employees/org-chart'),
+    staleTime: 60_000,
+  })
+}
+
+// ─── Onboarding approval queue ─────────────────────────────────────────────────
+
+export interface OnboardingQueueRow {
+  id: string
+  employeeCode: string | null
+  fullName: string | null
+  email: string | null
+  avatarUrl: string | null
+  designationTitle: string | null
+  departmentName: string | null
+  status: string
+  submittedAt: string | null
+}
+
+export function useOnboardingQueue() {
+  return useQuery({
+    queryKey: ['employees', 'onboarding-queue'],
+    queryFn: () =>
+      api.get<{ data: OnboardingQueueRow[]; total: number }>(
+        '/api/v1/employees/onboarding-queue',
+      ),
+    staleTime: 30_000,
+  })
+}
+
+export function useApproveOnboarding() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ employeeId: string; status: string }>(
+        `/api/v1/employees/${id}/approve-onboarding`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
+export function useRejectOnboarding() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.post<{ employeeId: string; status: string }>(
+        `/api/v1/employees/${id}/reject-onboarding`,
+        { reason },
+      ),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees'] })
     },
   })

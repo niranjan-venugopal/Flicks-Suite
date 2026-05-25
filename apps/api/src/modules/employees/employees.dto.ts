@@ -89,17 +89,38 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
+  @MaxLength(120)
   fullName?: string;
 
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  phone?: string;
+  @MaxLength(20)
+  workPhone?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  personalPhone?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  designationId?: string;
 
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   avatarUrl?: string;
+}
+
+export class RejectOnboardingDto {
+  @ApiPropertyOptional({ description: 'Reason shown to the employee' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class SelfUpdateEmployeeDto {

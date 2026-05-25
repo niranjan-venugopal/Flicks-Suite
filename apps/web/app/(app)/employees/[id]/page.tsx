@@ -4,7 +4,19 @@ import { use, useState } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
-import { useEmployee, type EmployeeDetail } from '@/lib/api/queries/use-employees'
+import {
+  useEmployee,
+  useUpdateEmployee,
+  type EmployeeDetail,
+} from '@/lib/api/queries/use-employees'
+import { useAuthStore } from '@/lib/stores/auth.store'
+import { useToast } from '@/components/ui/use-toast'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -132,6 +144,10 @@ export default function EmployeeDetailPage({
 
 function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   const name = [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || e.workEmail
+  const role = useAuthStore((s) => s.currentUser?.role)
+  const canEdit = role === 'OWNER' || role === 'HR_ADMIN'
+  const [editing, setEditing] = useState(false)
+  const contactEmail = e.workEmail || e.userEmail || e.personalEmail || undefined
 
   return (
     <div
@@ -187,14 +203,131 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
-        <Btn kind="secondary" size="sm" icon={<Icon.mail size={13} />}>
-          Message
-        </Btn>
-        <Btn kind="secondary" size="sm" icon={<Icon.cog size={13} />}>
-          Edit profile
-        </Btn>
+        {contactEmail && (
+          <a href={`mailto:${contactEmail}`}>
+            <Btn kind="secondary" size="sm" icon={<Icon.mail size={13} />}>
+              Message
+            </Btn>
+          </a>
+        )}
+        {canEdit && (
+          <Btn
+            kind="secondary"
+            size="sm"
+            icon={<Icon.cog size={13} />}
+            onClick={() => setEditing(true)}
+          >
+            Edit profile
+          </Btn>
+        )}
       </div>
+
+      {canEdit && (
+        <EditProfileDialog e={e} open={editing} onClose={() => setEditing(false)} />
+      )}
     </div>
+  )
+}
+
+function EditProfileDialog({
+  e,
+  open,
+  onClose,
+}: {
+  e: EmployeeDetail
+  open: boolean
+  onClose: () => void
+}) {
+  const update = useUpdateEmployee()
+  const { toast } = useToast()
+  const initialName =
+    [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || ''
+  const [fullName, setFullName] = useState(initialName)
+  const [workPhone, setWorkPhone] = useState(e.workPhone ?? '')
+  const [personalPhone, setPersonalPhone] = useState(e.personalPhone ?? '')
+
+  const handleSave = async () => {
+    if (!fullName.trim()) {
+      toast({ title: 'Name is required', variant: 'destructive' })
+      return
+    }
+    try {
+      await update.mutateAsync({
+        id: e.id,
+        fullName: fullName.trim(),
+        workPhone: workPhone.trim() || undefined,
+        personalPhone: personalPhone.trim() || undefined,
+      })
+      toast({ title: 'Profile updated', description: fullName.trim() })
+      onClose()
+    } catch (err) {
+      toast({
+        title: 'Could not save',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit profile</DialogTitle>
+        </DialogHeader>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+          <div>
+            <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+              Full name <span style={{ color: 'var(--coral)' }}>*</span>
+            </label>
+            <input
+              className="input"
+              value={fullName}
+              onChange={(ev) => setFullName(ev.target.value)}
+              maxLength={120}
+              style={{ width: '100%' }}
+              autoFocus
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Work phone
+              </label>
+              <input
+                className="input"
+                value={workPhone}
+                onChange={(ev) => setWorkPhone(ev.target.value)}
+                maxLength={20}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Personal phone
+              </label>
+              <input
+                className="input"
+                value={personalPhone}
+                onChange={(ev) => setPersonalPhone(ev.target.value)}
+                maxLength={20}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+          <Btn kind="ghost" onClick={onClose} disabled={update.isPending}>
+            Cancel
+          </Btn>
+          <Btn kind="primary" onClick={handleSave} disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </Btn>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 

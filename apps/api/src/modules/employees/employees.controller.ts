@@ -30,6 +30,7 @@ import {
   TransferEmployeeDto,
   TerminateEmployeeDto,
   EmployeeListQueryDto,
+  RejectOnboardingDto,
 } from './employees.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -91,6 +92,18 @@ export class EmployeesController {
   @ApiResponse({ status: 200, description: 'Team roster' })
   async listMyTeam(@CurrentUser() user: JwtPayload) {
     return this.employeesService.listMyTeam(user.sub, user.tenantId);
+  }
+
+  @Get('onboarding-queue')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'List employees pending HR onboarding approval',
+    description:
+      'Returns employees who submitted their self-onboarding for review (custom_fields.onboarding_submitted_for_review = true) and are not yet activated. Used by the People → Onboarding queue.',
+  })
+  @ApiResponse({ status: 200, description: 'Pending onboarding queue' })
+  async getOnboardingQueue(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.getOnboardingQueue(user.tenantId);
   }
 
   @Put('me')
@@ -208,6 +221,24 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.employeesService.approveOnboarding(id, user.sub, user.tenantId);
+  }
+
+  @Post(':id/reject-onboarding')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin sends employee onboarding back for changes' })
+  @ApiResponse({ status: 200, description: 'Onboarding rejected' })
+  async rejectOnboarding(
+    @Param('id') id: string,
+    @Body() dto: RejectOnboardingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.rejectOnboarding(
+      id,
+      dto.reason,
+      user.sub,
+      user.tenantId,
+    );
   }
 
   @Get(':id/documents/:docId/url')

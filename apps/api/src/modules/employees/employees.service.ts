@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, and, ilike, inArray, desc, asc, sql } from 'drizzle-orm';
+import { eq, ne, and, ilike, inArray, desc, asc, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -587,13 +587,38 @@ export class EmployeesService {
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
+    const empPatch: Partial<typeof employees.$inferInsert> = {
+      updated_at: new Date(),
+    };
+
+    if (dto.fullName !== undefined) {
+      const parts = dto.fullName.trim().split(/\s+/);
+      empPatch.first_name = parts[0] ?? dto.fullName;
+      empPatch.last_name = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    }
+    if (dto.workPhone !== undefined) empPatch.work_phone = dto.workPhone;
+    if (dto.personalPhone !== undefined)
+      empPatch.personal_phone = dto.personalPhone;
+    if (dto.designationId !== undefined)
+      empPatch.designation_id = dto.designationId;
+
     const [updated] = await this.db
       .update(employees)
-      .set({
-        updated_at: new Date(),
-      })
+      .set(empPatch)
       .where(eq(employees.id, employeeId))
       .returning();
+
+    // Name + avatar live on the user record, shared across memberships.
+    if (employee.userId && (dto.fullName !== undefined || dto.avatarUrl !== undefined)) {
+      await this.db
+        .update(users)
+        .set({
+          ...(dto.fullName !== undefined ? { full_name: dto.fullName } : {}),
+          ...(dto.avatarUrl !== undefined ? { avatar_url: dto.avatarUrl } : {}),
+          updated_at: new Date(),
+        })
+        .where(eq(users.id, employee.userId));
+    }
 
     await this.auditService.log({
       tenantId,
@@ -601,11 +626,109 @@ export class EmployeesService {
       action: 'employee.updated',
       resourceType: 'employee',
       resourceId: employeeId,
-      beforeState: { designationId: employee.designationId },
-      afterState: { fullName: dto.fullName, phone: dto.phone },
+      beforeState: {
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        workPhone: employee.workPhone,
+        personalPhone: employee.personalPhone,
+        designationId: employee.designationId,
+      },
+      afterState: {
+        fullName: dto.fullName,
+        workPhone: dto.workPhone,
+        personalPhone: dto.personalPhone,
+        designationId: dto.designationId,
+      },
     });
 
     return updated;
+  }
+
+  async getOnboardingQueue(tenantId: string) {
+    const rows = await this.db
+      .select({
+        id: employees.id,
+        employeeCode: employees.employee_code,
+        fullName: users.full_name,
+        email: users.email,
+        avatarUrl: users.avatar_url,
+        designationTitle: designations.title,
+        departmentName: departments.name,
+        status: employees.status,
+        submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
+      })
+      .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .leftJoin(designations, eq(employees.designation_id, designations.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
+          ne(employees.status, 'active'),
+        ),
+      )
+      .orderBy(asc(employees.created_at));
+
+    return { data: rows, total: rows.length };
+  }
+
+  async rejectOnboarding(
+    employeeId: string,
+    reason: string | undefined,
+    adminId: string,
+    tenantId: string,
+  ) {
+    const employee = await this.getEmployee(employeeId, tenantId);
+
+    // Clear the review flag so the employee can edit + resubmit, and record
+    // the reason in custom_fields for the wizard to surface.
+    const existing = (employee.customFields ?? {}) as Record<string, unknown>;
+    await this.db
+      .update(employees)
+      .set({
+        custom_fields: {
+          ...existing,
+          onboarding_submitted_for_review: false,
+          onboarding_rejection_reason: reason ?? null,
+          onboarding_rejected_at: new Date().toISOString(),
+        },
+        updated_at: new Date(),
+      })
+      .where(eq(employees.id, employeeId));
+
+    if (employee.userId) {
+      const [user] = await this.db
+        .select({ email: users.email, full_name: users.full_name })
+        .from(users)
+        .where(eq(users.id, employee.userId))
+        .limit(1);
+
+      if (user) {
+        await this.notificationsService
+          .createInAppNotification(
+            employee.userId,
+            'onboarding.rejected',
+            reason
+              ? `Your onboarding was sent back for changes: ${reason}`
+              : 'Your onboarding was sent back for changes. Please review and resubmit.',
+            '/employees/me/onboarding',
+            tenantId,
+          )
+          .catch(() => undefined);
+      }
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: adminId,
+      action: 'employee.onboarding.rejected',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      metadata: { reason: reason ?? null },
+    });
+
+    return { employeeId, status: employee.status, rejectedBy: adminId };
   }
 
   async selfUpdateEmployee(
@@ -720,6 +843,9 @@ export class EmployeesService {
       onboarding_step: nextStep,
       onboarding_completed_at: allStepsComplete ? new Date().toISOString() : null,
       onboarding_submitted_for_review: allStepsComplete,
+      ...(allStepsComplete
+        ? { onboarding_submitted_at: new Date().toISOString() }
+        : {}),
     };
     updateFields.updated_at = new Date();
 
@@ -1036,41 +1162,43 @@ export class EmployeesService {
       .select({
         id: employees.id,
         employeeCode: employees.employee_code,
-        designationId: employees.designation_id,
+        fullName: users.full_name,
+        email: users.email,
+        avatarUrl: users.avatar_url,
+        designationTitle: designations.title,
+        departmentName: departments.name,
         managerId: employees.reporting_manager_id,
-        departmentId: employees.department_id,
         status: employees.status,
       })
       .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .leftJoin(designations, eq(employees.designation_id, designations.id))
+      .leftJoin(departments, eq(employees.department_id, departments.id))
       .where(
         and(
           eq(employees.tenant_id, tenantId),
-          eq(employees.status, 'active'),
+          inArray(employees.status, ['active', 'on_leave', 'notice_period']),
         ),
       );
 
-    // Build tree structure
-    const nodeMap = new Map<
-      string,
-      typeof allEmployees[0] & { children: typeof allEmployees }
-    >();
+    type OrgNode = (typeof allEmployees)[number] & { children: OrgNode[] };
 
+    const nodeMap = new Map<string, OrgNode>();
     for (const emp of allEmployees) {
       nodeMap.set(emp.id, { ...emp, children: [] });
     }
 
-    const roots: typeof allEmployees = [];
-
+    const roots: OrgNode[] = [];
     for (const emp of allEmployees) {
       const node = nodeMap.get(emp.id)!;
       if (emp.managerId && nodeMap.has(emp.managerId)) {
-        nodeMap.get(emp.managerId)!.children.push(node as typeof allEmployees[0]);
+        nodeMap.get(emp.managerId)!.children.push(node);
       } else {
-        roots.push(node as typeof allEmployees[0]);
+        roots.push(node);
       }
     }
 
-    return { tree: roots };
+    return { tree: roots, total: allEmployees.length };
   }
 
   async generateSignedUrl(r2Key: string): Promise<{ url: string; expiresAt: Date }> {
