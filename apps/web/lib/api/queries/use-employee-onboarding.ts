@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { track, EVENTS } from '@/lib/analytics/posthog'
 
 // ─── Status ──────────────────────────────────────────────────────────────────
 
@@ -95,9 +96,12 @@ export function useSubmitOnboardingStep() {
         `/api/v1/employees/me/onboarding/${payload.step}`,
         payload,
       ),
-    onSuccess: () => {
+    onSuccess: (data, vars) => {
       qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
       qc.invalidateQueries({ queryKey: ['employees', 'me'] })
+      if (vars.submitForReview || data.allStepsComplete) {
+        track(EVENTS.EMPLOYEE_ONBOARDING_SUBMITTED)
+      }
     },
   })
 }

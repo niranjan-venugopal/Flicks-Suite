@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { track, EVENTS } from '@/lib/analytics/posthog'
 
 // ─── Wire types — match the API exactly ──────────────────────────────────────
 
@@ -231,6 +232,7 @@ export function usePunchIn() {
       if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
     },
     onSuccess: async () => {
+      track(EVENTS.ATTENDANCE_CLOCKED_IN)
       await invalidateAttendance(qc)
     },
   })
@@ -256,6 +258,7 @@ export function usePunchOut() {
       if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
     },
     onSuccess: async () => {
+      track(EVENTS.ATTENDANCE_CLOCKED_OUT)
       await invalidateAttendance(qc)
     },
   })

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { track, EVENTS } from '@/lib/analytics/posthog'
 
 export interface Employee {
   id: string
@@ -218,6 +219,7 @@ export function useInviteEmployee() {
       api.post<Employee>('/api/v1/employees/invite', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees'] })
+      track(EVENTS.EMPLOYEE_INVITED)
     },
   })
 }

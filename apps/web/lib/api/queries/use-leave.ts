@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { track, EVENTS } from '@/lib/analytics/posthog'
 
 // ─── Wire types — match the API responses exactly ─────────────────────────────
 
@@ -144,6 +145,7 @@ export function useApplyLeave() {
       api.post<LeaveRequest>('/api/v1/leave/apply', payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['leave'] })
+      track(EVENTS.LEAVE_SUBMITTED)
     },
   })
 }
@@ -164,8 +166,9 @@ export function useReviewLeave() {
         `/api/v1/leave/${id}/review`,
         { action, comment },
       ),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['leave'] })
+      track(EVENTS.LEAVE_REVIEWED, { action: vars.action })
     },
   })
 }

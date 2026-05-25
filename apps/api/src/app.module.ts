@@ -12,6 +12,7 @@ import { PassportModule } from '@nestjs/passport';
 
 import { configValidationSchema } from './core/config/config.schema';
 import { DatabaseModule } from './core/database/database.module';
+import { AnalyticsModule } from './core/analytics/analytics.module';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
 
@@ -116,6 +117,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     }),
 
     DatabaseModule,
+    AnalyticsModule,
 
     // Feature modules
     AuthModule,

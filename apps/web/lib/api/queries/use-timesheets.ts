@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { track, EVENTS } from '@/lib/analytics/posthog'
 
 // ─── API shapes ────────────────────────────────────────────────────────────
 
@@ -109,6 +110,7 @@ export function useSubmitTimesheet() {
       api.post<void>('/api/v1/timesheet/submit', { timesheetPeriodId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['timesheet'] })
+      track(EVENTS.TIMESHEET_SUBMITTED)
     },
   })
 }
@@ -126,8 +128,9 @@ export function useReviewTimesheet() {
       comment?: string
     }) =>
       api.post<void>(`/api/v1/timesheet/${periodId}/review`, { action, comment }),
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['timesheet'] })
+      track(EVENTS.TIMESHEET_REVIEWED, { action: vars.action })
     },
   })
 }

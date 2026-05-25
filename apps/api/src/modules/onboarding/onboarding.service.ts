@@ -20,6 +20,10 @@ import {
   shiftTemplates,
 } from '@flicks/db/schema';
 import { AuditService } from '../audit/audit.service';
+import {
+  AnalyticsService,
+  SERVER_EVENTS,
+} from '../../core/analytics/analytics.service';
 import type {
   CreateTenantDto,
   UpdateTenantDetailsDto,
@@ -168,6 +172,7 @@ export class OnboardingService {
   constructor(
     @Inject(DB_TENANT) private readonly db: Db,
     private readonly auditService: AuditService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async checkSlug(slug: string): Promise<{ available: boolean }> {
@@ -352,6 +357,13 @@ export class OnboardingService {
 
     this.logger.log(
       `Tenant created: ${tenant.slug} (${tenant.id}) by user ${userId} as Owner`,
+    );
+
+    this.analytics.capture(
+      userId,
+      SERVER_EVENTS.TENANT_SIGNUP_COMPLETED,
+      { tenantId: tenant.id, slug: tenant.slug },
+      { tenant: tenant.id },
     );
 
     return {

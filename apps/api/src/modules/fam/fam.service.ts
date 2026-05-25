@@ -30,6 +30,10 @@ import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  AnalyticsService,
+  SERVER_EVENTS,
+} from '../../core/analytics/analytics.service';
 import type { UserRole } from '@flicks/shared/types';
 import type {
   SuspendTenantDto,
@@ -49,6 +53,7 @@ export class FamService {
     private readonly auditService: AuditService,
     private readonly authService: AuthService,
     private readonly notificationsService: NotificationsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   // ─── Overview (platform-wide stats) ────────────────────────────────────────
@@ -941,6 +946,16 @@ export class FamService {
         `Could not send impersonation-started email to ${target.email}: ${(e as Error).message}`,
       );
     }
+
+    // Attribute to the FAM admin (impersonator), not the target — this is a
+    // staff action. Captured server-side so an ad-blocker can't suppress an
+    // audit-relevant event.
+    this.analytics.capture(
+      actorUserId,
+      SERVER_EVENTS.IMPERSONATION_STARTED,
+      { targetUserId: target.userId, tenantId: target.tenantId, sessionId: session.id },
+      { tenant: target.tenantId },
+    );
 
     return {
       accessToken,

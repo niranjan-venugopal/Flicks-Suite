@@ -52,6 +52,8 @@ export function useCreateTenant() {
   return useMutation({
     mutationFn: (payload: CreateTenantPayload) =>
       api.post<CreateTenantResponse>('/api/v1/onboarding/create-tenant', payload),
+    // tenant_signup_completed is captured server-side (analytics.service.ts)
+    // so it can't be dropped by an ad-blocker.
     onSuccess: async () => {
       // The user might have just signed up while still holding cached data
       // from a previous tenant (e.g. they had a session in another

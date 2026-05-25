@@ -43,6 +43,11 @@ export const configValidationSchema = Joi.object({
   R2_BUCKET_NAME: Joi.string().default('flicks-suite-uploads'),
   R2_PUBLIC_URL: Joi.string().uri().optional(),
 
+  // Observability
+  SENTRY_DSN: Joi.string().allow('').optional(),
+  POSTHOG_KEY: Joi.string().allow('').optional(),
+  POSTHOG_HOST: Joi.string().uri().default('https://app.posthog.com'),
+
   // Security
   OTP_EXPIRY_MINUTES: Joi.number().default(10),
   MAGIC_LINK_EXPIRY_MINUTES: Joi.number().default(30),

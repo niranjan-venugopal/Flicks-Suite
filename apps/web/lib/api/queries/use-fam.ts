@@ -558,6 +558,8 @@ export function useStartImpersonation() {
         tenantId: string
         expiresIn: number
       }>('/api/v1/fam/impersonate', dto),
+    // impersonation_started is captured server-side (analytics.service.ts)
+    // where it can be reliably attributed to the FAM admin.
     onSuccess: () => {
       // Cookies have been swapped server-side. Clear every query so the
       // next paint reflects the target user, not the cached FAM context.

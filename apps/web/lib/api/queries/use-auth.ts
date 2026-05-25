@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { resetAnalytics } from '@/lib/analytics/posthog'
 import {
   useAuthStore,
   type CurrentUser,
@@ -184,6 +185,7 @@ export function useLogout() {
     onSettled: () => {
       logout()
       queryClient.clear()
+      resetAnalytics()
     },
   })
 }
