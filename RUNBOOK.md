@@ -136,7 +136,7 @@ its own. Both sides are audit-logged (`audit_log_platform` + tenant `audit_log`)
 
 ## 4. Backup & restore
 
-Scripts live in `scripts/` (added in D6):
+Scripts live in `scripts/`:
 
 | Script | What | Cadence |
 |---|---|---|
