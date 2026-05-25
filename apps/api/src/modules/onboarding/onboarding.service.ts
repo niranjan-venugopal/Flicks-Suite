@@ -19,7 +19,9 @@ import {
   locations,
   shiftTemplates,
 } from '@flicks/db/schema';
+import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   AnalyticsService,
   SERVER_EVENTS,
@@ -173,6 +175,8 @@ export class OnboardingService {
     @Inject(DB_TENANT) private readonly db: Db,
     private readonly auditService: AuditService,
     private readonly analytics: AnalyticsService,
+    private readonly notificationsService: NotificationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async checkSlug(slug: string): Promise<{ available: boolean }> {
@@ -365,6 +369,15 @@ export class OnboardingService {
       { tenantId: tenant.id, slug: tenant.slug },
       { tenant: tenant.id },
     );
+
+    const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+    await this.notificationsService
+      .sendEmail('welcome-tenant', foundingUser.email, {
+        ownerName: foundingUser.full_name || foundingUser.email,
+        tenantName: tenant.name,
+        dashboardUrl: `${appUrl}/dashboard`,
+      })
+      .catch(() => undefined);
 
     return {
       id: tenant.id,

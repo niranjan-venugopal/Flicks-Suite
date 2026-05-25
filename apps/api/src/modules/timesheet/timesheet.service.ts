@@ -652,8 +652,13 @@ export class TimesheetService {
     // Push an in-app notification to the timesheet's owner so they see
     // the manager's decision next time they open the app.
     const [ownerUser] = await this.dbAdmin
-      .select({ userId: employees.user_id })
+      .select({
+        userId: employees.user_id,
+        email: users.email,
+        fullName: users.full_name,
+      })
       .from(employees)
+      .leftJoin(users, eq(employees.user_id, users.id))
       .where(eq(employees.id, period.employee_id))
       .limit(1);
     if (ownerUser?.userId) {
@@ -670,6 +675,27 @@ export class TimesheetService {
         '/timesheets',
         period.tenant_id,
       );
+
+      if (ownerUser.email) {
+        const tpl =
+          dto.action === 'approve'
+            ? 'timesheet-approved'
+            : dto.action === 'reject'
+              ? 'timesheet-rejected'
+              : 'timesheet-rework';
+        await this.notificationsService
+          .sendEmail(tpl, ownerUser.email, {
+            employeeName: ownerUser.fullName ?? 'there',
+            periodStart: period.period_start,
+            periodEnd: period.period_end,
+            comment: dto.comment,
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `Could not send ${tpl} email to ${ownerUser.email}: ${(e as Error).message}`,
+            ),
+          );
+      }
     }
 
     return {

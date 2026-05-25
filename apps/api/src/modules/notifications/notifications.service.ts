@@ -32,16 +32,36 @@ function toDto(row: Notification): InAppNotification {
 }
 
 type EmailTemplate =
-  | 'otp-login'
+  // Auth
+  | 'login-otp'
   | 'magic-link'
+  // Tenant + employee lifecycle
+  | 'welcome-tenant'
   | 'welcome-employee'
+  | 'onboarding-submitted'
   | 'onboarding-approved'
-  | 'leave-request'
+  | 'onboarding-rejected'
+  // Leave
+  | 'leave-requested'
   | 'leave-approved'
   | 'leave-rejected'
+  // Attendance regularization
+  | 'attendance-regularization-requested'
+  | 'attendance-regularization-approved'
+  | 'attendance-regularization-rejected'
+  // Timesheet
   | 'timesheet-submitted'
-  | 'trial-ending-soon'
   | 'timesheet-approved'
+  | 'timesheet-rejected'
+  | 'timesheet-rework'
+  // Billing
+  | 'trial-ending-soon'
+  | 'subscription-payment-success'
+  | 'subscription-payment-failed'
+  // DPDP self-service
+  | 'data-export-ready'
+  | 'account-deletion-confirmation'
+  // Platform
   | 'impersonation-started';
 
 @Injectable()
@@ -91,7 +111,7 @@ export class NotificationsService {
     const appName = 'Flicks Suite';
 
     switch (template) {
-      case 'otp-login': {
+      case 'login-otp': {
         const { otpCode, magicLinkUrl, expiryMinutes } = props as {
           otpCode: string;
           magicLinkUrl: string;
@@ -155,7 +175,7 @@ export class NotificationsService {
         };
       }
 
-      case 'leave-request': {
+      case 'leave-requested': {
         const { employeeName, leaveType, startDate, endDate, days, reason } =
           props as {
             employeeName: string;
@@ -290,6 +310,244 @@ export class NotificationsService {
               </table>
               <p>Every action this staff member performs is recorded in your workspace's audit log and on Specflicks's platform audit log. You can review it under Settings → Audit log.</p>
               <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't request support and this looks wrong, reply to this email or contact your workspace admin immediately.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'magic-link': {
+        const { magicLinkUrl, expiryMinutes } = props as {
+          magicLinkUrl: string;
+          expiryMinutes?: number;
+        };
+        return {
+          subject: `Your ${appName} sign-in link`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Sign in to ${appName}</h2>
+              <p>Click the secure link below to sign in. It expires in ${String(props.expiryMinutes ?? expiryMinutes ?? 30)} minutes.</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(magicLinkUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Sign in</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't request this, you can safely ignore this email.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'welcome-tenant': {
+        const { ownerName, tenantName, dashboardUrl } = props as {
+          ownerName: string;
+          tenantName: string;
+          dashboardUrl: string;
+        };
+        return {
+          subject: `Welcome to ${appName}, ${String(tenantName)}!`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Welcome aboard, ${String(ownerName)} 👋</h2>
+              <p>Your workspace <strong>${String(tenantName)}</strong> is live on ${appName}.</p>
+              <p>You're set up as the Owner. Next, invite your team and configure your locations, departments and leave policies.</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(dashboardUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your dashboard</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">Need a hand? Reply to this email or visit Help inside the app.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'onboarding-submitted': {
+        const { approverName, employeeName, reviewUrl } = props as {
+          approverName: string;
+          employeeName: string;
+          reviewUrl: string;
+        };
+        return {
+          subject: `Onboarding submitted for review — ${String(employeeName)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${String(approverName)},</h2>
+              <p><strong>${String(employeeName)}</strong> has completed their self-onboarding and submitted it for your approval.</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(reviewUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review onboarding</a>
+              </p>
+            </div>
+          `,
+        };
+      }
+
+      case 'onboarding-rejected': {
+        const { employeeName, reason, resubmitUrl } = props as {
+          employeeName: string;
+          reason?: string;
+          resubmitUrl: string;
+        };
+        return {
+          subject: `Action needed — your onboarding was sent back`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #f59e0b;">Almost there, ${String(employeeName)}</h2>
+              <p>Your onboarding details were sent back for a few changes before they can be approved.</p>
+              ${reason ? `<p style="background: #fff7ed; border-left: 3px solid #f59e0b; padding: 12px 14px;"><strong>What to fix:</strong> ${String(reason)}</p>` : ''}
+              <p style="margin: 24px 0;">
+                <a href="${String(resubmitUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Update & resubmit</a>
+              </p>
+            </div>
+          `,
+        };
+      }
+
+      case 'attendance-regularization-requested': {
+        const { managerName, employeeName, attendanceDate, requestType, reason } =
+          props as {
+            managerName: string;
+            employeeName: string;
+            attendanceDate: string;
+            requestType?: string;
+            reason?: string;
+          };
+        return {
+          subject: `Attendance regularization — ${String(employeeName)} (${String(attendanceDate)})`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${String(managerName)},</h2>
+              <p><strong>${String(employeeName)}</strong> has requested an attendance regularization.</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+                <tr><td style="padding: 8px; color: #666;">Date:</td><td style="padding: 8px;">${String(attendanceDate)}</td></tr>
+                ${requestType ? `<tr><td style="padding: 8px; color: #666;">Type:</td><td style="padding: 8px;">${String(requestType)}</td></tr>` : ''}
+                ${reason ? `<tr><td style="padding: 8px; color: #666;">Reason:</td><td style="padding: 8px;">${String(reason)}</td></tr>` : ''}
+              </table>
+              <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}/inbox" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Review request</a>
+            </div>
+          `,
+        };
+      }
+
+      case 'attendance-regularization-approved':
+      case 'attendance-regularization-rejected': {
+        const approved = template === 'attendance-regularization-approved';
+        const { employeeName, attendanceDate, comment } = props as {
+          employeeName: string;
+          attendanceDate: string;
+          comment?: string;
+        };
+        return {
+          subject: `Attendance regularization ${approved ? 'approved' : 'rejected'} — ${String(attendanceDate)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: ${approved ? '#22c55e' : '#ef4444'};">Regularization ${approved ? 'Approved' : 'Rejected'}</h2>
+              <p>Hi ${String(employeeName)}, your attendance regularization for <strong>${String(attendanceDate)}</strong> has been ${approved ? 'approved' : 'rejected'}.</p>
+              ${comment ? `<p>Comment: ${String(comment)}</p>` : ''}
+            </div>
+          `,
+        };
+      }
+
+      case 'timesheet-approved':
+      case 'timesheet-rejected':
+      case 'timesheet-rework': {
+        const { employeeName, periodStart, periodEnd, comment } = props as {
+          employeeName: string;
+          periodStart: string;
+          periodEnd: string;
+          comment?: string;
+        };
+        const variant = {
+          'timesheet-approved': { word: 'Approved', color: '#22c55e' },
+          'timesheet-rejected': { word: 'Rejected', color: '#ef4444' },
+          'timesheet-rework': { word: 'Sent back for rework', color: '#f59e0b' },
+        }[template];
+        return {
+          subject: `Timesheet ${variant.word.toLowerCase()} — week of ${String(periodStart)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: ${variant.color};">Timesheet ${variant.word}</h2>
+              <p>Hi ${String(employeeName)}, your timesheet for <strong>${String(periodStart)} → ${String(periodEnd)}</strong> was ${variant.word.toLowerCase()}.</p>
+              ${comment ? `<p style="background: #f4f6fa; border-radius: 8px; padding: 12px 14px;"><strong>Note:</strong> ${String(comment)}</p>` : ''}
+              ${template === 'timesheet-approved' ? '' : `<p style="margin: 20px 0;"><a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}/timesheets" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Open timesheet</a></p>`}
+            </div>
+          `,
+        };
+      }
+
+      case 'subscription-payment-success': {
+        const { tenantName, amount, periodEnd, invoiceUrl } = props as {
+          tenantName: string;
+          amount: string;
+          periodEnd?: string;
+          invoiceUrl?: string;
+        };
+        return {
+          subject: `Payment received — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #22c55e;">Payment successful</h2>
+              <p>Thanks ${String(tenantName)} — we've received your payment of <strong>${String(amount)}</strong>.</p>
+              ${periodEnd ? `<p>Your subscription is active until ${String(periodEnd)}.</p>` : ''}
+              ${invoiceUrl ? `<p><a href="${String(invoiceUrl)}" style="color:#6366f1;">Download invoice</a></p>` : ''}
+            </div>
+          `,
+        };
+      }
+
+      case 'subscription-payment-failed': {
+        const { tenantName, amount, retryUrl } = props as {
+          tenantName: string;
+          amount: string;
+          retryUrl: string;
+        };
+        return {
+          subject: `Action required: payment failed — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #ef4444;">Payment failed</h2>
+              <p>Hi ${String(tenantName)}, we couldn't process your payment of <strong>${String(amount)}</strong>.</p>
+              <p>Please update your payment method to avoid any interruption.</p>
+              <a href="${String(retryUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Update payment</a>
+            </div>
+          `,
+        };
+      }
+
+      case 'data-export-ready': {
+        const { userName, downloadUrl, expiryHours } = props as {
+          userName: string;
+          downloadUrl: string;
+          expiryHours?: number;
+        };
+        return {
+          subject: `Your ${appName} data export is ready`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Your data export is ready</h2>
+              <p>Hi ${String(userName)}, the personal-data export you requested is ready to download.</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(downloadUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Download my data</a>
+              </p>
+              <p style="color: #666; font-size: 12px;">This link expires in ${String(props.expiryHours ?? expiryHours ?? 24)} hours for your security.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'account-deletion-confirmation': {
+        const { userName, scheduledFor, cancelUrl } = props as {
+          userName: string;
+          scheduledFor: string;
+          cancelUrl: string;
+        };
+        return {
+          subject: `We've received your account deletion request — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Deletion request received</h2>
+              <p>Hi ${String(userName)}, we've scheduled your account for deletion on <strong>${String(scheduledFor)}</strong> after a 7-day cool-off period.</p>
+              <p>Changed your mind? You can cancel any time before then:</p>
+              <p style="margin: 24px 0;">
+                <a href="${String(cancelUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Cancel deletion</a>
+              </p>
+              <p style="color: #666; font-size: 12px;">After the cool-off period your personal data will be erased as required under the DPDP Act 2023.</p>
             </div>
           `,
         };

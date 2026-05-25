@@ -124,7 +124,7 @@ export class AuthService {
     const magicLinkUrl = `${magicLinkBaseUrl}?token=${magicLinkRawToken}`;
 
     // Send email
-    await this.notificationsService.sendEmail('otp-login', normalizedEmail, {
+    await this.notificationsService.sendEmail('login-otp', normalizedEmail, {
       otpCode,
       magicLinkUrl,
       expiryMinutes,
@@ -868,6 +868,22 @@ export class AuthService {
       resourceId: userId,
       metadata: { scheduledFor: scheduledFor.toISOString(), reason },
     });
+
+    const [u] = await this.dbAdmin
+      .select({ email: users.email, fullName: users.full_name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (u?.email) {
+      const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+      await this.notificationsService
+        .sendEmail('account-deletion-confirmation', u.email, {
+          userName: u.fullName ?? u.email,
+          scheduledFor: scheduledFor.toUTCString(),
+          cancelUrl: `${appUrl}/profile`,
+        })
+        .catch(() => undefined);
+    }
 
     return {
       id: row.id,

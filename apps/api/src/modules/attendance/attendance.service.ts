@@ -867,21 +867,38 @@ export class AttendanceService {
     if (!employee?.managerId) return;
     const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
-        .select({ email: employees.work_email })
+        .select({
+          email: employees.work_email,
+          firstName: employees.first_name,
+          lastName: employees.last_name,
+        })
         .from(employees)
         .where(eq(employees.id, employee.managerId!))
         .limit(1),
     );
     if (!manager?.email) return;
+
+    const [reg] = await this.databaseService.withTenant(tenantId, (tx) =>
+      tx
+        .select({
+          attendanceDate: attendanceRegularizations.attendance_date,
+          requestType: attendanceRegularizations.request_type,
+          reason: attendanceRegularizations.reason,
+        })
+        .from(attendanceRegularizations)
+        .where(eq(attendanceRegularizations.id, regId))
+        .limit(1),
+    );
+
     await this.notificationsService.sendEmail(
-      'leave-request', // reuse the closest existing template; dedicated attendance template is in packages/emails
+      'attendance-regularization-requested',
       manager.email,
       {
+        managerName: `${manager.firstName} ${manager.lastName}`.trim() || 'there',
         employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
-        leaveType: 'Attendance regularization',
-        startDate: '',
-        endDate: '',
-        days: 0,
+        attendanceDate: reg?.attendanceDate ?? '',
+        requestType: reg?.requestType,
+        reason: reg?.reason ?? undefined,
       },
     );
     this.logger.log(
@@ -1034,14 +1051,14 @@ export class AttendanceService {
 
     if (result.requester?.email) {
       const tpl =
-        dto.action === 'approve' ? 'leave-approved' : 'leave-rejected'; // closest reusable template
+        dto.action === 'approve'
+          ? 'attendance-regularization-approved'
+          : 'attendance-regularization-rejected';
       this.notificationsService
         .sendEmail(tpl, result.requester.email, {
           employeeName:
             `${result.requester.firstName ?? ''} ${result.requester.lastName ?? ''}`.trim(),
-          leaveType: 'Attendance regularization',
-          startDate: result.updated.attendance_date,
-          endDate: result.updated.attendance_date,
+          attendanceDate: result.updated.attendance_date,
           comment: dto.comment,
         })
         .catch((err) =>

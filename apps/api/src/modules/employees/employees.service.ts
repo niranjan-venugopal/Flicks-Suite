@@ -716,6 +716,15 @@ export class EmployeesService {
             tenantId,
           )
           .catch(() => undefined);
+
+        const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+        await this.notificationsService
+          .sendEmail('onboarding-rejected', user.email, {
+            employeeName: user.full_name,
+            reason,
+            resubmitUrl: `${appUrl}/employees/me/onboarding`,
+          })
+          .catch(() => undefined);
       }
     }
 
@@ -940,6 +949,41 @@ export class EmployeesService {
         tenantId,
         step,
       });
+
+      // Notify the reporting manager (best-effort) that there's an onboarding
+      // to approve. The People → Onboarding queue is the canonical surface.
+      try {
+        const mgr = alias(employees, 'mgr_submit');
+        const mgrUser = alias(users, 'mgr_submit_user');
+        const [info] = await this.db
+          .select({
+            employeeName: sql<string>`trim(coalesce(${employees.first_name},'') || ' ' || coalesce(${employees.last_name},''))`,
+            managerEmail: mgrUser.email,
+            managerName: mgrUser.full_name,
+          })
+          .from(employees)
+          .leftJoin(mgr, eq(employees.reporting_manager_id, mgr.id))
+          .leftJoin(mgrUser, eq(mgr.user_id, mgrUser.id))
+          .where(eq(employees.id, employeeId))
+          .limit(1);
+
+        if (info?.managerEmail) {
+          const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+          await this.notificationsService.sendEmail(
+            'onboarding-submitted',
+            info.managerEmail,
+            {
+              approverName: info.managerName ?? 'there',
+              employeeName: info.employeeName || 'A new hire',
+              reviewUrl: `${appUrl}/employees/onboarding`,
+            },
+          );
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Could not send onboarding-submitted email: ${(e as Error).message}`,
+        );
+      }
     }
 
     return {

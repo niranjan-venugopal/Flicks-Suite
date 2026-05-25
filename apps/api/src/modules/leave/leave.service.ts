@@ -452,7 +452,7 @@ export class LeaveService {
     );
     if (!manager?.email) return;
 
-    await this.notificationsService.sendEmail('leave-request', manager.email, {
+    await this.notificationsService.sendEmail('leave-requested', manager.email, {
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       leaveType: leaveTypeName,
       startDate: '',
