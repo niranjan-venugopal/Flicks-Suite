@@ -52,6 +52,15 @@ export function useMyCurrentTimesheet() {
   })
 }
 
+export function usePreviousWeekCategories() {
+  return useMutation({
+    mutationFn: () =>
+      api.get<{ categories: string[] }>(
+        '/api/v1/timesheet/me/previous-categories',
+      ),
+  })
+}
+
 export function useMyTimesheetPeriods(query?: { status?: string; page?: number }) {
   return useQuery({
     queryKey: ['timesheet', 'me', query],

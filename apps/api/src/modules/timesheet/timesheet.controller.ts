@@ -38,6 +38,18 @@ export class TimesheetController {
     return this.timesheetService.getMyCurrentPeriod(user.sub, user.tenantId);
   }
 
+  @Get('me/previous-categories')
+  @ApiOperation({
+    summary: 'Categories logged last week (for "Copy last week")',
+  })
+  @ApiResponse({ status: 200, description: 'Distinct prior-week categories' })
+  async getPreviousWeekCategories(@CurrentUser() user: JwtPayload) {
+    return this.timesheetService.getPreviousWeekCategories(
+      user.sub,
+      user.tenantId,
+    );
+  }
+
   @Get('me')
   @ApiOperation({ summary: 'List my timesheet periods' })
   @ApiResponse({ status: 200, description: 'Timesheet periods' })

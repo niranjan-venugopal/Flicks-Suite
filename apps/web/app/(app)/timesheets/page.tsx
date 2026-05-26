@@ -8,6 +8,7 @@ import {
   useSubmitTimesheet,
   useSaveTimesheetEntries,
   useTimesheetEntries,
+  usePreviousWeekCategories,
   type TimesheetPeriod,
 } from '@/lib/api/queries/use-timesheets'
 import { useToast } from '@/components/ui/use-toast'
@@ -72,6 +73,7 @@ export default function TimesheetsPage() {
   const entries = useTimesheetEntries(current.data?.id || null)
   const saveEntries = useSaveTimesheetEntries()
   const submit = useSubmitTimesheet()
+  const copyPrevious = usePreviousWeekCategories()
   const role = useAuthStore((s) => s.currentUser?.role)
   // Categories are workspace-level; per PRD §8 only admins curate them. Employees
   // pick from what's already configured but cannot add new rows themselves.
@@ -169,6 +171,35 @@ export default function TimesheetsPage() {
       })
     }
   }
+  const handleCopyLastWeek = async () => {
+    try {
+      const { categories } = await copyPrevious.mutateAsync()
+      if (categories.length === 0) {
+        toast({
+          title: 'Nothing to copy',
+          description: 'No categories were logged last week.',
+        })
+        return
+      }
+      // Bring forward last week's category rows with empty hours (PRD §8.3 —
+      // structure, not hours). Keep existing rows; append missing categories.
+      setRows((prev) => {
+        const have = new Set(prev.map((r) => r.category))
+        const added = categories
+          .filter((c) => !have.has(c))
+          .map((category) => ({ category, hours: Array(7).fill(0) as number[] }))
+        return [...prev, ...added]
+      })
+      toast({ title: 'Copied last week', description: `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} brought forward.` })
+    } catch (e) {
+      toast({
+        title: 'Could not copy',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
   const handleSubmit = async () => {
     if (!current.data?.id) return
     await handleSave()
@@ -194,7 +225,13 @@ export default function TimesheetsPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <Btn kind="ghost" size="sm" icon={<Icon.chevL size={12} />} />
               <Btn kind="ghost" size="sm" icon={<Icon.chevR size={12} />} />
-              <Btn kind="secondary" size="sm" icon={<Icon.copy size={13} />} disabled={!isEditable}>
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.copy size={13} />}
+                disabled={!isEditable || copyPrevious.isPending}
+                onClick={handleCopyLastWeek}
+              >
                 Copy last week
               </Btn>
               <Btn

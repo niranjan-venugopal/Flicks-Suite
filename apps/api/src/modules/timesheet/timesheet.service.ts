@@ -171,6 +171,39 @@ export class TimesheetService {
     return this.shapePeriod(created);
   }
 
+  // ─── 1b. "Copy last week": prior week's category rows (structure only) ──
+  // Returns the distinct categories the caller logged in the previous week so
+  // the grid can seed those rows with empty hours. Hours are intentionally
+  // NOT copied (PRD §8.3 — bring forward structure, not hours).
+  async getPreviousWeekCategories(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ categories: string[] }> {
+    const { employeeId } = await this.resolveCaller(userId, tenantId);
+    const prev = weekBoundaries(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+
+    const [prevPeriod] = await this.db
+      .select({ id: timesheetPeriods.id })
+      .from(timesheetPeriods)
+      .where(
+        and(
+          eq(timesheetPeriods.tenant_id, tenantId),
+          eq(timesheetPeriods.employee_id, employeeId),
+          eq(timesheetPeriods.period_start, prev.start),
+        ),
+      )
+      .limit(1);
+
+    if (!prevPeriod) return { categories: [] };
+
+    const rows = await this.db
+      .selectDistinct({ category: timesheetEntries.category })
+      .from(timesheetEntries)
+      .where(eq(timesheetEntries.timesheet_period_id, prevPeriod.id));
+
+    return { categories: rows.map((r) => r.category) };
+  }
+
   // ─── 2. List the caller's periods ──────────────────────────────────────
 
   async listMine(
