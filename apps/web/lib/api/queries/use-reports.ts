@@ -74,6 +74,40 @@ export function useAttendanceReport(filters: ReportFilters = {}) {
   })
 }
 
+// ─── Timesheet utilization report ─────────────────────────────────────────────
+
+export interface UtilizationEmployeeRow {
+  employeeId: string
+  name: string | null
+  employeeCode: string | null
+  billableHours: number
+  nonBillableHours: number
+  totalHours: number
+  utilization: number // 0..1
+}
+
+export interface UtilizationReport {
+  range: { from: string; to: string }
+  totals: {
+    billableHours: number
+    nonBillableHours: number
+    totalHours: number
+    utilization: number
+  }
+  byEmployee: UtilizationEmployeeRow[]
+}
+
+export function useUtilizationReport(filters: ReportFilters = {}) {
+  return useQuery({
+    queryKey: ['reports', 'utilization', filters],
+    queryFn: () =>
+      api.get<UtilizationReport>(
+        `/api/v1/timesheet/reports/utilization${qs(filters)}`,
+      ),
+    staleTime: 60_000,
+  })
+}
+
 // ─── Leave report ────────────────────────────────────────────────────────────
 
 export interface LeaveReportTotals {

@@ -50,6 +50,21 @@ export class TimesheetController {
     );
   }
 
+  @Get('reports/utilization')
+  @Roles('manager')
+  @ApiOperation({ summary: 'Billable vs non-billable utilization per employee' })
+  @ApiResponse({ status: 200, description: 'Utilization report' })
+  async getUtilizationReport(
+    @CurrentUser() user: JwtPayload,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.timesheetService.getUtilizationReport(user.tenantId, {
+      from,
+      to,
+    });
+  }
+
   @Get('me')
   @ApiOperation({ summary: 'List my timesheet periods' })
   @ApiResponse({ status: 200, description: 'Timesheet periods' })

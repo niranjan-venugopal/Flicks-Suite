@@ -55,13 +55,13 @@ const REPORTS: ReportTile[] = [
     status: 'live',
   },
   {
-    href: '/reports',
-    title: 'Timesheet billable',
-    description: 'Billable vs internal hours per project. Ships with the timesheet backend (Sprint 2).',
+    href: '/reports/utilization',
+    title: 'Timesheet utilization',
+    description: 'Billable vs non-billable hours per employee, with utilization %.',
     icon: 'tag',
     iconColor: 'var(--green)',
     iconTint: 'rgba(39, 210, 128, 0.13)',
-    status: 'soon',
+    status: 'live',
   },
   {
     href: '/reports',

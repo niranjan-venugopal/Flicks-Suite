@@ -204,6 +204,81 @@ export class TimesheetService {
     return { categories: rows.map((r) => r.category) };
   }
 
+  // ─── 1c. Utilization report (billable vs non-billable per employee) ─────
+  // PRD §8.4 /timesheets/reports/utilization. Manager/admin only (gated in
+  // the controller). Defaults to the last 30 days when no range given.
+  async getUtilizationReport(
+    tenantId: string,
+    range: { from?: string; to?: string },
+  ) {
+    const to = range.to ?? new Date().toISOString().slice(0, 10);
+    const from =
+      range.from ??
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+
+    const rows = await this.db
+      .select({
+        employeeId: timesheetEntries.employee_id,
+        name: users.full_name,
+        employeeCode: employees.employee_code,
+        billable: sql<number>`COALESCE(SUM(CASE WHEN ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
+        nonBillable: sql<number>`COALESCE(SUM(CASE WHEN NOT ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
+      })
+      .from(timesheetEntries)
+      .leftJoin(employees, eq(timesheetEntries.employee_id, employees.id))
+      .leftJoin(users, eq(employees.user_id, users.id))
+      .where(
+        and(
+          eq(timesheetEntries.tenant_id, tenantId),
+          gte(timesheetEntries.entry_date, from),
+          lte(timesheetEntries.entry_date, to),
+        ),
+      )
+      .groupBy(
+        timesheetEntries.employee_id,
+        users.full_name,
+        employees.employee_code,
+      );
+
+    const byEmployee = rows.map((r) => {
+      const billable = Number(r.billable ?? 0);
+      const nonBillable = Number(r.nonBillable ?? 0);
+      const total = billable + nonBillable;
+      return {
+        employeeId: r.employeeId,
+        name: r.name,
+        employeeCode: r.employeeCode,
+        billableHours: billable,
+        nonBillableHours: nonBillable,
+        totalHours: total,
+        utilization: total > 0 ? billable / total : 0,
+      };
+    });
+    byEmployee.sort((a, b) => b.totalHours - a.totalHours);
+
+    const totals = byEmployee.reduce(
+      (acc, r) => {
+        acc.billableHours += r.billableHours;
+        acc.nonBillableHours += r.nonBillableHours;
+        acc.totalHours += r.totalHours;
+        return acc;
+      },
+      { billableHours: 0, nonBillableHours: 0, totalHours: 0 },
+    );
+
+    return {
+      range: { from, to },
+      totals: {
+        ...totals,
+        utilization:
+          totals.totalHours > 0 ? totals.billableHours / totals.totalHours : 0,
+      },
+      byEmployee,
+    };
+  }
+
   // ─── 2. List the caller's periods ──────────────────────────────────────
 
   async listMine(
