@@ -1,7 +1,7 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
-import { Icon, Pill, SectionHead } from '@/components/proto'
+import { Icon, SectionHead } from '@/components/proto'
 import { useFamFunnel } from '@/lib/api/queries/use-fam'
 
 export default function FamFunnelPage() {
@@ -15,7 +15,6 @@ export default function FamFunnelPage() {
         <SectionHead
           title="Signup funnel"
           sub="Where new customers drop off between signup and first activity."
-          right={<Pill tone="purple" dot>Sprint 3 · C5</Pill>}
         />
 
         <div className="card" style={{ padding: 24 }}>

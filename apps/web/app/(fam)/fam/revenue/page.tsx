@@ -71,7 +71,6 @@ export default function FamRevenuePage() {
               Current snapshot · MoM trend reconstructed from subscription events
             </div>
           </div>
-          <Pill tone="purple" dot>Sprint 3 · C5</Pill>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>

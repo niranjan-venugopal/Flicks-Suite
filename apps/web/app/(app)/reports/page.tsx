@@ -66,7 +66,7 @@ const REPORTS: ReportTile[] = [
   {
     href: '/reports',
     title: 'Diversity snapshot',
-    description: 'Gender, age band, and location distribution. Hardening pass (Sprint 4).',
+    description: 'Gender, age band, and location distribution. On the roadmap.',
     icon: 'layers',
     iconColor: 'var(--purple)',
     iconTint: 'rgba(155, 123, 250, 0.13)',

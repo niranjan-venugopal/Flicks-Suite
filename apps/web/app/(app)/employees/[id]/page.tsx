@@ -131,7 +131,7 @@ export default function EmployeeDetailPage({
             {tab === 'attendance' && <ModuleLink href="/attendance" label="Attendance" />}
             {tab === 'leave' && <ModuleLink href="/leave" label="Leave" />}
             {tab === 'timesheet' && <ModuleLink href="/timesheets" label="Timesheets" />}
-            {tab === 'documents' && <ComingSoon title="Documents" desc="Offer letters, ID proofs, contracts and policies will land here once R2 file uploads ship (Sprint 4)." />}
+            {tab === 'documents' && <ComingSoon title="Documents" desc="Offer letters, ID proofs, contracts and policies will land here once secure file uploads are enabled." />}
             {tab === 'access' && <ComingSoon title="Access" desc="Workspace role, IP allowlist, and SSO bindings move here in a future polish pass." />}
           </>
         )}

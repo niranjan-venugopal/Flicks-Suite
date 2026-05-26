@@ -59,11 +59,6 @@ export default function FamTenantsPage() {
         <SectionHead
           title="Tenants"
           sub={`${total} workspace${total === 1 ? '' : 's'} on the platform`}
-          right={
-            <Pill tone="purple" dot>
-              Sprint 3 · C3
-            </Pill>
-          }
         />
 
         {/* Filter bar */}

@@ -12,7 +12,6 @@ import {
   SectionHead,
   Sparkline,
 } from '@/components/proto'
-import { useAuthStore } from '@/lib/stores/auth.store'
 import { useFamOverview } from '@/lib/api/queries/use-fam'
 import { formatCurrency, timeAgo } from '@/lib/utils'
 
@@ -41,8 +40,6 @@ const PLAN_COLOURS: Record<string, string> = {
 }
 
 export default function FamOverviewPage() {
-  const { currentUser } = useAuthStore()
-  const firstName = (currentUser?.name ?? 'Operator').split(' ')[0]
   const overview = useFamOverview()
   const d = overview.data
 
@@ -62,13 +59,24 @@ export default function FamOverviewPage() {
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: '.1em',
+            textTransform: 'uppercase',
+            color: 'var(--text-faint)',
+            marginBottom: 6,
+          }}
+        >
+          FAM Console · Specflicks Internal · Restricted
+        </div>
         <SectionHead
-          title={`FAM Console — Hi, ${firstName}.`}
-          sub="Platform-wide stats refresh every minute."
-          right={
-            <Pill tone="purple" dot>
-              Sprint 3 · C2
-            </Pill>
+          title="Platform overview"
+          sub={
+            d
+              ? `Live · ${d.activeTenants ?? 0} active tenants · refreshes every minute`
+              : 'Platform-wide stats refresh every minute.'
           }
         />
 
@@ -356,69 +364,45 @@ export default function FamOverviewPage() {
 
           <div className="card" style={{ padding: 18 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 12 }}>
-              Sprint 3 roadmap
+              Tenant health
             </div>
-            <ul
-              style={{
-                listStyle: 'none',
-                margin: 0,
-                padding: 0,
-                display: 'grid',
-                gap: 8,
-              }}
-            >
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
               {[
-                { id: 'C1', label: 'Shell + role + (fam) route group', status: 'done' },
-                { id: 'C2', label: 'Overview — platform-wide stats wired', status: 'done' },
-                { id: 'C3', label: 'Tenants list + detail (Overview / Members)', status: 'done' },
-                { id: 'C4', label: 'Tenant detail (Usage / Billing / Audit / Settings)', status: 'done' },
-                { id: 'C5', label: 'Revenue / Funnel / Feature usage / Flags / Audit / Verify', status: 'done' },
-                { id: 'C6', label: 'Impersonation flow + dual-audit banner', status: 'done' },
+                { key: 'healthy', label: 'Healthy', tone: 'green' as const },
+                { key: 'expanding', label: 'Expanding', tone: 'blue' as const },
+                { key: 'at_risk', label: 'At risk', tone: 'yellow' as const },
+                { key: 'churning', label: 'Churning', tone: 'coral' as const },
+                { key: 'new', label: 'New', tone: '' as const },
               ].map((r) => {
-                const tone =
-                  r.status === 'done' ? 'green' : r.status === 'next' ? 'blue' : 'yellow'
-                const label =
-                  r.status === 'done' ? 'Done' : r.status === 'next' ? 'Next' : 'Pending'
+                const count = d?.health?.[r.key as keyof typeof d.health] ?? 0
                 return (
                   <li
-                    key={r.id}
+                    key={r.key}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 10,
-                      padding: '8px 10px',
+                      padding: '10px 12px',
                       background: 'var(--surf-1)',
                       border: '1px solid var(--bord)',
                       borderRadius: 8,
                     }}
                   >
-                    <span
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: 7,
-                        background: 'var(--surf-2)',
-                        color: 'var(--text-mute)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 10.5,
-                        fontWeight: 800,
-                        fontFamily: 'var(--font-mono)',
-                      }}
-                    >
-                      {r.id}
+                    <Pill tone={r.tone} dot>{r.label}</Pill>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontSize: 15, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
+                      {count}
                     </span>
-                    <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>
-                      {r.label}
-                    </span>
-                    <Pill tone={tone} dot>
-                      {label}
-                    </Pill>
                   </li>
                 )
               })}
             </ul>
+            <Link
+              href="/fam/health"
+              style={{ display: 'inline-block', marginTop: 12, fontSize: 11, fontWeight: 700, color: 'var(--blue)', textDecoration: 'none' }}
+            >
+              View system health →
+            </Link>
           </div>
         </div>
 
