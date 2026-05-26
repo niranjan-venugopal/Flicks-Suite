@@ -117,129 +117,105 @@ export default function FamTenantDetailPage() {
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
       <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
-        {/* Breadcrumb */}
-        <div style={{ marginBottom: 12 }}>
-          <Link
-            href="/fam/tenants"
+        {/* Header card — gradient banner + embedded tab strip (prototype style) */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 18 }}>
+          <div
             style={{
-              fontSize: 11.5,
-              fontWeight: 700,
-              color: 'var(--text-mute)',
-              textDecoration: 'none',
-              display: 'inline-flex',
+              padding: '20px 22px',
+              display: 'flex',
               alignItems: 'center',
-              gap: 4,
+              gap: 16,
+              flexWrap: 'wrap',
+              background: 'linear-gradient(135deg, rgba(62,123,250,.08), rgba(155,123,250,.04))',
             }}
           >
-            <Icon.chevL size={12} /> Tenants
-          </Link>
-        </div>
-
-        {/* Header card */}
-        <div
-          className="card"
-          style={{
-            padding: '18px 22px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 16,
-            marginBottom: 18,
-          }}
-        >
-          <Avatar name={t.name} size="lg" />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>
-                {t.name}
-              </h1>
-              <Pill tone={statusTone(t.status)} dot>
-                {t.status.replace('_', ' ')}
-              </Pill>
-              {t.health?.signal && (
-                <Pill tone={signalTone(t.health.signal)} dot>
-                  {t.health.signal.replace('_', ' ')}
-                </Pill>
-              )}
-            </div>
-            <div
+            <Link
+              href="/fam/tenants"
               style={{
-                marginTop: 4,
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--text-mute)',
-                display: 'flex',
-                gap: 10,
-                flexWrap: 'wrap',
+                width: 32, height: 32, borderRadius: 8, background: 'var(--surf-1)',
+                border: '1px solid var(--bord)', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', color: 'var(--text-2)',
               }}
+              aria-label="Back to tenants"
             >
-              <span>{t.slug}</span>
-              {t.industry && <span>· {t.industry}</span>}
-              {t.sizeBand && <span>· {t.sizeBand} employees</span>}
-              {t.city && (
-                <span>
-                  · {t.city}
-                  {t.stateCode ? `, ${t.stateCode}` : ''}
-                </span>
-              )}
-              <span>· Joined {timeAgo(t.createdAt)}</span>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <Btn
-              kind="secondary"
-              size="sm"
-              icon={<Icon.warn size={13} />}
-              onClick={() => setTab('settings')}
-            >
-              Extend trial
-            </Btn>
-            <Btn
-              kind="ghost"
-              size="sm"
-              icon={<Icon.shield size={13} />}
-              onClick={() => setTab('settings')}
-            >
-              {t.status === 'suspended' ? 'Reactivate' : 'Suspend'}
-            </Btn>
-          </div>
-        </div>
-
-        {/* Tab strip */}
-        <div
-          style={{
-            display: 'flex',
-            gap: 4,
-            borderBottom: '1px solid var(--bord)',
-            marginBottom: 18,
-          }}
-        >
-          {TABS.map((t) => {
-            const active = tab === t.key
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
+              <Icon.chevL size={14} />
+            </Link>
+            <Avatar name={t.name} size="lg" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>
+                  {t.name}
+                </h1>
+                <Pill tone={statusTone(t.status)} dot>{t.status.replace('_', ' ')}</Pill>
+                {t.subscription?.planCode && <Pill tone="purple">{t.subscription.planCode}</Pill>}
+                {t.verifiedAt ? (
+                  <Pill tone="green" dot>Verified</Pill>
+                ) : (
+                  <Pill tone="yellow" dot>Unverified</Pill>
+                )}
+              </div>
+              <div
                 style={{
-                  background: 'transparent',
-                  border: 0,
-                  padding: '10px 14px',
-                  fontSize: 12.5,
-                  fontWeight: active ? 800 : 700,
-                  color: active ? '#fff' : 'var(--text-mute)',
-                  borderBottom: active ? '2px solid var(--blue)' : '2px solid transparent',
-                  marginBottom: -1,
-                  cursor: 'pointer',
-                  letterSpacing: '-0.01em',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
+                  marginTop: 5, fontSize: 12, fontWeight: 600, color: 'var(--text-mute)',
+                  display: 'flex', gap: 12, flexWrap: 'wrap', fontFamily: 'var(--font-mono)',
                 }}
               >
-                {t.label}
-              </button>
-            )
-          })}
+                <span>{t.slug}.flickssuite.com</span>
+                <span>·</span>
+                <span>{t.gstin ? `GSTIN ${t.gstin}` : 'no GSTIN'}</span>
+                <span>·</span>
+                <span>Joined {timeAgo(t.createdAt)}</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} onClick={() => setTab('settings')}>
+                Extend trial
+              </Btn>
+              <Btn kind="secondary" size="sm" icon={<Icon.shield size={13} />} onClick={() => setTab('settings')}>
+                {t.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+              </Btn>
+              <Btn kind="primary" size="sm" icon={<Icon.zap size={13} />} onClick={() => setTab('members')}>
+                Impersonate
+              </Btn>
+            </div>
+          </div>
+
+          {/* Tab strip embedded in the header card */}
+          <div
+            style={{
+              display: 'flex',
+              padding: '0 22px',
+              borderTop: '1px solid var(--bord)',
+              background: 'rgba(0,0,0,.2)',
+              overflowX: 'auto',
+            }}
+          >
+            {TABS.map((x) => {
+              const active = tab === x.key
+              return (
+                <button
+                  key={x.key}
+                  type="button"
+                  onClick={() => setTab(x.key)}
+                  style={{
+                    background: 'transparent',
+                    border: 0,
+                    padding: '13px 14px',
+                    fontSize: 12.5,
+                    fontWeight: active ? 800 : 700,
+                    color: active ? '#fff' : 'var(--text-mute)',
+                    borderBottom: active ? '2px solid var(--blue)' : '2px solid transparent',
+                    marginBottom: -1,
+                    cursor: 'pointer',
+                    letterSpacing: '-0.01em',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {x.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
 
         {tab === 'overview' && <OverviewTab tenant={t} />}
