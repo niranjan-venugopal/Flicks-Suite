@@ -1,12 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Shield, RefreshCw, ArrowRight, Copy, Check } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { RefreshCw, Copy, Check } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { LogoMark } from '@/components/proto'
+import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
+import { Btn, Icon } from '@/components/proto'
 import { useEnrollTotp, useConfirmTotp } from '@/lib/api/queries/use-auth'
 
 export default function TotpSetupPage() {
@@ -64,91 +62,76 @@ export default function TotpSetupPage() {
   }
 
   return (
-    <div className="relative min-h-screen bg-brand-bg flex items-center justify-center overflow-hidden">
-      <PageGlows variant="auth" />
-      <div className="relative z-10 w-full max-w-md px-4">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-4">
-            <LogoMark size={36} />
-            <span className="text-xl font-bold text-white tracking-tight">
-              flicks<span className="text-brand-blue">.</span>
-            </span>
+    <AuthLayout>
+      <AuthCard>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div
+            style={{
+              width: 60, height: 60, margin: '0 auto 16px', borderRadius: 16,
+              background: 'rgba(155,123,250,.12)', border: '1px solid rgba(155,123,250,.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--purple)',
+            }}
+          >
+            <Icon.shield size={26} />
+          </div>
+          <div className="t-h2" style={{ marginBottom: 8 }}>Set up two-factor</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            Platform admin accounts require an authenticator app. Add this secret to
+            Google Authenticator, 1Password, or Authy, then enter the 6-digit code to confirm.
           </div>
         </div>
 
-        <div className="glass rounded-xl p-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-8 h-8 bg-brand-purple/20 rounded-full flex items-center justify-center">
-              <Shield className="w-4 h-4 text-brand-purple" />
-            </div>
-            <h1 className="text-2xl font-bold text-white">Set up two-factor</h1>
+        {enroll.isPending && !secret ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0', color: 'var(--text-mute)' }}>
+            <RefreshCw className="w-5 h-5 animate-spin" />
           </div>
-          <p className="text-brand-muted text-sm mb-6">
-            Platform admin accounts require an authenticator app. Add this
-            secret to Google Authenticator, 1Password, or Authy, then enter the
-            6-digit code to confirm.
-          </p>
-
-          {enroll.isPending && !secret ? (
-            <div className="flex items-center justify-center py-8 text-brand-muted">
-              <RefreshCw className="w-5 h-5 animate-spin" />
-            </div>
-          ) : (
-            <>
-              <div className="mb-6">
-                <div className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-2">
-                  Setup key
-                </div>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-3 text-white font-mono text-sm break-all">
-                    {secret || '—'}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={copySecret}
-                    className="shrink-0 w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white transition-colors"
-                    aria-label="Copy setup key"
-                  >
-                    {copied ? (
-                      <Check className="w-4 h-4 text-brand-green" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <form onSubmit={handleConfirm} className="space-y-5">
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={code}
-                  onChange={(e) =>
-                    setCode(e.target.value.replace(/\D/g, '').slice(0, 6))
-                  }
-                  placeholder="123456"
-                  className="text-center tracking-[0.5em] text-xl bg-white/5 border-white/10 text-white h-14"
-                />
-                <Button
-                  type="submit"
-                  className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold"
-                  disabled={confirm.isPending || !secret}
+        ) : (
+          <>
+            <div style={{ marginBottom: 18 }}>
+              <label className="label">Setup key</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <code
+                  style={{
+                    flex: 1, background: 'var(--surf-2)', border: '1px solid var(--bord)',
+                    borderRadius: 'var(--r-sm)', padding: '12px 14px', color: '#fff',
+                    fontFamily: 'var(--font-mono)', fontSize: 13, wordBreak: 'break-all',
+                  }}
                 >
-                  {confirm.isPending ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <>
-                      Enable two-factor
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </>
-                  )}
-                </Button>
-              </form>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
+                  {secret || '—'}
+                </code>
+                <Btn
+                  kind="secondary"
+                  onClick={copySecret}
+                  icon={copied ? <Check className="w-4 h-4" style={{ color: 'var(--green)' }} /> : <Copy className="w-4 h-4" />}
+                  aria-label="Copy setup key"
+                  style={{ height: 44, width: 44 }}
+                />
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirm} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <input
+                className="input"
+                inputMode="numeric"
+                maxLength={6}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
+                style={{ textAlign: 'center', letterSpacing: '0.5em', fontSize: 20, height: 56 }}
+              />
+              <Btn
+                kind="primary"
+                type="submit"
+                disabled={confirm.isPending || !secret}
+                style={{ height: 48, fontSize: 14 }}
+                iconRight={<Icon.arrow size={16} />}
+              >
+                {confirm.isPending ? 'Enabling…' : 'Enable two-factor'}
+              </Btn>
+            </form>
+          </>
+        )}
+      </AuthCard>
+    </AuthLayout>
   )
 }

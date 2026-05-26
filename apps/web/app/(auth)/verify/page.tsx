@@ -3,11 +3,8 @@
 import { useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { motion } from 'framer-motion'
-import { CheckCircle2, RefreshCw, ShieldAlert } from 'lucide-react'
-import { LogoMark } from '@/components/proto'
-import { Button } from '@/components/ui/button'
-import { PageGlows } from '@/components/layout/PageGlows'
+import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
+import { Btn, Icon } from '@/components/proto'
 import { useVerifyMagicLinkQuery } from '@/lib/api/queries/use-auth'
 
 export default function VerifyMagicLinkPage() {
@@ -19,29 +16,41 @@ export default function VerifyMagicLinkPage() {
   useEffect(() => {
     if (isSuccess) {
       const timeout = setTimeout(() => {
-        // Hard navigation so the protected layout boots with the fresh
-        // auth cookies already committed.
         window.location.assign('/dashboard')
       }, 800)
       return () => clearTimeout(timeout)
     }
   }, [isSuccess])
 
+  const iconWrap = (color: string, bg: string, node: React.ReactNode) => (
+    <div
+      style={{
+        width: 60, height: 60, margin: '0 auto 16px', borderRadius: 16,
+        background: bg, border: `1px solid ${bg.replace('.12', '.3')}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', color,
+      }}
+    >
+      {node}
+    </div>
+  )
+
   const renderState = () => {
-    if (!token) {
+    if (!token || isError) {
       return (
-        <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-coral/15">
-            <ShieldAlert className="h-6 w-6 text-brand-coral" />
+        <div style={{ textAlign: 'center' }}>
+          {iconWrap('var(--coral)', 'rgba(248,120,107,.12)', <Icon.warn size={26} />)}
+          <div className="t-h2" style={{ marginBottom: 8 }}>
+            {!token ? 'Missing token' : 'Link expired or invalid'}
           </div>
-          <h1 className="text-2xl font-bold text-white font-gilroy mb-2">Missing token</h1>
-          <p className="text-brand-muted text-sm mb-6">
-            This link is missing the verification token. Please request a new one.
-          </p>
-          <Link href="/login">
-            <Button className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold shadow-glow-blue transition-all">
-              Back to sign in
-            </Button>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 22 }}>
+            {!token
+              ? 'This link is missing the verification token. Please request a new one.'
+              : error instanceof Error
+                ? error.message
+                : 'This magic link is no longer valid. Request a new one to continue.'}
+          </div>
+          <Link href="/login" style={{ display: 'block' }}>
+            <Btn kind="primary" style={{ width: '100%', height: 46 }}>Back to sign in</Btn>
           </Link>
         </div>
       )
@@ -49,51 +58,24 @@ export default function VerifyMagicLinkPage() {
 
     if (isLoading) {
       return (
-        <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-blue/15">
-            <RefreshCw className="h-6 w-6 text-brand-blue animate-spin" />
+        <div style={{ textAlign: 'center' }}>
+          {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.refresh size={26} />)}
+          <div className="t-h2" style={{ marginBottom: 8 }}>Verifying your link</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+            Hang tight while we sign you in securely…
           </div>
-          <h1 className="text-2xl font-bold text-white font-gilroy mb-2">
-            Verifying your link
-          </h1>
-          <p className="text-brand-muted text-sm">
-            Hang tight while we sign you in securely...
-          </p>
         </div>
       )
     }
 
     if (isSuccess) {
       return (
-        <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-green/15">
-            <CheckCircle2 className="h-6 w-6 text-brand-green" />
+        <div style={{ textAlign: 'center' }}>
+          {iconWrap('var(--green)', 'rgba(39,210,128,.12)', <Icon.check size={26} />)}
+          <div className="t-h2" style={{ marginBottom: 8 }}>You&apos;re in</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+            Redirecting to your dashboard…
           </div>
-          <h1 className="text-2xl font-bold text-white font-gilroy mb-2">You're in</h1>
-          <p className="text-brand-muted text-sm">Redirecting to your dashboard...</p>
-        </div>
-      )
-    }
-
-    if (isError) {
-      return (
-        <div className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-coral/15">
-            <ShieldAlert className="h-6 w-6 text-brand-coral" />
-          </div>
-          <h1 className="text-2xl font-bold text-white font-gilroy mb-2">
-            Link expired or invalid
-          </h1>
-          <p className="text-brand-muted text-sm mb-6">
-            {error instanceof Error
-              ? error.message
-              : 'This magic link is no longer valid. Request a new one to continue.'}
-          </p>
-          <Link href="/login">
-            <Button className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold shadow-glow-blue transition-all">
-              Back to sign in
-            </Button>
-          </Link>
         </div>
       )
     }
@@ -102,33 +84,8 @@ export default function VerifyMagicLinkPage() {
   }
 
   return (
-    <div className="relative min-h-screen bg-brand-bg flex items-center justify-center overflow-hidden">
-      <PageGlows variant="auth" />
-
-      <div className="relative z-10 w-full max-w-md px-4">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-10"
-        >
-          <div className="inline-flex items-center gap-3 mb-6">
-            <LogoMark size={40} />
-            <span className="text-2xl font-bold text-white tracking-tight">
-              flicks<span className="text-brand-blue">.</span>
-            </span>
-          </div>
-          <p className="text-brand-muted text-sm">HR that works at startup speed</p>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass rounded-xl p-8"
-        >
-          {renderState()}
-        </motion.div>
-      </div>
-    </div>
+    <AuthLayout>
+      <AuthCard>{renderState()}</AuthCard>
+    </AuthLayout>
   )
 }

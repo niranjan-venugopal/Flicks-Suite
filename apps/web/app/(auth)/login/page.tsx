@@ -4,29 +4,16 @@ import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowRight, RefreshCw, Mail, Shield } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import Link from 'next/link'
 import { useToast } from '@/components/ui/use-toast'
-import { PageGlows } from '@/components/layout/PageGlows'
-import { LogoMark } from '@/components/proto'
+import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
+import { Btn, Icon } from '@/components/proto'
 import { useRequestOtp, useVerifyOtp, useCompleteTotp } from '@/lib/api/queries/use-auth'
 
 const emailSchema = z.object({
   email: z.string().email('Enter a valid email address'),
 })
-
-const otpSchema = z.object({
-  code: z
-    .string()
-    .length(6, 'Enter all 6 digits')
-    .regex(/^\d{6}$/, 'Only digits allowed'),
-})
-
 type EmailForm = z.infer<typeof emailSchema>
-type OtpForm = z.infer<typeof otpSchema>
 
 export default function LoginPage() {
   const { toast } = useToast()
@@ -47,7 +34,6 @@ export default function LoginPage() {
     defaultValues: { email: '' },
   })
 
-  // Countdown for resend OTP
   useEffect(() => {
     if (countdown <= 0) return
     const timer = setTimeout(() => setCountdown((c) => c - 1), 1000)
@@ -64,7 +50,7 @@ export default function LoginPage() {
     } catch {
       toast({
         title: 'Something went wrong',
-        description: 'Could not send OTP. Please try again.',
+        description: 'Could not send the code. Please try again.',
         variant: 'destructive',
       })
     }
@@ -72,19 +58,11 @@ export default function LoginPage() {
 
   const handleOtpInput = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return
-    const newDigits = [...otpDigits]
-    newDigits[index] = value.slice(-1)
-    setOtpDigits(newDigits)
-
-    // Auto-advance
-    if (value && index < 5) {
-      otpInputsRef.current[index + 1]?.focus()
-    }
-
-    // Auto-submit when all 6 entered
-    if (newDigits.every((d) => d !== '')) {
-      handleOtpSubmit(newDigits.join(''))
-    }
+    const next = [...otpDigits]
+    next[index] = value.slice(-1)
+    setOtpDigits(next)
+    if (value && index < 5) otpInputsRef.current[index + 1]?.focus()
+    if (next.every((d) => d !== '')) handleOtpSubmit(next.join(''))
   }
 
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
@@ -96,26 +74,21 @@ export default function LoginPage() {
   const handleOtpSubmit = async (code: string) => {
     try {
       const result = await verifyOtp.mutateAsync({ email, code })
-      // FAM enrolled in TOTP — no session yet, collect the second factor.
       if (result.requiresTotp && result.challengeToken) {
         setChallengeToken(result.challengeToken)
         setTotpCode('')
         setStep('totp')
         return
       }
-      // FAM not yet enrolled — they have a session; send them to set up TOTP.
       if (result.requiresTotpEnrollment) {
         window.location.assign('/totp-setup')
         return
       }
-      // Hard navigation so the protected layout sees the fresh auth cookies
-      // and useCurrentUser runs against a clean tree (router.push alone can
-      // race with the cookie being committed to the jar).
       window.location.assign('/dashboard')
     } catch {
       toast({
         title: 'Invalid code',
-        description: 'The OTP is incorrect or has expired. Try again.',
+        description: 'The code is incorrect or has expired. Try again.',
         variant: 'destructive',
       })
       setOtpDigits(['', '', '', '', '', ''])
@@ -147,231 +120,192 @@ export default function LoginPage() {
       await requestOtp.mutateAsync({ email })
       setCountdown(60)
       setOtpDigits(['', '', '', '', '', ''])
-      toast({ title: 'Code sent', description: `New OTP sent to ${email}` })
+      toast({ title: 'Code sent', description: `New code sent to ${email}` })
     } catch {
       toast({ title: 'Failed to resend', variant: 'destructive' })
     }
   }
 
-  return (
-    <div className="relative min-h-screen bg-brand-bg flex items-center justify-center overflow-hidden">
-      <PageGlows variant="auth" />
-
-      <div className="relative z-10 w-full max-w-md px-4">
-        {/* Logo */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-10"
-        >
-          <div className="inline-flex items-center gap-3 mb-6">
-            <LogoMark size={40} />
-            <span className="text-2xl font-bold text-white tracking-tight">
-              flicks<span className="text-brand-blue">.</span>
-            </span>
+  // ─── Email step ──────────────────────────────────────────────────────────
+  if (step === 'email') {
+    return (
+      <AuthLayout>
+        <AuthCard>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <div className="t-h1" style={{ marginBottom: 8 }}>Welcome back</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+              Sign in to your Flicks Suite workspace.
+            </div>
           </div>
-          <p className="text-brand-muted text-sm">HR that works at startup speed</p>
-        </motion.div>
 
-        {/* Card */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="glass rounded-xl p-8"
+          <form onSubmit={handleEmailSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <label className="label">Work email</label>
+              <input
+                className="input"
+                type="email"
+                placeholder="you@company.com"
+                autoFocus
+                {...emailForm.register('email')}
+              />
+              {emailForm.formState.errors.email && (
+                <div style={{ fontSize: 11.5, color: 'var(--coral)', marginTop: 6 }}>
+                  {emailForm.formState.errors.email.message}
+                </div>
+              )}
+            </div>
+            <Btn
+              kind="primary"
+              type="submit"
+              disabled={requestOtp.isPending}
+              style={{ height: 48, fontSize: 14 }}
+              iconRight={<Icon.arrow size={16} />}
+            >
+              {requestOtp.isPending ? 'Sending…' : 'Send code & continue'}
+            </Btn>
+          </form>
+
+          <div style={{ textAlign: 'center', marginTop: 22, fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            New to Flicks?{' '}
+            <Link href="/onboarding" style={{ color: 'var(--blue)', fontWeight: 800 }}>
+              Create a workspace
+            </Link>
+          </div>
+        </AuthCard>
+      </AuthLayout>
+    )
+  }
+
+  // ─── TOTP step (FAM second factor) ────────────────────────────────────────
+  if (step === 'totp') {
+    return (
+      <AuthLayout>
+        <AuthCard>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div
+              style={{
+                width: 60, height: 60, margin: '0 auto 16px', borderRadius: 16,
+                background: 'rgba(155,123,250,.12)', border: '1px solid rgba(155,123,250,.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--purple)',
+              }}
+            >
+              <Icon.shield size={26} />
+            </div>
+            <div className="t-h2" style={{ marginBottom: 8 }}>Two-factor authentication</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Enter the 6-digit code from your authenticator app to finish signing in.
+            </div>
+          </div>
+
+          <form onSubmit={handleTotpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <input
+              className="input"
+              inputMode="numeric"
+              maxLength={6}
+              autoFocus
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="123456"
+              style={{ textAlign: 'center', letterSpacing: '0.5em', fontSize: 20, height: 56 }}
+            />
+            <Btn
+              kind="primary"
+              type="submit"
+              disabled={completeTotp.isPending}
+              style={{ height: 48, fontSize: 14 }}
+              iconRight={<Icon.arrow size={16} />}
+            >
+              {completeTotp.isPending ? 'Verifying…' : 'Verify & continue'}
+            </Btn>
+          </form>
+        </AuthCard>
+      </AuthLayout>
+    )
+  }
+
+  // ─── OTP step ──────────────────────────────────────────────────────────────
+  return (
+    <AuthLayout>
+      <AuthCard>
+        <button
+          type="button"
+          onClick={() => { setStep('email'); setOtpDigits(['', '', '', '', '', '']) }}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700,
+            color: 'var(--text-mute)', background: 'none', border: 'none', cursor: 'pointer', marginBottom: 16,
+          }}
         >
-          <AnimatePresence mode="wait">
-            {step === 'totp' ? (
-              <motion.div
-                key="totp-step"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-8 h-8 bg-brand-purple/20 rounded-full flex items-center justify-center">
-                    <Shield className="w-4 h-4 text-brand-purple" />
-                  </div>
-                  <h1 className="text-2xl font-bold text-white">Two-factor</h1>
-                </div>
-                <p className="text-brand-muted text-sm mb-8">
-                  Enter the 6-digit code from your authenticator app to finish
-                  signing in.
-                </p>
-                <form onSubmit={handleTotpSubmit} className="space-y-5">
-                  <Input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    autoFocus
-                    value={totpCode}
-                    onChange={(e) =>
-                      setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
-                    }
-                    placeholder="123456"
-                    className="text-center tracking-[0.5em] text-xl bg-white/5 border-white/10 text-white h-14"
-                  />
-                  <Button
-                    type="submit"
-                    className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold"
-                    disabled={completeTotp.isPending}
-                  >
-                    {completeTotp.isPending ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        Verify
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </>
-                    )}
-                  </Button>
-                </form>
-              </motion.div>
-            ) : step === 'email' ? (
-              <motion.div
-                key="email-step"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-              >
-                <h1 className="text-2xl font-bold text-white mb-2">Sign in</h1>
-                <p className="text-brand-muted text-sm mb-8">
-                  Enter your work email — we'll send a one-time code
-                </p>
+          ← Change email
+        </button>
 
-                <form onSubmit={handleEmailSubmit} className="space-y-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="email" className="text-white/70 text-sm">
-                      Work email
-                    </Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="you@company.com"
-                        className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-brand-blue focus:ring-brand-blue/20 h-12"
-                        autoFocus
-                        {...emailForm.register('email')}
-                      />
-                    </div>
-                    {emailForm.formState.errors.email && (
-                      <p className="text-brand-coral text-xs">
-                        {emailForm.formState.errors.email.message}
-                      </p>
-                    )}
-                  </div>
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div
+            style={{
+              width: 60, height: 60, margin: '0 auto 16px', borderRadius: 16,
+              background: 'rgba(62,123,250,.12)', border: '1px solid rgba(62,123,250,.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--blue)',
+            }}
+          >
+            <Icon.mail size={26} />
+          </div>
+          <div className="t-h2" style={{ marginBottom: 8 }}>Check your email</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            We sent a 6-digit code to <strong style={{ color: '#fff' }}>{email}</strong>. The code expires in 10 minutes.
+          </div>
+        </div>
 
-                  <Button
-                    type="submit"
-                    className="w-full h-12 bg-brand-blue hover:bg-brand-blue/90 text-white font-semibold shadow-glow-blue transition-all"
-                    disabled={requestOtp.isPending}
-                  >
-                    {requestOtp.isPending ? (
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <>
-                        Continue
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </>
-                    )}
-                  </Button>
-                </form>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 20 }}>
+          {otpDigits.map((digit, i) => (
+            <input
+              key={i}
+              ref={(el) => { otpInputsRef.current[i] = el }}
+              value={digit}
+              inputMode="numeric"
+              maxLength={1}
+              onChange={(e) => handleOtpInput(i, e.target.value)}
+              onKeyDown={(e) => handleOtpKeyDown(i, e)}
+              style={{
+                width: 48, height: 60, textAlign: 'center', fontSize: 24, fontWeight: 800,
+                letterSpacing: '-0.02em', color: '#fff', background: 'var(--surf-2)',
+                border: `1.5px solid ${digit ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
+                borderRadius: 12, outline: 'none', transition: 'border-color .2s',
+              }}
+            />
+          ))}
+        </div>
 
-                <p className="text-center text-brand-muted text-xs mt-6">
-                  By continuing, you agree to our{' '}
-                  <a href="/terms" className="text-white/60 hover:text-white underline">
-                    Terms
-                  </a>{' '}
-                  and{' '}
-                  <a href="/privacy" className="text-white/60 hover:text-white underline">
-                    Privacy Policy
-                  </a>
-                </p>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="otp-step"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-8 h-8 bg-brand-green/20 rounded-full flex items-center justify-center">
-                    <Shield className="w-4 h-4 text-brand-green" />
-                  </div>
-                  <h1 className="text-2xl font-bold text-white">Check your inbox</h1>
-                </div>
-                <p className="text-brand-muted text-sm mb-8">
-                  We sent a 6-digit code to{' '}
-                  <span className="text-white font-medium">{email}</span>
-                </p>
+        {verifyOtp.isPending && (
+          <div style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 14 }}>
+            Verifying…
+          </div>
+        )}
 
-                {/* OTP Input */}
-                <div className="flex gap-3 justify-center mb-8">
-                  {otpDigits.map((digit, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => { otpInputsRef.current[i] = el }}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={1}
-                      value={digit}
-                      onChange={(e) => handleOtpInput(i, e.target.value)}
-                      onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                      className={[
-                        'w-12 h-14 text-center text-xl font-bold rounded-lg',
-                        'bg-white/5 border-2 text-white',
-                        'focus:outline-none focus:ring-0 transition-all',
-                        digit
-                          ? 'border-brand-blue shadow-glow-blue'
-                          : 'border-white/10 focus:border-brand-blue/50',
-                      ].join(' ')}
-                    />
-                  ))}
-                </div>
+        <div style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+          Didn&apos;t get it?{' '}
+          {countdown > 0 ? (
+            <span>Resend in 0:{String(countdown).padStart(2, '0')}</span>
+          ) : (
+            <a
+              onClick={handleResend}
+              style={{ color: 'var(--blue)', fontWeight: 800, cursor: 'pointer' }}
+            >
+              Resend code
+            </a>
+          )}
+        </div>
 
-                {verifyOtp.isPending && (
-                  <div className="text-center text-brand-muted text-sm mb-4 flex items-center justify-center gap-2">
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    Verifying...
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between text-sm">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStep('email')
-                      setOtpDigits(['', '', '', '', '', ''])
-                    }}
-                    className="text-brand-muted hover:text-white transition-colors"
-                  >
-                    ← Change email
-                  </button>
-
-                  {countdown > 0 ? (
-                    <span className="text-brand-muted">Resend in {countdown}s</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleResend}
-                      className="text-brand-blue hover:text-brand-blue/80 transition-colors"
-                      disabled={requestOtp.isPending}
-                    >
-                      Resend code
-                    </button>
-                  )}
-                </div>
-
-                <p className="text-brand-muted text-xs mt-6 text-center">
-                  You can also use the magic link in your email for instant sign-in
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      </div>
-    </div>
+        <div
+          style={{
+            marginTop: 22, padding: 14, background: 'rgba(62,123,250,.06)',
+            border: '1px solid rgba(62,123,250,.2)', borderRadius: 10, display: 'flex', gap: 10,
+          }}
+        >
+          <Icon.info size={16} style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }} />
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            You can also <strong style={{ color: '#fff' }}>tap the magic link</strong> in the email to sign in instantly.
+          </div>
+        </div>
+      </AuthCard>
+    </AuthLayout>
   )
 }
