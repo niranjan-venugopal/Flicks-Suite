@@ -389,9 +389,11 @@ export class LeaveService {
     // The "approver" is the requesting employee's reporting manager. To find their
     // email we step outside RLS via the admin client (manager may be in same
     // tenant but resolving the user record requires a join we don't need scoped).
-    this.notifyOnApply(tenantId, employeeId, result.request.id, result.type.name).catch(
-      (err) => this.logger.warn(`Leave apply notification failed: ${err}`),
-    );
+    this.notifyOnApply(tenantId, employeeId, result.request.id, result.type.name, {
+      startDate: result.request.start_date,
+      endDate: result.request.end_date,
+      days: Number(result.request.total_days),
+    }).catch((err) => this.logger.warn(`Leave apply notification failed: ${err}`));
 
     await this.auditService.log({
       tenantId,
@@ -424,6 +426,7 @@ export class LeaveService {
     employeeId: string,
     requestId: string,
     leaveTypeName: string,
+    dates: { startDate: string; endDate: string; days: number },
   ) {
     // Resolve the requesting employee + their manager's email.
     const [employee] = await this.databaseService.withTenant(tenantId, (tx) =>
@@ -455,9 +458,9 @@ export class LeaveService {
     await this.notificationsService.sendEmail('leave-requested', manager.email, {
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       leaveType: leaveTypeName,
-      startDate: '',
-      endDate: '',
-      days: 0,
+      startDate: dates.startDate,
+      endDate: dates.endDate,
+      days: dates.days,
     });
     this.logger.log(`Leave-apply email queued to ${manager.email} (req=${requestId})`);
   }
