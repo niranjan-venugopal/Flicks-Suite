@@ -792,12 +792,17 @@ export class TimesheetService {
               ? 'timesheet-rejected'
               : 'timesheet-rework';
         await this.notificationsService
-          .sendEmail(tpl, ownerUser.email, {
-            employeeName: ownerUser.fullName ?? 'there',
-            periodStart: period.period_start,
-            periodEnd: period.period_end,
-            comment: dto.comment,
-          })
+          .sendEmail(
+            tpl,
+            ownerUser.email,
+            {
+              employeeName: ownerUser.fullName ?? 'there',
+              periodStart: period.period_start,
+              periodEnd: period.period_end,
+              comment: dto.comment,
+            },
+            { userId: ownerUser.userId, event: 'timesheet_reviewed' },
+          )
           .catch((e) =>
             this.logger.warn(
               `Could not send ${tpl} email to ${ownerUser.email}: ${(e as Error).message}`,

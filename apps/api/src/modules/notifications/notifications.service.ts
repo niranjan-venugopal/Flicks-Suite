@@ -2,11 +2,53 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { notifications } from '@flicks/db/schema';
+import { notifications, notificationPreferences } from '@flicks/db/schema';
 import type { Notification } from '@flicks/db/schema';
 import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+
+// ─── Notification preference taxonomy (PRD §9.3) ───────────────────────────────
+// User-configurable events. WhatsApp/SMS channels are Phase 2 — only in_app +
+// email are exposed. Absence of a stored row = the default below.
+export const NOTIFICATION_EVENTS = [
+  'leave_requested',
+  'leave_reviewed',
+  'timesheet_submitted',
+  'timesheet_reviewed',
+  'regularization_requested',
+  'regularization_reviewed',
+  'onboarding_submitted',
+  'onboarding_reviewed',
+] as const;
+export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
+export type NotificationChannel = 'in_app' | 'email';
+
+// PRD §9.3 defaults — mostly on; a couple of employee-facing emails default off.
+const PREFERENCE_DEFAULTS: Record<
+  NotificationEvent,
+  { in_app: boolean; email: boolean }
+> = {
+  leave_requested: { in_app: true, email: true },
+  leave_reviewed: { in_app: true, email: true },
+  timesheet_submitted: { in_app: true, email: true },
+  timesheet_reviewed: { in_app: true, email: false },
+  regularization_requested: { in_app: true, email: true },
+  regularization_reviewed: { in_app: true, email: true },
+  onboarding_submitted: { in_app: true, email: true },
+  onboarding_reviewed: { in_app: true, email: true },
+};
+
+// Map the free-form in-app `type` string (e.g. 'timesheet.approve',
+// 'leave.approved') to a preference event. Unmapped types are always
+// delivered (critical/security — e.g. impersonation).
+function eventForInAppType(type: string): NotificationEvent | null {
+  if (type.startsWith('timesheet.')) return 'timesheet_reviewed';
+  if (type.startsWith('leave.')) return 'leave_reviewed';
+  if (type.startsWith('regularization.')) return 'regularization_reviewed';
+  if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
+  return null;
+}
 
 // API shape returned to the client. Snake → camel.
 export interface InAppNotification {
@@ -84,7 +126,26 @@ export class NotificationsService {
     template: EmailTemplate,
     to: string,
     props: Record<string, unknown>,
+    opts?: { userId?: string; event?: NotificationEvent },
   ): Promise<void> {
+    // Honour the recipient's per-event email preference when this send is
+    // tied to a preference-managed event AND we know the recipient's user id.
+    // Transactional emails (OTP, magic link, welcome, account deletion) pass
+    // no event and are always delivered.
+    if (opts?.userId && opts.event) {
+      const allowed = await this.isChannelEnabled(
+        opts.userId,
+        opts.event,
+        'email',
+      );
+      if (!allowed) {
+        this.logger.log(
+          `Email [${template}] to ${to} suppressed by preference (${opts.event}/email)`,
+        );
+        return;
+      }
+    }
+
     const from = `${this.configService.get('EMAIL_FROM_NAME', 'Flicks Suite')} <${this.configService.get('EMAIL_FROM', 'noreply@flicks.app')}>`;
 
     try {
@@ -561,6 +622,76 @@ export class NotificationsService {
     }
   }
 
+  // ─── Preferences (PRD §9.3) ──────────────────────────────────────────────
+
+  /** True if the user has the given channel enabled for the event (default-on). */
+  async isChannelEnabled(
+    userId: string,
+    event: NotificationEvent,
+    channel: NotificationChannel,
+  ): Promise<boolean> {
+    const [row] = await this.dbAdmin
+      .select({ enabled: notificationPreferences.enabled })
+      .from(notificationPreferences)
+      .where(
+        and(
+          eq(notificationPreferences.user_id, userId),
+          eq(notificationPreferences.event_type, event),
+          eq(notificationPreferences.channel, channel),
+        ),
+      )
+      .limit(1);
+    if (row) return row.enabled;
+    return PREFERENCE_DEFAULTS[event]?.[channel] ?? true;
+  }
+
+  /** The full preference matrix for a user, merging stored rows over defaults. */
+  async getPreferences(userId: string) {
+    const stored = await this.dbAdmin
+      .select({
+        event: notificationPreferences.event_type,
+        channel: notificationPreferences.channel,
+        enabled: notificationPreferences.enabled,
+      })
+      .from(notificationPreferences)
+      .where(eq(notificationPreferences.user_id, userId));
+
+    const overrides = new Map(
+      stored.map((s) => [`${s.event}:${s.channel}`, s.enabled]),
+    );
+
+    return {
+      events: NOTIFICATION_EVENTS.map((event) => ({
+        event,
+        inApp:
+          overrides.get(`${event}:in_app`) ?? PREFERENCE_DEFAULTS[event].in_app,
+        email:
+          overrides.get(`${event}:email`) ?? PREFERENCE_DEFAULTS[event].email,
+      })),
+    };
+  }
+
+  /** Upsert a single (event, channel) preference for the user. */
+  async setPreference(
+    userId: string,
+    event: NotificationEvent,
+    channel: NotificationChannel,
+    enabled: boolean,
+  ) {
+    await this.dbAdmin
+      .insert(notificationPreferences)
+      .values({ user_id: userId, event_type: event, channel, enabled })
+      .onConflictDoUpdate({
+        target: [
+          notificationPreferences.user_id,
+          notificationPreferences.event_type,
+          notificationPreferences.channel,
+        ],
+        set: { enabled, updated_at: new Date() },
+      });
+    return { event, channel, enabled };
+  }
+
   async createInAppNotification(
     userId: string,
     type: string,
@@ -568,6 +699,19 @@ export class NotificationsService {
     linkUrl?: string | null,
     tenantId?: string | null,
   ): Promise<void> {
+    // Respect the user's in-app preference for preference-managed events.
+    // Unmapped types (security/critical, e.g. impersonation) always deliver.
+    const event = eventForInAppType(type);
+    if (event) {
+      const allowed = await this.isChannelEnabled(userId, event, 'in_app');
+      if (!allowed) {
+        this.logger.log(
+          `In-app [${type}] for ${userId} suppressed by preference (${event}/in_app)`,
+        );
+        return;
+      }
+    }
+
     await this.dbAdmin.insert(notifications).values({
       user_id: userId,
       type,

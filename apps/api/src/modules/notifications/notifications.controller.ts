@@ -3,6 +3,8 @@ import {
   Get,
   Patch,
   Post,
+  Put,
+  Body,
   Param,
   Query,
   HttpCode,
@@ -16,6 +18,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
+import { UpdateNotificationPreferenceDto } from './notifications.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 
@@ -38,6 +41,28 @@ export class NotificationsController {
   ) {
     const parsed = limit ? Number(limit) : 10;
     return this.notificationsService.getUnread(user.sub, parsed);
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get my notification preference matrix (PRD §9.3)' })
+  @ApiResponse({ status: 200, description: 'Per-event in-app + email toggles' })
+  async getPreferences(@CurrentUser() user: JwtPayload) {
+    return this.notificationsService.getPreferences(user.sub);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Update one notification preference toggle' })
+  @ApiResponse({ status: 200, description: 'Updated preference' })
+  async setPreference(
+    @Body() dto: UpdateNotificationPreferenceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.notificationsService.setPreference(
+      user.sub,
+      dto.event,
+      dto.channel,
+      dto.enabled,
+    );
   }
 
   @Get()

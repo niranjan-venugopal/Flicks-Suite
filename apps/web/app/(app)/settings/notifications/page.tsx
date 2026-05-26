@@ -1,245 +1,148 @@
 'use client'
 
-import { Icon, Pill, SectionHead } from '@/components/proto'
+import { Loader2 } from 'lucide-react'
+import { Pill, SectionHead, Toggle } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
+import { useToast } from '@/components/ui/use-toast'
+import {
+  useNotificationPreferences,
+  useUpdateNotificationPreference,
+  type NotificationEvent,
+} from '@/lib/api/queries/use-notifications'
 
-interface ChannelRow {
-  channel: string
-  icon: 'mail' | 'bell' | 'phone' | 'zap'
-  status: 'live' | 'soon'
-  description: string
+// Human labels + grouping for the 8 preference-managed events (PRD §9.3).
+const EVENT_META: Record<
+  NotificationEvent,
+  { group: string; title: string; desc: string }
+> = {
+  leave_requested: { group: 'Leave', title: 'Request submitted', desc: 'You are the approving manager' },
+  leave_reviewed: { group: 'Leave', title: 'Approved / rejected', desc: 'Your leave request was reviewed' },
+  timesheet_submitted: { group: 'Timesheet', title: 'Submitted', desc: 'A report submitted their week' },
+  timesheet_reviewed: { group: 'Timesheet', title: 'Approved / rejected / rework', desc: 'Your timesheet was reviewed' },
+  regularization_requested: { group: 'Attendance', title: 'Regularization submitted', desc: 'You are the approving manager' },
+  regularization_reviewed: { group: 'Attendance', title: 'Regularization reviewed', desc: 'Your regularization was reviewed' },
+  onboarding_submitted: { group: 'People', title: 'Onboarding submitted', desc: 'A hire finished self-onboarding' },
+  onboarding_reviewed: { group: 'People', title: 'Onboarding reviewed', desc: 'Your onboarding was approved / sent back' },
 }
 
-const CHANNELS: ChannelRow[] = [
-  {
-    channel: 'Email',
-    icon: 'mail',
-    status: 'live',
-    description:
-      'Magic-link sign-in + transactional alerts (leave approvals, attendance regularizations) ship today.',
-  },
-  {
-    channel: 'In-app',
-    icon: 'bell',
-    status: 'soon',
-    description:
-      'Notification bell + dedicated /notifications page with unread counts. Sprint 2.',
-  },
-  {
-    channel: 'Slack',
-    icon: 'zap',
-    status: 'soon',
-    description:
-      'Notify managers in #people-ops when approvals are pending; daily attendance digest.',
-  },
-  {
-    channel: 'SMS',
-    icon: 'phone',
-    status: 'soon',
-    description:
-      'Critical-only fallback for managers (final approval reminders).',
-  },
-]
-
-const EVENT_GROUPS: Array<{
-  group: string
-  items: Array<{ title: string; desc: string }>
-}> = [
-  {
-    group: 'Leave',
-    items: [
-      { title: 'Request submitted',  desc: 'Notify the approving manager' },
-      { title: 'Request approved',   desc: 'Notify the employee' },
-      { title: 'Request rejected',   desc: 'Notify the employee with comment' },
-      { title: 'Quota low',          desc: 'Warn employees when balance < 2 days' },
-    ],
-  },
-  {
-    group: 'Attendance',
-    items: [
-      { title: 'Missing punch',      desc: 'Notify employee at end of day' },
-      { title: 'Regularization',     desc: 'Notify the approving manager' },
-      { title: 'Late arrival',       desc: 'Daily summary to manager' },
-    ],
-  },
-  {
-    group: 'Timesheet',
-    items: [
-      { title: 'Period open',        desc: 'Remind employees to fill timesheet' },
-      { title: 'Submitted',          desc: 'Notify the approving manager' },
-      { title: 'Rework requested',   desc: 'Notify the employee with comment' },
-    ],
-  },
-  {
-    group: 'Workspace',
-    items: [
-      { title: 'New member joined',  desc: 'Notify admins' },
-      { title: 'Role changed',       desc: 'Notify the affected member' },
-    ],
-  },
-]
+const GROUP_ORDER = ['Leave', 'Timesheet', 'Attendance', 'People']
 
 export default function NotificationsSettingsPage() {
+  const { data, isLoading } = useNotificationPreferences()
+  const update = useUpdateNotificationPreference()
+  const { toast } = useToast()
+
+  const toggle = async (
+    event: NotificationEvent,
+    channel: 'in_app' | 'email',
+    enabled: boolean,
+  ) => {
+    try {
+      await update.mutateAsync({ event, channel, enabled })
+    } catch (e) {
+      toast({
+        title: 'Could not save',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const rowsByGroup = (group: string) =>
+    (data?.events ?? []).filter((r) => EVENT_META[r.event]?.group === group)
+
   return (
     <SettingsLayout>
       <div className="card">
         <SectionHead
           title="Notifications"
-          sub="Where and when the workspace tells you something happened. Per-event toggles ship in Sprint 2."
-          right={<Pill tone="yellow" dot>Preview</Pill>}
+          sub="Choose how the workspace tells you about each event. Sign-in and security emails are always sent."
+          right={<Pill tone="green" dot>Live</Pill>}
         />
 
-        <div style={{ marginBottom: 18 }}>
-          <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
-            Channels
+        {isLoading || !data ? (
+          <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
+            <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--text-mute)' }} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {CHANNELS.map((c) => {
-              const IconComp = Icon[c.icon]
+        ) : (
+          <div style={{ marginTop: 8 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 80px 80px',
+                gap: 8,
+                padding: '0 6px 8px',
+                fontSize: 11,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--text-mute)',
+              }}
+            >
+              <div>Event</div>
+              <div style={{ textAlign: 'center' }}>In-app</div>
+              <div style={{ textAlign: 'center' }}>Email</div>
+            </div>
+
+            {GROUP_ORDER.map((group) => {
+              const rows = rowsByGroup(group)
+              if (rows.length === 0) return null
               return (
-                <div
-                  key={c.channel}
-                  style={{
-                    padding: 14,
-                    background: 'var(--surf-1)',
-                    border: '1px solid var(--bord)',
-                    borderRadius: 10,
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                  }}
-                >
+                <div key={group} style={{ marginBottom: 16 }}>
                   <div
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 9,
-                      background: 'rgba(62, 123, 250, 0.13)',
-                      color: 'var(--blue)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--text-faint)',
+                      padding: '8px 6px 4px',
                     }}
                   >
-                    <IconComp size={15} />
+                    {group}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 8,
-                        alignItems: 'center',
-                        marginBottom: 4,
-                      }}
-                    >
-                      <span style={{ fontSize: 13, fontWeight: 800 }}>{c.channel}</span>
-                      {c.status === 'live' ? (
-                        <Pill tone="green" dot>Live</Pill>
-                      ) : (
-                        <Pill tone="yellow">Soon</Pill>
-                      )}
-                    </div>
-                    <p
-                      style={{
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        color: 'var(--text-mute)',
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {c.description}
-                    </p>
-                  </div>
+                  {rows.map((r) => {
+                    const meta = EVENT_META[r.event]
+                    return (
+                      <div
+                        key={r.event}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 80px 80px',
+                          gap: 8,
+                          alignItems: 'center',
+                          padding: '10px 6px',
+                          borderTop: '1px solid var(--bord)',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 12.5, fontWeight: 700 }}>{meta.title}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>{meta.desc}</div>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>
+                          <Toggle
+                            on={r.inApp}
+                            onChange={(v) => toggle(r.event, 'in_app', v)}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>
+                          <Toggle
+                            on={r.email}
+                            onChange={(v) => toggle(r.event, 'email', v)}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}
-          </div>
-        </div>
 
-        <div>
-          <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
-            Events
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            {EVENT_GROUPS.map((g) => (
-              <div
-                key={g.group}
-                style={{
-                  padding: 14,
-                  background: 'var(--surf-1)',
-                  border: '1px solid var(--bord)',
-                  borderRadius: 10,
-                  opacity: 0.7,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    color: 'var(--text-mute)',
-                    marginBottom: 10,
-                  }}
-                >
-                  {g.group}
-                </div>
-                <ul style={{ display: 'flex', flexDirection: 'column', gap: 8, listStyle: 'none', padding: 0, margin: 0 }}>
-                  {g.items.map((it) => (
-                    <li
-                      key={it.title}
-                      style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}
-                    >
-                      <div
-                        style={{
-                          width: 14,
-                          height: 14,
-                          borderRadius: 4,
-                          border: '1px solid var(--bord-2)',
-                          background: 'var(--surf-2)',
-                          marginTop: 2,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <div>
-                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{it.title}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>{it.desc}</div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div
-          style={{
-            marginTop: 18,
-            padding: 14,
-            background: 'rgba(254, 216, 0, 0.07)',
-            border: '1px solid rgba(254, 216, 0, 0.18)',
-            borderRadius: 10,
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 12,
-          }}
-        >
-          <div style={{ color: 'var(--yellow)', flexShrink: 0, marginTop: 1 }}>
-            <Icon.info size={16} />
-          </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>
-              Coming next: per-event toggles
-            </div>
-            <p style={{ fontSize: 11.5, color: 'var(--text-mute)', lineHeight: 1.5 }}>
-              Sprint 2 adds a real bell + notifications page, a <code>notification_preferences</code>{' '}
-              table, and per-event channel selection per user. Today the workspace defaults to email
-              for every transactional event.
+            <p style={{ fontSize: 11.5, color: 'var(--text-mute)', marginTop: 4, padding: '0 6px' }}>
+              WhatsApp and SMS channels are on the roadmap. Changes save instantly.
             </p>
           </div>
-        </div>
+        )}
       </div>
     </SettingsLayout>
   )

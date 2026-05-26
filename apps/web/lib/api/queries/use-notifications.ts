@@ -76,3 +76,48 @@ export function useMarkAllRead() {
     },
   })
 }
+
+// ─── Preferences (PRD §9.3) ────────────────────────────────────────────────────
+
+export type NotificationEvent =
+  | 'leave_requested'
+  | 'leave_reviewed'
+  | 'timesheet_submitted'
+  | 'timesheet_reviewed'
+  | 'regularization_requested'
+  | 'regularization_reviewed'
+  | 'onboarding_submitted'
+  | 'onboarding_reviewed'
+
+export interface PreferenceRow {
+  event: NotificationEvent
+  inApp: boolean
+  email: boolean
+}
+
+export interface PreferencesResponse {
+  events: PreferenceRow[]
+}
+
+export function useNotificationPreferences() {
+  return useQuery({
+    queryKey: ['notifications', 'preferences'],
+    queryFn: () =>
+      api.get<PreferencesResponse>('/api/v1/notifications/preferences'),
+    staleTime: 60_000,
+  })
+}
+
+export function useUpdateNotificationPreference() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: {
+      event: NotificationEvent
+      channel: 'in_app' | 'email'
+      enabled: boolean
+    }) => api.put('/api/v1/notifications/preferences', payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications', 'preferences'] })
+    },
+  })
+}
