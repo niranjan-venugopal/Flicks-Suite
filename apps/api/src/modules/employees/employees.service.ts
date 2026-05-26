@@ -45,6 +45,7 @@ import type {
   TransferEmployeeDto,
   TerminateEmployeeDto,
   EmployeeListQueryDto,
+  ImportEmployeesDto,
 } from './employees.dto';
 import { ConfigService } from '@nestjs/config';
 
@@ -300,6 +301,88 @@ export class EmployeesService {
       status: employee.status,
       joiningDate: employee.date_of_joining,
     };
+  }
+
+  // ─── Bulk CSV import (PRD §5.5) ────────────────────────────────────────
+  // Resolves department/designation/location NAMES to ids, then reuses the
+  // single-invite path per row so every row goes through the same validation,
+  // membership creation, and welcome email. Per-row failures are collected,
+  // not fatal — a bad row never blocks the good ones.
+  async importEmployees(
+    dto: ImportEmployeesDto,
+    adminId: string,
+    tenantId: string,
+  ) {
+    const norm = (s: string) => s.trim().toLowerCase();
+
+    const [depts, desigs, locs] = await Promise.all([
+      this.db
+        .select({ id: departments.id, name: departments.name })
+        .from(departments)
+        .where(eq(departments.tenant_id, tenantId)),
+      this.db
+        .select({ id: designations.id, title: designations.title })
+        .from(designations)
+        .where(eq(designations.tenant_id, tenantId)),
+      this.db
+        .select({ id: locations.id, name: locations.name })
+        .from(locations)
+        .where(eq(locations.tenant_id, tenantId)),
+    ]);
+    const deptMap = new Map(depts.map((d) => [norm(d.name), d.id]));
+    const desigMap = new Map(desigs.map((d) => [norm(d.title), d.id]));
+    const locMap = new Map(locs.map((l) => [norm(l.name), l.id]));
+
+    let created = 0;
+    const failed: Array<{ row: number; email: string; error: string }> = [];
+
+    for (let i = 0; i < dto.rows.length; i++) {
+      const r = dto.rows[i];
+      try {
+        if (r.department && !deptMap.has(norm(r.department))) {
+          throw new Error(`Unknown department "${r.department}"`);
+        }
+        if (r.designation && !desigMap.has(norm(r.designation))) {
+          throw new Error(`Unknown designation "${r.designation}"`);
+        }
+        if (r.location && !locMap.has(norm(r.location))) {
+          throw new Error(`Unknown location "${r.location}"`);
+        }
+        await this.inviteEmployee(
+          {
+            fullName: r.fullName,
+            email: r.email,
+            employeeCode: r.employeeCode,
+            departmentId: r.department ? deptMap.get(norm(r.department)) : undefined,
+            designationId: r.designation ? desigMap.get(norm(r.designation)) : undefined,
+            locationId: r.location ? locMap.get(norm(r.location)) : undefined,
+            employmentType: r.employmentType,
+            joiningDate: r.joiningDate,
+            jobTitle: r.jobTitle,
+          },
+          adminId,
+          tenantId,
+        );
+        created += 1;
+      } catch (e) {
+        failed.push({
+          row: i + 1,
+          email: r.email,
+          error: e instanceof Error ? e.message : 'Failed to import',
+        });
+      }
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: adminId,
+      action: 'employee.bulk_imported',
+      resourceType: 'employee',
+      resourceId: tenantId,
+      metadata: { total: dto.rows.length, created, failed: failed.length },
+    });
+
+    return { total: dto.rows.length, created, failed };
   }
 
   async getEmployee(employeeId: string, tenantId: string) {

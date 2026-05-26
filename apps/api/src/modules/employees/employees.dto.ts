@@ -115,6 +115,62 @@ export class UpdateEmployeeDto {
   avatarUrl?: string;
 }
 
+export class ImportEmployeeRowDto {
+  @ApiProperty({ example: 'John Doe' })
+  @IsString()
+  @IsNotEmpty()
+  fullName: string;
+
+  @ApiProperty({ example: 'john.doe@company.com' })
+  @IsEmail()
+  email: string;
+
+  @ApiProperty({ example: 'EMP001' })
+  @IsString()
+  @IsNotEmpty()
+  employeeCode: string;
+
+  // Resolved by NAME against the tenant's existing records (CSV authors
+  // don't have UUIDs). Unmatched names are reported as a per-row error.
+  @ApiPropertyOptional({ description: 'Department name (resolved to id)' })
+  @IsString()
+  @IsOptional()
+  department?: string;
+
+  @ApiPropertyOptional({ description: 'Designation title (resolved to id)' })
+  @IsString()
+  @IsOptional()
+  designation?: string;
+
+  @ApiPropertyOptional({ description: 'Location name (resolved to id)' })
+  @IsString()
+  @IsOptional()
+  location?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  employmentType?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-15' })
+  @IsString()
+  @IsOptional()
+  joiningDate?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  jobTitle?: string;
+}
+
+export class ImportEmployeesDto {
+  @ApiProperty({ type: [ImportEmployeeRowDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImportEmployeeRowDto)
+  rows: ImportEmployeeRowDto[];
+}
+
 export class RejectOnboardingDto {
   @ApiPropertyOptional({ description: 'Reason shown to the employee' })
   @IsString()

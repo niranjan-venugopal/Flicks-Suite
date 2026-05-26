@@ -31,6 +31,7 @@ import {
   TerminateEmployeeDto,
   EmployeeListQueryDto,
   RejectOnboardingDto,
+  ImportEmployeesDto,
 } from './employees.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -66,6 +67,21 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.employeesService.inviteEmployee(dto, user.sub, user.tenantId);
+  }
+
+  @Post('import')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Bulk-import employees from parsed CSV rows',
+    description:
+      'Each row reuses the single-invite path. Department/designation/location are matched by name. Returns per-row success/failure.',
+  })
+  @ApiResponse({ status: 201, description: 'Import result' })
+  async importEmployees(
+    @Body() dto: ImportEmployeesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.importEmployees(dto, user.sub, user.tenantId);
   }
 
   @Get('org-chart')

@@ -247,6 +247,37 @@ export function useUpdateEmployee() {
   })
 }
 
+// ─── Bulk CSV import ───────────────────────────────────────────────────────────
+
+export interface ImportEmployeeRow {
+  fullName: string
+  email: string
+  employeeCode: string
+  department?: string
+  designation?: string
+  location?: string
+  employmentType?: string
+  joiningDate?: string
+  jobTitle?: string
+}
+
+export interface ImportResult {
+  total: number
+  created: number
+  failed: Array<{ row: number; email: string; error: string }>
+}
+
+export function useImportEmployees() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (rows: ImportEmployeeRow[]) =>
+      api.post<ImportResult>('/api/v1/employees/import', { rows }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
 // ─── Org chart ───────────────────────────────────────────────────────────────
 
 export interface OrgNode {
