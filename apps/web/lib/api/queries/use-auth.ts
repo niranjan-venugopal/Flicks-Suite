@@ -1,7 +1,6 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
 import { api } from '../client'
 import { resetAnalytics } from '@/lib/analytics/posthog'
 import {
@@ -128,7 +127,7 @@ function adaptTenant(
 // ──────────────────────────────────────────────────────────────────────────
 
 export function useCurrentUser() {
-  const { setUser, setTenant, isAuthenticated } = useAuthStore()
+  const { setUser, setTenant } = useAuthStore()
 
   return useQuery({
     queryKey: ['auth', 'me'],
@@ -140,12 +139,13 @@ export function useCurrentUser() {
       if (tenant) setTenant(tenant)
       return data
     },
-    // Only fetch /me while the store says we're logged in. Without this gate,
-    // logout's queryClient.clear() triggers an immediate /me refetch on the
-    // still-mounted layout; if the session cookie is even briefly still valid
-    // the queryFn calls setUser() and silently re-authenticates the user we
-    // just logged out — leaving the shell rendered with cleared (empty) data.
-    enabled: isAuthenticated,
+    // Intentionally NOT gated on isAuthenticated: the persisted auth store
+    // rehydrates asynchronously after a hard navigation (login does a full
+    // reload), so isAuthenticated is briefly false on first paint. Gating the
+    // query there left isLoading=false during that window and the layout
+    // redirected to /login before hydration finished. Keeping /me always-on
+    // means isLoading stays true until it resolves, so the guard waits. Logout
+    // safety is handled by useLogout doing a hard teardown instead.
     retry: false,
     staleTime: 5 * 60 * 1000,
   })
@@ -191,22 +191,21 @@ export function useVerifyMagicLink() {
 }
 
 export function useLogout() {
-  const queryClient = useQueryClient()
   const { logout } = useAuthStore()
-  const router = useRouter()
 
   return useMutation({
     mutationFn: () => api.post<void>('/api/v1/auth/logout'),
     // onSettled (not onSuccess) so we still tear down the session even if the
-    // network call fails. Order matters: clear the store first (disables the
-    // /me query so it can't re-auth), wipe cached data, then navigate. The
-    // explicit replace guarantees we leave the protected route instead of
-    // relying solely on the layout's reactive guard.
+    // network call fails. We clear the persisted store, then hard-navigate to
+    // /login. A full-page reload destroys the entire React Query cache and the
+    // mounted /me observer with it, so there's no chance of a post-logout /me
+    // refetch silently re-authenticating the user (the original bug). We
+    // deliberately do NOT call queryClient.clear() here — that was what
+    // triggered the re-auth refetch; the hard reload handles cache teardown.
     onSettled: () => {
       logout()
-      queryClient.clear()
       resetAnalytics()
-      router.replace('/login')
+      window.location.assign('/login')
     },
   })
 }
