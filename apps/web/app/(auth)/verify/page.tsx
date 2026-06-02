@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
 import { useVerifyMagicLinkQuery } from '@/lib/api/queries/use-auth'
 
-export default function VerifyMagicLinkPage() {
+function VerifyMagicLinkInner() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
 
@@ -87,5 +87,28 @@ export default function VerifyMagicLinkPage() {
     <AuthLayout>
       <AuthCard>{renderState()}</AuthCard>
     </AuthLayout>
+  )
+}
+
+// useSearchParams() forces this route into client-side rendering, which Next's
+// static export step rejects unless the consumer is inside a Suspense boundary.
+export default function VerifyMagicLinkPage() {
+  return (
+    <Suspense
+      fallback={
+        <AuthLayout>
+          <AuthCard>
+            <div style={{ textAlign: 'center', padding: '8px 0' }}>
+              <div className="t-h2" style={{ marginBottom: 8 }}>Verifying your link</div>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+                Hang tight…
+              </div>
+            </div>
+          </AuthCard>
+        </AuthLayout>
+      }
+    >
+      <VerifyMagicLinkInner />
+    </Suspense>
   )
 }
