@@ -218,7 +218,7 @@ export default function FamTenantDetailPage() {
           </div>
         </div>
 
-        {tab === 'overview' && <OverviewTab tenant={t} />}
+        {tab === 'overview' && <OverviewTab tenant={t} setTab={setTab} />}
         {tab === 'members'  && id && <MembersTab tenantId={id} />}
         {tab === 'usage'    && id && <UsageTab tenantId={id} currency={t.currency} />}
         {tab === 'billing'  && id && <BillingTab tenantId={id} currency={t.currency} />}
@@ -233,9 +233,75 @@ export default function FamTenantDetailPage() {
 
 // ─── Overview tab ───────────────────────────────────────────────────────────
 
-function OverviewTab({ tenant }: { tenant: NonNullable<ReturnType<typeof useFamTenant>['data']> }) {
+function OverviewTab({
+  tenant,
+  setTab,
+}: {
+  tenant: NonNullable<ReturnType<typeof useFamTenant>['data']>
+  setTab: (t: TabKey) => void
+}) {
   const t = tenant
   const usersForKpi = t.subscription?.userCount ?? t.employeeCount
+  const { toast } = useToast()
+  const verifyMut = useVerifyTenant()
+  const extendMut = useExtendTrial()
+  const suspendMut = useSuspendTenant()
+  const reactivateMut = useReactivateTenant()
+  const busy =
+    verifyMut.isPending || extendMut.isPending || suspendMut.isPending || reactivateMut.isPending
+
+  const runVerify = () => {
+    if (!window.confirm(`Mark ${t.name} as verified? This cannot be undone here.`)) return
+    verifyMut.mutate(t.id, {
+      onSuccess: () => toast({ title: 'Tenant verified' }),
+      onError: (e) =>
+        toast({ title: 'Verify failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+    })
+  }
+  const runExtend = () => {
+    extendMut.mutate(
+      { id: t.id, days: 14 },
+      {
+        onSuccess: (r) => toast({ title: 'Trial extended by 14 days', description: `New end: ${formatDate(r.trialEndsAt)}` }),
+        onError: (e) =>
+          toast({ title: 'Extend failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+      },
+    )
+  }
+  const runReactivate = () => {
+    reactivateMut.mutate(t.id, {
+      onSuccess: () => toast({ title: 'Tenant reactivated' }),
+      onError: (e) =>
+        toast({ title: 'Reactivate failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+    })
+  }
+  const runSuspend = () => {
+    const reason = window.prompt(`Suspend ${t.name}? This blocks all logins. Reason (required):`)
+    if (!reason || !reason.trim()) return
+    suspendMut.mutate(
+      { id: t.id, reason: reason.trim() },
+      {
+        onSuccess: () => toast({ title: 'Tenant suspended' }),
+        onError: (e) =>
+          toast({ title: 'Suspend failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+      },
+    )
+  }
+
+  const quickActions: Array<{ label: string; icon: React.ReactNode; onClick: () => void; danger?: boolean }> = [
+    ...(t.verifiedAt
+      ? []
+      : [{ label: 'Mark verified', icon: <Icon.shield size={13} />, onClick: runVerify }]),
+    ...(t.status === 'trialing'
+      ? [{ label: 'Extend trial · 14 days', icon: <Icon.cal size={13} />, onClick: runExtend }]
+      : []),
+    t.status === 'suspended'
+      ? { label: 'Reactivate tenant', icon: <Icon.check size={13} />, onClick: runReactivate }
+      : { label: 'Suspend tenant', icon: <Icon.shield size={13} />, onClick: runSuspend, danger: true },
+    { label: 'Billing & invoices', icon: <Icon.chart size={13} />, onClick: () => setTab('billing') },
+    { label: 'View members', icon: <Icon.people size={13} />, onClick: () => setTab('members') },
+    { label: 'Audit trail', icon: <Icon.clock size={13} />, onClick: () => setTab('audit') },
+  ]
   return (
     <>
       <div
@@ -385,6 +451,7 @@ function OverviewTab({ tenant }: { tenant: NonNullable<ReturnType<typeof useFamT
           </dl>
         </div>
 
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="card" style={{ padding: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
             Subscription
@@ -414,6 +481,34 @@ function OverviewTab({ tenant }: { tenant: NonNullable<ReturnType<typeof useFamT
               No subscription on file yet.
             </div>
           )}
+        </div>
+
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
+            Quick actions
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {quickActions.map((a) => (
+              <button
+                key={a.label}
+                type="button"
+                onClick={a.onClick}
+                disabled={busy}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderRadius: 8,
+                  background: 'transparent', border: '1px solid var(--bord)',
+                  color: a.danger ? 'var(--coral)' : 'var(--text-2)',
+                  cursor: busy ? 'default' : 'pointer', fontSize: 12, fontWeight: 700, textAlign: 'left',
+                  opacity: busy ? 0.6 : 1,
+                }}
+              >
+                {a.icon}
+                <span style={{ flex: 1 }}>{a.label}</span>
+                <Icon.arrow size={11} style={{ color: 'var(--text-mute)' }} />
+              </button>
+            ))}
+          </div>
+        </div>
         </div>
       </div>
     </>
