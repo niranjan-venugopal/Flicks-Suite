@@ -250,54 +250,45 @@ function OverviewTab({
   const busy =
     verifyMut.isPending || extendMut.isPending || suspendMut.isPending || reactivateMut.isPending
 
-  const runVerify = () => {
-    if (!window.confirm(`Mark ${t.name} as verified? This cannot be undone here.`)) return
+  const [dialog, setDialog] = useState<'verify' | 'extend' | 'suspend' | 'reactivate' | null>(null)
+  const [suspendReason, setSuspendReason] = useState('')
+  const close = () => setDialog(null)
+  const err = (title: string) => (e: unknown) =>
+    toast({ title, description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+
+  const doVerify = () =>
     verifyMut.mutate(t.id, {
-      onSuccess: () => toast({ title: 'Tenant verified' }),
-      onError: (e) =>
-        toast({ title: 'Verify failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+      onSuccess: () => { toast({ title: 'Tenant verified' }); close() },
+      onError: err('Verify failed'),
     })
-  }
-  const runExtend = () => {
-    extendMut.mutate(
-      { id: t.id, days: 14 },
-      {
-        onSuccess: (r) => toast({ title: 'Trial extended by 14 days', description: `New end: ${formatDate(r.trialEndsAt)}` }),
-        onError: (e) =>
-          toast({ title: 'Extend failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
-      },
-    )
-  }
-  const runReactivate = () => {
+  const doExtend = () =>
+    extendMut.mutate({ id: t.id, days: 14 }, {
+      onSuccess: (r) => { toast({ title: 'Trial extended by 14 days', description: `New end: ${formatDate(r.trialEndsAt)}` }); close() },
+      onError: err('Extend failed'),
+    })
+  const doReactivate = () =>
     reactivateMut.mutate(t.id, {
-      onSuccess: () => toast({ title: 'Tenant reactivated' }),
-      onError: (e) =>
-        toast({ title: 'Reactivate failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+      onSuccess: () => { toast({ title: 'Tenant reactivated' }); close() },
+      onError: err('Reactivate failed'),
     })
-  }
-  const runSuspend = () => {
-    const reason = window.prompt(`Suspend ${t.name}? This blocks all logins. Reason (required):`)
-    if (!reason || !reason.trim()) return
-    suspendMut.mutate(
-      { id: t.id, reason: reason.trim() },
-      {
-        onSuccess: () => toast({ title: 'Tenant suspended' }),
-        onError: (e) =>
-          toast({ title: 'Suspend failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
-      },
-    )
+  const doSuspend = () => {
+    if (!suspendReason.trim()) return
+    suspendMut.mutate({ id: t.id, reason: suspendReason.trim() }, {
+      onSuccess: () => { toast({ title: 'Tenant suspended' }); close() },
+      onError: err('Suspend failed'),
+    })
   }
 
   const quickActions: Array<{ label: string; icon: React.ReactNode; onClick: () => void; danger?: boolean }> = [
     ...(t.verifiedAt
       ? []
-      : [{ label: 'Mark verified', icon: <Icon.shield size={13} />, onClick: runVerify }]),
+      : [{ label: 'Mark verified', icon: <Icon.shield size={13} />, onClick: () => setDialog('verify') }]),
     ...(t.status === 'trialing'
-      ? [{ label: 'Extend trial · 14 days', icon: <Icon.cal size={13} />, onClick: runExtend }]
+      ? [{ label: 'Extend trial · 14 days', icon: <Icon.cal size={13} />, onClick: () => setDialog('extend') }]
       : []),
     t.status === 'suspended'
-      ? { label: 'Reactivate tenant', icon: <Icon.check size={13} />, onClick: runReactivate }
-      : { label: 'Suspend tenant', icon: <Icon.shield size={13} />, onClick: runSuspend, danger: true },
+      ? { label: 'Reactivate tenant', icon: <Icon.check size={13} />, onClick: () => setDialog('reactivate') }
+      : { label: 'Suspend tenant', icon: <Icon.shield size={13} />, onClick: () => { setSuspendReason(''); setDialog('suspend') }, danger: true },
     { label: 'Billing & invoices', icon: <Icon.chart size={13} />, onClick: () => setTab('billing') },
     { label: 'View members', icon: <Icon.people size={13} />, onClick: () => setTab('members') },
     { label: 'Audit trail', icon: <Icon.clock size={13} />, onClick: () => setTab('audit') },
@@ -511,6 +502,68 @@ function OverviewTab({
         </div>
         </div>
       </div>
+
+      <Dialog open={dialog === 'suspend'} onOpenChange={(o) => !o && close()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Suspend {t.name}</DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
+            All logins for this workspace will be blocked. The action is recorded in the platform audit log. Reversible.
+          </p>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+            Reason <span style={{ color: 'var(--coral)' }}>*</span>
+          </label>
+          <textarea
+            className="input"
+            rows={3}
+            value={suspendReason}
+            onChange={(e) => setSuspendReason(e.target.value)}
+            placeholder="Why is this tenant being suspended?"
+            maxLength={500}
+            style={{ width: '100%', padding: 10, fontSize: 12.5 }}
+            autoFocus
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <Btn kind="ghost" onClick={close} disabled={suspendMut.isPending}>Cancel</Btn>
+            <Btn kind="danger" onClick={doSuspend} disabled={suspendMut.isPending || !suspendReason.trim()}>
+              {suspendMut.isPending ? 'Suspending…' : 'Suspend tenant'}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={dialog === 'verify' || dialog === 'extend' || dialog === 'reactivate'}
+        onOpenChange={(o) => !o && close()}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {dialog === 'verify' && `Mark ${t.name} verified`}
+              {dialog === 'extend' && `Extend trial for ${t.name}`}
+              {dialog === 'reactivate' && `Reactivate ${t.name}`}
+            </DialogTitle>
+          </DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 16 }}>
+            {dialog === 'verify' && 'Records the verification on the platform audit log. This cannot be undone from this surface.'}
+            {dialog === 'extend' && 'Adds 14 days to the existing trial end date (or starts a trial today if none is set). The change is recorded in the platform audit log.'}
+            {dialog === 'reactivate' && 'Flips the tenant back to active and unblocks all logins. The change is recorded in the platform audit log.'}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Btn kind="ghost" onClick={close} disabled={busy}>Cancel</Btn>
+            <Btn
+              kind="primary"
+              onClick={dialog === 'verify' ? doVerify : dialog === 'extend' ? doExtend : doReactivate}
+              disabled={busy}
+            >
+              {dialog === 'verify' && (verifyMut.isPending ? 'Verifying…' : 'Verify tenant')}
+              {dialog === 'extend' && (extendMut.isPending ? 'Extending…' : 'Extend · 14 days')}
+              {dialog === 'reactivate' && (reactivateMut.isPending ? 'Reactivating…' : 'Reactivate')}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
