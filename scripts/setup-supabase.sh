@@ -10,10 +10,18 @@
 # Required env:
 #   DATABASE_DIRECT_URL   postgresql://postgres.<ref>:<pwd>@aws-1-...:5432/postgres
 #                         (password MUST be URL-encoded — '@' → '%40' etc.)
+#   APP_ROLE_PASSWORD     password for the NOBYPASSRLS app role created below.
+#                         If unset, the role step is skipped (RLS will NOT isolate
+#                         tenants until DATABASE_URL uses a non-bypass role).
+#
+# After running, set in apps/api/.env:
+#   DATABASE_URL              -> connects as the app role (NOBYPASSRLS) — RLS applies
+#   DATABASE_SERVICE_ROLE_URL -> connects as postgres (BYPASSRLS)  — admin/FAM only
+# Pointing DATABASE_URL at the postgres role disables tenant isolation entirely.
 #
 # Usage:
 #   set -a; source apps/api/.env; set +a
-#   bash scripts/setup-supabase.sh
+#   APP_ROLE_PASSWORD='<strong-pwd>' bash scripts/setup-supabase.sh
 
 set -euo pipefail
 
@@ -37,6 +45,12 @@ if [[ ! -f "$SCHEMA_SQL" ]]; then
 fi
 
 PSQL_ARGS=(-v ON_ERROR_STOP=1 --quiet --no-psqlrc)
+
+# Dedicated app role that the API connects as. It MUST be NOBYPASSRLS so the
+# tenant-isolation policies actually apply. The privileged Supabase `postgres`
+# role bypasses RLS, so it is used ONLY for the service-role connection and for
+# this setup script — never for DATABASE_URL.
+APP_ROLE="${APP_ROLE:-flicks_app}"
 
 echo "─── Step 1: probe connectivity ───"
 SERVER_VERSION=$(psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" -tAc "show server_version;" | tr -d '[:space:]')
@@ -71,6 +85,37 @@ for MIG in "${REPO_ROOT}/packages/db/drizzle/"[0-9]*.sql; do
   psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" -f "$MIG" >/dev/null
   echo "  ✓ applied $base"
 done
+
+echo "─── Step 3c: app role '${APP_ROLE}' (NOBYPASSRLS) + grants ───"
+# RLS only isolates tenants when the API connects as a role that is SUBJECT to
+# row-level security. Supabase's `postgres` role BYPASSES RLS, so if DATABASE_URL
+# uses it, every tenant can read every other tenant's data (the multi-tenant
+# isolation tests fail wholesale). This creates the dedicated NOBYPASSRLS role
+# the API should use, mirroring scripts/setup-db.sh for local Postgres.
+if [[ -z "${APP_ROLE_PASSWORD:-}" ]]; then
+  echo "  ⚠ APP_ROLE_PASSWORD not set — SKIPPING role creation."
+  echo "    Until DATABASE_URL points at a NOBYPASSRLS role, RLS does NOT isolate"
+  echo "    tenants. Re-run with: APP_ROLE_PASSWORD='<strong-pwd>' bash scripts/setup-supabase.sh"
+else
+  psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" <<SQL >/dev/null
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_ROLE}') THEN
+    CREATE ROLE "${APP_ROLE}" WITH LOGIN PASSWORD '${APP_ROLE_PASSWORD}'
+      NOSUPERUSER NOCREATEROLE NOCREATEDB NOBYPASSRLS;
+  ELSE
+    ALTER ROLE "${APP_ROLE}" WITH LOGIN PASSWORD '${APP_ROLE_PASSWORD}' NOBYPASSRLS;
+  END IF;
+END
+\$\$;
+GRANT USAGE ON SCHEMA public TO "${APP_ROLE}";
+GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public TO "${APP_ROLE}";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${APP_ROLE}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO "${APP_ROLE}";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "${APP_ROLE}";
+SQL
+  echo "  ✓ role '${APP_ROLE}' ready (NOBYPASSRLS) — point DATABASE_URL at it"
+fi
 
 echo "─── Step 4: insert seed tenant ───"
 psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" <<SQL >/dev/null
