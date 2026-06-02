@@ -9,70 +9,116 @@ function nodeName(n: OrgNode): string {
   return (n.fullName ?? '').trim() || n.email || n.employeeCode || 'Employee'
 }
 
-function NodeCard({ node }: { node: OrgNode }) {
+const TONE_BORDER: Record<string, string> = {
+  blue: 'var(--blue)',
+  purple: 'var(--purple)',
+  coral: 'var(--coral)',
+  green: 'var(--green)',
+  yellow: 'var(--yellow)',
+}
+const BRANCH_TONES = ['purple', 'coral', 'green', 'blue', 'yellow'] as const
+
+function NodeCard({
+  node,
+  big = false,
+  tone,
+}: {
+  node: OrgNode
+  big?: boolean
+  tone?: string
+}) {
+  const pending = node.status !== 'active'
+  const reports = node.children.length
+  const border = pending
+    ? 'rgba(254,216,0,.45)'
+    : big
+      ? 'var(--blue)'
+      : tone
+        ? TONE_BORDER[tone]
+        : 'var(--bord-2)'
   return (
     <Link
       href={`/employees/${node.id}`}
-      className="card-glass"
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 11,
-        padding: '10px 14px',
+        position: 'relative',
+        background: big
+          ? 'linear-gradient(180deg, rgba(62,123,250,.18), rgba(62,123,250,.06))'
+          : 'var(--surf-2)',
+        border: `1.5px solid ${border}`,
         borderRadius: 12,
-        minWidth: 230,
+        padding: big ? '14px 18px' : '10px 14px',
+        minWidth: big ? 220 : 168,
+        textAlign: 'center',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
         textDecoration: 'none',
+        color: 'inherit',
       }}
     >
-      <Avatar name={nodeName(node)} size="sm" src={node.avatarUrl ?? undefined} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      {pending && (
+        <Pill tone="yellow" style={{ position: 'absolute', top: -9, right: -6 }}>
+          Pending
+        </Pill>
+      )}
+      <Avatar name={nodeName(node)} size={big ? 'lg' : 'sm'} src={node.avatarUrl ?? undefined} />
+      <div style={{ minWidth: 0, maxWidth: big ? 200 : 150 }}>
+        <div style={{ fontSize: big ? 13 : 11.5, fontWeight: 800, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {nodeName(node)}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: big ? 11.5 : 10.5, fontWeight: 600, color: 'var(--text-mute)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {[node.designationTitle, node.departmentName].filter(Boolean).join(' · ') || node.employeeCode || '—'}
         </div>
+        {reports > 0 && (
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--blue)', marginTop: 2 }}>
+            {reports} {reports === 1 ? 'report' : 'reports'}
+          </div>
+        )}
       </div>
     </Link>
   )
 }
 
-/** Vertical, indented tree. Each level nests under its manager with a guide rail. */
+const Connector = ({ h = 24 }: { h?: number }) => (
+  <div style={{ width: 1.5, height: h, background: 'var(--bord-2)' }} />
+)
+
+/** Recursive top-down tree: node on top, a vertical drop, then children in a row. */
 function TreeNode({ node, depth }: { node: OrgNode; depth: number }) {
+  const tone = depth === 1 ? BRANCH_TONES[0] : undefined
   return (
-    <div style={{ marginLeft: depth === 0 ? 0 : 22 }}>
-      <div
-        style={{
-          position: 'relative',
-          paddingLeft: depth === 0 ? 0 : 18,
-          marginBottom: 10,
-        }}
-      >
-        {depth > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 20,
-              width: 14,
-              height: 1,
-              background: 'var(--bord)',
-            }}
-          />
-        )}
-        <NodeCard node={node} />
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+      <NodeCard node={node} big={depth === 0} tone={tone} />
       {node.children.length > 0 && (
-        <div
-          style={{
-            borderLeft: '1px solid var(--bord)',
-            marginLeft: depth === 0 ? 18 : 18,
-          }}
-        >
-          {node.children.map((child) => (
-            <TreeNode key={child.id} node={child} depth={depth + 1} />
-          ))}
-        </div>
+        <>
+          <Connector h={depth === 0 ? 24 : 20} />
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', justifyContent: 'center' }}>
+            {node.children.map((child, i) => (
+              <BranchNode key={child.id} node={child} depth={depth + 1} branchIndex={i} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Like TreeNode but colours the branch head by its sibling index. */
+function BranchNode({ node, depth, branchIndex }: { node: OrgNode; depth: number; branchIndex: number }) {
+  const tone = depth === 1 ? BRANCH_TONES[branchIndex % BRANCH_TONES.length] : undefined
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+      <NodeCard node={node} tone={tone} />
+      {node.children.length > 0 && (
+        <>
+          <Connector h={20} />
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'center' }}>
+            {node.children.map((child) => (
+              <BranchNode key={child.id} node={child} depth={depth + 1} branchIndex={branchIndex} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   )
@@ -84,7 +130,7 @@ export default function OrgChartPage() {
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
-      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
         <SectionHead
           title="Org chart"
           sub={
@@ -122,13 +168,17 @@ export default function OrgChartPage() {
               </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div style={{ minWidth: 'min-content', margin: '0 auto', padding: '12px 8px' }}>
               {tree.length > 1 && (
-                <Pill tone="blue">{tree.length} top-level (no manager assigned)</Pill>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+                  <Pill tone="blue">{tree.length} top-level (no manager assigned)</Pill>
+                </div>
               )}
-              {tree.map((root) => (
-                <TreeNode key={root.id} node={root} depth={0} />
-              ))}
+              <div style={{ display: 'flex', gap: 40, alignItems: 'flex-start', justifyContent: 'center' }}>
+                {tree.map((root) => (
+                  <TreeNode key={root.id} node={root} depth={0} />
+                ))}
+              </div>
             </div>
           )}
         </div>
