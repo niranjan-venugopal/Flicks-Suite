@@ -15,20 +15,8 @@ import {
   useFamRevenue,
   useFamFunnel,
   useFamVerificationQueue,
-  useFamTenants,
 } from '@/lib/api/queries/use-fam'
 import { formatCurrency } from '@/lib/utils'
-
-function statusTone(s: string) {
-  switch (s) {
-    case 'active': return 'green'
-    case 'trialing': return 'blue'
-    case 'past_due': return 'yellow'
-    case 'suspended':
-    case 'canceled': return 'coral'
-    default: return ''
-  }
-}
 
 const PLAN_COLOURS: Record<string, string> = {
   free: 'var(--text-mute)',
@@ -45,18 +33,16 @@ export default function FamOverviewPage() {
   const revenue = useFamRevenue()
   const funnel = useFamFunnel()
   const verify = useFamVerificationQueue()
-  const tenants = useFamTenants({})
 
   const d = overview.data
   const rev = revenue.data
 
-  const totalSeats = (tenants.data?.data ?? []).reduce(
-    (s, t) => s + (t.userCount ?? 0),
-    0,
-  )
-  const topTenants = [...(tenants.data?.data ?? [])]
+  // Top tenants come from the revenue payload's topPaying list — no need for a
+  // second full /fam/tenants fetch just to derive them on the overview.
+  const topTenants = [...(rev?.topPaying ?? [])]
     .sort((a, b) => (b.mrr ?? 0) - (a.mrr ?? 0))
     .slice(0, 4)
+  const signups7d = d?.signupsTrend7d?.reduce((s, p) => s + p.count, 0) ?? 0
 
   const healthTotal = d
     ? d.health.healthy + d.health.at_risk + d.health.churning + d.health.expanding + d.health.new
@@ -102,9 +88,9 @@ export default function FamOverviewPage() {
             accent="green"
           />
           <Kpi
-            label="Total seats"
-            value={tenants.isLoading ? '…' : totalSeats.toLocaleString()}
-            delta={`${d?.totalTenants ?? 0} workspaces`}
+            label="Signups · 7d"
+            value={overview.isLoading ? '…' : String(d?.signupsThisWeek ?? signups7d)}
+            delta={`${d?.totalTenants ?? 0} workspaces total`}
             icon={<Icon.people size={14} />}
             accent="purple"
           />
@@ -183,23 +169,23 @@ export default function FamOverviewPage() {
             ) : (
               topTenants.map((t, i) => (
                 <Link
-                  key={t.id}
-                  href={`/fam/tenants/${t.id}`}
+                  key={t.tenantId}
+                  href={`/fam/tenants/${t.tenantId}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
                     borderBottom: i < topTenants.length - 1 ? '1px solid var(--bord)' : 'none',
                     textDecoration: 'none', color: 'inherit',
                   }}
                 >
-                  <Avatar name={t.name} size="sm" />
+                  <Avatar name={t.tenantName} size="sm" />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.tenantName}</div>
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
-                      {t.userCount} seats · {t.plan ?? 'free'}
+                      {t.userCount} seats · {t.planCode ?? 'free'}
                     </div>
                   </div>
                   <div style={{ fontSize: 12.5, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-                    {formatCurrency(t.mrr ?? 0, 'INR')}
+                    {formatCurrency(t.mrr ?? 0, rev?.mrr.currency ?? 'INR')}
                   </div>
                 </Link>
               ))
