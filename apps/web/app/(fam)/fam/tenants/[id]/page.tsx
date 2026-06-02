@@ -280,6 +280,73 @@ function OverviewTab({ tenant }: { tenant: NonNullable<ReturnType<typeof useFamT
         />
       </div>
 
+      {t.health && (() => {
+        const score = t.health.score != null ? Math.round(t.health.score) : null
+        const ringHex =
+          signalTone(t.health.signal) === 'green' ? '#27D280'
+          : signalTone(t.health.signal) === 'blue' ? '#3E7BFA'
+          : signalTone(t.health.signal) === 'coral' ? '#F8786B'
+          : signalTone(t.health.signal) === 'yellow' ? '#FED800'
+          : '#3E7BFA'
+        const pct = (n: number | null) =>
+          n == null ? null : Math.max(0, Math.min(100, Math.round(n)))
+        const rate = (active: number) =>
+          t.memberCount > 0 ? Math.min(100, Math.round((active / t.memberCount) * 100)) : null
+        const metrics: Array<[string, number | null]> = [
+          ['Weekly active rate', rate(t.health.activeUsers7d)],
+          ['Monthly active rate', rate(t.health.activeUsers30d)],
+          ['Attendance compliance', pct(t.health.attendanceCompliance)],
+          ['Feature adoption', pct(t.health.featureAdoptionScore)],
+        ]
+        const barColor = (v: number) =>
+          v >= 80 ? 'var(--green)' : v >= 60 ? 'var(--yellow)' : 'var(--coral)'
+        return (
+          <div className="card" style={{ marginBottom: 14 }}>
+            <SectionHead
+              title="Health score"
+              sub={`${score != null ? `${score}/100` : 'No score'} · refreshed ${timeAgo(t.health.snapshotDate)}`}
+              right={
+                t.health.signal ? (
+                  <Pill tone={signalTone(t.health.signal)} dot>
+                    {t.health.signal.replace('_', ' ')}
+                  </Pill>
+                ) : undefined
+              }
+            />
+            <div style={{ display: 'flex', gap: 18, alignItems: 'center' }}>
+              <div style={{ position: 'relative', width: 120, height: 120, flexShrink: 0 }}>
+                <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%' }}>
+                  <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surf-2)" strokeWidth="10" />
+                  <circle
+                    cx="60" cy="60" r="50" fill="none" stroke={ringHex} strokeWidth="10"
+                    strokeDasharray={`${(score ?? 0) * 3.14} 314`}
+                    strokeLinecap="round" transform="rotate(-90 60 60)"
+                  />
+                </svg>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                  <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-0.03em' }}>{score ?? '—'}</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mute)', letterSpacing: '.06em' }}>HEALTH</div>
+                </div>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {metrics.filter(([, v]) => v != null).map(([label, v]) => (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ flex: 1, fontSize: 11.5, fontWeight: 700 }}>{label}</div>
+                    <div style={{ width: 160, height: 6, borderRadius: 99, background: 'var(--surf-2)', overflow: 'hidden' }}>
+                      <div style={{ width: `${v}%`, height: '100%', background: barColor(v as number), borderRadius: 99 }} />
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 11.5, width: 32, textAlign: 'right' }}>{v}</div>
+                  </div>
+                ))}
+                {metrics.every(([, v]) => v == null) && (
+                  <div className="t-mute" style={{ fontSize: 12 }}>No sub-metrics in the latest snapshot.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
         <div className="card" style={{ padding: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
