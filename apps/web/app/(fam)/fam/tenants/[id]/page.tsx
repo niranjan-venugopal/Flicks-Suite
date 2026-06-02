@@ -788,6 +788,29 @@ function UsageTab({ tenantId, currency }: { tenantId: string; currency: string }
 
 // ─── Billing tab ─────────────────────────────────────────────────────────────
 
+function billingEventSub(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata) return null
+  const m = metadata
+  const str = (k: string) => (typeof m[k] === 'string' ? (m[k] as string) : undefined)
+  const num = (k: string) => (typeof m[k] === 'number' ? (m[k] as number) : undefined)
+  const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)
+  const from = str('fromPlan') ?? str('from_plan') ?? str('previousPlan')
+  const to = str('toPlan') ?? str('to_plan') ?? str('newPlan') ?? str('planCode') ?? str('plan')
+  if (from && to) return `${cap(from)} → ${cap(to)}`
+  if (to) return cap(to)
+  const seats = num('seats') ?? num('seatsAdded') ?? num('seat_delta')
+  if (seats != null) return `${seats > 0 ? '+' : ''}${seats} seats`
+  const days = num('days')
+  if (days != null) return `Trial · ${days} days`
+  return null
+}
+
+function billingEventAmount(metadata: Record<string, unknown> | null, currency: string): string | null {
+  if (!metadata) return null
+  const mrr = typeof metadata.mrr === 'number' ? metadata.mrr : undefined
+  return mrr != null ? `${formatCurrency(mrr, currency)} MRR` : null
+}
+
 function BillingTab({ tenantId, currency }: { tenantId: string; currency: string }) {
   const billing = useFamTenantBilling(tenantId)
   const data = billing.data
@@ -832,66 +855,45 @@ function BillingTab({ tenantId, currency }: { tenantId: string; currency: string
         </dl>
       </div>
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bord)', fontSize: 12, fontWeight: 800, color: 'var(--text-2)' }}>
-          Billing history
-        </div>
+      <div className="card" style={{ padding: 20 }}>
+        <SectionHead title="Plan history" sub={`${data.events.length} event${data.events.length === 1 ? '' : 's'}`} />
         {data.events.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', fontSize: 12, color: 'var(--text-mute)' }}>
-            No billing events yet.
+          <div style={{ padding: '20px 0', fontSize: 12, color: 'var(--text-mute)' }}>
+            No subscription events yet.
           </div>
         ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {data.events.map((e) => (
-              <li
-                key={e.id}
-                style={{
-                  display: 'flex',
-                  gap: 11,
-                  padding: '12px 18px',
-                  borderBottom: '1px solid var(--bord)',
-                  alignItems: 'flex-start',
-                }}
-              >
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {data.events.map((e, i) => {
+              const sub = billingEventSub(e.metadata)
+              const amount = billingEventAmount(e.metadata, currency)
+              return (
                 <div
+                  key={e.id}
                   style={{
-                    flex: '0 0 28px',
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
-                    background: 'var(--surf-2)',
-                    border: '1px solid var(--bord)',
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'var(--text-2)',
+                    gap: 14,
+                    padding: '12px 0',
+                    borderBottom: i < data.events.length - 1 ? '1px solid var(--bord)' : 'none',
+                    alignItems: 'flex-start',
                   }}
                 >
-                  <Icon.tag size={14} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800 }}>{e.eventType}</div>
-                  {e.metadata && (
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: 'var(--text-mute)',
-                        fontFamily: 'var(--font-mono)',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {JSON.stringify(e.metadata)}
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 800, color: 'var(--text-mute)', width: 92, paddingTop: 1, flexShrink: 0 }}>
+                    {formatDate(e.createdAt)}
+                  </div>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--blue)', marginTop: 5, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 2, textTransform: 'capitalize' }}>
+                      {e.eventType.replace(/[_.]/g, ' ')}
                     </div>
-                  )}
-                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: 'var(--text-faint)' }}>
-                    {timeAgo(e.createdAt)}
+                    {sub && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>{sub}</div>}
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, color: amount ? 'var(--green)' : 'var(--text-faint)', flexShrink: 0 }}>
+                    {amount ?? '—'}
                   </div>
                 </div>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>
