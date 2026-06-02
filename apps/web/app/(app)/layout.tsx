@@ -68,7 +68,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // and the dashboard / sidebar / topbar render the wrong navigation
   // for ~half a second before the fresh data lands. Showing a centered
   // spinner is better UX than flashing the wrong UI.
-  if (isLoading || (isAuthenticated && !meData)) {
+  // Render the app shell ONLY when we're fully authenticated with fresh /me
+  // data. Showing a spinner in every other state (loading, logged out, error)
+  // means a logout never flashes the dashboard with cleared data before the
+  // redirect lands.
+  if (!isAuthenticated || isLoading || !meData) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-brand-bg">
         <Loader2 className="w-7 h-7 animate-spin text-brand-muted" />

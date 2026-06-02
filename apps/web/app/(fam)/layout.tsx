@@ -40,7 +40,7 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isError, isAuthenticated, meData, isPlatformAdmin, router])
 
-  if (isLoading || (isAuthenticated && !meData) || (meData && !isPlatformAdmin)) {
+  if (!isAuthenticated || isLoading || !meData || !isPlatformAdmin) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-brand-bg">
         <Loader2 className="w-7 h-7 animate-spin text-brand-muted" />
