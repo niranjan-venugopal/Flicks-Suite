@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   Logger,
+  Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { eq, ne, and, inArray, desc, asc, sql } from 'drizzle-orm';
@@ -29,6 +30,8 @@ import {
 // tell which version each principal agreed to (DPDP audit requirement).
 const CONSENT_VERSION = '2026-05-v1';
 import { DatabaseService } from '../../core/database/database.service';
+import { DB_SERVICE_ROLE } from '../../core/database/database.module';
+import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
@@ -77,6 +80,11 @@ export class EmployeesService {
   // load-bearing, not just defense-in-depth.
   constructor(
     private readonly databaseService: DatabaseService,
+    // Identity provisioning (find-or-create a user by email during invite) must
+    // see users across tenants — a person can already exist in another tenant —
+    // so it runs on the service-role (BYPASSRLS) connection. The users RLS
+    // policy (0010) otherwise scopes user visibility to the current tenant.
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
@@ -152,7 +160,29 @@ export class EmployeesService {
     const firstName = nameParts[0] ?? dto.fullName;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    const { employee, currentUser, companyName } =
+    // Find or create the user on the service-role connection: an existing user
+    // may belong to a different tenant and would be invisible under the users
+    // RLS policy, so this lookup/creation must bypass RLS.
+    let user = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+
+    if (!user[0]) {
+      const inserted = await this.dbAdmin
+        .insert(users)
+        .values({
+          email: normalizedEmail,
+          full_name: dto.fullName,
+        })
+        .returning();
+      user = inserted;
+    }
+
+    const currentUser = user[0];
+
+    const { employee, companyName } =
       await this.databaseService.withTenant(tenantId, async (db) => {
         // Check for duplicate employee code within tenant
         const existing = await db
@@ -171,26 +201,6 @@ export class EmployeesService {
             `Employee code ${dto.employeeCode} is already in use`,
           );
         }
-
-        // Find or create user
-        let user = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, normalizedEmail))
-          .limit(1);
-
-        if (!user[0]) {
-          const inserted = await db
-            .insert(users)
-            .values({
-              email: normalizedEmail,
-              full_name: dto.fullName,
-            })
-            .returning();
-          user = inserted;
-        }
-
-        const currentUser = user[0];
 
         // Create employee record
         const [employee] = await db
@@ -254,7 +264,7 @@ export class EmployeesService {
           .limit(1);
         const companyName = tenantRow?.name ?? 'Your Company';
 
-        return { employee, currentUser, companyName };
+        return { employee, companyName };
       });
 
     // Generate a 7-day magic link so the invitee can sign in with one click,

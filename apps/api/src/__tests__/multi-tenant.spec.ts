@@ -443,4 +443,48 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
       .delete(schema.impersonationSessions)
       .where(eq(schema.impersonationSessions.id, session!.id));
   });
+
+  // ─── Test 13: Users visible only to tenants they are members of (0010) ────
+  it('13. Users are visible only to tenants they belong to', async () => {
+    const user = await createTestUser(`u13-${Date.now()}@test.test`);
+    const [membership] = await dbAdmin
+      .insert(schema.memberships)
+      .values({
+        tenant_id: tenantA.id,
+        user_id: user.id,
+        role: 'employee',
+        status: 'active',
+      })
+      .returning();
+
+    // Visible under tenant A (the user is a member there) …
+    const fromA = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.users).where(eq(schema.users.id, user.id)),
+    );
+    expect(fromA.length).toBe(1);
+
+    // … but invisible under tenant B (not a member).
+    const fromB = await withTestTenant(tenantB.id, (tx) =>
+      tx.select().from(schema.users).where(eq(schema.users.id, user.id)),
+    );
+    expect(fromB.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.memberships)
+      .where(eq(schema.memberships.id, membership!.id));
+    await dbAdmin.delete(schema.users).where(eq(schema.users.id, user.id));
+  });
+
+  // ─── Test 14: Tenants see only their own row (0010) ───────────────────────
+  it('14. A tenant connection sees only its own tenants row', async () => {
+    const own = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.tenants).where(eq(schema.tenants.id, tenantA.id)),
+    );
+    expect(own.length).toBe(1);
+
+    const other = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.tenants).where(eq(schema.tenants.id, tenantB.id)),
+    );
+    expect(other.length).toBe(0);
+  });
 });
