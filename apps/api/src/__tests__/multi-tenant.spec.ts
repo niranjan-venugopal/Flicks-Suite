@@ -387,4 +387,137 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
     expect(employees.every((e) => e.tenant_id === tenantA.id)).toBe(true);
     expect(employees.find((e) => e.tenant_id === tenantB.id)).toBeUndefined();
   });
+
+  // ─── Test 11: Subscriptions isolation (Bucket B, 0009) ────────────────────
+  // FAM reads subscriptions via the service role, so this is defense-in-depth:
+  // a tenant-role query must never see another tenant's billing row.
+  it('11. Subscriptions are isolated per tenant', async () => {
+    const [sub] = await dbAdmin
+      .insert(schema.subscriptions)
+      .values({
+        tenant_id: tenantA.id,
+        plan_code: 'starter',
+        status: 'trialing',
+      })
+      .returning();
+
+    const results = await withTestTenant(tenantB.id, (tx) =>
+      tx
+        .select()
+        .from(schema.subscriptions)
+        .where(eq(schema.subscriptions.id, sub!.id)),
+    );
+
+    expect(results.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.subscriptions)
+      .where(eq(schema.subscriptions.id, sub!.id));
+  });
+
+  // ─── Test 12: Impersonation sessions isolation (target_tenant_id, 0009) ───
+  // The policy keys on target_tenant_id (the tenant being impersonated), not
+  // tenant_id — guard against that column being wired up wrong.
+  it('12. Impersonation sessions are isolated per target tenant', async () => {
+    const [session] = await dbAdmin
+      .insert(schema.impersonationSessions)
+      .values({
+        target_tenant_id: tenantA.id,
+        impersonator_user_id: employeeA.user_id!,
+        target_user_id: employeeA.user_id!,
+        ends_at: new Date(Date.now() + 15 * 60 * 1000),
+        reason: 'isolation test',
+      })
+      .returning();
+
+    const results = await withTestTenant(tenantB.id, (tx) =>
+      tx
+        .select()
+        .from(schema.impersonationSessions)
+        .where(eq(schema.impersonationSessions.id, session!.id)),
+    );
+
+    expect(results.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.impersonationSessions)
+      .where(eq(schema.impersonationSessions.id, session!.id));
+  });
+
+  // ─── Test 13: Users visible only to tenants they are members of (0010) ────
+  it('13. Users are visible only to tenants they belong to', async () => {
+    const user = await createTestUser(`u13-${Date.now()}@test.test`);
+    const [membership] = await dbAdmin
+      .insert(schema.memberships)
+      .values({
+        tenant_id: tenantA.id,
+        user_id: user.id,
+        role: 'employee',
+        status: 'active',
+      })
+      .returning();
+
+    // Visible under tenant A (the user is a member there) …
+    const fromA = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.users).where(eq(schema.users.id, user.id)),
+    );
+    expect(fromA.length).toBe(1);
+
+    // … but invisible under tenant B (not a member).
+    const fromB = await withTestTenant(tenantB.id, (tx) =>
+      tx.select().from(schema.users).where(eq(schema.users.id, user.id)),
+    );
+    expect(fromB.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.memberships)
+      .where(eq(schema.memberships.id, membership!.id));
+    await dbAdmin.delete(schema.users).where(eq(schema.users.id, user.id));
+  });
+
+  // ─── Test 14: Tenants see only their own row (0010) ───────────────────────
+  it('14. A tenant connection sees only its own tenants row', async () => {
+    const own = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.tenants).where(eq(schema.tenants.id, tenantA.id)),
+    );
+    expect(own.length).toBe(1);
+
+    const other = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.tenants).where(eq(schema.tenants.id, tenantB.id)),
+    );
+    expect(other.length).toBe(0);
+  });
+
+  // ─── Test 15: Identity/auth tables are denied to the tenant role (0011) ───
+  // auth_otps et al. are service-role-only (deny-all RLS). The app role must
+  // be able to neither read nor write them — this is what makes the OTP/login
+  // tables safe to have RLS on without leaking, and re-locks auth_otps after
+  // the dashboard-drift hotfix.
+  it('15. Identity tables (auth_otps) are denied to the tenant connection', async () => {
+    const [otp] = await dbAdmin
+      .insert(schema.authOtps)
+      .values({
+        email: `otp-${Date.now()}@test.test`,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000),
+      })
+      .returning();
+
+    // Deny-all USING(false): the tenant connection sees zero rows.
+    const seen = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.authOtps).where(eq(schema.authOtps.id, otp!.id)),
+    );
+    expect(seen.length).toBe(0);
+
+    // Deny-all WITH CHECK(false): the tenant connection cannot insert either.
+    await expect(
+      withTestTenant(tenantA.id, (tx) =>
+        tx.insert(schema.authOtps).values({
+          email: `blocked-${Date.now()}@test.test`,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000),
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await dbAdmin.delete(schema.authOtps).where(eq(schema.authOtps.id, otp!.id));
+  });
 });
