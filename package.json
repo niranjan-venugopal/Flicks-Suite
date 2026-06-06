@@ -14,6 +14,7 @@
     "db:seed": "pnpm --filter @flicks/db seed",
     "db:studio": "pnpm --filter @flicks/db studio",
     "setup:db": "bash scripts/setup-db.sh",
+    "setup:database": "bash scripts/setup-database.sh",
     "setup:demo": "bash scripts/setup-demo.sh",
     "setup": "pnpm install && pnpm setup:db && pnpm db:seed"
   },
