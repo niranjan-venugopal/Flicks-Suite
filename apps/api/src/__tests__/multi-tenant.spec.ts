@@ -487,4 +487,37 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
     );
     expect(other.length).toBe(0);
   });
+
+  // ─── Test 15: Identity/auth tables are denied to the tenant role (0011) ───
+  // auth_otps et al. are service-role-only (deny-all RLS). The app role must
+  // be able to neither read nor write them — this is what makes the OTP/login
+  // tables safe to have RLS on without leaking, and re-locks auth_otps after
+  // the dashboard-drift hotfix.
+  it('15. Identity tables (auth_otps) are denied to the tenant connection', async () => {
+    const [otp] = await dbAdmin
+      .insert(schema.authOtps)
+      .values({
+        email: `otp-${Date.now()}@test.test`,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000),
+      })
+      .returning();
+
+    // Deny-all USING(false): the tenant connection sees zero rows.
+    const seen = await withTestTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.authOtps).where(eq(schema.authOtps.id, otp!.id)),
+    );
+    expect(seen.length).toBe(0);
+
+    // Deny-all WITH CHECK(false): the tenant connection cannot insert either.
+    await expect(
+      withTestTenant(tenantA.id, (tx) =>
+        tx.insert(schema.authOtps).values({
+          email: `blocked-${Date.now()}@test.test`,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000),
+        }),
+      ),
+    ).rejects.toThrow();
+
+    await dbAdmin.delete(schema.authOtps).where(eq(schema.authOtps.id, otp!.id));
+  });
 });
