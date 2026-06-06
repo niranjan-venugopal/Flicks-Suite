@@ -387,4 +387,60 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
     expect(employees.every((e) => e.tenant_id === tenantA.id)).toBe(true);
     expect(employees.find((e) => e.tenant_id === tenantB.id)).toBeUndefined();
   });
+
+  // ─── Test 11: Subscriptions isolation (Bucket B, 0009) ────────────────────
+  // FAM reads subscriptions via the service role, so this is defense-in-depth:
+  // a tenant-role query must never see another tenant's billing row.
+  it('11. Subscriptions are isolated per tenant', async () => {
+    const [sub] = await dbAdmin
+      .insert(schema.subscriptions)
+      .values({
+        tenant_id: tenantA.id,
+        plan_code: 'starter',
+        status: 'trialing',
+      })
+      .returning();
+
+    const results = await withTestTenant(tenantB.id, (tx) =>
+      tx
+        .select()
+        .from(schema.subscriptions)
+        .where(eq(schema.subscriptions.id, sub!.id)),
+    );
+
+    expect(results.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.subscriptions)
+      .where(eq(schema.subscriptions.id, sub!.id));
+  });
+
+  // ─── Test 12: Impersonation sessions isolation (target_tenant_id, 0009) ───
+  // The policy keys on target_tenant_id (the tenant being impersonated), not
+  // tenant_id — guard against that column being wired up wrong.
+  it('12. Impersonation sessions are isolated per target tenant', async () => {
+    const [session] = await dbAdmin
+      .insert(schema.impersonationSessions)
+      .values({
+        target_tenant_id: tenantA.id,
+        impersonator_user_id: employeeA.user_id!,
+        target_user_id: employeeA.user_id!,
+        ends_at: new Date(Date.now() + 15 * 60 * 1000),
+        reason: 'isolation test',
+      })
+      .returning();
+
+    const results = await withTestTenant(tenantB.id, (tx) =>
+      tx
+        .select()
+        .from(schema.impersonationSessions)
+        .where(eq(schema.impersonationSessions.id, session!.id)),
+    );
+
+    expect(results.length).toBe(0);
+
+    await dbAdmin
+      .delete(schema.impersonationSessions)
+      .where(eq(schema.impersonationSessions.id, session!.id));
+  });
 });

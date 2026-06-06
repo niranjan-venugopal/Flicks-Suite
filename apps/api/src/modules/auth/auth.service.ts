@@ -29,11 +29,8 @@ import {
   leaveRequests,
   timesheetPeriods,
 } from '@flicks/db/schema';
-import {
-  DB_TENANT,
-  DB_SERVICE_ROLE,
-} from '../../core/database/database.module';
-import type { Db, DbAdmin } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../../core/database/database.module';
+import type { DbAdmin } from '@flicks/db';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
@@ -51,11 +48,15 @@ function generateSecureToken(length = 32): string {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
+  // Auth is a platform-level / cross-tenant concern: it looks up users by
+  // email before any tenant exists (OTP), enumerates the tenants a user
+  // belongs to (memberships) to build the tenant picker, issues/rotates
+  // session + refresh tokens, and manages trusted devices + impersonation.
+  // None of that fits a single-tenant RLS context, so it runs entirely on the
+  // service-role (BYPASSRLS) connection. `db` and `dbAdmin` point at the same
+  // connection — kept as two fields only to avoid churning ~50 call sites.
   constructor(
-    @Inject(DB_TENANT) private readonly db: Db,
-    // Auth is a platform-level concern: it discovers a user's tenants by
-    // querying memberships before any tenant context is established. The
-    // service-role client bypasses RLS, which is required for that lookup.
+    @Inject(DB_SERVICE_ROLE) private readonly db: DbAdmin,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
