@@ -2,12 +2,10 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  BadRequestException,
   Logger,
-  Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, ilike, inArray, desc, asc, sql } from 'drizzle-orm';
+import { eq, ne, and, inArray, desc, asc, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -24,15 +22,13 @@ import {
   attendanceRecords,
   leaveBalances,
   leaveTypes,
-  leaveRequests,
   dataConsents,
 } from '@flicks/db/schema';
 
 // Bump when the privacy policy / consent copy materially changes so we can
 // tell which version each principal agreed to (DPDP audit requirement).
 const CONSENT_VERSION = '2026-05-v1';
-import { DB_TENANT } from '../../core/database/database.module';
-import type { Db } from '@flicks/db';
+import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
@@ -40,7 +36,6 @@ import type {
   InviteEmployeeDto,
   UpdateEmployeeDto,
   SelfUpdateEmployeeDto,
-  OnboardingStepDto,
   SubmitOnboardingStepDto,
   TransferEmployeeDto,
   TerminateEmployeeDto,
@@ -75,8 +70,13 @@ const SAFE_EMPLOYEE_FIELDS = {
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
+  // Every query runs through databaseService.withTenant(tenantId, …) so that
+  // app.tenant_id is set for the duration of the transaction and the RLS
+  // policies on the tenant tables resolve correctly. Under the NOBYPASSRLS
+  // app role, a query without that context returns zero rows — so this is
+  // load-bearing, not just defense-in-depth.
   constructor(
-    @Inject(DB_TENANT) private readonly db: Db,
+    private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
@@ -101,33 +101,35 @@ export class EmployeesService {
       conditions.push(eq(employees.status, query.status as typeof employees.status._.data));
     }
 
-    const result = await this.db
-      .select({
-        id: employees.id,
-        employeeCode: employees.employee_code,
-        status: employees.status,
-        employmentType: employees.employment_type,
-        dateOfJoining: employees.date_of_joining,
-        departmentId: employees.department_id,
-        departmentName: departments.name,
-        locationId: employees.location_id,
-        locationName: locations.name,
-        reportingManagerId: employees.reporting_manager_id,
-        designationId: employees.designation_id,
-        userId: employees.user_id,
-        fullName: users.full_name,
-        email: users.email,
-        avatarUrl: users.avatar_url,
-        createdAt: employees.created_at,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .leftJoin(departments, eq(employees.department_id, departments.id))
-      .leftJoin(locations, eq(employees.location_id, locations.id))
-      .where(and(...conditions))
-      .orderBy(desc(employees.created_at))
-      .limit(limit)
-      .offset(offset);
+    const result = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          id: employees.id,
+          employeeCode: employees.employee_code,
+          status: employees.status,
+          employmentType: employees.employment_type,
+          dateOfJoining: employees.date_of_joining,
+          departmentId: employees.department_id,
+          departmentName: departments.name,
+          locationId: employees.location_id,
+          locationName: locations.name,
+          reportingManagerId: employees.reporting_manager_id,
+          designationId: employees.designation_id,
+          userId: employees.user_id,
+          fullName: users.full_name,
+          email: users.email,
+          avatarUrl: users.avatar_url,
+          createdAt: employees.created_at,
+        })
+        .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .leftJoin(departments, eq(employees.department_id, departments.id))
+        .leftJoin(locations, eq(employees.location_id, locations.id))
+        .where(and(...conditions))
+        .orderBy(desc(employees.created_at))
+        .limit(limit)
+        .offset(offset),
+    );
 
     return {
       data: result,
@@ -142,45 +144,6 @@ export class EmployeesService {
   ) {
     const normalizedEmail = dto.email.toLowerCase().trim();
 
-    // Check for duplicate employee code within tenant
-    const existing = await this.db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(
-        and(
-          eq(employees.tenant_id, tenantId),
-          eq(employees.employee_code, dto.employeeCode),
-        ),
-      )
-      .limit(1);
-
-    if (existing[0]) {
-      throw new ConflictException(
-        `Employee code ${dto.employeeCode} is already in use`,
-      );
-    }
-
-    // Find or create user
-    let user = await this.db
-      .select()
-      .from(users)
-      .where(eq(users.email, normalizedEmail))
-      .limit(1);
-
-    if (!user[0]) {
-      const inserted = await this.db
-        .insert(users)
-        .values({
-          email: normalizedEmail,
-          full_name: dto.fullName,
-        })
-        .returning();
-      user = inserted;
-    }
-
-    const currentUser = user[0];
-
-    // Create employee record
     const joiningDate = dto.joiningDate
       ? dto.joiningDate
       : new Date().toISOString().split('T')[0];
@@ -189,75 +152,110 @@ export class EmployeesService {
     const firstName = nameParts[0] ?? dto.fullName;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    const [employee] = await this.db
-      .insert(employees)
-      .values({
-        tenant_id: tenantId,
-        user_id: currentUser.id,
-        employee_code: dto.employeeCode,
-        first_name: firstName,
-        last_name: lastName,
-        work_email: normalizedEmail,
-        designation_id: dto.designationId,
-        department_id: dto.departmentId,
-        location_id: dto.locationId,
-        reporting_manager_id: dto.managerId,
-        employment_type:
-          (dto.employmentType as typeof employees.$inferInsert['employment_type']) ??
-          'full_time',
-        date_of_joining: joiningDate,
-        // Pre-fills from the Invite form — the wizard lets the employee
-        // edit them later but admins typically know phone + DOB up front.
-        ...(dto.personalPhone ? { personal_phone: dto.personalPhone } : {}),
-        ...(dto.dateOfBirth ? { date_of_birth: dto.dateOfBirth } : {}),
-        status: 'inactive',
-        custom_fields: {
-          onboarding_step: 0,
-          ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
-        },
-      })
-      .returning();
+    const { employee, currentUser, companyName } =
+      await this.databaseService.withTenant(tenantId, async (db) => {
+        // Check for duplicate employee code within tenant
+        const existing = await db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.tenant_id, tenantId),
+              eq(employees.employee_code, dto.employeeCode),
+            ),
+          )
+          .limit(1);
 
-    // Create or update membership
-    const existingMembership = await this.db
-      .select()
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, currentUser.id),
-          eq(memberships.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+        if (existing[0]) {
+          throw new ConflictException(
+            `Employee code ${dto.employeeCode} is already in use`,
+          );
+        }
 
-    if (!existingMembership[0]) {
-      await this.db.insert(memberships).values({
-        tenant_id: tenantId,
-        user_id: currentUser.id,
-        employee_id: employee.id,
-        role: 'employee',
-        status: 'invited',
-        invited_by: adminId,
-        invited_at: new Date(),
+        // Find or create user
+        let user = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, normalizedEmail))
+          .limit(1);
+
+        if (!user[0]) {
+          const inserted = await db
+            .insert(users)
+            .values({
+              email: normalizedEmail,
+              full_name: dto.fullName,
+            })
+            .returning();
+          user = inserted;
+        }
+
+        const currentUser = user[0];
+
+        // Create employee record
+        const [employee] = await db
+          .insert(employees)
+          .values({
+            tenant_id: tenantId,
+            user_id: currentUser.id,
+            employee_code: dto.employeeCode,
+            first_name: firstName,
+            last_name: lastName,
+            work_email: normalizedEmail,
+            designation_id: dto.designationId,
+            department_id: dto.departmentId,
+            location_id: dto.locationId,
+            reporting_manager_id: dto.managerId,
+            employment_type:
+              (dto.employmentType as typeof employees.$inferInsert['employment_type']) ??
+              'full_time',
+            date_of_joining: joiningDate,
+            // Pre-fills from the Invite form — the wizard lets the employee
+            // edit them later but admins typically know phone + DOB up front.
+            ...(dto.personalPhone ? { personal_phone: dto.personalPhone } : {}),
+            ...(dto.dateOfBirth ? { date_of_birth: dto.dateOfBirth } : {}),
+            status: 'inactive',
+            custom_fields: {
+              onboarding_step: 0,
+              ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
+            },
+          })
+          .returning();
+
+        // Create or update membership
+        const existingMembership = await db
+          .select()
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.user_id, currentUser.id),
+              eq(memberships.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
+
+        if (!existingMembership[0]) {
+          await db.insert(memberships).values({
+            tenant_id: tenantId,
+            user_id: currentUser.id,
+            employee_id: employee.id,
+            role: 'employee',
+            status: 'invited',
+            invited_by: adminId,
+            invited_at: new Date(),
+          });
+        }
+
+        // Resolve tenant name for the email template.
+        const [tenantRow] = await db
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, tenantId))
+          .limit(1);
+        const companyName = tenantRow?.name ?? 'Your Company';
+
+        return { employee, currentUser, companyName };
       });
-    }
-
-    // Get company info for invite email
-    const adminUser = await this.db
-      .select({ full_name: users.full_name })
-      .from(users)
-      .where(eq(users.id, adminId))
-      .limit(1);
-
-    const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-
-    // Resolve tenant name for the email template.
-    const [tenantRow] = await this.db
-      .select({ name: tenants.name })
-      .from(tenants)
-      .where(eq(tenants.id, tenantId))
-      .limit(1);
-    const companyName = tenantRow?.name ?? 'Your Company';
 
     // Generate a 7-day magic link so the invitee can sign in with one click,
     // bypassing the OTP flow. The link routes through /verify → /auth/magic-link
@@ -315,20 +313,24 @@ export class EmployeesService {
   ) {
     const norm = (s: string) => s.trim().toLowerCase();
 
-    const [depts, desigs, locs] = await Promise.all([
-      this.db
-        .select({ id: departments.id, name: departments.name })
-        .from(departments)
-        .where(eq(departments.tenant_id, tenantId)),
-      this.db
-        .select({ id: designations.id, title: designations.title })
-        .from(designations)
-        .where(eq(designations.tenant_id, tenantId)),
-      this.db
-        .select({ id: locations.id, name: locations.name })
-        .from(locations)
-        .where(eq(locations.tenant_id, tenantId)),
-    ]);
+    const [depts, desigs, locs] = await this.databaseService.withTenant(
+      tenantId,
+      (db) =>
+        Promise.all([
+          db
+            .select({ id: departments.id, name: departments.name })
+            .from(departments)
+            .where(eq(departments.tenant_id, tenantId)),
+          db
+            .select({ id: designations.id, title: designations.title })
+            .from(designations)
+            .where(eq(designations.tenant_id, tenantId)),
+          db
+            .select({ id: locations.id, name: locations.name })
+            .from(locations)
+            .where(eq(locations.tenant_id, tenantId)),
+        ]),
+    );
     const deptMap = new Map(depts.map((d) => [norm(d.name), d.id]));
     const desigMap = new Map(desigs.map((d) => [norm(d.title), d.id]));
     const locMap = new Map(locs.map((l) => [norm(l.name), l.id]));
@@ -386,213 +388,217 @@ export class EmployeesService {
   }
 
   async getEmployee(employeeId: string, tenantId: string) {
-    // Self-join alias for the reporting manager (manager is also an employee).
-    const manager = alias(employees, 'manager');
-    const managerUser = alias(users, 'manager_user');
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      // Self-join alias for the reporting manager (manager is also an employee).
+      const manager = alias(employees, 'manager');
+      const managerUser = alias(users, 'manager_user');
 
-    // ─── Core profile with all joins ────────────────────────────────────────
-    const [row] = await this.db
-      .select({
-        // Identity
-        id: employees.id,
-        employeeCode: employees.employee_code,
-        firstName: employees.first_name,
-        middleName: employees.middle_name,
-        lastName: employees.last_name,
-        preferredName: employees.preferred_name,
-        // Email / phone
-        workEmail: employees.work_email,
-        personalEmail: employees.personal_email,
-        workPhone: employees.work_phone,
-        personalPhone: employees.personal_phone,
-        // FKs + joined names
-        userId: employees.user_id,
-        departmentId: employees.department_id,
-        departmentName: departments.name,
-        designationId: employees.designation_id,
-        designationTitle: designations.title,
-        designationLevel: designations.level,
-        locationId: employees.location_id,
-        locationName: locations.name,
-        locationCity: locations.city,
-        locationTimezone: locations.timezone,
-        reportingManagerId: employees.reporting_manager_id,
-        reportingManagerName: managerUser.full_name,
-        reportingManagerEmail: managerUser.email,
-        // Employment
-        employmentType: employees.employment_type,
-        dateOfJoining: employees.date_of_joining,
-        dateOfConfirmation: employees.date_of_confirmation,
-        probationEndDate: employees.probation_end_date,
-        dateOfExit: employees.date_of_exit,
-        noticePeriodDays: employees.notice_period_days,
-        // Personal
-        dateOfBirth: employees.date_of_birth,
-        gender: employees.gender,
-        maritalStatus: employees.marital_status,
-        nationality: employees.nationality,
-        bloodGroup: employees.blood_group,
-        currentAddress: employees.current_address,
-        permanentAddress: employees.permanent_address,
-        // Statutory (encrypted columns surfaced as flags only)
-        hasPan: sql<boolean>`${employees.pan_encrypted} IS NOT NULL`,
-        hasPassport: sql<boolean>`${employees.passport_number_encrypted} IS NOT NULL`,
-        pfUan: employees.pf_uan,
-        esicNumber: employees.esic_number,
-        pfApplicable: employees.pf_applicable,
-        esiApplicable: employees.esi_applicable,
-        // Banking (account number encrypted; show last-4 + bank name + ifsc)
-        bankName: employees.bank_name,
-        bankBranch: employees.bank_branch,
-        bankIfsc: employees.bank_ifsc,
-        bankAccountType: employees.bank_account_type,
-        bankAccountHolder: employees.bank_account_holder,
-        hasBankAccount: sql<boolean>`${employees.bank_account_number_encrypted} IS NOT NULL`,
-        // Status + avatar
-        status: employees.status,
-        avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
-        customFields: employees.custom_fields,
-        createdAt: employees.created_at,
-        updatedAt: employees.updated_at,
-        // Linked user identity
-        userFullName: users.full_name,
-        userEmail: users.email,
-        // Keep snake_case mirrors of the columns that other service methods
-        // already reference, so this rewrite stays a non-breaking enrichment.
-        custom_fields: employees.custom_fields,
-        user_id: employees.user_id,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .leftJoin(departments, eq(employees.department_id, departments.id))
-      .leftJoin(designations, eq(employees.designation_id, designations.id))
-      .leftJoin(locations, eq(employees.location_id, locations.id))
-      .leftJoin(manager, eq(employees.reporting_manager_id, manager.id))
-      .leftJoin(managerUser, eq(manager.user_id, managerUser.id))
-      .where(
-        and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
-      )
-      .limit(1);
-
-    if (!row) {
-      throw new NotFoundException('Employee not found');
-    }
-
-    // ─── Sibling collections ────────────────────────────────────────────────
-    const [emergencyList, leaveBalanceRows, monthStats] = await Promise.all([
-      // Emergency contacts (primary first)
-      this.db
+      // ─── Core profile with all joins ──────────────────────────────────────
+      const [row] = await db
         .select({
-          id: emergencyContacts.id,
-          name: emergencyContacts.name,
-          relationship: emergencyContacts.relationship,
-          phone: emergencyContacts.phone,
-          email: emergencyContacts.email,
-          isPrimary: emergencyContacts.is_primary,
+          // Identity
+          id: employees.id,
+          employeeCode: employees.employee_code,
+          firstName: employees.first_name,
+          middleName: employees.middle_name,
+          lastName: employees.last_name,
+          preferredName: employees.preferred_name,
+          // Email / phone
+          workEmail: employees.work_email,
+          personalEmail: employees.personal_email,
+          workPhone: employees.work_phone,
+          personalPhone: employees.personal_phone,
+          // FKs + joined names
+          userId: employees.user_id,
+          departmentId: employees.department_id,
+          departmentName: departments.name,
+          designationId: employees.designation_id,
+          designationTitle: designations.title,
+          designationLevel: designations.level,
+          locationId: employees.location_id,
+          locationName: locations.name,
+          locationCity: locations.city,
+          locationTimezone: locations.timezone,
+          reportingManagerId: employees.reporting_manager_id,
+          reportingManagerName: managerUser.full_name,
+          reportingManagerEmail: managerUser.email,
+          // Employment
+          employmentType: employees.employment_type,
+          dateOfJoining: employees.date_of_joining,
+          dateOfConfirmation: employees.date_of_confirmation,
+          probationEndDate: employees.probation_end_date,
+          dateOfExit: employees.date_of_exit,
+          noticePeriodDays: employees.notice_period_days,
+          // Personal
+          dateOfBirth: employees.date_of_birth,
+          gender: employees.gender,
+          maritalStatus: employees.marital_status,
+          nationality: employees.nationality,
+          bloodGroup: employees.blood_group,
+          currentAddress: employees.current_address,
+          permanentAddress: employees.permanent_address,
+          // Statutory (encrypted columns surfaced as flags only)
+          hasPan: sql<boolean>`${employees.pan_encrypted} IS NOT NULL`,
+          hasPassport: sql<boolean>`${employees.passport_number_encrypted} IS NOT NULL`,
+          pfUan: employees.pf_uan,
+          esicNumber: employees.esic_number,
+          pfApplicable: employees.pf_applicable,
+          esiApplicable: employees.esi_applicable,
+          // Banking (account number encrypted; show last-4 + bank name + ifsc)
+          bankName: employees.bank_name,
+          bankBranch: employees.bank_branch,
+          bankIfsc: employees.bank_ifsc,
+          bankAccountType: employees.bank_account_type,
+          bankAccountHolder: employees.bank_account_holder,
+          hasBankAccount: sql<boolean>`${employees.bank_account_number_encrypted} IS NOT NULL`,
+          // Status + avatar
+          status: employees.status,
+          avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+          customFields: employees.custom_fields,
+          createdAt: employees.created_at,
+          updatedAt: employees.updated_at,
+          // Linked user identity
+          userFullName: users.full_name,
+          userEmail: users.email,
+          // Keep snake_case mirrors of the columns that other service methods
+          // already reference, so this rewrite stays a non-breaking enrichment.
+          custom_fields: employees.custom_fields,
+          user_id: employees.user_id,
         })
-        .from(emergencyContacts)
+        .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .leftJoin(departments, eq(employees.department_id, departments.id))
+        .leftJoin(designations, eq(employees.designation_id, designations.id))
+        .leftJoin(locations, eq(employees.location_id, locations.id))
+        .leftJoin(manager, eq(employees.reporting_manager_id, manager.id))
+        .leftJoin(managerUser, eq(manager.user_id, managerUser.id))
         .where(
-          and(
-            eq(emergencyContacts.tenant_id, tenantId),
-            eq(emergencyContacts.employee_id, employeeId),
-          ),
+          and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
         )
-        .orderBy(desc(emergencyContacts.is_primary)),
+        .limit(1);
 
-      // Leave balances for the current year (with type metadata).
-      // Falls back to leave_types.default_quota_days when no balance row
-      // exists yet — matches the leave service's own getMyBalances shape.
-      this.db
-        .select({
-          leaveTypeId: leaveTypes.id,
-          leaveTypeName: leaveTypes.name,
-          code: leaveTypes.code,
-          color: leaveTypes.color,
-          defaultQuotaDays: leaveTypes.default_quota_days,
-          opening: leaveBalances.opening_balance,
-          accrued: leaveBalances.accrued,
-          used: leaveBalances.used,
-          pending: leaveBalances.pending,
-          available: leaveBalances.available,
-        })
-        .from(leaveTypes)
-        .leftJoin(
-          leaveBalances,
-          and(
-            eq(leaveBalances.leave_type_id, leaveTypes.id),
-            eq(leaveBalances.employee_id, employeeId),
-            eq(leaveBalances.leave_year, new Date().getFullYear()),
+      if (!row) {
+        throw new NotFoundException('Employee not found');
+      }
+
+      // ─── Sibling collections ──────────────────────────────────────────────
+      const [emergencyList, leaveBalanceRows, monthStats] = await Promise.all([
+        // Emergency contacts (primary first)
+        db
+          .select({
+            id: emergencyContacts.id,
+            name: emergencyContacts.name,
+            relationship: emergencyContacts.relationship,
+            phone: emergencyContacts.phone,
+            email: emergencyContacts.email,
+            isPrimary: emergencyContacts.is_primary,
+          })
+          .from(emergencyContacts)
+          .where(
+            and(
+              eq(emergencyContacts.tenant_id, tenantId),
+              eq(emergencyContacts.employee_id, employeeId),
+            ),
+          )
+          .orderBy(desc(emergencyContacts.is_primary)),
+
+        // Leave balances for the current year (with type metadata).
+        // Falls back to leave_types.default_quota_days when no balance row
+        // exists yet — matches the leave service's own getMyBalances shape.
+        db
+          .select({
+            leaveTypeId: leaveTypes.id,
+            leaveTypeName: leaveTypes.name,
+            code: leaveTypes.code,
+            color: leaveTypes.color,
+            defaultQuotaDays: leaveTypes.default_quota_days,
+            opening: leaveBalances.opening_balance,
+            accrued: leaveBalances.accrued,
+            used: leaveBalances.used,
+            pending: leaveBalances.pending,
+            available: leaveBalances.available,
+          })
+          .from(leaveTypes)
+          .leftJoin(
+            leaveBalances,
+            and(
+              eq(leaveBalances.leave_type_id, leaveTypes.id),
+              eq(leaveBalances.employee_id, employeeId),
+              eq(leaveBalances.leave_year, new Date().getFullYear()),
+            ),
+          )
+          .where(
+            and(
+              eq(leaveTypes.tenant_id, tenantId),
+              eq(leaveTypes.is_active, true),
+            ),
+          )
+          .orderBy(asc(leaveTypes.display_order)),
+
+        // 'This month' attendance summary — single row aggregate
+        db
+          .select({
+            daysPresent: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} IN ('present','late','work_from_home','on_duty'))::int`,
+            lateArrivals: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.is_late} = true)::int`,
+            minutesWorked: sql<number>`COALESCE(SUM(${attendanceRecords.total_worked_minutes}),0)::int`,
+            onLeave: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} = 'on_leave')::int`,
+          })
+          .from(attendanceRecords)
+          .where(
+            and(
+              eq(attendanceRecords.tenant_id, tenantId),
+              eq(attendanceRecords.employee_id, employeeId),
+              sql`${attendanceRecords.attendance_date} >= date_trunc('month', current_date)::date`,
+              sql`${attendanceRecords.attendance_date} <= current_date`,
+            ),
           ),
-        )
-        .where(
-          and(
-            eq(leaveTypes.tenant_id, tenantId),
-            eq(leaveTypes.is_active, true),
-          ),
-        )
-        .orderBy(asc(leaveTypes.display_order)),
+      ]);
 
-      // 'This month' attendance summary — single row aggregate
-      this.db
-        .select({
-          daysPresent: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} IN ('present','late','work_from_home','on_duty'))::int`,
-          lateArrivals: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.is_late} = true)::int`,
-          minutesWorked: sql<number>`COALESCE(SUM(${attendanceRecords.total_worked_minutes}),0)::int`,
-          onLeave: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} = 'on_leave')::int`,
-        })
-        .from(attendanceRecords)
-        .where(
-          and(
-            eq(attendanceRecords.tenant_id, tenantId),
-            eq(attendanceRecords.employee_id, employeeId),
-            sql`${attendanceRecords.attendance_date} >= date_trunc('month', current_date)::date`,
-            sql`${attendanceRecords.attendance_date} <= current_date`,
-          ),
-        ),
-    ]);
+      const month = monthStats[0] ?? {
+        daysPresent: 0,
+        lateArrivals: 0,
+        minutesWorked: 0,
+        onLeave: 0,
+      };
 
-    const month = monthStats[0] ?? {
-      daysPresent: 0,
-      lateArrivals: 0,
-      minutesWorked: 0,
-      onLeave: 0,
-    };
-
-    return {
-      ...row,
-      // Synthesise the "this month" card from the aggregate.
-      thisMonth: {
-        daysPresent: Number(month.daysPresent ?? 0),
-        lateArrivals: Number(month.lateArrivals ?? 0),
-        hoursWorked: Math.round(Number(month.minutesWorked ?? 0) / 60),
-        leaveTaken: Number(month.onLeave ?? 0),
-      },
-      emergencyContacts: emergencyList,
-      leaveBalances: leaveBalanceRows.map((b) => ({
-        leaveTypeId: b.leaveTypeId,
-        leaveTypeName: b.leaveTypeName,
-        code: b.code,
-        color: b.color,
-        opening: Number(b.opening ?? b.defaultQuotaDays ?? 0),
-        accrued: Number(b.accrued ?? 0),
-        used: Number(b.used ?? 0),
-        pending: Number(b.pending ?? 0),
-        available: Number(b.available ?? b.defaultQuotaDays ?? 0),
-      })),
-    };
+      return {
+        ...row,
+        // Synthesise the "this month" card from the aggregate.
+        thisMonth: {
+          daysPresent: Number(month.daysPresent ?? 0),
+          lateArrivals: Number(month.lateArrivals ?? 0),
+          hoursWorked: Math.round(Number(month.minutesWorked ?? 0) / 60),
+          leaveTaken: Number(month.onLeave ?? 0),
+        },
+        emergencyContacts: emergencyList,
+        leaveBalances: leaveBalanceRows.map((b) => ({
+          leaveTypeId: b.leaveTypeId,
+          leaveTypeName: b.leaveTypeName,
+          code: b.code,
+          color: b.color,
+          opening: Number(b.opening ?? b.defaultQuotaDays ?? 0),
+          accrued: Number(b.accrued ?? 0),
+          used: Number(b.used ?? 0),
+          pending: Number(b.pending ?? 0),
+          available: Number(b.available ?? b.defaultQuotaDays ?? 0),
+        })),
+      };
+    });
   }
 
   async getMyRecord(userId: string, tenantId: string) {
-    const membership = await this.db
-      .select({ employeeId: memberships.employee_id })
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+    const membership = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({ employeeId: memberships.employee_id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.user_id, userId),
+            eq(memberships.tenant_id, tenantId),
+          ),
+        )
+        .limit(1),
+    );
 
     if (!membership[0]?.employeeId) {
       throw new NotFoundException('Employee record not found');
@@ -602,64 +608,66 @@ export class EmployeesService {
   }
 
   async listMyTeam(userId: string, tenantId: string) {
-    const [membership] = await this.db
-      .select({ employeeId: memberships.employee_id })
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
-    if (!membership?.employeeId) {
-      // User has no employee row (e.g. plain admin user) → empty team.
-      return { data: [], total: 0 };
-    }
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const [membership] = await db
+        .select({ employeeId: memberships.employee_id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.user_id, userId),
+            eq(memberships.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
+      if (!membership?.employeeId) {
+        // User has no employee row (e.g. plain admin user) → empty team.
+        return { data: [], total: 0 };
+      }
 
-    const managerEmployeeId = membership.employeeId;
+      const managerEmployeeId = membership.employeeId;
 
-    const rows = await this.db
-      .select({
-        id: employees.id,
-        employeeCode: employees.employee_code,
-        firstName: employees.first_name,
-        lastName: employees.last_name,
-        fullName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
-        workEmail: employees.work_email,
-        status: employees.status,
-        employmentType: employees.employment_type,
-        dateOfJoining: employees.date_of_joining,
-        // Joined names
-        departmentId: employees.department_id,
-        departmentName: departments.name,
-        designationId: employees.designation_id,
-        designationTitle: designations.title,
-        locationId: employees.location_id,
-        locationName: locations.name,
-        avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
-        // Submitted-for-review flag — managers should see which of their
-        // reports have finished self-onboarding.
-        onboardingComplete: sql<boolean>`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean`,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .leftJoin(departments, eq(employees.department_id, departments.id))
-      .leftJoin(designations, eq(employees.designation_id, designations.id))
-      .leftJoin(locations, eq(employees.location_id, locations.id))
-      .where(
-        and(
-          eq(employees.tenant_id, tenantId),
-          eq(employees.reporting_manager_id, managerEmployeeId),
-        ),
-      )
-      .orderBy(asc(employees.first_name));
+      const rows = await db
+        .select({
+          id: employees.id,
+          employeeCode: employees.employee_code,
+          firstName: employees.first_name,
+          lastName: employees.last_name,
+          fullName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
+          workEmail: employees.work_email,
+          status: employees.status,
+          employmentType: employees.employment_type,
+          dateOfJoining: employees.date_of_joining,
+          // Joined names
+          departmentId: employees.department_id,
+          departmentName: departments.name,
+          designationId: employees.designation_id,
+          designationTitle: designations.title,
+          locationId: employees.location_id,
+          locationName: locations.name,
+          avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+          // Submitted-for-review flag — managers should see which of their
+          // reports have finished self-onboarding.
+          onboardingComplete: sql<boolean>`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean`,
+        })
+        .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .leftJoin(departments, eq(employees.department_id, departments.id))
+        .leftJoin(designations, eq(employees.designation_id, designations.id))
+        .leftJoin(locations, eq(employees.location_id, locations.id))
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            eq(employees.reporting_manager_id, managerEmployeeId),
+          ),
+        )
+        .orderBy(asc(employees.first_name));
 
-    return {
-      managerEmployeeId,
-      data: rows,
-      total: rows.length,
-    };
+      return {
+        managerEmployeeId,
+        data: rows,
+        total: rows.length,
+      };
+    });
   }
 
   async updateEmployee(
@@ -685,23 +693,33 @@ export class EmployeesService {
     if (dto.designationId !== undefined)
       empPatch.designation_id = dto.designationId;
 
-    const [updated] = await this.db
-      .update(employees)
-      .set(empPatch)
-      .where(eq(employees.id, employeeId))
-      .returning();
+    const updated = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [updated] = await db
+          .update(employees)
+          .set(empPatch)
+          .where(eq(employees.id, employeeId))
+          .returning();
 
-    // Name + avatar live on the user record, shared across memberships.
-    if (employee.userId && (dto.fullName !== undefined || dto.avatarUrl !== undefined)) {
-      await this.db
-        .update(users)
-        .set({
-          ...(dto.fullName !== undefined ? { full_name: dto.fullName } : {}),
-          ...(dto.avatarUrl !== undefined ? { avatar_url: dto.avatarUrl } : {}),
-          updated_at: new Date(),
-        })
-        .where(eq(users.id, employee.userId));
-    }
+        // Name + avatar live on the user record, shared across memberships.
+        if (
+          employee.userId &&
+          (dto.fullName !== undefined || dto.avatarUrl !== undefined)
+        ) {
+          await db
+            .update(users)
+            .set({
+              ...(dto.fullName !== undefined ? { full_name: dto.fullName } : {}),
+              ...(dto.avatarUrl !== undefined ? { avatar_url: dto.avatarUrl } : {}),
+              updated_at: new Date(),
+            })
+            .where(eq(users.id, employee.userId));
+        }
+
+        return updated;
+      },
+    );
 
     await this.auditService.log({
       tenantId,
@@ -728,30 +746,32 @@ export class EmployeesService {
   }
 
   async getOnboardingQueue(tenantId: string) {
-    const rows = await this.db
-      .select({
-        id: employees.id,
-        employeeCode: employees.employee_code,
-        fullName: users.full_name,
-        email: users.email,
-        avatarUrl: users.avatar_url,
-        designationTitle: designations.title,
-        departmentName: departments.name,
-        status: employees.status,
-        submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .leftJoin(designations, eq(employees.designation_id, designations.id))
-      .leftJoin(departments, eq(employees.department_id, departments.id))
-      .where(
-        and(
-          eq(employees.tenant_id, tenantId),
-          sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
-          ne(employees.status, 'active'),
-        ),
-      )
-      .orderBy(asc(employees.created_at));
+    const rows = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          id: employees.id,
+          employeeCode: employees.employee_code,
+          fullName: users.full_name,
+          email: users.email,
+          avatarUrl: users.avatar_url,
+          designationTitle: designations.title,
+          departmentName: departments.name,
+          status: employees.status,
+          submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
+        })
+        .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .leftJoin(designations, eq(employees.designation_id, designations.id))
+        .leftJoin(departments, eq(employees.department_id, departments.id))
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
+            ne(employees.status, 'active'),
+          ),
+        )
+        .orderBy(asc(employees.created_at)),
+    );
 
     return { data: rows, total: rows.length };
   }
@@ -767,48 +787,53 @@ export class EmployeesService {
     // Clear the review flag so the employee can edit + resubmit, and record
     // the reason in custom_fields for the wizard to surface.
     const existing = (employee.customFields ?? {}) as Record<string, unknown>;
-    await this.db
-      .update(employees)
-      .set({
-        custom_fields: {
-          ...existing,
-          onboarding_submitted_for_review: false,
-          onboarding_rejection_reason: reason ?? null,
-          onboarding_rejected_at: new Date().toISOString(),
-        },
-        updated_at: new Date(),
-      })
-      .where(eq(employees.id, employeeId));
-
-    if (employee.userId) {
-      const [user] = await this.db
-        .select({ email: users.email, full_name: users.full_name })
-        .from(users)
-        .where(eq(users.id, employee.userId))
-        .limit(1);
-
-      if (user) {
-        await this.notificationsService
-          .createInAppNotification(
-            employee.userId,
-            'onboarding.rejected',
-            reason
-              ? `Your onboarding was sent back for changes: ${reason}`
-              : 'Your onboarding was sent back for changes. Please review and resubmit.',
-            '/employees/me/onboarding',
-            tenantId,
-          )
-          .catch(() => undefined);
-
-        const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-        await this.notificationsService
-          .sendEmail('onboarding-rejected', user.email, {
-            employeeName: user.full_name,
-            reason,
-            resubmitUrl: `${appUrl}/employees/me/onboarding`,
+    const user = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        await db
+          .update(employees)
+          .set({
+            custom_fields: {
+              ...existing,
+              onboarding_submitted_for_review: false,
+              onboarding_rejection_reason: reason ?? null,
+              onboarding_rejected_at: new Date().toISOString(),
+            },
+            updated_at: new Date(),
           })
-          .catch(() => undefined);
-      }
+          .where(eq(employees.id, employeeId));
+
+        if (!employee.userId) return null;
+        const [u] = await db
+          .select({ email: users.email, full_name: users.full_name })
+          .from(users)
+          .where(eq(users.id, employee.userId))
+          .limit(1);
+        return u ?? null;
+      },
+    );
+
+    if (employee.userId && user) {
+      await this.notificationsService
+        .createInAppNotification(
+          employee.userId,
+          'onboarding.rejected',
+          reason
+            ? `Your onboarding was sent back for changes: ${reason}`
+            : 'Your onboarding was sent back for changes. Please review and resubmit.',
+          '/employees/me/onboarding',
+          tenantId,
+        )
+        .catch(() => undefined);
+
+      const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+      await this.notificationsService
+        .sendEmail('onboarding-rejected', user.email, {
+          employeeName: user.full_name,
+          reason,
+          resubmitUrl: `${appUrl}/employees/me/onboarding`,
+        })
+        .catch(() => undefined);
     }
 
     await this.auditService.log({
@@ -828,30 +853,37 @@ export class EmployeesService {
     dto: SelfUpdateEmployeeDto,
     tenantId: string,
   ) {
-    const membership = await this.db
-      .select({ employeeId: memberships.employee_id })
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+    const employeeId = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const membership = await db
+          .select({ employeeId: memberships.employee_id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.user_id, userId),
+              eq(memberships.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
 
-    if (!membership[0]?.employeeId) {
-      throw new NotFoundException('Employee record not found');
-    }
+        if (!membership[0]?.employeeId) {
+          throw new NotFoundException('Employee record not found');
+        }
 
-    // Update user's phone in users table
-    if (dto.phone) {
-      await this.db
-        .update(users)
-        .set({ phone: dto.phone, updated_at: new Date() })
-        .where(eq(users.id, userId));
-    }
+        // Update user's phone in users table
+        if (dto.phone) {
+          await db
+            .update(users)
+            .set({ phone: dto.phone, updated_at: new Date() })
+            .where(eq(users.id, userId));
+        }
 
-    return this.getEmployee(membership[0].employeeId, tenantId);
+        return membership[0].employeeId;
+      },
+    );
+
+    return this.getEmployee(employeeId, tenantId);
   }
 
   async submitOnboardingStep(
@@ -941,75 +973,77 @@ export class EmployeesService {
     };
     updateFields.updated_at = new Date();
 
-    await this.db
-      .update(employees)
-      .set(updateFields)
-      .where(eq(employees.id, employeeId));
+    await this.databaseService.withTenant(tenantId, async (db) => {
+      await db
+        .update(employees)
+        .set(updateFields)
+        .where(eq(employees.id, employeeId));
 
-    // ─── Emergency contact: upsert the primary row ───────────────────────
-    if (data.emergencyContact) {
-      const ec = data.emergencyContact;
-      const [existing] = await this.db
-        .select()
-        .from(emergencyContacts)
-        .where(
-          and(
-            eq(emergencyContacts.tenant_id, tenantId),
-            eq(emergencyContacts.employee_id, employeeId),
-            eq(emergencyContacts.is_primary, true),
-          ),
-        )
-        .limit(1);
+      // ─── Emergency contact: upsert the primary row ─────────────────────
+      if (data.emergencyContact) {
+        const ec = data.emergencyContact;
+        const [existing] = await db
+          .select()
+          .from(emergencyContacts)
+          .where(
+            and(
+              eq(emergencyContacts.tenant_id, tenantId),
+              eq(emergencyContacts.employee_id, employeeId),
+              eq(emergencyContacts.is_primary, true),
+            ),
+          )
+          .limit(1);
 
-      if (existing) {
-        await this.db
-          .update(emergencyContacts)
-          .set({
+        if (existing) {
+          await db
+            .update(emergencyContacts)
+            .set({
+              name: ec.name,
+              relationship: ec.relationship,
+              phone: ec.phone,
+              email: ec.email ?? null,
+            })
+            .where(eq(emergencyContacts.id, existing.id));
+        } else {
+          await db.insert(emergencyContacts).values({
+            tenant_id: tenantId,
+            employee_id: employeeId,
             name: ec.name,
             relationship: ec.relationship,
             phone: ec.phone,
             email: ec.email ?? null,
-          })
-          .where(eq(emergencyContacts.id, existing.id));
-      } else {
-        await this.db.insert(emergencyContacts).values({
-          tenant_id: tenantId,
-          employee_id: employeeId,
-          name: ec.name,
-          relationship: ec.relationship,
-          phone: ec.phone,
-          email: ec.email ?? null,
-          is_primary: true,
-        });
+            is_primary: true,
+          });
+        }
       }
-    }
 
-    // ─── DPDP consents ───────────────────────────────────────────────────
-    // Record each granted/withheld consent as its own immutable row, with
-    // the policy version + IP + UA for the audit trail. We re-grant on
-    // every submit that carries consents (idempotent enough for the MVP —
-    // the rows are timestamped so the latest one wins on read).
-    if (data.consents?.length) {
-      const now = new Date();
-      await this.db.insert(dataConsents).values(
-        data.consents.map((c) => ({
-          tenant_id: tenantId,
-          user_id: actorUserId,
-          consent_type: c.type as
-            | 'data_processing'
-            | 'marketing'
-            | 'background_check'
-            | 'biometric_data'
-            | 'third_party_sharing',
-          purpose: c.purpose ?? null,
-          granted: c.granted,
-          consent_version: CONSENT_VERSION,
-          ip_address: ctx?.ip ?? null,
-          user_agent: ctx?.userAgent ?? null,
-          granted_at: c.granted ? now : null,
-        })),
-      );
-    }
+      // ─── DPDP consents ─────────────────────────────────────────────────
+      // Record each granted/withheld consent as its own immutable row, with
+      // the policy version + IP + UA for the audit trail. We re-grant on
+      // every submit that carries consents (idempotent enough for the MVP —
+      // the rows are timestamped so the latest one wins on read).
+      if (data.consents?.length) {
+        const now = new Date();
+        await db.insert(dataConsents).values(
+          data.consents.map((c) => ({
+            tenant_id: tenantId,
+            user_id: actorUserId,
+            consent_type: c.type as
+              | 'data_processing'
+              | 'marketing'
+              | 'background_check'
+              | 'biometric_data'
+              | 'third_party_sharing',
+            purpose: c.purpose ?? null,
+            granted: c.granted,
+            consent_version: CONSENT_VERSION,
+            ip_address: ctx?.ip ?? null,
+            user_agent: ctx?.userAgent ?? null,
+            granted_at: c.granted ? now : null,
+          })),
+        );
+      }
+    });
 
     await this.auditService.log({
       tenantId,
@@ -1036,19 +1070,25 @@ export class EmployeesService {
       // Notify the reporting manager (best-effort) that there's an onboarding
       // to approve. The People → Onboarding queue is the canonical surface.
       try {
-        const mgr = alias(employees, 'mgr_submit');
-        const mgrUser = alias(users, 'mgr_submit_user');
-        const [info] = await this.db
-          .select({
-            employeeName: sql<string>`trim(coalesce(${employees.first_name},'') || ' ' || coalesce(${employees.last_name},''))`,
-            managerEmail: mgrUser.email,
-            managerName: mgrUser.full_name,
-          })
-          .from(employees)
-          .leftJoin(mgr, eq(employees.reporting_manager_id, mgr.id))
-          .leftJoin(mgrUser, eq(mgr.user_id, mgrUser.id))
-          .where(eq(employees.id, employeeId))
-          .limit(1);
+        const info = await this.databaseService.withTenant(
+          tenantId,
+          async (db) => {
+            const mgr = alias(employees, 'mgr_submit');
+            const mgrUser = alias(users, 'mgr_submit_user');
+            const [info] = await db
+              .select({
+                employeeName: sql<string>`trim(coalesce(${employees.first_name},'') || ' ' || coalesce(${employees.last_name},''))`,
+                managerEmail: mgrUser.email,
+                managerName: mgrUser.full_name,
+              })
+              .from(employees)
+              .leftJoin(mgr, eq(employees.reporting_manager_id, mgr.id))
+              .leftJoin(mgrUser, eq(mgr.user_id, mgrUser.id))
+              .where(eq(employees.id, employeeId))
+              .limit(1);
+            return info;
+          },
+        );
 
         if (info?.managerEmail) {
           const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
@@ -1096,13 +1136,15 @@ export class EmployeesService {
   }
 
   private async getEmployeeIdForUserOrNull(userId: string, tenantId: string) {
-    const [m] = await this.db
-      .select({ employeeId: memberships.employee_id })
-      .from(memberships)
-      .where(
-        and(eq(memberships.user_id, userId), eq(memberships.tenant_id, tenantId)),
-      )
-      .limit(1);
+    const [m] = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({ employeeId: memberships.employee_id })
+        .from(memberships)
+        .where(
+          and(eq(memberships.user_id, userId), eq(memberships.tenant_id, tenantId)),
+        )
+        .limit(1),
+    );
     return m?.employeeId ?? null;
   }
 
@@ -1113,39 +1155,44 @@ export class EmployeesService {
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
-    // Activate employee
-    await this.db
-      .update(employees)
-      .set({ status: 'active', updated_at: new Date() })
-      .where(eq(employees.id, employeeId));
+    const user = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        // Activate employee
+        await db
+          .update(employees)
+          .set({ status: 'active', updated_at: new Date() })
+          .where(eq(employees.id, employeeId));
 
-    // Activate membership
-    await this.db
-      .update(memberships)
-      .set({ status: 'active', accepted_at: new Date() })
-      .where(
-        and(
-          eq(memberships.employee_id, employeeId),
-          eq(memberships.tenant_id, tenantId),
-        ),
+        // Activate membership
+        await db
+          .update(memberships)
+          .set({ status: 'active', accepted_at: new Date() })
+          .where(
+            and(
+              eq(memberships.employee_id, employeeId),
+              eq(memberships.tenant_id, tenantId),
+            ),
+          );
+
+        // Get user email for notification
+        if (!employee.user_id) return null;
+        const [u] = await db
+          .select({ email: users.email, full_name: users.full_name })
+          .from(users)
+          .where(eq(users.id, employee.user_id))
+          .limit(1);
+        return u ?? null;
+      },
+    );
+
+    if (employee.user_id && user) {
+      const loginUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+      await this.notificationsService.sendEmail(
+        'onboarding-approved',
+        user.email,
+        { employeeName: user.full_name, loginUrl },
       );
-
-    // Get user email for notification
-    if (employee.user_id) {
-      const [user] = await this.db
-        .select({ email: users.email, full_name: users.full_name })
-        .from(users)
-        .where(eq(users.id, employee.user_id))
-        .limit(1);
-
-      if (user) {
-        const loginUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-        await this.notificationsService.sendEmail(
-          'onboarding-approved',
-          user.email,
-          { employeeName: user.full_name, loginUrl },
-        );
-      }
     }
 
     await this.auditService.log({
@@ -1180,31 +1227,38 @@ export class EmployeesService {
       designationId: dto.designationId ?? employee.designationId,
     };
 
-    // Record history
-    await this.db.insert(employmentHistory).values({
-      tenant_id: tenantId,
-      employee_id: employeeId,
-      change_type: 'transfer',
-      effective_from:
-        dto.effectiveDate ?? new Date().toISOString().split('T')[0],
-      previous_value: previousValue,
-      new_value: newValue,
-      reason: dto.reason,
-      changed_by: adminId,
-    });
+    const updated = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        // Record history
+        await db.insert(employmentHistory).values({
+          tenant_id: tenantId,
+          employee_id: employeeId,
+          change_type: 'transfer',
+          effective_from:
+            dto.effectiveDate ?? new Date().toISOString().split('T')[0],
+          previous_value: previousValue,
+          new_value: newValue,
+          reason: dto.reason,
+          changed_by: adminId,
+        });
 
-    // Update employee record
-    const [updated] = await this.db
-      .update(employees)
-      .set({
-        department_id: dto.departmentId ?? employee.departmentId,
-        reporting_manager_id: dto.managerId ?? employee.reportingManagerId,
-        location_id: dto.locationId ?? employee.locationId,
-        designation_id: dto.designationId ?? employee.designationId,
-        updated_at: new Date(),
-      })
-      .where(eq(employees.id, employeeId))
-      .returning();
+        // Update employee record
+        const [updated] = await db
+          .update(employees)
+          .set({
+            department_id: dto.departmentId ?? employee.departmentId,
+            reporting_manager_id: dto.managerId ?? employee.reportingManagerId,
+            location_id: dto.locationId ?? employee.locationId,
+            designation_id: dto.designationId ?? employee.designationId,
+            updated_at: new Date(),
+          })
+          .where(eq(employees.id, employeeId))
+          .returning();
+
+        return updated;
+      },
+    );
 
     await this.auditService.log({
       tenantId,
@@ -1230,27 +1284,29 @@ export class EmployeesService {
     const lastWorkingDate =
       dto.lastWorkingDate ?? new Date().toISOString().split('T')[0];
 
-    await this.db
-      .update(employees)
-      .set({
-        status: 'notice_period',
-        updated_at: new Date(),
-      })
-      .where(eq(employees.id, employeeId));
+    await this.databaseService.withTenant(tenantId, async (db) => {
+      await db
+        .update(employees)
+        .set({
+          status: 'notice_period',
+          updated_at: new Date(),
+        })
+        .where(eq(employees.id, employeeId));
 
-    // Record in employment history
-    await this.db.insert(employmentHistory).values({
-      tenant_id: tenantId,
-      employee_id: employeeId,
-      change_type: 'separation',
-      effective_from: lastWorkingDate,
-      previous_value: {
-        designationId: employee.designationId,
-        status: employee.status,
-      },
-      new_value: { status: 'notice_period', separationType: dto.separationType },
-      reason: dto.reason,
-      changed_by: adminId,
+      // Record in employment history
+      await db.insert(employmentHistory).values({
+        tenant_id: tenantId,
+        employee_id: employeeId,
+        change_type: 'separation',
+        effective_from: lastWorkingDate,
+        previous_value: {
+          designationId: employee.designationId,
+          status: employee.status,
+        },
+        new_value: { status: 'notice_period', separationType: dto.separationType },
+        reason: dto.reason,
+        changed_by: adminId,
+      });
     });
 
     await this.auditService.log({
@@ -1277,36 +1333,40 @@ export class EmployeesService {
   async getEmploymentHistory(employeeId: string, tenantId: string) {
     await this.getEmployee(employeeId, tenantId); // verify access
 
-    return this.db
-      .select()
-      .from(employmentHistory)
-      .where(eq(employmentHistory.employee_id, employeeId))
-      .orderBy(desc(employmentHistory.effective_from));
+    return this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select()
+        .from(employmentHistory)
+        .where(eq(employmentHistory.employee_id, employeeId))
+        .orderBy(desc(employmentHistory.effective_from)),
+    );
   }
 
   async getOrgChart(tenantId: string) {
-    const allEmployees = await this.db
-      .select({
-        id: employees.id,
-        employeeCode: employees.employee_code,
-        fullName: users.full_name,
-        email: users.email,
-        avatarUrl: users.avatar_url,
-        designationTitle: designations.title,
-        departmentName: departments.name,
-        managerId: employees.reporting_manager_id,
-        status: employees.status,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .leftJoin(designations, eq(employees.designation_id, designations.id))
-      .leftJoin(departments, eq(employees.department_id, departments.id))
-      .where(
-        and(
-          eq(employees.tenant_id, tenantId),
-          inArray(employees.status, ['active', 'on_leave', 'notice_period']),
+    const allEmployees = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          id: employees.id,
+          employeeCode: employees.employee_code,
+          fullName: users.full_name,
+          email: users.email,
+          avatarUrl: users.avatar_url,
+          designationTitle: designations.title,
+          departmentName: departments.name,
+          managerId: employees.reporting_manager_id,
+          status: employees.status,
+        })
+        .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .leftJoin(designations, eq(employees.designation_id, designations.id))
+        .leftJoin(departments, eq(employees.department_id, departments.id))
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            inArray(employees.status, ['active', 'on_leave', 'notice_period']),
+          ),
         ),
-      );
+    );
 
     type OrgNode = (typeof allEmployees)[number] & { children: OrgNode[] };
 
@@ -1345,17 +1405,20 @@ export class EmployeesService {
     docId: string,
     tenantId: string,
   ): Promise<{ url: string; expiresAt: Date }> {
-    const [doc] = await this.db
-      .select()
-      .from(employeeDocuments)
-      .where(
-        and(
-          eq(employeeDocuments.id, docId),
-          eq(employeeDocuments.employee_id, employeeId),
-          eq(employeeDocuments.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+    const doc = await this.databaseService.withTenant(tenantId, async (db) => {
+      const [doc] = await db
+        .select()
+        .from(employeeDocuments)
+        .where(
+          and(
+            eq(employeeDocuments.id, docId),
+            eq(employeeDocuments.employee_id, employeeId),
+            eq(employeeDocuments.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
+      return doc;
+    });
 
     if (!doc) {
       throw new NotFoundException('Document not found');

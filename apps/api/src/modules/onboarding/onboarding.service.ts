@@ -6,8 +6,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
-import { DB_TENANT } from '../../core/database/database.module';
-import type { Db } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../../core/database/database.module';
+import type { DbAdmin } from '@flicks/db';
 import {
   tenants,
   memberships,
@@ -171,8 +171,13 @@ function getIndianNationalHolidays(year: number) {
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
 
+  // Onboarding provisions a brand-new tenant and seeds its tables (locations,
+  // employees, departments, memberships, …). At checkSlug/createTenant time
+  // there is no tenant context to scope to — the tenant is being created — and
+  // slug uniqueness is a global check. So this service runs on the service-role
+  // (BYPASSRLS) connection, like FAM provisioning, rather than the tenant role.
   constructor(
-    @Inject(DB_TENANT) private readonly db: Db,
+    @Inject(DB_SERVICE_ROLE) private readonly db: DbAdmin,
     private readonly auditService: AuditService,
     private readonly analytics: AnalyticsService,
     private readonly notificationsService: NotificationsService,

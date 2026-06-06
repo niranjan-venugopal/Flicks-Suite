@@ -15,8 +15,9 @@ import {
   users,
   memberships,
 } from '@flicks/db/schema';
-import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
+import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
+import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type {
@@ -47,17 +48,22 @@ function weekBoundaries(d: Date): { start: string; end: string } {
 export class TimesheetService {
   private readonly logger = new Logger(TimesheetService.name);
 
+  // Tenant-table reads/writes go through databaseService.withTenant(tenantId, …)
+  // so app.tenant_id is set and RLS resolves correctly under the NOBYPASSRLS
+  // app role. The dbAdmin connection is kept only for the notification lookups
+  // (resolving approver/submitter/owner identity), which intentionally bypass
+  // RLS the same way they did before.
   constructor(
-    @Inject(DB_TENANT) private readonly db: Db,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+    private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
   // ─── Internal helpers ──────────────────────────────────────────────────
 
-  private async resolveCaller(userId: string, tenantId: string) {
-    const [row] = await this.db
+  private async resolveCaller(db: Db, userId: string, tenantId: string) {
+    const [row] = await db
       .select({
         employeeId: employees.id,
         reportingManagerId: employees.reporting_manager_id,
@@ -111,8 +117,8 @@ export class TimesheetService {
   }
 
   /** Latest open (unresolved) rework request for a period, or null. */
-  private async getLatestRework(periodId: string) {
-    const [r] = await this.db
+  private async getLatestRework(db: Db, periodId: string) {
+    const [r] = await db
       .select({
         comment: timesheetReworkRequests.comment,
         createdAt: timesheetReworkRequests.created_at,
@@ -132,43 +138,46 @@ export class TimesheetService {
   // ─── 1. Get-or-create the caller's current week period ────────────────
 
   async getMyCurrentPeriod(userId: string, tenantId: string) {
-    const { employeeId, reportingManagerId } = await this.resolveCaller(
-      userId,
-      tenantId,
-    );
-    const { start, end } = weekBoundaries(new Date());
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const { employeeId, reportingManagerId } = await this.resolveCaller(
+        db,
+        userId,
+        tenantId,
+      );
+      const { start, end } = weekBoundaries(new Date());
 
-    const [existing] = await this.db
-      .select()
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.tenant_id, tenantId),
-          eq(timesheetPeriods.employee_id, employeeId),
-          eq(timesheetPeriods.period_start, start),
-          eq(timesheetPeriods.period_end, end),
-        ),
-      )
-      .limit(1);
+      const [existing] = await db
+        .select()
+        .from(timesheetPeriods)
+        .where(
+          and(
+            eq(timesheetPeriods.tenant_id, tenantId),
+            eq(timesheetPeriods.employee_id, employeeId),
+            eq(timesheetPeriods.period_start, start),
+            eq(timesheetPeriods.period_end, end),
+          ),
+        )
+        .limit(1);
 
-    if (existing) {
-      const rework = await this.getLatestRework(existing.id);
-      return this.shapePeriod(existing, rework);
-    }
+      if (existing) {
+        const rework = await this.getLatestRework(db, existing.id);
+        return this.shapePeriod(existing, rework);
+      }
 
-    const [created] = await this.db
-      .insert(timesheetPeriods)
-      .values({
-        tenant_id: tenantId,
-        employee_id: employeeId,
-        period_start: start,
-        period_end: end,
-        status: 'draft',
-        approver_id: reportingManagerId,
-      })
-      .returning();
+      const [created] = await db
+        .insert(timesheetPeriods)
+        .values({
+          tenant_id: tenantId,
+          employee_id: employeeId,
+          period_start: start,
+          period_end: end,
+          status: 'draft',
+          approver_id: reportingManagerId,
+        })
+        .returning();
 
-    return this.shapePeriod(created);
+      return this.shapePeriod(created);
+    });
   }
 
   // ─── 1b. "Copy last week": prior week's category rows (structure only) ──
@@ -179,29 +188,33 @@ export class TimesheetService {
     userId: string,
     tenantId: string,
   ): Promise<{ categories: string[] }> {
-    const { employeeId } = await this.resolveCaller(userId, tenantId);
-    const prev = weekBoundaries(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+      const prev = weekBoundaries(
+        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      );
 
-    const [prevPeriod] = await this.db
-      .select({ id: timesheetPeriods.id })
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.tenant_id, tenantId),
-          eq(timesheetPeriods.employee_id, employeeId),
-          eq(timesheetPeriods.period_start, prev.start),
-        ),
-      )
-      .limit(1);
+      const [prevPeriod] = await db
+        .select({ id: timesheetPeriods.id })
+        .from(timesheetPeriods)
+        .where(
+          and(
+            eq(timesheetPeriods.tenant_id, tenantId),
+            eq(timesheetPeriods.employee_id, employeeId),
+            eq(timesheetPeriods.period_start, prev.start),
+          ),
+        )
+        .limit(1);
 
-    if (!prevPeriod) return { categories: [] };
+      if (!prevPeriod) return { categories: [] };
 
-    const rows = await this.db
-      .selectDistinct({ category: timesheetEntries.category })
-      .from(timesheetEntries)
-      .where(eq(timesheetEntries.timesheet_period_id, prevPeriod.id));
+      const rows = await db
+        .selectDistinct({ category: timesheetEntries.category })
+        .from(timesheetEntries)
+        .where(eq(timesheetEntries.timesheet_period_id, prevPeriod.id));
 
-    return { categories: rows.map((r) => r.category) };
+      return { categories: rows.map((r) => r.category) };
+    });
   }
 
   // ─── 1c. Utilization report (billable vs non-billable per employee) ─────
@@ -218,29 +231,31 @@ export class TimesheetService {
         .toISOString()
         .slice(0, 10);
 
-    const rows = await this.db
-      .select({
-        employeeId: timesheetEntries.employee_id,
-        name: users.full_name,
-        employeeCode: employees.employee_code,
-        billable: sql<number>`COALESCE(SUM(CASE WHEN ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
-        nonBillable: sql<number>`COALESCE(SUM(CASE WHEN NOT ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
-      })
-      .from(timesheetEntries)
-      .leftJoin(employees, eq(timesheetEntries.employee_id, employees.id))
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .where(
-        and(
-          eq(timesheetEntries.tenant_id, tenantId),
-          gte(timesheetEntries.entry_date, from),
-          lte(timesheetEntries.entry_date, to),
+    const rows = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          employeeId: timesheetEntries.employee_id,
+          name: users.full_name,
+          employeeCode: employees.employee_code,
+          billable: sql<number>`COALESCE(SUM(CASE WHEN ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
+          nonBillable: sql<number>`COALESCE(SUM(CASE WHEN NOT ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
+        })
+        .from(timesheetEntries)
+        .leftJoin(employees, eq(timesheetEntries.employee_id, employees.id))
+        .leftJoin(users, eq(employees.user_id, users.id))
+        .where(
+          and(
+            eq(timesheetEntries.tenant_id, tenantId),
+            gte(timesheetEntries.entry_date, from),
+            lte(timesheetEntries.entry_date, to),
+          ),
+        )
+        .groupBy(
+          timesheetEntries.employee_id,
+          users.full_name,
+          employees.employee_code,
         ),
-      )
-      .groupBy(
-        timesheetEntries.employee_id,
-        users.full_name,
-        employees.employee_code,
-      );
+    );
 
     const byEmployee = rows.map((r) => {
       const billable = Number(r.billable ?? 0);
@@ -286,52 +301,54 @@ export class TimesheetService {
     tenantId: string,
     query: TimesheetListQueryDto,
   ) {
-    const { employeeId } = await this.resolveCaller(userId, tenantId);
-    const page = query.page ?? 1;
-    const limit = Math.min(query.limit ?? 20, 100);
-    const offset = (page - 1) * limit;
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+      const page = query.page ?? 1;
+      const limit = Math.min(query.limit ?? 20, 100);
+      const offset = (page - 1) * limit;
 
-    const conditions = [
-      eq(timesheetPeriods.tenant_id, tenantId),
-      eq(timesheetPeriods.employee_id, employeeId),
-    ];
-    if (query.status) {
-      conditions.push(
-        eq(
-          timesheetPeriods.status,
-          query.status as 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked',
-        ),
+      const conditions = [
+        eq(timesheetPeriods.tenant_id, tenantId),
+        eq(timesheetPeriods.employee_id, employeeId),
+      ];
+      if (query.status) {
+        conditions.push(
+          eq(
+            timesheetPeriods.status,
+            query.status as 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked',
+          ),
+        );
+      }
+      if (query.fromDate) {
+        conditions.push(gte(timesheetPeriods.period_start, query.fromDate));
+      }
+      if (query.toDate) {
+        conditions.push(lte(timesheetPeriods.period_end, query.toDate));
+      }
+
+      const [rows, totalRow] = await Promise.all([
+        db
+          .select()
+          .from(timesheetPeriods)
+          .where(and(...conditions))
+          .orderBy(desc(timesheetPeriods.period_start))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ n: sql<number>`COUNT(*)::int` })
+          .from(timesheetPeriods)
+          .where(and(...conditions)),
+      ]);
+
+      const reworks = await Promise.all(
+        rows.map((r) => this.getLatestRework(db, r.id)),
       );
-    }
-    if (query.fromDate) {
-      conditions.push(gte(timesheetPeriods.period_start, query.fromDate));
-    }
-    if (query.toDate) {
-      conditions.push(lte(timesheetPeriods.period_end, query.toDate));
-    }
 
-    const [rows, totalRow] = await Promise.all([
-      this.db
-        .select()
-        .from(timesheetPeriods)
-        .where(and(...conditions))
-        .orderBy(desc(timesheetPeriods.period_start))
-        .limit(limit)
-        .offset(offset),
-      this.db
-        .select({ n: sql<number>`COUNT(*)::int` })
-        .from(timesheetPeriods)
-        .where(and(...conditions)),
-    ]);
-
-    const reworks = await Promise.all(
-      rows.map((r) => this.getLatestRework(r.id)),
-    );
-
-    return {
-      data: rows.map((r, i) => this.shapePeriod(r, reworks[i])),
-      pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
-    };
+      return {
+        data: rows.map((r, i) => this.shapePeriod(r, reworks[i])),
+        pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
+      };
+    });
   }
 
   // ─── 3. Entries for a given period ─────────────────────────────────────
@@ -341,50 +358,52 @@ export class TimesheetService {
     userId: string,
     tenantId: string,
   ) {
-    const [period] = await this.db
-      .select()
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.id, timesheetPeriodId),
-          eq(timesheetPeriods.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const [period] = await db
+        .select()
+        .from(timesheetPeriods)
+        .where(
+          and(
+            eq(timesheetPeriods.id, timesheetPeriodId),
+            eq(timesheetPeriods.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
 
-    if (!period) {
-      throw new NotFoundException('Timesheet period not found');
-    }
+      if (!period) {
+        throw new NotFoundException('Timesheet period not found');
+      }
 
-    const { employeeId } = await this.resolveCaller(userId, tenantId);
-    const isAuthor = period.employee_id === employeeId;
-    const isApprover = period.approver_id === employeeId;
-    if (!isAuthor && !isApprover) {
-      throw new ForbiddenException('Not allowed to view this timesheet');
-    }
+      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+      const isAuthor = period.employee_id === employeeId;
+      const isApprover = period.approver_id === employeeId;
+      if (!isAuthor && !isApprover) {
+        throw new ForbiddenException('Not allowed to view this timesheet');
+      }
 
-    const entries = await this.db
-      .select()
-      .from(timesheetEntries)
-      .where(eq(timesheetEntries.timesheet_period_id, timesheetPeriodId))
-      .orderBy(asc(timesheetEntries.entry_date));
+      const entries = await db
+        .select()
+        .from(timesheetEntries)
+        .where(eq(timesheetEntries.timesheet_period_id, timesheetPeriodId))
+        .orderBy(asc(timesheetEntries.entry_date));
 
-    const rework = await this.getLatestRework(period.id);
+      const rework = await this.getLatestRework(db, period.id);
 
-    return {
-      timesheetPeriodId,
-      period: this.shapePeriod(period, rework),
-      entries: entries.map((e) => ({
-        id: e.id,
-        entryDate: e.entry_date,
-        hours: e.hours,
-        category: e.category,
-        isBillable: e.is_billable,
-        description: e.description,
-        projectId: e.project_id,
-        taskId: e.task_id,
-      })),
-    };
+      return {
+        timesheetPeriodId,
+        period: this.shapePeriod(period, rework),
+        entries: entries.map((e) => ({
+          id: e.id,
+          entryDate: e.entry_date,
+          hours: e.hours,
+          category: e.category,
+          isBillable: e.is_billable,
+          description: e.description,
+          projectId: e.project_id,
+          taskId: e.task_id,
+        })),
+      };
+    });
   }
 
   // ─── 4. Bulk save entries (replace-all on a draft) ─────────────────────
@@ -394,96 +413,103 @@ export class TimesheetService {
     tenantId: string,
     dto: BulkSaveEntriesDto,
   ) {
-    const { employeeId } = await this.resolveCaller(userId, tenantId);
+    const result = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const { employeeId } = await this.resolveCaller(db, userId, tenantId);
 
-    const [period] = await this.db
-      .select()
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.id, dto.timesheetPeriodId),
-          eq(timesheetPeriods.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+        const [period] = await db
+          .select()
+          .from(timesheetPeriods)
+          .where(
+            and(
+              eq(timesheetPeriods.id, dto.timesheetPeriodId),
+              eq(timesheetPeriods.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
 
-    if (!period) throw new NotFoundException('Timesheet period not found');
-    if (period.employee_id !== employeeId) {
-      throw new ForbiddenException("Cannot save another employee's timesheet");
-    }
-    if (period.status !== 'draft') {
-      throw new BadRequestException(
-        `Timesheet is ${period.status} and cannot be edited`,
-      );
-    }
+        if (!period) throw new NotFoundException('Timesheet period not found');
+        if (period.employee_id !== employeeId) {
+          throw new ForbiddenException("Cannot save another employee's timesheet");
+        }
+        if (period.status !== 'draft') {
+          throw new BadRequestException(
+            `Timesheet is ${period.status} and cannot be edited`,
+          );
+        }
 
-    // Reject >24h on any single day across the submitted entries.
-    const dayTotals = new Map<string, number>();
-    for (const e of dto.entries) {
-      dayTotals.set(e.entryDate, (dayTotals.get(e.entryDate) ?? 0) + e.hours);
-    }
-    for (const [day, hours] of dayTotals) {
-      if (hours > 24) {
-        throw new BadRequestException(`More than 24 hours logged on ${day}`);
-      }
-    }
+        // Reject >24h on any single day across the submitted entries.
+        const dayTotals = new Map<string, number>();
+        for (const e of dto.entries) {
+          dayTotals.set(e.entryDate, (dayTotals.get(e.entryDate) ?? 0) + e.hours);
+        }
+        for (const [day, hours] of dayTotals) {
+          if (hours > 24) {
+            throw new BadRequestException(`More than 24 hours logged on ${day}`);
+          }
+        }
 
-    // Replace-all: drop the period's existing entries then insert new ones.
-    await this.db
-      .delete(timesheetEntries)
-      .where(eq(timesheetEntries.timesheet_period_id, period.id));
+        // Replace-all: drop the period's existing entries then insert new ones.
+        await db
+          .delete(timesheetEntries)
+          .where(eq(timesheetEntries.timesheet_period_id, period.id));
 
-    if (dto.entries.length > 0) {
-      await this.db.insert(timesheetEntries).values(
-        dto.entries.map((e) => ({
-          tenant_id: tenantId,
-          timesheet_period_id: period.id,
-          employee_id: employeeId,
-          entry_date: e.entryDate,
-          hours: e.hours,
-          category: e.category as typeof timesheetEntries.$inferInsert['category'],
-          is_billable: e.isBillable ?? false,
-          description: e.description ?? null,
-          project_id: e.projectId ?? null,
-          task_id: e.taskId ?? null,
-        })),
-      );
-    }
+        if (dto.entries.length > 0) {
+          await db.insert(timesheetEntries).values(
+            dto.entries.map((e) => ({
+              tenant_id: tenantId,
+              timesheet_period_id: period.id,
+              employee_id: employeeId,
+              entry_date: e.entryDate,
+              hours: e.hours,
+              category: e.category as typeof timesheetEntries.$inferInsert['category'],
+              is_billable: e.isBillable ?? false,
+              description: e.description ?? null,
+              project_id: e.projectId ?? null,
+              task_id: e.taskId ?? null,
+            })),
+          );
+        }
 
-    // Refresh the totals on the period header.
-    const totals = this.rollup(
-      dto.entries.map((e) => ({
-        hours: e.hours,
-        isBillable: e.isBillable ?? false,
-      })),
+        // Refresh the totals on the period header.
+        const totals = this.rollup(
+          dto.entries.map((e) => ({
+            hours: e.hours,
+            isBillable: e.isBillable ?? false,
+          })),
+        );
+        await db
+          .update(timesheetPeriods)
+          .set({
+            total_hours: totals.total,
+            total_billable_hours: totals.billable,
+            total_non_billable_hours: totals.nonBillable,
+            updated_at: new Date(),
+          })
+          .where(eq(timesheetPeriods.id, period.id));
+
+        return { periodId: period.id, totals };
+      },
     );
-    await this.db
-      .update(timesheetPeriods)
-      .set({
-        total_hours: totals.total,
-        total_billable_hours: totals.billable,
-        total_non_billable_hours: totals.nonBillable,
-        updated_at: new Date(),
-      })
-      .where(eq(timesheetPeriods.id, period.id));
 
     await this.auditService.log({
       tenantId,
       actorUserId: userId,
       action: 'timesheet.entries.saved',
       resourceType: 'timesheet_period',
-      resourceId: period.id,
+      resourceId: result.periodId,
       metadata: {
         entryCount: dto.entries.length,
-        totalHours: totals.total,
+        totalHours: result.totals.total,
       },
     });
 
     return {
-      timesheetPeriodId: period.id,
+      timesheetPeriodId: result.periodId,
       entryCount: dto.entries.length,
-      totalHours: totals.total,
-      totalBillableHours: totals.billable,
+      totalHours: result.totals.total,
+      totalBillableHours: result.totals.billable,
     };
   }
 
@@ -494,63 +520,69 @@ export class TimesheetService {
     tenantId: string,
     dto: SubmitTimesheetDto,
   ) {
-    const { employeeId, reportingManagerId } = await this.resolveCaller(
-      userId,
-      tenantId,
-    );
+    const { period, approverId, submittedAt } =
+      await this.databaseService.withTenant(tenantId, async (db) => {
+        const { employeeId, reportingManagerId } = await this.resolveCaller(
+          db,
+          userId,
+          tenantId,
+        );
 
-    const [period] = await this.db
-      .select()
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.id, dto.timesheetPeriodId),
-          eq(timesheetPeriods.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+        const [period] = await db
+          .select()
+          .from(timesheetPeriods)
+          .where(
+            and(
+              eq(timesheetPeriods.id, dto.timesheetPeriodId),
+              eq(timesheetPeriods.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
 
-    if (!period) throw new NotFoundException('Timesheet period not found');
-    if (period.employee_id !== employeeId) {
-      throw new ForbiddenException("Cannot submit another employee's timesheet");
-    }
-    if (period.status !== 'draft') {
-      throw new BadRequestException(
-        `Timesheet is ${period.status}; only draft timesheets can be submitted`,
-      );
-    }
-    if (period.total_hours <= 0) {
-      throw new BadRequestException('Add at least one entry before submitting');
-    }
+        if (!period) throw new NotFoundException('Timesheet period not found');
+        if (period.employee_id !== employeeId) {
+          throw new ForbiddenException("Cannot submit another employee's timesheet");
+        }
+        if (period.status !== 'draft') {
+          throw new BadRequestException(
+            `Timesheet is ${period.status}; only draft timesheets can be submitted`,
+          );
+        }
+        if (period.total_hours <= 0) {
+          throw new BadRequestException('Add at least one entry before submitting');
+        }
 
-    const approverId = period.approver_id ?? reportingManagerId;
-    if (!approverId) {
-      throw new BadRequestException(
-        'No approver configured. Ask HR to set your reporting manager first.',
-      );
-    }
+        const approverId = period.approver_id ?? reportingManagerId;
+        if (!approverId) {
+          throw new BadRequestException(
+            'No approver configured. Ask HR to set your reporting manager first.',
+          );
+        }
 
-    const submittedAt = new Date();
-    await this.db
-      .update(timesheetPeriods)
-      .set({
-        status: 'submitted',
-        submitted_at: submittedAt,
-        approver_id: approverId,
-        updated_at: submittedAt,
-      })
-      .where(eq(timesheetPeriods.id, period.id));
+        const submittedAt = new Date();
+        await db
+          .update(timesheetPeriods)
+          .set({
+            status: 'submitted',
+            submitted_at: submittedAt,
+            approver_id: approverId,
+            updated_at: submittedAt,
+          })
+          .where(eq(timesheetPeriods.id, period.id));
 
-    // Any open rework requests are addressed by this submission.
-    await this.db
-      .update(timesheetReworkRequests)
-      .set({ resolved_at: submittedAt })
-      .where(
-        and(
-          eq(timesheetReworkRequests.timesheet_period_id, period.id),
-          isNull(timesheetReworkRequests.resolved_at),
-        ),
-      );
+        // Any open rework requests are addressed by this submission.
+        await db
+          .update(timesheetReworkRequests)
+          .set({ resolved_at: submittedAt })
+          .where(
+            and(
+              eq(timesheetReworkRequests.timesheet_period_id, period.id),
+              isNull(timesheetReworkRequests.resolved_at),
+            ),
+          );
+
+        return { period, approverId, submittedAt };
+      });
 
     // Resolve approver email + name + user_id for notifications.
     const [approver] = await this.dbAdmin
@@ -570,7 +602,7 @@ export class TimesheetService {
       .select({ fullName: users.full_name })
       .from(employees)
       .leftJoin(users, eq(employees.user_id, users.id))
-      .where(eq(employees.id, employeeId))
+      .where(eq(employees.id, period.employee_id))
       .limit(1);
     const submitterName = submitter?.fullName ?? 'An employee';
 
@@ -628,46 +660,48 @@ export class TimesheetService {
     tenantId: string,
     query: TimesheetListQueryDto,
   ) {
-    const { employeeId } = await this.resolveCaller(userId, tenantId);
-    const page = query.page ?? 1;
-    const limit = Math.min(query.limit ?? 20, 100);
-    const offset = (page - 1) * limit;
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+      const page = query.page ?? 1;
+      const limit = Math.min(query.limit ?? 20, 100);
+      const offset = (page - 1) * limit;
 
-    const conditions = [
-      eq(timesheetPeriods.tenant_id, tenantId),
-      eq(timesheetPeriods.approver_id, employeeId),
-      eq(timesheetPeriods.status, 'submitted' as const),
-    ];
+      const conditions = [
+        eq(timesheetPeriods.tenant_id, tenantId),
+        eq(timesheetPeriods.approver_id, employeeId),
+        eq(timesheetPeriods.status, 'submitted' as const),
+      ];
 
-    const [rows, totalRow] = await Promise.all([
-      this.db
-        .select({
-          id: timesheetPeriods.id,
-          employeeId: timesheetPeriods.employee_id,
-          employeeCode: employees.employee_code,
-          employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
-          periodStart: timesheetPeriods.period_start,
-          periodEnd: timesheetPeriods.period_end,
-          totalHours: timesheetPeriods.total_hours,
-          totalBillableHours: timesheetPeriods.total_billable_hours,
-          submittedAt: timesheetPeriods.submitted_at,
-        })
-        .from(timesheetPeriods)
-        .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
-        .where(and(...conditions))
-        .orderBy(desc(timesheetPeriods.submitted_at))
-        .limit(limit)
-        .offset(offset),
-      this.db
-        .select({ n: sql<number>`COUNT(*)::int` })
-        .from(timesheetPeriods)
-        .where(and(...conditions)),
-    ]);
+      const [rows, totalRow] = await Promise.all([
+        db
+          .select({
+            id: timesheetPeriods.id,
+            employeeId: timesheetPeriods.employee_id,
+            employeeCode: employees.employee_code,
+            employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
+            periodStart: timesheetPeriods.period_start,
+            periodEnd: timesheetPeriods.period_end,
+            totalHours: timesheetPeriods.total_hours,
+            totalBillableHours: timesheetPeriods.total_billable_hours,
+            submittedAt: timesheetPeriods.submitted_at,
+          })
+          .from(timesheetPeriods)
+          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .where(and(...conditions))
+          .orderBy(desc(timesheetPeriods.submitted_at))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ n: sql<number>`COUNT(*)::int` })
+          .from(timesheetPeriods)
+          .where(and(...conditions)),
+      ]);
 
-    return {
-      data: rows,
-      pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
-    };
+      return {
+        data: rows,
+        pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
+      };
+    });
   }
 
   // ─── 7. Review (approve / reject / rework) ─────────────────────────────
@@ -678,70 +712,81 @@ export class TimesheetService {
     tenantId: string,
     dto: ReviewTimesheetDto,
   ) {
-    const { employeeId } = await this.resolveCaller(reviewerUserId, tenantId);
+    const { period, newStatus, now } = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const { employeeId } = await this.resolveCaller(
+          db,
+          reviewerUserId,
+          tenantId,
+        );
 
-    const [period] = await this.db
-      .select()
-      .from(timesheetPeriods)
-      .where(
-        and(
-          eq(timesheetPeriods.id, timesheetPeriodId),
-          eq(timesheetPeriods.tenant_id, tenantId),
-        ),
-      )
-      .limit(1);
+        const [period] = await db
+          .select()
+          .from(timesheetPeriods)
+          .where(
+            and(
+              eq(timesheetPeriods.id, timesheetPeriodId),
+              eq(timesheetPeriods.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
 
-    if (!period) throw new NotFoundException('Timesheet period not found');
-    if (period.approver_id !== employeeId) {
-      throw new ForbiddenException('You are not the approver for this timesheet');
-    }
-    if (period.status !== 'submitted') {
-      throw new BadRequestException(
-        `Timesheet is ${period.status}; only submitted timesheets can be reviewed`,
-      );
-    }
-    if (dto.action === 'reject' && !dto.comment?.trim()) {
-      throw new BadRequestException('A comment is required when rejecting');
-    }
-    if (dto.action === 'rework' && !dto.comment?.trim()) {
-      throw new BadRequestException(
-        'A comment explaining the changes is required when requesting rework',
-      );
-    }
+        if (!period) throw new NotFoundException('Timesheet period not found');
+        if (period.approver_id !== employeeId) {
+          throw new ForbiddenException('You are not the approver for this timesheet');
+        }
+        if (period.status !== 'submitted') {
+          throw new BadRequestException(
+            `Timesheet is ${period.status}; only submitted timesheets can be reviewed`,
+          );
+        }
+        if (dto.action === 'reject' && !dto.comment?.trim()) {
+          throw new BadRequestException('A comment is required when rejecting');
+        }
+        if (dto.action === 'rework' && !dto.comment?.trim()) {
+          throw new BadRequestException(
+            'A comment explaining the changes is required when requesting rework',
+          );
+        }
 
-    const now = new Date();
-    let newStatus: 'approved' | 'rejected' | 'draft';
-    const update: Record<string, unknown> = { updated_at: now };
+        const now = new Date();
+        let newStatus: 'approved' | 'rejected' | 'draft';
+        const update: Record<string, unknown> = { updated_at: now };
 
-    if (dto.action === 'approve') {
-      newStatus = 'approved';
-      update.status = 'approved';
-      update.approved_at = now;
-    } else if (dto.action === 'reject') {
-      newStatus = 'rejected';
-      update.status = 'rejected';
-      update.rejected_at = now;
-      update.rejection_comment = dto.comment;
-    } else {
-      // rework — re-open the period for editing
-      newStatus = 'draft';
-      update.status = 'draft';
-      update.submitted_at = null;
-    }
+        if (dto.action === 'approve') {
+          newStatus = 'approved';
+          update.status = 'approved';
+          update.approved_at = now;
+        } else if (dto.action === 'reject') {
+          newStatus = 'rejected';
+          update.status = 'rejected';
+          update.rejected_at = now;
+          update.rejection_comment = dto.comment;
+        } else {
+          // rework — re-open the period for editing
+          newStatus = 'draft';
+          update.status = 'draft';
+          update.submitted_at = null;
+        }
 
-    await this.db
-      .update(timesheetPeriods)
-      .set(update)
-      .where(eq(timesheetPeriods.id, period.id));
+        await db
+          .update(timesheetPeriods)
+          .set(update)
+          .where(eq(timesheetPeriods.id, period.id));
 
-    if (dto.action === 'rework') {
-      await this.db.insert(timesheetReworkRequests).values({
-        tenant_id: tenantId,
-        timesheet_period_id: period.id,
-        requested_by: reviewerUserId,
-        comment: dto.comment!,
-      });
-    }
+        if (dto.action === 'rework') {
+          await db.insert(timesheetReworkRequests).values({
+            tenant_id: tenantId,
+            timesheet_period_id: period.id,
+            requested_by: reviewerUserId,
+            comment: dto.comment!,
+          });
+        }
+
+        return { period, newStatus, now };
+      },
+    );
 
     await this.auditService.log({
       tenantId,
