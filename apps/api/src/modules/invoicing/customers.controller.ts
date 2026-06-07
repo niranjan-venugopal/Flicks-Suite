@@ -10,7 +10,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
-import { ListQueryDto, CreateCustomerDto } from './dto/invoicing.dto';
+import {
+  ListQueryDto,
+  CreateCustomerDto,
+  UpdateCustomerDto,
+  ImportCustomersDto,
+} from './dto/invoicing.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
@@ -30,11 +35,25 @@ export class CustomersController {
     return this.customers.list(user.tenantId, query);
   }
 
+  @Get('export')
+  @RequireGrant('invoicing', 'view')
+  @ApiOperation({ summary: 'Export all customers' })
+  export(@CurrentUser() user: JwtPayload) {
+    return this.customers.exportAll(user.tenantId);
+  }
+
   @Get(':id')
   @RequireGrant('invoicing', 'view')
   @ApiOperation({ summary: 'Get a customer' })
   get(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.customers.get(user.tenantId, id);
+  }
+
+  @Get(':id/statement')
+  @RequireGrant('invoicing', 'view')
+  @ApiOperation({ summary: 'Customer statement / ledger' })
+  statement(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.customers.statement(user.tenantId, id);
   }
 
   @Post()
@@ -44,12 +63,19 @@ export class CustomersController {
     return this.customers.create(dto, user.sub, user.tenantId);
   }
 
+  @Post('import')
+  @RequireGrant('invoicing', 'edit', 'manage_customers')
+  @ApiOperation({ summary: 'Bulk import customers' })
+  import(@Body() dto: ImportCustomersDto, @CurrentUser() user: JwtPayload) {
+    return this.customers.importRows(dto, user.sub, user.tenantId);
+  }
+
   @Patch(':id')
   @RequireGrant('invoicing', 'edit', 'manage_customers')
   @ApiOperation({ summary: 'Update a customer' })
   update(
     @Param('id') id: string,
-    @Body() dto: CreateCustomerDto,
+    @Body() dto: UpdateCustomerDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.customers.update(id, dto, user.sub, user.tenantId);
@@ -59,6 +85,13 @@ export class CustomersController {
   @RequireGrant('invoicing', 'edit', 'manage_customers')
   @ApiOperation({ summary: 'Archive a customer' })
   archive(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.customers.archive(id, user.sub, user.tenantId);
+    return this.customers.setStatus(id, 'archived', user.sub, user.tenantId);
+  }
+
+  @Post(':id/unarchive')
+  @RequireGrant('invoicing', 'edit', 'manage_customers')
+  @ApiOperation({ summary: 'Unarchive a customer' })
+  unarchive(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.customers.setStatus(id, 'active', user.sub, user.tenantId);
   }
 }

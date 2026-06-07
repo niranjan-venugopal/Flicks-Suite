@@ -9,14 +9,15 @@ import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
 import { HsnSacController } from './hsn-sac.controller';
 import { HsnSacService } from './hsn-sac.service';
+import { NumberingController } from './numbering.controller';
+import { NumberingService } from './numbering.service';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
 
 /**
- * Invoicing module (v3) — scaffold. Wires the core resource controllers
- * (customers, items, invoices, HSN/SAC) behind the InvoicingGrantGuard.
- * Notes/subscriptions/reports/settings/org-financial/members land as their own
- * modules in later sprints. DatabaseService is global; AuditModule/AuthModule
- * are imported for the service + guard dependencies.
+ * Invoicing module (v3). Sprint 2 implements customers, items, HSN/SAC and the
+ * numbering engine; invoices remain stubbed until Sprint 3. All controllers sit
+ * behind the InvoicingGrantGuard. NumberingService is exported so invoice
+ * creation (Sprint 3) can reserve numbers atomically.
  */
 @Module({
   imports: [AuditModule, AuthModule],
@@ -25,14 +26,21 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     ItemsController,
     InvoicesController,
     HsnSacController,
+    NumberingController,
   ],
   providers: [
     CustomersService,
     ItemsService,
     InvoicesService,
     HsnSacService,
+    NumberingService,
     InvoicingGrantGuard,
   ],
-  exports: [CustomersService, ItemsService, InvoicesService],
+  exports: [
+    CustomersService,
+    ItemsService,
+    InvoicesService,
+    NumberingService,
+  ],
 })
 export class InvoicingModule {}

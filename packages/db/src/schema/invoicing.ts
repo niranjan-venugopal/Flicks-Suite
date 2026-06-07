@@ -49,6 +49,31 @@ export const hsnSacCodes = pgTable(
   ],
 );
 
+// ─── tenant_hsn_sac_codes (tenant-specific additions to the global master) ──────
+
+export const tenantHsnSacCodes = pgTable(
+  'tenant_hsn_sac_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    type: text('type').notNull(), // HSN | SAC
+    description: text('description').notNull(),
+    default_gst_rate: numeric('default_gst_rate', { precision: 5, scale: 2 }),
+    category: text('category'),
+    created_by: uuid('created_by').references(() => users.id),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tenant_hsn_sac_codes_unique').on(t.tenant_id, t.code),
+    index('tenant_hsn_sac_codes_tenant_idx').on(t.tenant_id),
+  ],
+);
+
 // ─── invoicing_settings (one row per tenant) ────────────────────────────────────
 
 export const invoicingSettings = pgTable(
@@ -1246,6 +1271,8 @@ export const invoiceSubscriptionsRelations = relations(
 
 export type HsnSacCode = typeof hsnSacCodes.$inferSelect;
 export type NewHsnSacCode = typeof hsnSacCodes.$inferInsert;
+export type TenantHsnSacCode = typeof tenantHsnSacCodes.$inferSelect;
+export type NewTenantHsnSacCode = typeof tenantHsnSacCodes.$inferInsert;
 export type InvoicingSettings = typeof invoicingSettings.$inferSelect;
 export type NewInvoicingSettings = typeof invoicingSettings.$inferInsert;
 export type InvoicingSetupProgress =

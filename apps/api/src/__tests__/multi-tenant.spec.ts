@@ -600,6 +600,7 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     { label: 'gstr1_exports', table: schema.gstr1Exports, values: () => ({ tenant_id: tenantA.id, fy_label: '26-27' }) },
     { label: 'form_131_received', table: schema.form131Received, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, fy_label: '26-27', quarter: 1 }) },
     { label: 'tenant_module_toggles', table: schema.tenantModuleToggles, values: () => ({ tenant_id: tenantA.id, module: `mod-${rid()}`, enabled: true }) },
+    { label: 'tenant_hsn_sac_codes', table: schema.tenantHsnSacCodes, values: () => ({ tenant_id: tenantA.id, code: `X-${rid()}`, type: 'SAC', description: 'Custom service' }) },
   ];
 
   cases.forEach(({ label, table, values }) => {
