@@ -140,7 +140,7 @@ use `DROP POLICY IF EXISTS` before `CREATE`), so re-running setup is safe.
 
 ---
 
-## 7. Table inventory (40 total)
+## 7. Table inventory (40 at RLS-hardening; 68 after Invoicing v3 — see below)
 
 - **Tenant business data (RLS by `tenant_id`, from `0001` + `0009`):**
   `employees`, `attendance_records`, `attendance_punches`,
@@ -156,6 +156,31 @@ use `DROP POLICY IF EXISTS` before `CREATE`), so re-running setup is safe.
 - **Deny-all / service-role-only (`0011`):** `auth_otps`, `refresh_tokens`,
   `trusted_devices`, `auth_events`, `notification_preferences`, `notifications`,
   `feature_flags`, `tenant_cohorts`, `audit_log_platform`.
+
+### Invoicing v3 (`0012`–`0014`) — +27 tenant tables, +1 deny-all, +1 global
+
+After the invoicing module the live posture is **67/68** (the single non-RLS
+table is the intentionally global `hsn_sac_codes`).
+
+- **Tenant-scoped (RLS by `tenant_id`, ENABLE+FORCE+`tenant_isolation_*`, `0014`):**
+  `invoicing_settings`, `invoicing_setup_progress`, `customers`,
+  `customer_credit_balance`, `customer_credit_balance_entries`, `items`,
+  `invoice_sequences`, `invoices`, `invoice_line_items`, `invoice_payments`,
+  `invoice_subscriptions`, `invoice_subscription_line_items`,
+  `invoice_subscription_proration_events`, `credit_notes`,
+  `credit_note_line_items`, `debit_notes`, `debit_note_line_items`,
+  `adjustments`, `reminder_schedule`, `reminder_sent`, `gstr1_exports`,
+  `form_131_received`, `tenant_bank_accounts`, `tenant_currency_bank_defaults`,
+  `membership_grants`, `tenant_module_toggles`.
+- **Global, intentionally NO RLS:** `hsn_sac_codes` (read-only master, shared by
+  all tenants; `flicks_app` has SELECT only).
+- **Deny-all (service-role only, `0014`):** `razorpay_webhook_events` (written
+  without tenant context by the webhook handler).
+- **Additional permissive policy:** `memberships_self_visibility` (SELECT) keyed
+  on `app.user_id` — lets the company switcher list a user's own memberships
+  across tenants; writes/tenant-reads still governed by `tenant_isolation_memberships`.
+- **CI:** the Gate-1 cross-tenant suite covers every table above plus an
+  auditor-in-two-companies case and the webhook deny-all (47 tests total).
 
 ---
 
@@ -173,7 +198,8 @@ migrations against the OLD code breaks login + employees/timesheet.
   `connected_as = flicks_app`, `rolbypassrls = f`, `leak_with_bogus_context = 0`.
 - **Coverage check:**
   `SELECT count(*) FILTER (WHERE relrowsecurity) || '/' || count(*) FROM pg_class
-   WHERE relkind='r' AND relnamespace='public'::regnamespace;` → `40/40`.
+   WHERE relkind='r' AND relnamespace='public'::regnamespace;` → `40/40` before
+   Invoicing v3, `67/68` after (only the global `hsn_sac_codes` is non-RLS).
 
 **Failure signals:** empty employees list / login 500 ⇒ wrong role on
 `DATABASE_URL`, old code, or migrations not applied. `leak_with_bogus_context >
