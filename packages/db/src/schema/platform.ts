@@ -5,6 +5,7 @@ import {
   boolean,
   timestamp,
   integer,
+  jsonb,
   pgEnum,
   uniqueIndex,
   index,
@@ -32,6 +33,9 @@ export const membershipRoleEnum = pgEnum('membership_role', [
   'manager',
   'finance',
   'employee',
+  // Invoicing v3: finance-scoped, grant-driven, multi-company, non-billable.
+  // Added to the DB enum via migration (ALTER TYPE … ADD VALUE 'auditor').
+  'auditor',
 ]);
 
 export const membershipStatusEnum = pgEnum('membership_status', [
@@ -149,6 +153,10 @@ export const memberships = pgTable(
     employee_id: uuid('employee_id'), // FK set on employees table to avoid circular dep
     role: membershipRoleEnum('role').notNull().default('employee'),
     status: membershipStatusEnum('status').notNull().default('invited'),
+    // Invoicing v3 auditor support: external CA vs internal reviewer, and an
+    // optional time-boxed engagement window (P1).
+    is_external: boolean('is_external').notNull().default(false),
+    access_expires_at: timestamp('access_expires_at', { withTimezone: true }),
     invited_by: uuid('invited_by').references(() => users.id),
     invited_at: timestamp('invited_at', { withTimezone: true }).defaultNow(),
     accepted_at: timestamp('accepted_at', { withTimezone: true }),
@@ -198,6 +206,60 @@ export const accountDeletionRequests = pgTable(
   ],
 );
 
+// ─── membership_grants (Invoicing v3 — per-membership module scopes) ────────────
+// Drives the Auditor sidebar + grant guards. One row per (membership, module).
+
+export const membershipGrants = pgTable(
+  'membership_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }), // == membership's tenant
+    membership_id: uuid('membership_id')
+      .notNull()
+      .references(() => memberships.id, { onDelete: 'cascade' }),
+    // invoicing | reports | org_financial | payroll(reserved) | expenses(reserved)
+    module: text('module').notNull(),
+    access_level: text('access_level').notNull().default('view'), // none | view | edit
+    capabilities: jsonb('capabilities').notNull().default({}), // {"send":true,"record_payment":true,...}
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('membership_grants_membership_module_unique').on(
+      t.membership_id,
+      t.module,
+    ),
+    index('idx_membership_grants_membership').on(t.membership_id),
+    index('membership_grants_tenant_idx').on(t.tenant_id),
+  ],
+);
+
+// ─── tenant_module_toggles (Invoicing v3 — FAM per-module enablement) ───────────
+
+export const tenantModuleToggles = pgTable(
+  'tenant_module_toggles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    module: text('module').notNull(), // invoicing | payroll | expenses
+    enabled: boolean('enabled').notNull().default(false),
+    updated_by: uuid('updated_by').references(() => users.id),
+    updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tenant_module_toggles_unique').on(t.tenant_id, t.module),
+    index('tenant_module_toggles_tenant_idx').on(t.tenant_id),
+  ],
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────────
 
 export const tenantsRelations = relations(tenants, ({ many }) => ({
@@ -208,7 +270,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   memberships: many(memberships),
 }));
 
-export const membershipsRelations = relations(memberships, ({ one }) => ({
+export const membershipsRelations = relations(memberships, ({ one, many }) => ({
   tenant: one(tenants, {
     fields: [memberships.tenant_id],
     references: [tenants.id],
@@ -221,7 +283,32 @@ export const membershipsRelations = relations(memberships, ({ one }) => ({
     fields: [memberships.invited_by],
     references: [users.id],
   }),
+  grants: many(membershipGrants),
 }));
+
+export const membershipGrantsRelations = relations(
+  membershipGrants,
+  ({ one }) => ({
+    tenant: one(tenants, {
+      fields: [membershipGrants.tenant_id],
+      references: [tenants.id],
+    }),
+    membership: one(memberships, {
+      fields: [membershipGrants.membership_id],
+      references: [memberships.id],
+    }),
+  }),
+);
+
+export const tenantModuleTogglesRelations = relations(
+  tenantModuleToggles,
+  ({ one }) => ({
+    tenant: one(tenants, {
+      fields: [tenantModuleToggles.tenant_id],
+      references: [tenants.id],
+    }),
+  }),
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -231,3 +318,7 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Membership = typeof memberships.$inferSelect;
 export type NewMembership = typeof memberships.$inferInsert;
+export type MembershipGrant = typeof membershipGrants.$inferSelect;
+export type NewMembershipGrant = typeof membershipGrants.$inferInsert;
+export type TenantModuleToggle = typeof tenantModuleToggles.$inferSelect;
+export type NewTenantModuleToggle = typeof tenantModuleToggles.$inferInsert;
