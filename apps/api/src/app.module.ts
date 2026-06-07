@@ -31,6 +31,7 @@ import { FamModule } from './modules/fam/fam.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { InvoicingModule } from './modules/invoicing/invoicing.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -39,6 +40,7 @@ import { NotificationsGateway } from './gateways/notifications.gateway';
 import { DailySnapshotsJob } from './jobs/daily-snapshots.job';
 import { LeaveAccrualJob } from './jobs/leave-accrual.job';
 import { TrialExpiryJob } from './jobs/trial-expiry.job';
+import { InvoicingJobs } from './jobs/invoicing.jobs';
 
 @Module({
   imports: [
@@ -134,6 +136,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     SettingsModule,
     ReportsModule,
     AuditModule,
+    InvoicingModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -145,6 +148,7 @@ import { TrialExpiryJob } from './jobs/trial-expiry.job';
     DailySnapshotsJob,
     LeaveAccrualJob,
     TrialExpiryJob,
+    InvoicingJobs,
   ],
 })
 export class AppModule {

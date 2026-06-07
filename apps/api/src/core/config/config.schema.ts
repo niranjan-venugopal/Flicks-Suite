@@ -59,4 +59,20 @@ export const configValidationSchema = Joi.object({
   MAX_OTP_ATTEMPTS: Joi.number().default(5),
   MAX_OTP_PER_HOUR: Joi.number().default(5),
   TRUSTED_DEVICE_EXPIRY_DAYS: Joi.number().default(30),
+
+  // ─── Invoicing (v3) external integrations ──────────────────────────────────
+  // All optional and stubbed: the corresponding service no-ops safely when the
+  // key is absent (mirrors the R2 placeholder pattern), so local dev + CI run
+  // without live credentials. Per-tenant Razorpay keys live encrypted in
+  // invoicing_settings; these are the platform-level fallbacks/feature flags.
+  RAZORPAY_KEY_ID: Joi.string().allow('').optional(),
+  RAZORPAY_KEY_SECRET: Joi.string().allow('').optional(),
+  RAZORPAY_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+  // FX rates (openexchangerates.org) for multi-currency snapshots.
+  FX_RATE_SOURCE: Joi.string().default('openexchangerates'),
+  OPENEXCHANGERATES_APP_ID: Joi.string().allow('').optional(),
+  // R2 bucket for generated invoice/credit-note PDFs + GSTR-1 exports.
+  R2_INVOICING_BUCKET: Joi.string().default('flicks-suite-invoicing'),
+  // Tenant-branded public invoice base, e.g. https://{slug}.flickssuite.com.
+  PUBLIC_INVOICE_BASE_URL: Joi.string().uri().default('http://localhost:3000'),
 });

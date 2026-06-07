@@ -2,7 +2,10 @@
 
 // 'super_admin' kept for backwards-compat with legacy rows; 'fam' is the
 // canonical name for the Specflicks-internal platform admin role.
-export type UserRole = 'fam' | 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee';
+// 'auditor' (Invoicing v3): finance-scoped, grant-driven, multi-company,
+// non-billable. It is orthogonal to the role hierarchy — invoicing access is
+// resolved by membership_grants via the grant guard, not the role rank.
+export type UserRole = 'fam' | 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee' | 'auditor';
 
 export type TenantStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended';
 

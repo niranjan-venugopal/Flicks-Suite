@@ -45,6 +45,10 @@ export class RolesGuard implements CanActivate {
       manager: 3,
       finance: 2,
       employee: 1,
+      // Auditor is orthogonal to the hierarchy — it never satisfies a ranked
+      // @Roles(...) requirement (HRMS routes). Invoicing access is resolved by
+      // the InvoicingGrantGuard via membership_grants instead.
+      auditor: 0,
     };
 
     const userLevel = roleHierarchy[user.role] ?? 0;
