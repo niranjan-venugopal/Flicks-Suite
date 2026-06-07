@@ -63,6 +63,20 @@ const ADMIN_NAV: NavSection[] = [
         ],
       },
       {
+        id: 'invoicing',
+        label: 'Invoicing',
+        icon: 'wallet',
+        children: [
+          { href: '/invoicing', label: 'Overview' },
+          { href: '/invoicing/invoices', label: 'Invoices' },
+          { href: '/invoicing/customers', label: 'Customers' },
+          { href: '/invoicing/items', label: 'Items' },
+          { href: '/invoicing/recurring', label: 'Recurring' },
+          { href: '/invoicing/reports', label: 'Reports' },
+          { href: '/invoicing/settings', label: 'Settings' },
+        ],
+      },
+      {
         id: 'insights',
         label: 'Insights',
         icon: 'chart',
