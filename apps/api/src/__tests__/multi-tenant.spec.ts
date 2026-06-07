@@ -521,3 +521,152 @@ describe('Multi-Tenant RLS Isolation (Gate 1 — PRD Section 2.3)', () => {
     await dbAdmin.delete(schema.authOtps).where(eq(schema.authOtps.id, otp!.id));
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// Invoicing v3 — cross-tenant isolation (PRD §4.4)
+// Self-contained (own DB clients) so it is independent of the suite above,
+// whose afterAll closes the shared connections. Covers every new tenant-scoped
+// table, plus the auditor company-switcher cases (memberships self-visibility,
+// auditor-in-A-and-B) and the razorpay_webhook_events deny-all.
+// ════════════════════════════════════════════════════════════════════════════
+
+describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
+  const invApp = postgres(APP_DB_URL, { max: 5 });
+  const invAdmin = postgres(ADMIN_DB_URL, { max: 2 });
+  const idb = drizzle(invApp, { schema });
+  const idbAdmin = drizzle(invAdmin, { schema });
+  const rid = () => Math.random().toString(36).slice(2, 10);
+
+  async function withTenant<T>(
+    tenantId: string,
+    cb: (tx: typeof idb) => Promise<T>,
+  ): Promise<T> {
+    return idb.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}::text, true)`);
+      return cb(tx as unknown as typeof idb);
+    });
+  }
+  async function withTenantUser<T>(
+    tenantId: string,
+    userId: string,
+    cb: (tx: typeof idb) => Promise<T>,
+  ): Promise<T> {
+    return idb.transaction(async (tx) => {
+      await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}::text, true)`);
+      await tx.execute(sql`SELECT set_config('app.user_id', ${userId}::text, true)`);
+      return cb(tx as unknown as typeof idb);
+    });
+  }
+  const mkTenant = async (name: string) =>
+    (await idbAdmin.insert(schema.tenants).values({ name, slug: `inv-${name.toLowerCase()}-${rid()}`, status: 'trialing' }).returning())[0]!;
+  const mkUser = async (email: string) =>
+    (await idbAdmin.insert(schema.users).values({ email, full_name: email.split('@')[0]!, status: 'active' }).returning())[0]!;
+
+  let tenantA: typeof schema.tenants.$inferSelect;
+  let tenantB: typeof schema.tenants.$inferSelect;
+  let customerA: typeof schema.customers.$inferSelect;
+  let customerB: typeof schema.customers.$inferSelect;
+
+  beforeAll(async () => {
+    tenantA = await mkTenant(`InvAlpha${rid()}`);
+    tenantB = await mkTenant(`InvBeta${rid()}`);
+    [customerA] = await idbAdmin.insert(schema.customers).values({ tenant_id: tenantA.id, customer_code: `CUST-A-${rid()}`, display_name: 'Customer A' }).returning();
+    [customerB] = await idbAdmin.insert(schema.customers).values({ tenant_id: tenantB.id, customer_code: `CUST-B-${rid()}`, display_name: 'Customer B' }).returning();
+  });
+
+  afterAll(async () => {
+    await idbAdmin.delete(schema.tenants).where(eq(schema.tenants.id, tenantA.id));
+    await idbAdmin.delete(schema.tenants).where(eq(schema.tenants.id, tenantB.id));
+    await invApp.end();
+    await invAdmin.end();
+  });
+
+  const cases: { label: string; table: any; values: () => Record<string, unknown> }[] = [
+    { label: 'customers', table: schema.customers, values: () => ({ tenant_id: tenantA.id, customer_code: `C-${rid()}`, display_name: 'Acme' }) },
+    { label: 'items', table: schema.items, values: () => ({ tenant_id: tenantA.id, item_code: `I-${rid()}`, name: 'Widget', default_rate: '100.00' }) },
+    { label: 'invoices', table: schema.invoices, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, invoice_number: `INV-${rid()}`, invoice_date: '2026-06-01', due_date: '2026-07-01', fy_label: '26-27', currency: 'INR' }) },
+    { label: 'invoice_payments', table: schema.invoicePayments, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, payment_number: `PMT-${rid()}`, payment_date: '2026-06-02', amount: '50.00', currency: 'INR', payment_method: 'CASH' }) },
+    { label: 'invoice_subscriptions', table: schema.invoiceSubscriptions, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, name: 'Monthly', pricing_model: 'flat_rate', currency: 'INR', billing_period: 'monthly', start_date: '2026-06-01' }) },
+    { label: 'credit_notes', table: schema.creditNotes, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, credit_note_number: `CN-${rid()}`, fy_label: '26-27', credit_note_date: '2026-06-01', reason: 'sales_return' }) },
+    { label: 'debit_notes', table: schema.debitNotes, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, debit_note_number: `DN-${rid()}`, fy_label: '26-27', debit_note_date: '2026-06-01', reason: 'additional_charges' }) },
+    { label: 'adjustments', table: schema.adjustments, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, adjustment_date: '2026-06-01', amount: '10.00', type: 'round_off' }) },
+    { label: 'customer_credit_balance', table: schema.customerCreditBalance, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, balance_amount: '0', currency: `C${rid().slice(0, 2)}` }) },
+    { label: 'customer_credit_balance_entries', table: schema.customerCreditBalanceEntries, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, entry_date: '2026-06-01', entry_type: 'overpayment', amount: '5.00' }) },
+    { label: 'invoicing_settings', table: schema.invoicingSettings, values: () => ({ tenant_id: tenantA.id }) },
+    { label: 'invoicing_setup_progress', table: schema.invoicingSetupProgress, values: () => ({ tenant_id: tenantA.id }) },
+    { label: 'invoice_sequences', table: schema.invoiceSequences, values: () => ({ tenant_id: tenantA.id, document_type: `INVOICE-${rid()}`, fy_label: '26-27', fy_start_date: '2026-04-01', fy_end_date: '2027-03-31' }) },
+    { label: 'tenant_bank_accounts', table: schema.tenantBankAccounts, values: () => ({ tenant_id: tenantA.id, beneficiary_name: 'Acme Pvt Ltd', account_number: `${rid()}`, bank_name: 'HDFC' }) },
+    { label: 'reminder_schedule', table: schema.reminderSchedule, values: () => ({ tenant_id: tenantA.id, reminder_number: 1, offset_days: -3 }) },
+    { label: 'gstr1_exports', table: schema.gstr1Exports, values: () => ({ tenant_id: tenantA.id, fy_label: '26-27' }) },
+    { label: 'form_131_received', table: schema.form131Received, values: () => ({ tenant_id: tenantA.id, customer_id: customerA.id, fy_label: '26-27', quarter: 1 }) },
+    { label: 'tenant_module_toggles', table: schema.tenantModuleToggles, values: () => ({ tenant_id: tenantA.id, module: `mod-${rid()}`, enabled: true }) },
+  ];
+
+  cases.forEach(({ label, table, values }) => {
+    it(`isolation: ${label} — A sees its row, B sees none`, async () => {
+      const [row] = await idbAdmin.insert(table).values(values()).returning();
+      const seenByA = await withTenant(tenantA.id, (tx) => tx.select().from(table).where(eq(table.id, (row as any).id)));
+      expect(seenByA.length).toBe(1);
+      const seenByB = await withTenant(tenantB.id, (tx) => tx.select().from(table).where(eq(table.id, (row as any).id)));
+      expect(seenByB.length).toBe(0);
+      await idbAdmin.delete(table).where(eq(table.id, (row as any).id));
+    });
+  });
+
+  it('isolation: invoice_line_items follow their invoice tenant', async () => {
+    const [inv] = await idbAdmin.insert(schema.invoices).values({ tenant_id: tenantA.id, customer_id: customerA.id, invoice_number: `INV-${rid()}`, invoice_date: '2026-06-01', due_date: '2026-07-01', fy_label: '26-27', currency: 'INR' }).returning();
+    const [line] = await idbAdmin.insert(schema.invoiceLineItems).values({ tenant_id: tenantA.id, invoice_id: inv!.id, line_number: 1, item_name: 'Widget', quantity: '1', rate: '100.00' }).returning();
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.invoiceLineItems).where(eq(schema.invoiceLineItems.id, line!.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.invoiceLineItems).where(eq(schema.invoiceLineItems.id, line!.id)))).length).toBe(0);
+    await idbAdmin.delete(schema.invoices).where(eq(schema.invoices.id, inv!.id));
+  });
+
+  it('isolation: tenant_currency_bank_defaults is tenant-scoped', async () => {
+    const [bank] = await idbAdmin.insert(schema.tenantBankAccounts).values({ tenant_id: tenantA.id, beneficiary_name: 'Acme', account_number: `${rid()}`, bank_name: 'ICICI' }).returning();
+    const [def] = await idbAdmin.insert(schema.tenantCurrencyBankDefaults).values({ tenant_id: tenantA.id, currency: 'USD', bank_account_id: bank!.id }).returning();
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.tenantCurrencyBankDefaults).where(eq(schema.tenantCurrencyBankDefaults.id, def!.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.tenantCurrencyBankDefaults).where(eq(schema.tenantCurrencyBankDefaults.id, def!.id)))).length).toBe(0);
+    await idbAdmin.delete(schema.tenantBankAccounts).where(eq(schema.tenantBankAccounts.id, bank!.id));
+  });
+
+  it('isolation: razorpay_webhook_events denies the tenant connection', async () => {
+    const [evt] = await idbAdmin.insert(schema.razorpayWebhookEvents).values({ event_id: `evt-${rid()}`, event_type: 'payment.captured' }).returning();
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.razorpayWebhookEvents).where(eq(schema.razorpayWebhookEvents.id, evt!.id)))).length).toBe(0);
+    await expect(withTenant(tenantA.id, (tx) => tx.insert(schema.razorpayWebhookEvents).values({ event_id: `blk-${rid()}`, event_type: 'payment.captured' }))).rejects.toThrow();
+    await idbAdmin.delete(schema.razorpayWebhookEvents).where(eq(schema.razorpayWebhookEvents.id, evt!.id));
+  });
+
+  it('isolation: membership_grants is tenant-scoped', async () => {
+    const user = await mkUser(`grant-${rid()}@test.test`);
+    const [m] = await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantA.id, user_id: user.id, role: 'auditor', status: 'active' }).returning();
+    const [grant] = await idbAdmin.insert(schema.membershipGrants).values({ tenant_id: tenantA.id, membership_id: m!.id, module: 'invoicing', access_level: 'view' }).returning();
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.membershipGrants).where(eq(schema.membershipGrants.id, grant!.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.membershipGrants).where(eq(schema.membershipGrants.id, grant!.id)))).length).toBe(0);
+    await idbAdmin.delete(schema.memberships).where(eq(schema.memberships.id, m!.id));
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, user.id));
+  });
+
+  it('memberships self-visibility: own rows cross-tenant only with app.user_id', async () => {
+    const user = await mkUser(`auditor-${rid()}@test.test`);
+    const [mA] = await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantA.id, user_id: user.id, role: 'auditor', status: 'active' }).returning();
+    const [mB] = await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantB.id, user_id: user.id, role: 'auditor', status: 'active' }).returning();
+    const withUser = await withTenantUser(tenantA.id, user.id, (tx) => tx.select().from(schema.memberships).where(eq(schema.memberships.user_id, user.id)));
+    expect(withUser.map((m: any) => m.id).sort()).toEqual([mA!.id, mB!.id].sort());
+    const withoutUser = await withTenant(tenantA.id, (tx) => tx.select().from(schema.memberships).where(eq(schema.memberships.user_id, user.id)));
+    expect(withoutUser.map((m: any) => m.id)).toEqual([mA!.id]);
+    await idbAdmin.delete(schema.memberships).where(eq(schema.memberships.user_id, user.id));
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, user.id));
+  });
+
+  it('auditor in two companies stays confined to the active company (RLS)', async () => {
+    const user = await mkUser(`multico-${rid()}@test.test`);
+    await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantA.id, user_id: user.id, role: 'auditor', status: 'active' });
+    await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantB.id, user_id: user.id, role: 'auditor', status: 'active' });
+    const seen = await withTenantUser(tenantA.id, user.id, (tx) => tx.select().from(schema.customers));
+    expect(seen.some((c: any) => c.id === customerA.id)).toBe(true);
+    expect(seen.some((c: any) => c.id === customerB.id)).toBe(false);
+    await expect(withTenantUser(tenantA.id, user.id, (tx) => tx.insert(schema.customers).values({ tenant_id: tenantB.id, customer_code: `EVIL-${rid()}`, display_name: 'Evil' }))).rejects.toThrow();
+    await idbAdmin.delete(schema.memberships).where(eq(schema.memberships.user_id, user.id));
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, user.id));
+  });
+});

@@ -67,6 +67,12 @@ CREATE POLICY service_role_only_razorpay_webhook_events ON razorpay_webhook_even
   FOR ALL USING (false) WITH CHECK (false);
 
 -- ─── memberships self-visibility (company switcher) ─────────────────────────────
+-- NULLIF(...,'') so an unset/empty app.user_id resolves to NULL (no match)
+-- rather than raising on a ''::uuid cast — this permissive SELECT policy is
+-- evaluated for every read of memberships, including those that set only
+-- app.tenant_id.
 DROP POLICY IF EXISTS memberships_self_visibility ON memberships;
 CREATE POLICY memberships_self_visibility ON memberships
-  FOR SELECT USING (user_id = current_setting('app.user_id', true)::uuid);
+  FOR SELECT USING (
+    user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+  );
