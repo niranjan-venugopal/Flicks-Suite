@@ -5,9 +5,11 @@
 -- memberships ALTER). RLS for the two new tenant-scoped tables is applied in
 -- 0014. Idempotent.
 --
--- NOTE: ALTER TYPE … ADD VALUE cannot run inside an explicit transaction and
--- the new value cannot be used in the same statement batch — so this file does
--- NOT insert any 'auditor' rows; it only registers the enum value.
+-- NOTE: this file does NOT insert any 'auditor' rows — it only registers the
+-- enum value. Postgres (12+) permits ALTER TYPE … ADD VALUE inside a transaction
+-- (e.g. when pasted into the Supabase SQL editor, which runs each batch in one
+-- transaction); the only rule is that the new value cannot be *used* in that
+-- same transaction, which we don't. Idempotent via ADD VALUE IF NOT EXISTS.
 -- =============================================================================
 
 -- ─── membership_role gains 'auditor' ────────────────────────────────────────────
