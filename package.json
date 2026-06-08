@@ -15,6 +15,8 @@
     "db:studio": "pnpm --filter @flicks/db studio",
     "setup:db": "bash scripts/setup-db.sh",
     "setup:database": "bash scripts/setup-database.sh",
+    "sync:supabase": "bash scripts/sync-supabase.sh",
+    "uninstall:invoicing": "psql \"$DATABASE_DIRECT_URL\" -v ON_ERROR_STOP=1 -f scripts/uninstall-invoicing.sql",
     "setup:demo": "bash scripts/setup-demo.sh",
     "setup": "pnpm install && pnpm setup:db && pnpm db:seed"
   },

@@ -103,6 +103,34 @@ In dev mode (`NODE_ENV != production`) the API logs the plaintext OTP to the con
 
 ---
 
+## Sync the schema to Supabase (one command)
+
+To apply all migrations — including the Invoicing module (`0012–0017`) — to a
+**Supabase** database:
+
+```bash
+# 1. In apps/api/.env set your three Supabase URLs (Session pooler, port 5432):
+#      DATABASE_DIRECT_URL        -> postgres user (privileged; for migrations)
+#      DATABASE_SERVICE_ROLE_URL  -> postgres user (BYPASSRLS; auth/FAM)
+#      DATABASE_URL               -> flicks_app role (NOBYPASSRLS; the app)
+#    (URL-encode the password: '@' -> %40, etc.)
+
+# 2. First time on a brand-new project, also create the app role:
+APP_ROLE_PASSWORD='<strong-pwd>' pnpm sync:supabase
+
+# 3. Thereafter (role already exists) just:
+pnpm sync:supabase
+```
+
+`sync:supabase` is **idempotent and non-destructive**: it only adds what's
+missing and re-asserts the `flicks_app` grants, so it's safe to run repeatedly on
+a database that already holds V1 (HRMS) data. To back the module out cleanly
+(leaving HRMS untouched): `pnpm uninstall:invoicing`.
+
+> Supabase is database-only — to run the app (`pnpm dev`) you still need Redis,
+> e.g. `docker run -d -p 6379:6379 redis:7-alpine`. Leave `hsn_sac_codes` with RLS
+> **off** in the Supabase Table Editor (it's the intentional global HSN/SAC master).
+
 ## Common commands
 
 ```bash
