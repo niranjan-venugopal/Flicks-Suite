@@ -128,8 +128,8 @@ a database that already holds V1 (HRMS) data. To back the module out cleanly
 (leaving HRMS untouched): `pnpm uninstall:invoicing`.
 
 > Supabase is database-only — to run the app (`pnpm dev`) you still need Redis,
-> e.g. `docker run -d -p 6379:6379 redis:7-alpine`. Leave `hsn_sac_codes` with RLS
-> **off** in the Supabase Table Editor (it's the intentional global HSN/SAC master).
+> e.g. `docker run -d -p 6379:6379 redis:7-alpine` (start Docker Desktop first),
+> or `brew install redis && brew services start redis`.
 
 ## Common commands
 

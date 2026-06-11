@@ -172,8 +172,13 @@ table is the intentionally global `hsn_sac_codes`).
   `adjustments`, `reminder_schedule`, `reminder_sent`, `gstr1_exports`,
   `form_131_received`, `tenant_bank_accounts`, `tenant_currency_bank_defaults`,
   `membership_grants`, `tenant_module_toggles`.
-- **Global, intentionally NO RLS:** `hsn_sac_codes` (read-only master, shared by
-  all tenants; `flicks_app` has SELECT only).
+- **Global read-for-all (`0018`):** `hsn_sac_codes` (shared HSN/SAC master).
+  RLS is ON with a permissive `SELECT USING (true)` policy — reads work for
+  every tenant; app-role writes are denied (tenant additions live in
+  `tenant_hsn_sac_codes`). It originally shipped without RLS, but the Supabase
+  dashboard/advisor enables RLS on it (observed live), which with no policy
+  silently blanks HSN search — `0018` owns the posture instead, so coverage is
+  a clean N/N regardless of dashboard state.
 - **Deny-all (service-role only, `0014`):** `razorpay_webhook_events` (written
   without tenant context by the webhook handler).
 - **Additional permissive policy:** `memberships_self_visibility` (SELECT) keyed
