@@ -7,7 +7,7 @@
 import 'dotenv/config';
 import { db, dbAdmin } from '@flicks/db';
 import { tenants, users } from '@flicks/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../core/database/database.service';
 import { CustomersService } from '../modules/invoicing/customers.service';
 import { ItemsService } from '../modules/invoicing/items.service';
@@ -1233,6 +1233,255 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
     await expect(subsSvc.resume(created.data.id, userId, tenantId)).rejects.toThrow(/Cannot resume/);
     const cancelled = await subsSvc.cancel(created.data.id, 'not needed', userId, tenantId);
     expect(cancelled.data.status).toBe('CANCELLED');
+  });
+});
+
+// ─── Sprint 8: auditor role — invite, grants, switch, My Companies, seats ─────
+import { MembersService } from '../modules/members/members.service';
+import { resolveSwitchMembership } from '../modules/auth/switch-membership.util';
+import { InvoicingGrantGuard } from '../core/auth/guards/invoicing-grant.guard';
+import type { GrantRequirement } from '../core/auth/decorators/require-grant.decorator';
+import {
+  memberships as membershipsTable,
+  membershipGrants as membershipGrantsTable,
+  users as usersTable,
+} from '@flicks/db/schema';
+import type { Reflector } from '@nestjs/core';
+import type { ExecutionContext } from '@nestjs/common';
+import type { JwtPayload } from '@flicks/shared/types';
+
+describe('Members & auditor role (Sprint 8)', () => {
+  // AuthService is only needed for the invite magic link — stub it.
+  const authStub = {
+    issueInviteMagicLink: async () => 'http://localhost:3000/verify?token=test',
+  } as unknown as import('../modules/auth/auth.service').AuthService;
+  const members = new MembersService(
+    dbSvc,
+    dbAdmin as never,
+    audit,
+    notificationsStub,
+    authStub,
+  );
+
+  // Two isolated companies + an owner; the auditor is invited into both.
+  let tenantA: string;
+  let tenantB: string;
+  let ownerId: string;
+  let auditorUserId: string;
+  let auditorMembershipA: string;
+  const auditorEmail = `auditor-${rid()}@firm.test`;
+
+  beforeAll(async () => {
+    const [a] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `AudCoA${rid()}`, slug: `aud-a-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    const [b] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `AudCoB${rid()}`, slug: `aud-b-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    tenantA = a!.id;
+    tenantB = b!.id;
+    const [owner] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `owner-${rid()}@test.test`, full_name: 'Owner', status: 'active' })
+      .returning();
+    ownerId = owner!.id;
+    await dbAdmin.insert(membershipsTable).values({
+      tenant_id: tenantA,
+      user_id: ownerId,
+      role: 'owner',
+      status: 'active',
+    });
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantA));
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantB));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, ownerId));
+    if (auditorUserId) {
+      await dbAdmin.delete(usersTable).where(eq(usersTable.id, auditorUserId));
+    }
+  });
+
+  // Build a guard wired to a fixed @RequireGrant requirement + JWT payload.
+  const guardCheck = async (req: GrantRequirement, user: Partial<JwtPayload>) => {
+    const reflector = {
+      getAllAndOverride: () => req,
+    } as unknown as Reflector;
+    const guard = new InvoicingGrantGuard(reflector, dbSvc);
+    const ctx = {
+      switchToHttp: () => ({ getRequest: () => ({ user }) }),
+      getHandler: () => function handler() {},
+      getClass: () => class Ctrl {},
+    } as unknown as ExecutionContext;
+    return guard.canActivate(ctx);
+  };
+
+  it('invite creates an invited, external, non-billable membership with review-grade default grants and emails the invite', async () => {
+    sentEmails.length = 0;
+    const res = await members.inviteAuditor(
+      { email: auditorEmail },
+      ownerId,
+      tenantA,
+    );
+    const m = res.data.membership;
+    auditorMembershipA = m.id;
+    auditorUserId = m.user_id;
+    expect(m.role).toBe('auditor');
+    expect(m.status).toBe('invited');
+    expect(m.is_external).toBe(true);
+    expect(m.invited_by).toBe(ownerId);
+
+    const grantSet = res.data.grants.map((g) => `${g.module}:${g.access_level}`).sort();
+    expect(grantSet).toEqual([
+      'invoicing:view',
+      'org_financial:view',
+      'reports:view',
+    ]);
+
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.template).toBe('auditor-invite');
+    expect(sentEmails[0]!.to).toBe(auditorEmail);
+    expect(String(sentEmails[0]!.props.magicLinkUrl)).toContain('token=');
+  });
+
+  it('rejects a duplicate invite while one is pending', async () => {
+    await expect(
+      members.inviteAuditor({ email: auditorEmail }, ownerId, tenantA),
+    ).rejects.toThrow(/pending invite|already/i);
+  });
+
+  it('grant guard allows invoicing:view but denies invoicing:edit for the default auditor', async () => {
+    const jwt = {
+      sub: auditorUserId,
+      tenantId: tenantA,
+      membershipId: auditorMembershipA,
+      role: 'auditor' as const,
+      isPlatformAdmin: false,
+    };
+    await expect(
+      guardCheck({ module: 'invoicing', level: 'view' }, jwt),
+    ).resolves.toBe(true);
+    await expect(
+      guardCheck({ module: 'invoicing', level: 'edit' }, jwt),
+    ).rejects.toThrow(/Missing grant/);
+  });
+
+  it('grant elevation flips the guard: edit + send capability pass, record_payments stays denied', async () => {
+    await members.updateGrants(
+      auditorMembershipA,
+      {
+        grants: [
+          { module: 'invoicing', access_level: 'edit', capabilities: { send: true } },
+          { module: 'reports', access_level: 'view' },
+        ],
+      },
+      ownerId,
+      tenantA,
+    );
+    const jwt = {
+      sub: auditorUserId,
+      tenantId: tenantA,
+      membershipId: auditorMembershipA,
+      role: 'auditor' as const,
+      isPlatformAdmin: false,
+    };
+    await expect(
+      guardCheck({ module: 'invoicing', level: 'edit', capability: 'send' }, jwt),
+    ).resolves.toBe(true);
+    await expect(
+      guardCheck({ module: 'invoicing', level: 'edit', capability: 'record_payments' }, jwt),
+    ).rejects.toThrow(/Missing grant/);
+    // org_financial grant was dropped in the replacement set.
+    await expect(
+      guardCheck({ module: 'org_financial', level: 'view' }, jwt),
+    ).rejects.toThrow(/Missing grant/);
+  });
+
+  it('GET /me/companies lists only the caller’s own memberships, with grants', async () => {
+    // Second engagement: same auditor user invited into company B.
+    await members.inviteAuditor({ email: auditorEmail }, ownerId, tenantB);
+
+    const mine = await members.getMyCompanies(auditorUserId);
+    expect(mine.data.map((c) => c.tenantId).sort()).toEqual(
+      [tenantA, tenantB].sort(),
+    );
+    const companyA = mine.data.find((c) => c.tenantId === tenantA)!;
+    expect(companyA.role).toBe('auditor');
+    expect(companyA.grants.some((g) => g.module === 'invoicing')).toBe(true);
+
+    // The owner of A sees exactly their one company — never the auditor's B.
+    const ownersView = await members.getMyCompanies(ownerId);
+    expect(ownersView.data.map((c) => c.tenantId)).toEqual([tenantA]);
+  });
+
+  it('switch-company verifies server-side: foreign tenant rejected, invited auditor accepted on switch', async () => {
+    // The owner has no membership in B — must be rejected regardless of the
+    // client-supplied tenant id.
+    await expect(
+      resolveSwitchMembership(dbAdmin as never, ownerId, tenantB),
+    ).rejects.toThrow(/No active membership/);
+
+    // The invited auditor switching into B is accepted on switch.
+    const switched = await resolveSwitchMembership(dbAdmin as never, auditorUserId, tenantB);
+    expect(switched.activated).toBe(true);
+    expect(switched.membership.status).toBe('active');
+    expect(switched.membership.accepted_at).not.toBeNull();
+
+    // Idempotent on the second switch.
+    const again = await resolveSwitchMembership(dbAdmin as never, auditorUserId, tenantB);
+    expect(again.activated).toBe(false);
+  });
+
+  it('switch-company rejects revoked memberships and elapsed access windows', async () => {
+    // Revoke the B engagement.
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'deactivated' })
+      .where(
+        and(
+          eq(membershipsTable.user_id, auditorUserId),
+          eq(membershipsTable.tenant_id, tenantB),
+        ),
+      );
+    await expect(
+      resolveSwitchMembership(dbAdmin as never, auditorUserId, tenantB),
+    ).rejects.toThrow(/revoked/);
+
+    // Expired engagement window on A.
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ access_expires_at: new Date(Date.now() - 24 * 3600 * 1000) })
+      .where(eq(membershipsTable.id, auditorMembershipA));
+    await expect(
+      resolveSwitchMembership(dbAdmin as never, auditorUserId, tenantA),
+    ).rejects.toThrow(/expired/);
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ access_expires_at: null })
+      .where(eq(membershipsTable.id, auditorMembershipA));
+  });
+
+  it('auditor seats are non-billable: billable count excludes auditors', async () => {
+    // Activate the A engagement (invited → active via switch).
+    const { membership } = await resolveSwitchMembership(
+      dbAdmin as never,
+      auditorUserId,
+      tenantA,
+    );
+    expect(membership.status).toBe('active');
+
+    const seats = await members.seats(tenantA);
+    expect(seats.data.billable).toBe(1); // the owner only
+    expect(seats.data.auditors).toBe(1);
+
+    // Grants for the revoked B membership are irrelevant to A's counts.
+    const grantsA = await dbAdmin
+      .select()
+      .from(membershipGrantsTable)
+      .where(eq(membershipGrantsTable.tenant_id, tenantA));
+    expect(grantsA.length).toBeGreaterThan(0);
   });
 });
 

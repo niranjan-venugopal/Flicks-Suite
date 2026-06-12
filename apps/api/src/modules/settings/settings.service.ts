@@ -13,6 +13,7 @@ import {
   designations,
   employees,
   memberships,
+  membershipGrants,
   users,
   shiftTemplates,
   employeeShifts,
@@ -1010,6 +1011,9 @@ export class SettingsService {
         employeeId: memberships.employee_id,
         role: memberships.role,
         status: memberships.status,
+        // Auditor metadata (Invoicing v3, PRD §3) — non-billable seat info.
+        isExternal: memberships.is_external,
+        accessExpiresAt: memberships.access_expires_at,
         invitedAt: memberships.invited_at,
         acceptedAt: memberships.accepted_at,
         createdAt: memberships.created_at,
@@ -1033,7 +1037,36 @@ export class SettingsService {
       .where(eq(memberships.tenant_id, tenantId))
       .orderBy(asc(memberships.created_at));
 
-    return { data: rows, total: rows.length };
+    // Module grants per membership (drives the auditor "Granted scope" pills
+    // on Settings → Members). One extra query, merged in memory.
+    const grantRows = rows.length
+      ? await this.dbAdmin
+          .select({
+            membershipId: membershipGrants.membership_id,
+            module: membershipGrants.module,
+            accessLevel: membershipGrants.access_level,
+            capabilities: membershipGrants.capabilities,
+          })
+          .from(membershipGrants)
+          .where(eq(membershipGrants.tenant_id, tenantId))
+      : [];
+    const grantsByMembership = new Map<string, typeof grantRows>();
+    for (const g of grantRows) {
+      const list = grantsByMembership.get(g.membershipId) ?? [];
+      list.push(g);
+      grantsByMembership.set(g.membershipId, list);
+    }
+
+    const data = rows.map((r) => ({
+      ...r,
+      grants: (grantsByMembership.get(r.id) ?? []).map((g) => ({
+        module: g.module,
+        access_level: g.accessLevel,
+        capabilities: g.capabilities ?? {},
+      })),
+    }));
+
+    return { data, total: data.length };
   }
 
   async updateMemberRole(

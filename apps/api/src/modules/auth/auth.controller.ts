@@ -281,6 +281,28 @@ export class AuthController {
     return result;
   }
 
+  @Post('switch-company')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Switch active company (Invoicing v3 alias of select-tenant)',
+    description:
+      'Re-verifies the membership server-side (revoked/expired access is rejected; ' +
+      'pending invites are accepted on switch) and issues a JWT scoped to the chosen tenant.',
+  })
+  @ApiResponse({ status: 200, description: 'Switched, new tokens issued' })
+  @ApiResponse({ status: 400, description: 'No membership for this tenant' })
+  @ApiResponse({ status: 403, description: 'Membership revoked or access window expired' })
+  async switchCompany(
+    @Body() dto: SelectTenantDto,
+    @CurrentUser() user: JwtPayload,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.selectTenant(user.sub, dto.tenantId);
+    this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+    return result;
+  }
+
   @Get('sessions')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'List active sessions' })

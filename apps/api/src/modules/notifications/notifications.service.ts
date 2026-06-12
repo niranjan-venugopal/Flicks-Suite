@@ -101,6 +101,7 @@ type EmailTemplate =
   | 'payment-received'
   | 'invoice-reminder'
   | 'subscription-pre-debit'
+  | 'auditor-invite'
   // Billing
   | 'trial-ending-soon'
   | 'subscription-payment-success'
@@ -224,6 +225,26 @@ export class NotificationsService {
             <p>A scheduled charge of <strong>${props.amount}</strong> for
             <strong>${props.name}</strong> will be made on <strong>${props.chargeDate}</strong>
             via your authorized mandate. No action is needed.</p>
+          `,
+        };
+      }
+
+      case 'auditor-invite': {
+        return {
+          subject: `You're invited to review ${props.companyName} on ${appName}`,
+          html: `
+            <p>Hi,</p>
+            <p><strong>${props.inviterName}</strong> invited you as an <strong>auditor</strong>
+            for <strong>${props.companyName}</strong> on ${appName}.</p>
+            <p>Granted access: <strong>${props.scopeSummary}</strong>${
+              props.accessExpiresAt ? ` (until ${props.accessExpiresAt})` : ''
+            }.</p>
+            ${props.note ? `<p>Note from the inviter: ${props.note}</p>` : ''}
+            <p style="margin:24px 0;">
+              <a href="${props.magicLinkUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">Accept invite &amp; sign in</a>
+            </p>
+            <p>Auditor seats are non-billable. If you already use ${appName}, this company
+            appears under <strong>My companies</strong> the next time you sign in.</p>
           `,
         };
       }

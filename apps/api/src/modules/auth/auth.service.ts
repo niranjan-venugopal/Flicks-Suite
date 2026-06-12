@@ -35,6 +35,7 @@ import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
 import { TotpService } from './totp.service';
+import { resolveSwitchMembership } from './switch-membership.util';
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -673,23 +674,14 @@ export class AuthService {
   }
 
   async selectTenant(userId: string, tenantId: string) {
-    const membershipResult = await this.dbAdmin
-      .select()
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-          eq(memberships.status, 'active'),
-        ),
-      )
-      .limit(1);
-
-    if (!membershipResult[0]) {
-      throw new BadRequestException('No active membership found for this tenant');
-    }
-
-    const membership = membershipResult[0];
+    // Server-side re-verification (PRD §3.5): membership must exist, must not
+    // be revoked or past its access window; pending invites are accepted on
+    // switch. Shared with POST /auth/switch-company.
+    const { membership, activated } = await resolveSwitchMembership(
+      this.dbAdmin,
+      userId,
+      tenantId,
+    );
 
     const user = await this.db
       .select()
@@ -711,7 +703,7 @@ export class AuthService {
     await this.writeAuthEvent({
       userId,
       eventType: 'tenant_selected',
-      metadata: { tenantId },
+      metadata: { tenantId, ...(activated ? { invite_accepted: true } : {}) },
     });
 
     return { accessToken, refreshToken, expiresIn: 900 };
