@@ -1,20 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useToast } from '@/components/ui/use-toast'
+import { Loader2, Plus, Landmark, Star } from 'lucide-react'
+import { Btn, Pill, SectionHead } from '@/components/proto'
+import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { BankAccountModal } from '@/components/invoicing/BankAccountModal'
-import {
-  INVO,
-  InvoPage,
-  InvoTitle,
-  InvoCard,
-  InvoCardTitle,
-  InvoBtn,
-  InvoIcons,
-  StatusChip,
-  invoField,
-  invoLabel,
-} from '@/components/invoicing/invo'
+import { useToast } from '@/components/ui/use-toast'
 import {
   useOrgFinancial,
   useUpdateOrgFinancial,
@@ -27,15 +18,16 @@ import {
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 
 /**
- * Organization → Financial details (PRD §7.2/§8). Single source of truth for
- * legal name / GSTIN / PAN / FY (columns on the tenant) and the company bank
- * accounts that render on invoices.
+ * Organization → Financial details (PRD §7.2/§8) — an org Settings page, so it
+ * follows the HRMS settings pattern (SettingsLayout + cards), NOT the Invo
+ * module style. Single source of truth for legal name / GSTIN / PAN (columns
+ * on the tenant) + the company bank accounts that render on invoices.
  */
 export default function OrgFinancialPage() {
   const { toast } = useToast()
-  const { data: fin } = useOrgFinancial()
+  const { data: fin, isLoading: finLoading } = useOrgFinancial()
   const updateFin = useUpdateOrgFinancial()
-  const { data: banks, isLoading } = useBankAccounts()
+  const { data: banks, isLoading: banksLoading } = useBankAccounts()
   const bankAction = useBankAccountAction()
   const setCurrencyDefault = useSetCurrencyDefault()
 
@@ -56,7 +48,8 @@ export default function OrgFinancialPage() {
   const accounts = banks?.data ?? []
   const currencyDefaults = banks?.meta?.currency_defaults ?? {}
 
-  const onSaveFinancial = async () => {
+  const onSaveFinancial = async (e: React.FormEvent) => {
+    e.preventDefault()
     try {
       await updateFin.mutateAsync({
         legal_name: legalName || undefined,
@@ -64,10 +57,10 @@ export default function OrgFinancialPage() {
         pan: pan || undefined,
       })
       toast({ title: 'Financial details saved' })
-    } catch (err) {
+    } catch (err: any) {
       toast({
         title: 'Could not save',
-        description: err instanceof Error ? err.message : undefined,
+        description: err?.message ?? 'Please try again.',
         variant: 'destructive',
       })
     }
@@ -77,10 +70,10 @@ export default function OrgFinancialPage() {
     try {
       await bankAction.mutateAsync({ id, action })
       toast({ title: action === 'delete' ? 'Bank account removed' : 'Default updated' })
-    } catch (err) {
+    } catch (err: any) {
       toast({
         title: 'Action failed',
-        description: err instanceof Error ? err.message : undefined,
+        description: err?.message ?? 'Please try again.',
         variant: 'destructive',
       })
     }
@@ -91,155 +84,191 @@ export default function OrgFinancialPage() {
     try {
       await setCurrencyDefault.mutateAsync({ currency, bank_account_id: bankAccountId })
       toast({ title: `${currency} invoices will use this account` })
-    } catch (err) {
+    } catch (err: any) {
       toast({
         title: 'Could not set currency default',
-        description: err instanceof Error ? err.message : undefined,
+        description: err?.message ?? 'Please try again.',
         variant: 'destructive',
       })
     }
   }
 
   return (
-    <InvoPage glow="green">
-      <InvoTitle icon={InvoIcons.settings}>Organization · Financial details</InvoTitle>
-
-      {/* Financial details (tenants columns — shared with Payroll later) */}
-      <InvoCard style={{ marginBottom: 20 }}>
-        <InvoCardTitle>Company financials</InvoCardTitle>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={invoLabel}>Legal name</label>
-            <input style={invoField()} value={legalName} onChange={(e) => setLegalName(e.target.value)} placeholder="Acme Private Limited" />
-          </div>
-          <div>
-            <label style={invoLabel}>GSTIN</label>
-            <input style={invoField()} value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} placeholder="29ABCDE1234F1Z5" />
-          </div>
-          <div>
-            <label style={invoLabel}>PAN</label>
-            <input style={invoField()} value={pan} onChange={(e) => setPan(e.target.value.toUpperCase())} placeholder="ABCDE1234F" />
-          </div>
-          <div>
-            <label style={invoLabel}>Fiscal year</label>
-            <input style={{ ...invoField(), opacity: 0.6 }} value={`Starts April (month ${fin?.data?.fiscal_year_start_month ?? 4})`} disabled />
-          </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <InvoBtn kind="primary" height={44} onClick={onSaveFinancial} disabled={updateFin.isPending}>
-            {updateFin.isPending ? 'Saving…' : 'Save details'}
-          </InvoBtn>
-        </div>
-      </InvoCard>
-
-      {/* Bank accounts */}
-      <InvoCard>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <InvoCardTitle>Bank accounts</InvoCardTitle>
-          <InvoBtn
+    <SettingsLayout>
+      <SectionHead
+        title="Organization · Financial details"
+        sub="Legal identity and bank accounts — read by Invoicing today, Payroll later. Single source of truth."
+        right={
+          <Btn
             kind="primary"
-            height={44}
-            icon={InvoIcons.plusSmall}
+            icon={<Plus className="w-4 h-4" />}
             onClick={() => {
               setEditing(null)
               setModalOpen(true)
             }}
           >
-            Add account
-          </InvoBtn>
-        </div>
+            Add bank account
+          </Btn>
+        }
+      />
 
-        {isLoading && <div style={{ color: INVO.muted40, fontWeight: 600 }}>Loading…</div>}
-        {!isLoading && accounts.length === 0 && (
-          <div style={{ color: INVO.muted40, fontWeight: 600, fontSize: 14, padding: '24px 0', textAlign: 'center' }}>
-            No bank accounts yet — add one so invoices can show payment details.
+      {/* Company financials (columns on the tenant) */}
+      <form className="card p-5 mb-6" onSubmit={onSaveFinancial}>
+        <div className="t-h3 mb-4">Company financials</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="sm:col-span-2">
+            <label className="t-caption block mb-1.5">Legal name</label>
+            <input
+              className="input w-full"
+              value={legalName}
+              onChange={(e) => setLegalName(e.target.value)}
+              placeholder="Acme Private Limited"
+            />
           </div>
-        )}
-
-        <div style={{ display: 'grid', gap: 14 }}>
-          {accounts.map((a) => (
-            <div
-              key={a.id}
-              style={{
-                padding: 18,
-                borderRadius: 12,
-                background: 'rgba(255,255,255,0.04)',
-                border: a.is_default ? '1.5px solid rgba(62,123,250,0.5)' : '1px solid rgba(255,255,255,0.08)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15, color: '#fff', letterSpacing: '-0.02em' }}>
-                      {a.bank_name} <span style={{ color: INVO.muted40 }}>· {a.account_type}</span>
-                    </span>
-                    {a.is_default && (
-                      <span style={{ padding: '3px 10px', borderRadius: 999, background: 'rgba(62,123,250,0.15)', color: INVO.blue, fontWeight: 700, fontSize: 11 }}>
-                        Default
-                      </span>
-                    )}
-                    {!a.is_active && <StatusChip status="archived" />}
-                  </div>
-                  <div style={{ fontFamily: 'monospace', fontSize: 13, color: INVO.muted60, marginBottom: 4 }}>
-                    {a.account_number}
-                    {a.ifsc && <span> · IFSC {a.ifsc}</span>}
-                    {a.swift_bic && <span> · SWIFT {a.swift_bic}</span>}
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: 12, color: INVO.muted40 }}>
-                    {a.beneficiary_name}
-                    {a.branch ? ` · ${a.branch}` : ''}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {!a.is_default && (
-                    <InvoBtn kind="chip-blue" onClick={() => onAction(a.id, 'set-default')}>
-                      Set default
-                    </InvoBtn>
-                  )}
-                  <InvoBtn
-                    kind="chip-blue"
-                    onClick={() => {
-                      setEditing(a)
-                      setModalOpen(true)
-                    }}
-                  >
-                    Edit
-                  </InvoBtn>
-                  <InvoBtn kind="chip-outline" onClick={() => onAction(a.id, 'delete')}>
-                    Remove
-                  </InvoBtn>
-                </div>
-              </div>
-            </div>
-          ))}
+          <div>
+            <label className="t-caption block mb-1.5">GSTIN</label>
+            <input
+              className="input w-full"
+              value={gstin}
+              onChange={(e) => setGstin(e.target.value.toUpperCase())}
+              placeholder="29ABCDE1234F1Z5"
+            />
+          </div>
+          <div>
+            <label className="t-caption block mb-1.5">PAN</label>
+            <input
+              className="input w-full"
+              value={pan}
+              onChange={(e) => setPan(e.target.value.toUpperCase())}
+              placeholder="ABCDE1234F"
+            />
+          </div>
+          <div>
+            <label className="t-caption block mb-1.5">Fiscal year</label>
+            <input
+              className="input w-full opacity-60"
+              value={`April – March (month ${fin?.data?.fiscal_year_start_month ?? 4})`}
+              disabled
+            />
+          </div>
         </div>
+        <div className="flex justify-end mt-4">
+          <Btn kind="primary" type="submit" disabled={updateFin.isPending || finLoading}>
+            {updateFin.isPending ? 'Saving…' : 'Save details'}
+          </Btn>
+        </div>
+      </form>
 
-        {/* Per-currency defaults */}
-        {accounts.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em', marginBottom: 10 }}>
-              Default account per currency
-            </div>
-            <div style={{ fontWeight: 600, fontSize: 12, color: INVO.muted40, marginBottom: 12 }}>
-              Invoices auto-pick the matching account when their currency changes (§8). Foreign currencies require an
+      {/* Bank accounts */}
+      {banksLoading ? (
+        <div className="card p-12 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
+        </div>
+      ) : accounts.length === 0 ? (
+        <div className="card p-12 text-center">
+          <div className="w-12 h-12 rounded-xl bg-brand-blue/10 flex items-center justify-center mx-auto mb-4">
+            <Landmark className="w-5 h-5 text-brand-blue" />
+          </div>
+          <h3 className="t-h3 mb-1">No bank accounts yet</h3>
+          <p className="t-mute mb-4">
+            Add one so your invoices can show payment details — IFSC for INR, SWIFT/BIC for international.
+          </p>
+          <Btn
+            kind="primary"
+            icon={<Plus className="w-4 h-4" />}
+            onClick={() => {
+              setEditing(null)
+              setModalOpen(true)
+            }}
+          >
+            Add your first account
+          </Btn>
+        </div>
+      ) : (
+        <>
+          <div className="card overflow-hidden mb-6">
+            <table className="tbl w-full">
+              <thead>
+                <tr>
+                  <th>Bank</th>
+                  <th>Account number</th>
+                  <th>IFSC / SWIFT</th>
+                  <th>Beneficiary</th>
+                  <th>Status</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((a) => (
+                  <tr key={a.id} className={a.is_active ? '' : 'opacity-50'}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">{a.bank_name}</span>
+                        <span className="t-mute text-xs">{a.account_type}</span>
+                        {a.is_default && (
+                          <Pill tone="blue">
+                            <Star className="w-3 h-3" /> Default
+                          </Pill>
+                        )}
+                      </div>
+                      {a.branch && <div className="t-mute text-xs mt-0.5">{a.branch}</div>}
+                    </td>
+                    <td className="font-mono text-sm">{a.account_number}</td>
+                    <td className="font-mono text-xs">
+                      {a.ifsc && <div>IFSC {a.ifsc}</div>}
+                      {a.swift_bic && <div>SWIFT {a.swift_bic}</div>}
+                    </td>
+                    <td className="t-mute text-sm">{a.beneficiary_name}</td>
+                    <td>
+                      <Pill tone={a.is_active ? 'green' : ''}>{a.is_active ? 'active' : 'inactive'}</Pill>
+                    </td>
+                    <td className="text-right whitespace-nowrap">
+                      {!a.is_default && (
+                        <Btn kind="ghost" size="sm" onClick={() => onAction(a.id, 'set-default')}>
+                          Set default
+                        </Btn>
+                      )}
+                      <Btn
+                        kind="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditing(a)
+                          setModalOpen(true)
+                        }}
+                      >
+                        Edit
+                      </Btn>
+                      <Btn kind="ghost" size="sm" onClick={() => onAction(a.id, 'delete')}>
+                        Remove
+                      </Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Per-currency defaults */}
+          <div className="card p-5">
+            <div className="t-h3 mb-1">Default account per currency</div>
+            <p className="t-mute text-sm mb-4">
+              Invoices auto-pick the matching account when their currency changes. Foreign currencies require an
               account with a SWIFT/BIC.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {CURRENCIES.map((cur) => (
                 <div key={cur}>
-                  <label style={invoLabel}>{cur}</label>
+                  <label className="t-caption block mb-1.5">{cur}</label>
                   <select
-                    style={invoField(true)}
+                    className="input w-full"
                     value={currencyDefaults[cur] ?? ''}
                     onChange={(e) => onCurrencyDefault(cur, e.target.value)}
                   >
-                    <option value="" style={{ color: '#000' }}>
-                      — overall default —
-                    </option>
+                    <option value="">— overall default —</option>
                     {accounts
                       .filter((a) => a.is_active && (cur === 'INR' || a.swift_bic))
                       .map((a) => (
-                        <option key={a.id} value={a.id} style={{ color: '#000' }}>
+                        <option key={a.id} value={a.id}>
                           {a.bank_name} …{a.account_number.slice(-4)}
                         </option>
                       ))}
@@ -248,10 +277,10 @@ export default function OrgFinancialPage() {
               ))}
             </div>
           </div>
-        )}
-      </InvoCard>
+        </>
+      )}
 
       <BankAccountModal open={modalOpen} onOpenChange={setModalOpen} account={editing} />
-    </InvoPage>
+    </SettingsLayout>
   )
 }

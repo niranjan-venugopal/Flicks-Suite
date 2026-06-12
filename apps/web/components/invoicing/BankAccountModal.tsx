@@ -3,37 +3,9 @@
 import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
-import { InvoBtn } from '@/components/invoicing/invo'
+import { Btn } from '@/components/proto'
 import { useSaveBankAccount, type BankAccount, type BankAccountInput } from '@/lib/api/queries/use-invoicing'
 
-const FIELD: React.CSSProperties = {
-  width: '100%',
-  height: 44,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1.5px solid rgba(255,255,255,0.10)',
-  borderRadius: 10,
-  padding: '0 14px',
-  fontWeight: 600,
-  fontSize: 14,
-  color: '#fff',
-  outline: 'none',
-  letterSpacing: '-0.02em',
-}
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 700,
-  fontSize: 13,
-  color: 'rgba(255,255,255,0.6)',
-  marginBottom: 6,
-  letterSpacing: '-0.02em',
-}
-const HINT: React.CSSProperties = {
-  fontWeight: 600,
-  fontSize: 11,
-  color: 'rgba(255,255,255,0.35)',
-  marginTop: 4,
-  letterSpacing: '-0.01em',
-}
 
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
 const SWIFT_RE = /^[A-Z0-9]{8}([A-Z0-9]{3})?$/
@@ -132,16 +104,16 @@ export function BankAccountModal({
         </DialogHeader>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, padding: '4px 0' }}>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={LABEL}>Beneficiary name *</label>
-            <input style={FIELD} value={form.beneficiary_name} onChange={set('beneficiary_name')} placeholder="Should match your legal account holder name" />
+            <label className="t-caption block mb-1.5">Beneficiary name *</label>
+            <input className="input w-full" value={form.beneficiary_name} onChange={set('beneficiary_name')} placeholder="Should match your legal account holder name" />
           </div>
           <div>
-            <label style={LABEL}>Account number *</label>
-            <input style={FIELD} value={form.account_number} onChange={set('account_number')} inputMode="numeric" />
+            <label className="t-caption block mb-1.5">Account number *</label>
+            <input className="input w-full" value={form.account_number} onChange={set('account_number')} inputMode="numeric" />
           </div>
           <div>
-            <label style={LABEL}>Account type</label>
-            <select style={FIELD} value={form.account_type ?? 'Current'} onChange={set('account_type')}>
+            <label className="t-caption block mb-1.5">Account type</label>
+            <select className="input w-full" value={form.account_type ?? 'Current'} onChange={set('account_type')}>
               {['Current', 'Savings', 'EEFC'].map((t) => (
                 <option key={t} value={t} style={{ color: '#000' }}>
                   {t}
@@ -150,22 +122,22 @@ export function BankAccountModal({
             </select>
           </div>
           <div>
-            <label style={LABEL}>Bank name *</label>
-            <input style={FIELD} value={form.bank_name} onChange={set('bank_name')} placeholder="HDFC Bank" />
+            <label className="t-caption block mb-1.5">Bank name *</label>
+            <input className="input w-full" value={form.bank_name} onChange={set('bank_name')} placeholder="HDFC Bank" />
           </div>
           <div>
-            <label style={LABEL}>Branch</label>
-            <input style={FIELD} value={form.branch ?? ''} onChange={set('branch')} />
+            <label className="t-caption block mb-1.5">Branch</label>
+            <input className="input w-full" value={form.branch ?? ''} onChange={set('branch')} />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
-            <label style={LABEL}>IFSC (for INR transfers)</label>
+            <label className="t-caption block mb-1.5">IFSC (for INR transfers)</label>
             <input
-              style={{ ...FIELD, borderColor: ifscBad ? '#F8786B' : undefined }}
+              className={`input w-full ${ifscBad ? "border-red-400" : ""}`}
               value={form.ifsc ?? ''}
               onChange={(e) => setForm((f) => ({ ...f, ifsc: e.target.value.toUpperCase() }))}
               placeholder="HDFC0001234"
             />
-            {ifscBad && <div style={{ ...HINT, color: '#F8786B' }}>4 letters, a zero, then 6 alphanumerics</div>}
+            {ifscBad && <div className="text-xs text-red-400 mt-1">4 letters, a zero, then 6 alphanumerics</div>}
           </div>
 
           <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -176,7 +148,7 @@ export function BankAccountModal({
               onChange={(e) => setIntl(e.target.checked)}
               style={{ width: 16, height: 16, accentColor: '#3E7BFA' }}
             />
-            <label htmlFor="intl-toggle" style={{ ...LABEL, marginBottom: 0, cursor: 'pointer' }}>
+            <label htmlFor="intl-toggle" className="t-caption cursor-pointer">
               This account receives international (foreign-currency) transfers
             </label>
           </div>
@@ -184,19 +156,19 @@ export function BankAccountModal({
           {intl && (
             <>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={LABEL}>SWIFT / BIC *</label>
+                <label className="t-caption block mb-1.5">SWIFT / BIC *</label>
                 <input
-                  style={{ ...FIELD, borderColor: swiftBad ? '#F8786B' : undefined }}
+                  className={`input w-full ${swiftBad ? "border-red-400" : ""}`}
                   value={form.swift_bic ?? ''}
                   onChange={(e) => setForm((f) => ({ ...f, swift_bic: e.target.value.toUpperCase() }))}
                   placeholder="HDFCINBB or HDFCINBBXXX"
                 />
-                {swiftBad && <div style={{ ...HINT, color: '#F8786B' }}>8 or 11 alphanumerics</div>}
+                {swiftBad && <div className="text-xs text-red-400 mt-1">8 or 11 alphanumerics</div>}
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={LABEL}>Bank address (required for international wires) *</label>
+                <label className="t-caption block mb-1.5">Bank address (required for international wires) *</label>
                 <textarea
-                  style={{ ...FIELD, height: 'auto', minHeight: 56, padding: '12px 14px', resize: 'vertical' }}
+                  className="input w-full min-h-[56px] py-2.5 resize-y"
                   value={form.bank_address ?? ''}
                   onChange={set('bank_address')}
                   placeholder="Bank branch postal address"
@@ -206,12 +178,12 @@ export function BankAccountModal({
           )}
         </div>
         <DialogFooter>
-          <InvoBtn kind="outline" height={44} onClick={() => onOpenChange(false)}>
+          <Btn kind="ghost" onClick={() => onOpenChange(false)}>
             Cancel
-          </InvoBtn>
-          <InvoBtn kind="primary" height={44} onClick={onSubmit} disabled={save.isPending}>
+          </Btn>
+          <Btn kind="primary" onClick={onSubmit} disabled={save.isPending}>
             {save.isPending ? 'Saving…' : account ? 'Save changes' : 'Add account'}
-          </InvoBtn>
+          </Btn>
         </DialogFooter>
       </DialogContent>
     </Dialog>

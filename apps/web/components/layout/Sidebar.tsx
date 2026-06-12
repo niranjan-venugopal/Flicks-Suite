@@ -74,7 +74,6 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/invoicing/recurring', label: 'Recurring' },
           { href: '/invoicing/reports', label: 'Reports' },
           { href: '/invoicing/settings', label: 'Settings' },
-          { href: '/settings/organization', label: 'Bank & financial' },
         ],
       },
       {

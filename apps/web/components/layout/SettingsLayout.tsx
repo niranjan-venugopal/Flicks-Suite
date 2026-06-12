@@ -17,6 +17,7 @@ interface NavItem {
 // progressively enable them as the surfaces become real.
 const NAV: Array<NavItem & { disabled?: boolean }> = [
   { href: '/settings',              label: 'General',              icon: 'cog' },
+  { href: '/settings/organization', label: 'Organization · Financial', icon: 'bank' },
   { href: '/settings/departments',  label: 'Departments',          icon: 'layers' },
   { href: '/settings/locations',    label: 'Locations & geofence', icon: 'pin' },
   { href: '/settings/designations', label: 'Designations',         icon: 'briefcase' },
