@@ -263,6 +263,18 @@ export function Sidebar() {
 
   const parentOfActive = activeId.includes('>') ? activeId.split('>')[0] : null
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+
+  // Collapsible rail (prototype shell-v3: 248px ↔ 72px). Persisted locally.
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('sidebar-collapsed') === '1') {
+      setCollapsed(true)
+    }
+  }, [])
+  const toggleCollapsed = (next: boolean) => {
+    setCollapsed(next)
+    if (typeof window !== 'undefined') localStorage.setItem('sidebar-collapsed', next ? '1' : '0')
+  }
   useEffect(() => {
     if (parentOfActive) setOpenGroups((g) => ({ ...g, [parentOfActive!]: true }))
   }, [parentOfActive])
@@ -281,7 +293,8 @@ export function Sidebar() {
   return (
     <aside
       style={{
-        width: 252,
+        width: collapsed ? 72 : 252,
+        transition: 'width .2s',
         flexShrink: 0,
         // Match the prototype's FAM sidebar: a darker purple-tinted
         // gradient that distinguishes platform admin from tenant chrome.
@@ -299,14 +312,16 @@ export function Sidebar() {
       {/* Brand */}
       <div
         style={{
-          padding: '18px 18px 14px',
+          padding: collapsed ? '18px 0 14px' : '18px 18px 14px',
           display: 'flex',
           alignItems: 'center',
           gap: 10,
           borderBottom: '1px solid var(--bord)',
+          justifyContent: collapsed ? 'center' : 'flex-start',
         }}
       >
         <LogoMark size={32} />
+        {!collapsed && (
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: '-0.02em' }}>
             {brandTitle}
@@ -325,10 +340,61 @@ export function Sidebar() {
             {brandSub}
           </div>
         </div>
+        )}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => toggleCollapsed(true)}
+            title="Collapse sidebar"
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-faint)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <Icon.chevL size={15} />
+          </button>
+        )}
       </div>
 
       {/* Workspace switcher — hidden for FAM, who isn't inside any tenant. */}
-      {!isFam && (
+      {!isFam && collapsed && (
+        <div style={{ padding: '10px 0 0', display: 'flex', justifyContent: 'center' }}>
+          <div className="avatar sm" style={{ background: avBg(tenantName) }} title={tenantName}>
+            {initials(tenantName)}
+          </div>
+        </div>
+      )}
+      {collapsed && (
+        <button
+          type="button"
+          onClick={() => toggleCollapsed(false)}
+          title="Expand sidebar"
+          style={{
+            margin: '10px auto 0',
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text-mute)',
+            background: 'var(--surf-1)',
+            border: '1px solid var(--bord)',
+            cursor: 'pointer',
+          }}
+        >
+          <Icon.chevR size={15} />
+        </button>
+      )}
+      {!isFam && !collapsed && (
         <div style={{ padding: '12px 12px 0' }}>
           <button
             type="button"
@@ -369,10 +435,10 @@ export function Sidebar() {
       )}
 
       {/* Nav */}
-      <nav style={{ flex: 1, overflow: 'auto', padding: '8px 8px 12px' }}>
+      <nav style={{ flex: 1, overflow: 'auto', padding: collapsed ? '8px 10px 12px' : '8px 8px 12px' }}>
         {nav.map((sec, si) => (
           <div key={si} style={{ marginTop: sec.section === 'main' ? 4 : 14 }}>
-            {sec.section !== 'main' && (
+            {sec.section !== 'main' && !collapsed && (
               <div
                 style={{
                   padding: '8px 12px 6px',
@@ -393,6 +459,8 @@ export function Sidebar() {
                 activeId={activeId}
                 openGroups={openGroups}
                 setOpenGroups={setOpenGroups}
+                collapsed={collapsed}
+                onExpand={() => toggleCollapsed(false)}
                 approvalsBadge={
                   (item.id === 'inbox' || item.id === 'mgr-inbox') && pendingCount > 0
                     ? pendingCount
@@ -405,9 +473,10 @@ export function Sidebar() {
       </nav>
 
       {/* User block */}
-      <div style={{ padding: '10px 12px', borderTop: '1px solid var(--bord)' }}>
+      <div style={{ padding: collapsed ? '10px 0' : '10px 12px', borderTop: '1px solid var(--bord)' }}>
         <Link
           href="/profile"
+          title={collapsed ? `${currentUser?.name ?? 'Guest'} · ${roleLabel(role)}` : undefined}
           style={{
             width: '100%',
             display: 'flex',
@@ -418,9 +487,11 @@ export function Sidebar() {
             background: 'transparent',
             textDecoration: 'none',
             color: 'inherit',
+            justifyContent: collapsed ? 'center' : 'flex-start',
           }}
         >
           <Avatar name={currentUser?.name ?? ''} size="sm" src={currentUser?.avatarUrl} />
+          {!collapsed && (
           <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
             <div
               style={{
@@ -437,7 +508,8 @@ export function Sidebar() {
               {roleLabel(role)}
             </div>
           </div>
-          <Icon.cog size={14} style={{ color: 'var(--text-mute)' }} />
+          )}
+          {!collapsed && <Icon.cog size={14} style={{ color: 'var(--text-mute)' }} />}
         </Link>
       </div>
     </aside>
@@ -452,12 +524,16 @@ function NavRow({
   openGroups,
   setOpenGroups,
   approvalsBadge,
+  collapsed = false,
+  onExpand,
 }: {
   item: NavItem
   activeId: string
   openGroups: Record<string, boolean>
   setOpenGroups: (fn: (g: Record<string, boolean>) => Record<string, boolean>) => void
   approvalsBadge?: number
+  collapsed?: boolean
+  onExpand?: () => void
 }) {
   const hasChildren = !!item.children?.length
   const isOpen =
@@ -471,7 +547,8 @@ function NavRow({
     display: 'flex',
     alignItems: 'center',
     gap: 11,
-    padding: '9px 12px',
+    padding: collapsed ? '10px 0' : '9px 12px',
+    justifyContent: collapsed ? ('center' as const) : ('flex-start' as const),
     borderRadius: 9,
     background: active ? 'var(--surf-2)' : 'transparent',
     border: active ? '1px solid var(--bord-2)' : '1px solid transparent',
@@ -505,8 +582,8 @@ function NavRow({
         />
       )}
       <IconCmp size={17} />
-      <span style={{ flex: 1 }}>{item.label}</span>
-      {badge !== undefined && badge > 0 && (
+      {!collapsed && <span style={{ flex: 1 }}>{item.label}</span>}
+      {!collapsed && badge !== undefined && badge > 0 && (
         <span
           style={{
             minWidth: 18,
@@ -525,7 +602,7 @@ function NavRow({
           {badge}
         </span>
       )}
-      {hasChildren && (
+      {hasChildren && !collapsed && (
         <Icon.chevD
           size={12}
           style={{
@@ -543,18 +620,28 @@ function NavRow({
       {hasChildren ? (
         <button
           type="button"
-          onClick={() => setOpenGroups((g) => ({ ...g, [item.id]: !isOpen }))}
+          title={collapsed ? item.label : undefined}
+          onClick={() => {
+            // Prototype behaviour: clicking a group on the collapsed rail
+            // expands the sidebar and opens the group.
+            if (collapsed) {
+              onExpand?.()
+              setOpenGroups((g) => ({ ...g, [item.id]: true }))
+              return
+            }
+            setOpenGroups((g) => ({ ...g, [item.id]: !isOpen }))
+          }}
           style={{ ...rowStyle, cursor: 'pointer' }}
         >
           {innerContent}
         </button>
       ) : (
-        <Link href={item.href ?? '#'} style={rowStyle}>
+        <Link href={item.href ?? '#'} title={collapsed ? item.label : undefined} style={rowStyle}>
           {innerContent}
         </Link>
       )}
 
-      {hasChildren && isOpen && (
+      {hasChildren && isOpen && !collapsed && (
         <div
           style={{
             paddingLeft: 24,
