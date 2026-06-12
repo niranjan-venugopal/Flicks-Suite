@@ -545,3 +545,104 @@ export function useSetCurrencyDefault() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['org-financial'] }),
   })
 }
+
+// ─── Notes / payments / reports (Sprint 6) ──────────────────────────────────
+
+export interface NoteRow {
+  id: string
+  number: string
+  date: string
+  reason: string
+  status: string
+  currency: string
+  total_amount: string
+  customer_name: string | null
+  invoice_number: string | null
+}
+
+export function useNotes() {
+  return useQuery({
+    queryKey: ['invoicing', 'notes'],
+    queryFn: () => api.get<{ data: { credit: NoteRow[]; debit: NoteRow[] } }>('/api/v1/credit-notes'),
+  })
+}
+
+export function useIssueNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ kind, ...data }: { kind: 'credit' | 'debit'; invoice_id?: string; reason: string; amount: string }) =>
+      api.post<{ data: NoteRow }>(`/api/v1/${kind}-notes`, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
+export interface PaymentRow {
+  id: string
+  payment_number: string
+  payment_date: string
+  amount: string
+  currency: string
+  payment_method: string
+  reference_number: string | null
+  source: string
+  invoice_id: string | null
+  invoice_number: string | null
+  customer_name: string | null
+}
+
+export function usePayments() {
+  return useQuery({
+    queryKey: ['invoicing', 'payments'],
+    queryFn: () => api.get<Paginated<PaymentRow>>('/api/v1/payments'),
+  })
+}
+
+export interface AgingData {
+  buckets: { bucket: string; amount: string }[]
+  total: string
+}
+
+export function useAging() {
+  return useQuery({
+    queryKey: ['invoicing', 'reports', 'aging'],
+    queryFn: () => api.get<{ data: AgingData }>('/api/v1/invoicing/reports/aging'),
+  })
+}
+
+export function useInvDashboard() {
+  return useQuery({
+    queryKey: ['invoicing', 'reports', 'dashboard'],
+    queryFn: () =>
+      api.get<{ data: { total: number; open: number; overdue: number; paid: number; outstanding: string; collected: string; tds: string } }>(
+        '/api/v1/invoicing/reports/dashboard',
+      ),
+  })
+}
+
+export function useTdsReceivable() {
+  return useQuery({
+    queryKey: ['invoicing', 'reports', 'tds'],
+    queryFn: () =>
+      api.get<{ data: unknown[]; meta: { total: string; count: number } }>('/api/v1/invoicing/reports/tds-receivable'),
+  })
+}
+
+export interface Gstr1Summary {
+  b2b: { count: number; taxable: string; tax: string }
+  b2cl: { count: number; taxable: string; tax: string }
+  b2cs: { count: number; taxable: string; tax: string }
+  exp: { count: number; taxable: string; tax: string }
+  cdnr: { count: number; taxable: string }
+}
+
+export function useGenerateGstr1() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { period_month: number; period_year: number }) =>
+      api.post<{ data: { export: { id: string; file_hash: string }; payload: unknown; summary: Gstr1Summary } }>(
+        '/api/v1/invoicing/reports/gstr1/generate',
+        input,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'reports'] }),
+  })
+}
