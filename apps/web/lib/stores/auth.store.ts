@@ -7,6 +7,7 @@ export type UserRole =
   | 'HR_ADMIN'
   | 'MANAGER'
   | 'EMPLOYEE'
+  | 'AUDITOR'
 
 // Human-readable label for the Topbar / surfaces showing a role.
 // HR stays uppercase; everything else is title-cased.
@@ -17,6 +18,7 @@ export function roleLabel(role: UserRole | string | null | undefined): string {
     case 'HR_ADMIN':    return 'HR Admin'
     case 'MANAGER':     return 'Manager'
     case 'EMPLOYEE':    return 'Employee'
+    case 'AUDITOR':     return 'Auditor'
     default:            return 'Member'
   }
 }

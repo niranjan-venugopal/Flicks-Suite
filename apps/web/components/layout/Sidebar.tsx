@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuthStore, roleLabel, type UserRole } from '@/lib/stores/auth.store'
 import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
-import { Avatar, Icon, LogoMark, avBg, initials } from '@/components/proto'
+import { useMyCompanies, type ModuleGrant } from '@/lib/api/queries/use-members'
+import { CompanySwitcher } from '@/components/invoicing/CompanySwitcher'
+import { Avatar, Icon, LogoMark } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
 
 // ─── Nav model ─────────────────────────────────────────────────────────────
@@ -213,13 +215,69 @@ function navFor(role: UserRole | undefined): NavSection[] {
   }
 }
 
+// Auditor nav is grant-driven (prototype ROLE_CFG.Auditor): the sidebar shows
+// only the invoicing sub-items their membership_grants unlock for the active
+// company, plus the cross-company My Companies surface.
+function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
+  const invoicing = grants.find((g) => g.module === 'invoicing')
+  const reports = grants.find((g) => g.module === 'reports')
+  const caps = invoicing?.capabilities ?? {}
+
+  const children: NavChild[] = []
+  if (invoicing && invoicing.access_level !== 'none') {
+    children.push(
+      { href: '/invoicing', label: 'Overview' },
+      { href: '/invoicing/invoices', label: 'Invoices' },
+    )
+  }
+  if (caps.manage_customers) children.push({ href: '/invoicing/customers', label: 'Customers' })
+  if (caps.record_payments) children.push({ href: '/invoicing/payments', label: 'Payments' })
+  if (reports && reports.access_level !== 'none') {
+    children.push({ href: '/invoicing/reports', label: 'Reports' })
+  }
+
+  return [
+    {
+      section: 'main',
+      items: [
+        { id: 'my-companies', label: 'My companies', icon: 'grid', href: '/my-companies' },
+      ],
+    },
+    ...(children.length
+      ? [
+          {
+            section: 'main',
+            items: [
+              { id: 'invoicing', label: 'Invoicing', icon: 'wallet' as IconKey, children },
+            ],
+          },
+        ]
+      : []),
+  ]
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function Sidebar() {
   const { currentUser, currentTenant } = useAuthStore()
   const pathname = usePathname() ?? '/'
   const role = currentUser?.role
-  const nav = useMemo(() => navFor(role), [role])
+
+  // Auditor sidebar is grant-driven: read the active company's grants from the
+  // same /me/companies payload the switcher uses.
+  const myCompanies = useMyCompanies(role === 'AUDITOR')
+  const activeGrants = useMemo<ModuleGrant[]>(() => {
+    if (role !== 'AUDITOR') return []
+    return (
+      myCompanies.data?.data.find((c) => c.tenantId === currentUser?.tenantId)
+        ?.grants ?? []
+    )
+  }, [role, myCompanies.data, currentUser?.tenantId])
+
+  const nav = useMemo(
+    () => (role === 'AUDITOR' ? auditorNavFor(activeGrants) : navFor(role)),
+    [role, activeGrants],
+  )
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.
   // FAM admins live under /fam/* and have no tenant approvals queue.
@@ -287,8 +345,6 @@ export function Sidebar() {
   const brandSub = isFam
     ? 'Specflicks Internal · admin.flickssuite.com'
     : currentTenant?.name ?? 'Workspace'
-  const tenantName = currentTenant?.name ?? 'Workspace'
-  const tenantPlan = currentTenant?.plan ?? 'free'
 
   return (
     <aside
@@ -364,14 +420,10 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Workspace switcher — hidden for FAM, who isn't inside any tenant. */}
-      {!isFam && collapsed && (
-        <div style={{ padding: '10px 0 0', display: 'flex', justifyContent: 'center' }}>
-          <div className="avatar sm" style={{ background: avBg(tenantName) }} title={tenantName}>
-            {initials(tenantName)}
-          </div>
-        </div>
-      )}
+      {/* Workspace / company switcher — hidden for FAM, who isn't inside any
+          tenant. Multi-company users (auditors, multi-workspace owners) get
+          the live dropdown; everyone else the static chip. */}
+      {!isFam && collapsed && <CompanySwitcher collapsed />}
       {collapsed && (
         <button
           type="button"
@@ -394,45 +446,7 @@ export function Sidebar() {
           <Icon.chevR size={15} />
         </button>
       )}
-      {!isFam && !collapsed && (
-        <div style={{ padding: '12px 12px 0' }}>
-          <button
-            type="button"
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '9px 11px',
-              borderRadius: 10,
-              background: 'var(--surf-1)',
-              border: '1px solid var(--bord)',
-              cursor: 'pointer',
-            }}
-          >
-            <div className="avatar sm" style={{ background: avBg(tenantName) }}>
-              {initials(tenantName)}
-            </div>
-            <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 800,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {tenantName}
-              </div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                {tenantPlan}
-              </div>
-            </div>
-            <Icon.chevD size={14} style={{ color: 'var(--text-mute)' }} />
-          </button>
-        </div>
-      )}
+      {!isFam && !collapsed && <CompanySwitcher />}
 
       {/* Nav */}
       <nav style={{ flex: 1, overflow: 'auto', padding: collapsed ? '8px 10px 12px' : '8px 8px 12px' }}>

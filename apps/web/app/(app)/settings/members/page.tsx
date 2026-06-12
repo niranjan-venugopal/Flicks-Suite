@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Loader2, Plus } from 'lucide-react'
-import { Avatar, Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { Avatar, Btn, Icon, Kpi, Pill, SectionHead, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useMembers,
@@ -13,6 +13,8 @@ import {
   type Member,
   type MembershipRole,
 } from '@/lib/api/queries/use-settings'
+import { useSeats } from '@/lib/api/queries/use-members'
+import { InviteAuditorModal } from '@/components/invoicing/InviteAuditorModal'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -26,10 +28,29 @@ const ROLE_LABELS: Record<MembershipRole, string> = {
   manager:     'Manager',
   finance:     'Finance',
   employee:    'Employee',
+  auditor:     'Auditor',
 }
 
-// Roles a customer admin can assign (fam is Specflicks-internal only).
+// Roles a customer admin can assign (fam is Specflicks-internal only;
+// auditors are invited through the grant-scoped flow, not the role select).
 const ASSIGNABLE_ROLES: MembershipRole[] = ['owner', 'admin', 'manager', 'employee']
+
+// Short labels for the auditor "Granted scope" pills.
+const GRANT_LABELS: Record<string, string> = {
+  invoicing:     'Invoicing',
+  reports:       'Reports',
+  org_financial: 'Financial',
+  payroll:       'Payroll',
+  expenses:      'Expenses',
+}
+
+function grantPills(m: Member): string[] {
+  return (m.grants ?? []).map((g) => {
+    const caps = Object.keys(g.capabilities ?? {}).filter((k) => g.capabilities[k])
+    const base = `${GRANT_LABELS[g.module] ?? g.module}: ${g.access_level}`
+    return caps.length ? `${base} +${caps.length}` : base
+  })
+}
 
 function roleTone(r: MembershipRole): PillTone {
   switch (r) {
@@ -39,6 +60,7 @@ function roleTone(r: MembershipRole): PillTone {
     case 'admin':       return 'blue'
     case 'manager':     return 'green'
     case 'finance':     return 'purple'
+    case 'auditor':     return 'purple'
     default:            return ''
   }
 }
@@ -61,12 +83,16 @@ function displayName(m: Member): string {
 export default function MembersSettingsPage() {
   const { currentUser } = useAuthStore()
   const { data, isLoading } = useMembers()
+  const seats = useSeats()
   const updateRole = useUpdateMemberRole()
   const deactivate = useDeactivateMember()
   const reactivate = useReactivateMember()
   const { toast } = useToast()
+  const [inviteAuditorOpen, setInviteAuditorOpen] = useState(false)
 
-  const items = data?.data ?? []
+  const allItems = data?.data ?? []
+  const auditors = useMemo(() => allItems.filter((m) => m.role === 'auditor'), [allItems])
+  const items = useMemo(() => allItems.filter((m) => m.role !== 'auditor'), [allItems])
   const counts = useMemo(() => {
     const c = { total: 0, active: 0, invited: 0, deactivated: 0 }
     for (const m of items) {
@@ -134,13 +160,130 @@ export default function MembersSettingsPage() {
 
   return (
     <SettingsLayout>
+      {/* Seats — members are billable, auditors are not (PRD §3 / §13.3 Q3). */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 18 }}>
+        <Kpi
+          label="Member seats"
+          value={seats.data?.data.billable ?? counts.active}
+          delta="billable"
+          icon={<Icon.people size={16} />}
+          accent="blue"
+        />
+        <Kpi
+          label="Auditor seats"
+          value={seats.data?.data.auditors ?? auditors.filter((a) => a.status === 'active').length}
+          delta="non-billable"
+          icon={<Icon.shield size={16} />}
+          accent="purple"
+        />
+        <Kpi
+          label="Pending invites"
+          value={seats.data?.data.pendingInvites ?? counts.invited}
+          delta="awaiting accept"
+          icon={<Icon.mail size={16} />}
+          accent="yellow"
+        />
+      </div>
+
+      {/* Auditors — finance-scoped, multi-company, grant-driven access. */}
+      <div className="card" style={{ marginBottom: 18 }}>
+        <SectionHead
+          title="Auditors"
+          sub="Finance-scoped, multi-company and not billed. Access is exactly the granted modules."
+          right={
+            <Btn
+              kind="primary"
+              size="sm"
+              icon={<Icon.shield size={14} />}
+              onClick={() => setInviteAuditorOpen(true)}
+            >
+              Invite auditor
+            </Btn>
+          }
+        />
+        {auditors.length === 0 ? (
+          <div className="t-mute" style={{ padding: '14px 14px 6px', fontSize: 12.5 }}>
+            No auditors yet. Invite your CA firm — they get a non-billable seat scoped to the
+            modules you grant.
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--bord)' }}>
+                <th style={th}>Auditor</th>
+                <th style={th}>Seat</th>
+                <th style={th}>Granted scope</th>
+                <th style={th}>Window</th>
+                <th style={th}>Status</th>
+                <th style={{ ...th, textAlign: 'right' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditors.map((m, i, arr) => (
+                <tr
+                  key={m.id}
+                  style={{
+                    borderBottom: i < arr.length - 1 ? '1px solid var(--bord)' : 'none',
+                    opacity: m.status === 'deactivated' ? 0.5 : 1,
+                  }}
+                >
+                  <td style={{ padding: '12px 14px' }}>
+                    <div className="flex items-center gap-3">
+                      <Avatar name={displayName(m)} size="sm" src={m.avatarUrl ?? undefined} />
+                      <div>
+                        <div className="font-semibold text-white text-sm">{displayName(m)}</div>
+                        <div className="text-xs text-brand-muted">{m.email ?? '—'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style={td}>
+                    <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 800 }}>
+                      Non-billable
+                    </span>
+                  </td>
+                  <td style={td}>
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                      {grantPills(m).map((s) => (
+                        <Pill key={s}>{s}</Pill>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={td}>
+                    {m.accessExpiresAt ? (
+                      <span className="t-mute" style={{ fontSize: 12 }}>
+                        until {new Date(m.accessExpiresAt).toLocaleDateString('en-IN')}
+                      </span>
+                    ) : (
+                      <span className="t-mute" style={{ fontSize: 12 }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '12px 14px' }}>{statusPill(m.status)}</td>
+                  <td style={{ padding: '12px 14px', textAlign: 'right' }}>
+                    {m.status !== 'deactivated' && (
+                      <Btn
+                        kind="danger"
+                        size="sm"
+                        onClick={() => handleStatusToggle(m)}
+                        disabled={deactivate.isPending}
+                      >
+                        Revoke
+                      </Btn>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <div className="card">
         <SectionHead
           title="Roles & permissions"
           sub={`${counts.total} member${counts.total === 1 ? '' : 's'} · ${counts.active} active · ${counts.invited} invited${counts.deactivated ? ` · ${counts.deactivated} deactivated` : ''}`}
           right={
             <Link href="/employees/add" style={{ textDecoration: 'none' }}>
-              <Btn kind="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />}>
+              <Btn kind="secondary" size="sm" icon={<Plus className="w-3.5 h-3.5" />}>
                 Invite employee
               </Btn>
             </Link>
@@ -240,6 +383,8 @@ export default function MembersSettingsPage() {
           </table>
         )}
       </div>
+
+      <InviteAuditorModal open={inviteAuditorOpen} onClose={() => setInviteAuditorOpen(false)} />
     </SettingsLayout>
   )
 }

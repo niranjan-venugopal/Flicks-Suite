@@ -482,6 +482,7 @@ export type MembershipRole =
   | 'manager'
   | 'finance'
   | 'employee'
+  | 'auditor'
 
 export type MembershipStatus = 'invited' | 'active' | 'deactivated'
 
@@ -491,6 +492,10 @@ export interface Member {
   employeeId: string | null
   role: MembershipRole
   status: MembershipStatus
+  // Auditor metadata (Invoicing v3 Sprint 8)
+  isExternal: boolean
+  accessExpiresAt: string | null
+  grants: { module: string; access_level: string; capabilities: Record<string, boolean> }[]
   invitedAt: string | null
   acceptedAt: string | null
   createdAt: string
