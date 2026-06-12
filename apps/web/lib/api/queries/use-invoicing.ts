@@ -194,3 +194,131 @@ export function useUpsertSequence() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'sequences'] }),
   })
 }
+
+// ─── Invoices (Sprint 3) ────────────────────────────────────────────────────
+
+export interface InvoiceLineInput {
+  item_id?: string
+  item_name: string
+  description?: string
+  hsn_sac_code?: string
+  quantity: string
+  unit?: string
+  rate: string
+  gst_rate?: string
+  cess_rate?: string
+}
+
+export interface InvoiceInput {
+  customer_id: string
+  invoice_date: string
+  due_date: string
+  currency?: string
+  reference?: string
+  place_of_supply?: string
+  tax_treatment?: string
+  discount_type?: 'percent' | 'fixed'
+  discount_value?: string
+  tds_section?: string
+  tds_payment_code?: string
+  tds_rate?: string
+  notes?: string
+  terms_and_conditions?: string
+  line_items: InvoiceLineInput[]
+}
+
+export interface InvoiceRow {
+  id: string
+  invoice_number: string
+  document_type: string
+  status: string
+  invoice_date: string
+  due_date: string
+  currency: string
+  total_amount: string
+  tds_amount: string
+  net_receivable: string | null
+  amount_paid: string | null
+  amount_outstanding: string | null
+  customer_id: string
+  customer_name: string | null
+  created_at: string
+}
+
+export interface InvoiceDetail extends InvoiceRow {
+  subtotal: string
+  discount_type: string | null
+  discount_value: string | null
+  discount_amount: string | null
+  taxable_amount: string
+  cgst_amount: string | null
+  sgst_amount: string | null
+  igst_amount: string | null
+  cess_amount: string | null
+  tds_section: string | null
+  tds_payment_code: string | null
+  tds_rate: string | null
+  place_of_supply: string | null
+  tax_treatment: string | null
+  reference: string | null
+  notes: string | null
+  terms_and_conditions: string | null
+  line_items: Array<
+    InvoiceLineInput & {
+      id: string
+      line_number: number
+      taxable_amount: string
+      line_total: string
+    }
+  >
+  customer?: Customer
+}
+
+export function useInvoices(
+  params: { page?: number; q?: string; status?: string; customer_id?: string } = {},
+) {
+  const qs = new URLSearchParams()
+  if (params.page) qs.set('page', String(params.page))
+  if (params.q) qs.set('q', params.q)
+  if (params.status) qs.set('status', params.status)
+  if (params.customer_id) qs.set('customer_id', params.customer_id)
+  return useQuery({
+    queryKey: ['invoicing', 'invoices', params],
+    queryFn: () => api.get<Paginated<InvoiceRow>>(`/api/v1/invoices?${qs.toString()}`),
+  })
+}
+
+export function useInvoice(id: string | undefined) {
+  return useQuery({
+    queryKey: ['invoicing', 'invoice', id],
+    queryFn: () => api.get<{ data: InvoiceDetail }>(`/api/v1/invoices/${id}`),
+    enabled: !!id,
+  })
+}
+
+export function useSaveInvoice() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: InvoiceInput & { id?: string }) =>
+      id
+        ? api.patch<{ data: InvoiceDetail }>(`/api/v1/invoices/${id}`, data)
+        : api.post<{ data: InvoiceDetail }>('/api/v1/invoices', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
+export function useInvoiceAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      action,
+      body,
+    }: {
+      id: string
+      action: 'duplicate' | 'cancel' | 'void' | 'write-off'
+      body?: Record<string, unknown>
+    }) => api.post<{ data: InvoiceDetail }>(`/api/v1/invoices/${id}/${action}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
