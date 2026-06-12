@@ -322,3 +322,122 @@ export function useInvoiceAction() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
   })
 }
+
+// ─── Send / payments / public (Sprint 4) ────────────────────────────────────
+
+export function useSendInvoice() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: InvoiceDetail; meta: { public_url: string } }>(`/api/v1/invoices/${id}/send`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
+export interface RecordPaymentInput {
+  id: string
+  amount: string
+  payment_date?: string
+  payment_method: string
+  reference_number?: string
+  notes?: string
+}
+
+export function useRecordPayment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: RecordPaymentInput) =>
+      api.post<{ data: { payment_number: string }; meta: { invoice_status: string; overpaid: string } }>(
+        `/api/v1/invoices/${id}/record-payment`,
+        data,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
+// ─── Public hosted invoice (no auth) ────────────────────────────────────────
+
+export interface PublicInvoicePayload {
+  invoice: {
+    invoice_number: string
+    status: string
+    invoice_date: string
+    due_date: string
+    currency: string
+    subtotal: string
+    discount_amount: string | null
+    taxable_amount: string
+    cgst_amount: string | null
+    sgst_amount: string | null
+    igst_amount: string | null
+    cess_amount: string | null
+    total_amount: string
+    tds_section: string | null
+    tds_rate: string | null
+    tds_amount: string | null
+    net_receivable: string | null
+    amount_paid: string | null
+    amount_outstanding: string | null
+    tax_treatment: string | null
+    place_of_supply: string | null
+    reference: string | null
+    notes: string | null
+    terms_and_conditions: string | null
+  }
+  line_items: Array<{
+    line_number: number
+    item_name: string
+    description: string | null
+    hsn_sac_code: string | null
+    quantity: string
+    unit: string | null
+    rate: string
+    gst_rate: string | null
+    taxable_amount: string | null
+    line_total: string | null
+  }>
+  customer: {
+    display_name: string
+    legal_name: string | null
+    gstin: string | null
+    billing_address_line1: string | null
+    billing_address_line2: string | null
+    billing_city: string | null
+    billing_state: string | null
+    billing_postal_code: string | null
+    billing_country: string | null
+  } | null
+  seller: {
+    name: string
+    legal_name: string | null
+    gstin: string | null
+    address_line1: string | null
+    address_line2: string | null
+    city: string | null
+    state_code: string | null
+    postal_code: string | null
+    logo_url: string | null
+    brand_color: string | null
+  } | null
+  payment_options: {
+    upi: { upi_id: string; display_name: string | null } | null
+    razorpay: { key_id: string } | null
+    bank_transfer: null
+    allow_partial: boolean
+  }
+  show_powered_by: boolean
+}
+
+export function usePublicInvoice(token: string | undefined) {
+  return useQuery({
+    queryKey: ['public-invoice', token],
+    queryFn: () => api.get<{ data: PublicInvoicePayload }>(`/api/v1/public/inv/${token}`),
+    enabled: !!token,
+    retry: 1,
+  })
+}
+
+export function trackPublicView(token: string) {
+  // Fire-and-forget view pixel; failures must never break the page.
+  api.post(`/api/v1/public/inv/${token}/track`).catch(() => {})
+}

@@ -6,6 +6,7 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   useCustomers,
   useSaveInvoice,
+  useSendInvoice,
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
@@ -48,6 +49,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const router = useRouter()
   const { toast } = useToast()
   const save = useSaveInvoice()
+  const send = useSendInvoice()
   const { data: customersData } = useCustomers({})
 
   const [customerId, setCustomerId] = useState(invoice?.customer_id ?? '')
@@ -111,7 +113,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     return Number.isFinite(n) ? n : 0
   }
 
-  const onSave = async () => {
+  const onSave = async (thenSend = false) => {
     if (!customerId) return toast({ title: 'Pick a client first', variant: 'destructive' })
     const valid = lines.filter((l) => l.item_name.trim() && l.rate)
     if (!valid.length) return toast({ title: 'Add at least one line item', variant: 'destructive' })
@@ -132,7 +134,12 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     }
     try {
       const res = await save.mutateAsync({ id: invoice?.id, ...payload })
-      toast({ title: invoice ? 'Draft updated' : `Draft ${res.data.invoice_number} created` })
+      if (thenSend) {
+        const sent = await send.mutateAsync(res.data.id)
+        toast({ title: `Invoice ${res.data.invoice_number} sent`, description: sent.meta.public_url })
+      } else {
+        toast({ title: invoice ? 'Draft updated' : `Draft ${res.data.invoice_number} created` })
+      }
       router.push('/invoicing/invoices')
     } catch (err) {
       toast({
@@ -395,11 +402,17 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <InvoBtn kind="primary" full height={52} onClick={onSave} disabled={save.isPending}>
-                {save.isPending ? 'Saving…' : invoice ? 'Save changes' : 'Save as draft'}
+              <InvoBtn
+                kind="primary"
+                full
+                height={52}
+                onClick={() => onSave(true)}
+                disabled={save.isPending || send.isPending}
+              >
+                {send.isPending ? 'Sending…' : 'Send invoice'}
               </InvoBtn>
-              <InvoBtn kind="outline" full height={52} disabled title="Send arrives in Sprint 4">
-                Send invoice
+              <InvoBtn kind="outline" full height={52} onClick={() => onSave(false)} disabled={save.isPending}>
+                {save.isPending ? 'Saving…' : invoice ? 'Save changes' : 'Save as draft'}
               </InvoBtn>
             </div>
           </InvoCard>

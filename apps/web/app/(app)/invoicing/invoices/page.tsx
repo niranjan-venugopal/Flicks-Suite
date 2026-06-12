@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
-import { useInvoices, useInvoiceAction, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import { useInvoices, useInvoiceAction, useSendInvoice, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import {
   INVO,
   InvoPage,
@@ -101,9 +102,24 @@ export default function InvoicesPage() {
   })
   const { data: draftsData } = useInvoices({ status: 'DRAFT' })
   const action = useInvoiceAction()
+  const send = useSendInvoice()
+  const [payingInvoice, setPayingInvoice] = useState<InvoiceRow | null>(null)
 
   const rows = data?.data ?? []
   const drafts = (draftsData?.data ?? []).slice(0, 3)
+
+  const onSend = async (inv: InvoiceRow) => {
+    try {
+      const res = await send.mutateAsync(inv.id)
+      toast({ title: `Invoice ${inv.invoice_number} sent`, description: res.meta.public_url })
+    } catch (err) {
+      toast({
+        title: 'Could not send',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
 
   const onDuplicate = async (inv: InvoiceRow) => {
     try {
@@ -196,12 +212,22 @@ export default function InvoicesPage() {
             <td style={invoTd}>
               <div style={{ display: 'flex', gap: 8 }}>
                 {inv.status === 'DRAFT' ? (
-                  <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/edit`)}>
-                    Edit
-                  </InvoBtn>
+                  <>
+                    <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/edit`)}>
+                      Edit
+                    </InvoBtn>
+                    <InvoBtn kind="chip-blue" onClick={() => onSend(inv)}>
+                      Send
+                    </InvoBtn>
+                  </>
                 ) : (
                   <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
                     View
+                  </InvoBtn>
+                )}
+                {['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status) && (
+                  <InvoBtn kind="chip-blue" onClick={() => setPayingInvoice(inv)}>
+                    Record payment
                   </InvoBtn>
                 )}
                 <InvoBtn kind="chip-outline" onClick={() => onDuplicate(inv)}>
@@ -212,6 +238,12 @@ export default function InvoicesPage() {
           </InvoRow>
         ))}
       </InvoTable>
+
+      <PaymentModal
+        open={!!payingInvoice}
+        onOpenChange={(v) => !v && setPayingInvoice(null)}
+        invoice={payingInvoice}
+      />
     </InvoPage>
   )
 }
