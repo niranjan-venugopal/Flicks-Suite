@@ -4,9 +4,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { and, eq, ilike, or, desc, sql, asc } from 'drizzle-orm';
+import * as crypto from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import {
   invoices,
   invoiceLineItems,
+  invoicePayments,
+  customerCreditBalance,
+  customerCreditBalanceEntries,
   customers,
   tenants,
 } from '@flicks/db/schema';
@@ -15,10 +20,12 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NumberingService } from './numbering.service';
 import { computeInvoice, deriveTaxTreatment, type TaxTreatment } from './tax.util';
+import { NotificationsService } from '../notifications/notifications.service';
 import type {
   CreateInvoiceDto,
   UpdateInvoiceDto,
   InvoiceListQueryDto,
+  RecordPaymentDto,
 } from './dto/invoicing.dto';
 
 /**
@@ -38,6 +45,8 @@ export class InvoicesService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
+    private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── list / get ────────────────────────────────────────────────────────────
@@ -478,17 +487,218 @@ export class InvoicesService {
     return { data: inv };
   }
 
-  // Send + payments land in Sprint 4.
-  async send(_id: string, _userId: string, _tenantId: string): Promise<never> {
-    throw new BadRequestException('Send is implemented in Sprint 4');
+  // ─── send (§6.6 / §9.3) ───────────────────────────────────────────────────
+
+  /**
+   * Send the invoice: DRAFT → SENT (re-send keeps SENT/VIEWED). Generates the
+   * signed public token on first send and emails the customer a "View & Pay"
+   * link to the hosted page — no PDF attachment by default (§9.3).
+   */
+  async send(id: string, userId: string, tenantId: string) {
+    const result = await this.db.withTenant(tenantId, async (tx) => {
+      const existing = await this.fetch(tx, id);
+      if (!['DRAFT', 'SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(existing.status)) {
+        throw new BadRequestException(
+          `Cannot send an invoice in status ${existing.status}`,
+        );
+      }
+      const [customer] = await tx
+        .select()
+        .from(customers)
+        .where(eq(customers.id, existing.customer_id))
+        .limit(1);
+      if (!customer?.email) {
+        throw new BadRequestException(
+          'The customer has no email address — add one before sending',
+        );
+      }
+      const [tenant] = await tx
+        .select({ name: tenants.name, slug: tenants.slug })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+
+      const token =
+        existing.public_view_token ?? crypto.randomBytes(24).toString('base64url');
+      const [updated] = await tx
+        .update(invoices)
+        .set({
+          status: existing.status === 'DRAFT' ? 'SENT' : existing.status,
+          public_view_token: token,
+          customer_email_at_send: customer.email,
+          email_sent_at: new Date(),
+          updated_by: userId,
+          updated_at: new Date(),
+        })
+        .where(eq(invoices.id, id))
+        .returning();
+      return { invoice: updated!, customer, tenant };
+    });
+
+    const base = this.config.get<string>(
+      'PUBLIC_INVOICE_BASE_URL',
+      this.config.get<string>('APP_URL', 'http://localhost:3000'),
+    );
+    const viewUrl = `${base}/inv/${result.invoice.public_view_token}`;
+
+    await this.notifications.sendEmail('invoice-sent', result.customer.email!, {
+      invoiceNumber: result.invoice.invoice_number,
+      tenantName: result.tenant?.name,
+      customerName: result.customer.display_name,
+      amount: `${result.invoice.currency} ${result.invoice.total_amount}`,
+      dueDate: result.invoice.due_date,
+      viewUrl,
+    });
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.invoice.send',
+      resourceType: 'invoice',
+      resourceId: id,
+      metadata: { to: result.customer.email, viewUrl },
+    });
+    return { data: result.invoice, meta: { public_url: viewUrl } };
   }
+
+  // ─── payments (§6.6) ─────────────────────────────────────────────────────
+
+  /**
+   * Record a payment (manual or webhook-sourced). Updates amount_paid /
+   * amount_outstanding, transitions PARTIALLY_PAID → PAID, and books any
+   * overpayment into the customer credit balance (§6.6).
+   */
   async recordPayment(
-    _id: string,
-    _dto: unknown,
-    _userId: string,
-    _tenantId: string,
-  ): Promise<never> {
-    throw new BadRequestException('Record payment is implemented in Sprint 4');
+    id: string,
+    dto: RecordPaymentDto,
+    userId: string | null,
+    tenantId: string,
+    source: 'manual' | 'automatic_webhook' | 'subscription_charge' = 'manual',
+  ) {
+    const toCents = (v: string | null | undefined) =>
+      Math.round(parseFloat(v ?? '0') * 100);
+    const fromCents = (c: number) => (c / 100).toFixed(2);
+
+    const result = await this.db.withTenant(tenantId, async (tx) => {
+      const existing = await this.fetch(tx, id);
+      if (!['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID', 'DISPUTED'].includes(existing.status)) {
+        throw new BadRequestException(
+          `Cannot record a payment on a ${existing.status} invoice`,
+        );
+      }
+      const amountCents = toCents(dto.amount);
+      if (amountCents <= 0) {
+        throw new BadRequestException('Payment amount must be positive');
+      }
+
+      // Sequential payment number per tenant (PMT-0001…).
+      const [{ total: paymentCount }] = await tx
+        .select({ total: sql<number>`count(*)::int` })
+        .from(invoicePayments)
+        .where(eq(invoicePayments.tenant_id, tenantId));
+      const paymentNumber = `PMT-${String((paymentCount ?? 0) + 1).padStart(4, '0')}`;
+
+      const [payment] = await tx
+        .insert(invoicePayments)
+        .values({
+          tenant_id: tenantId,
+          invoice_id: id,
+          customer_id: existing.customer_id,
+          payment_number: paymentNumber,
+          payment_date: dto.payment_date ?? new Date().toISOString().slice(0, 10),
+          amount: fromCents(amountCents),
+          currency: existing.currency,
+          payment_method: dto.payment_method,
+          reference_number: dto.reference_number,
+          razorpay_payment_id: dto.razorpay_payment_id,
+          notes: dto.notes,
+          source,
+          created_by: userId,
+        })
+        .returning();
+
+      const totalCents = toCents(existing.total_amount);
+      const paidBefore = toCents(existing.amount_paid);
+      const paidAfter = paidBefore + amountCents;
+      const applied = Math.min(paidAfter, totalCents);
+      const overpaid = Math.max(0, paidAfter - totalCents);
+      const outstanding = Math.max(0, totalCents - paidAfter);
+      const fullyPaid = applied >= totalCents;
+
+      const [updated] = await tx
+        .update(invoices)
+        .set({
+          amount_paid: fromCents(applied),
+          amount_outstanding: fromCents(outstanding),
+          status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
+          paid_at: fullyPaid ? new Date() : existing.paid_at,
+          updated_at: new Date(),
+        })
+        .where(eq(invoices.id, id))
+        .returning();
+
+      // Overpayment → customer credit balance + append-only ledger entry.
+      if (overpaid > 0) {
+        const [balance] = await tx
+          .select()
+          .from(customerCreditBalance)
+          .where(
+            and(
+              eq(customerCreditBalance.customer_id, existing.customer_id),
+              eq(customerCreditBalance.currency, existing.currency),
+            ),
+          )
+          .limit(1);
+        if (balance) {
+          await tx
+            .update(customerCreditBalance)
+            .set({
+              balance_amount: fromCents(toCents(balance.balance_amount) + overpaid),
+              updated_at: new Date(),
+            })
+            .where(eq(customerCreditBalance.id, balance.id));
+        } else {
+          await tx.insert(customerCreditBalance).values({
+            tenant_id: tenantId,
+            customer_id: existing.customer_id,
+            balance_amount: fromCents(overpaid),
+            currency: existing.currency,
+          });
+        }
+        await tx.insert(customerCreditBalanceEntries).values({
+          tenant_id: tenantId,
+          customer_id: existing.customer_id,
+          entry_date: new Date().toISOString().slice(0, 10),
+          entry_type: 'overpayment',
+          amount: fromCents(overpaid),
+          currency: existing.currency,
+          reference_type: 'invoice_payment',
+          reference_id: payment!.id,
+          description: `Overpayment on ${existing.invoice_number}`,
+          created_by: userId,
+        });
+      }
+      return { payment: payment!, invoice: updated!, overpaid: fromCents(overpaid) };
+    });
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId ?? undefined,
+      action: 'invoicing.payment.record',
+      resourceType: 'invoice_payment',
+      resourceId: result.payment.id,
+      metadata: {
+        invoiceId: id,
+        amount: dto.amount,
+        method: dto.payment_method,
+        source,
+        overpaid: result.overpaid,
+      },
+    });
+    return {
+      data: result.payment,
+      meta: { invoice_status: result.invoice.status, overpaid: result.overpaid },
+    };
   }
 
   // ─── internals ─────────────────────────────────────────────────────────────

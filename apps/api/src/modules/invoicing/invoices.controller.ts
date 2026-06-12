@@ -16,6 +16,7 @@ import {
   UpdateInvoiceDto,
   CancelInvoiceDto,
   WriteOffInvoiceDto,
+  RecordPaymentDto,
 } from './dto/invoicing.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
@@ -101,17 +102,17 @@ export class InvoicesController {
 
   @Post(':id/send')
   @RequireGrant('invoicing', 'edit', 'send')
-  @ApiOperation({ summary: 'Send an invoice (Sprint 4)' })
+  @ApiOperation({ summary: 'Send: DRAFT→SENT, email the hosted View & Pay link' })
   send(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.invoices.send(id, user.sub, user.tenantId);
   }
 
   @Post(':id/record-payment')
   @RequireGrant('invoicing', 'edit', 'record_payment')
-  @ApiOperation({ summary: 'Record a payment (Sprint 4)' })
+  @ApiOperation({ summary: 'Record a manual payment (partial/over handled)' })
   recordPayment(
     @Param('id') id: string,
-    @Body() dto: Record<string, unknown>,
+    @Body() dto: RecordPaymentDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.invoices.recordPayment(id, dto, user.sub, user.tenantId);

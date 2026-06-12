@@ -1,5 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { and, inArray, lt, sql } from 'drizzle-orm';
+import { invoices } from '@flicks/db/schema';
+import type { DbAdmin } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../core/database/database.module';
 import { DatabaseService } from '../core/database/database.service';
 
 /**
@@ -13,12 +17,29 @@ import { DatabaseService } from '../core/database/database.service';
 export class InvoicingJobs {
   private readonly logger = new Logger(InvoicingJobs.name);
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+  ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'mark-overdue-invoices' })
   async markOverdueInvoices(): Promise<void> {
-    // Sprint 3/6: SENT/VIEWED/PARTIALLY_PAID past due_date → OVERDUE.
-    this.logger.debug('mark-overdue-invoices (stub)');
+    // SENT/VIEWED/PARTIALLY_PAID past due_date → OVERDUE (§6.5). Cross-tenant
+    // sweep on the service role; RLS-scoped reads are unaffected.
+    const today = new Date().toISOString().slice(0, 10);
+    const updated = await this.dbAdmin
+      .update(invoices)
+      .set({ status: 'OVERDUE', updated_at: new Date() })
+      .where(
+        and(
+          inArray(invoices.status, ['SENT', 'VIEWED', 'PARTIALLY_PAID']),
+          lt(invoices.due_date, today),
+        ),
+      )
+      .returning({ id: invoices.id });
+    if (updated.length > 0) {
+      this.logger.log(`mark-overdue-invoices: ${updated.length} invoice(s) → OVERDUE`);
+    }
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'expire-quotes' })

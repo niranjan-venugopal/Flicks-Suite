@@ -148,8 +148,21 @@ import {
   invoices as schemaInvoices,
 } from '@flicks/db/schema';
 
+// Config + email stubs for the invoice service (send() reads PUBLIC_INVOICE_BASE_URL
+// and emails via NotificationsService — capture instead of sending).
+const sentEmails: { template: string; to: string; props: Record<string, unknown> }[] = [];
+const configStub = {
+  get: (key: string, fallback?: unknown) =>
+    key === 'PUBLIC_INVOICE_BASE_URL' ? 'http://localhost:3000' : fallback,
+} as unknown as import('@nestjs/config').ConfigService;
+const notificationsStub = {
+  sendEmail: async (template: string, to: string, props: Record<string, unknown>) => {
+    sentEmails.push({ template, to, props });
+  },
+} as unknown as import('../modules/notifications/notifications.service').NotificationsService;
+
 describe('Invoicing services (Sprint 3 — invoices)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -342,6 +355,197 @@ describe('Invoicing services (Sprint 3 — invoices)', () => {
         tenantId,
       ),
     ).rejects.toThrow(/line item/);
+  });
+});
+
+// ─── Sprint 4: send, public page, payments, webhook ──────────────────────────
+import { PublicInvoiceService } from '../modules/invoicing/public-invoice.service';
+import { RazorpayWebhookController } from '../modules/invoicing/razorpay-webhook.controller';
+import {
+  customerCreditBalance as cbTable,
+  razorpayWebhookEvents as rweTable,
+} from '@flicks/db/schema';
+
+describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub);
+  const publicSvc = new PublicInvoiceService(dbAdmin as any);
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+
+  const mkInvoice = async (over: Record<string, unknown> = {}) =>
+    (
+      await invoicesSvc.create(
+        {
+          customer_id: customerId,
+          invoice_date: '2026-06-12',
+          due_date: '2026-07-12',
+          line_items: [{ item_name: 'Retainer', quantity: '1', rate: '1000.00', gst_rate: '18' }],
+          ...(over as object),
+        } as any,
+        userId,
+        tenantId,
+      )
+    ).data;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `PayCo${rid()}`, slug: `payco-${rid()}-${Date.now()}`, status: 'trialing', state_code: 'KA' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `pay-${rid()}@test.test`, full_name: 'Pay User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const c = await customers.create(
+      { display_name: 'Payer Inc', email: 'payer@test.test', state_code: 'MH' },
+      userId,
+      tenantId,
+    );
+    customerId = c.data.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(users).where(eq(users.id, userId));
+  });
+
+  it('send: DRAFT → SENT, generates a public token and emails the View & Pay link', async () => {
+    sentEmails.length = 0;
+    const inv = await mkInvoice();
+    const sent = await invoicesSvc.send(inv.id, userId, tenantId);
+    expect(sent.data.status).toBe('SENT');
+    expect(sent.data.public_view_token).toBeTruthy();
+    expect(sent.meta.public_url).toContain(`/inv/${sent.data.public_view_token}`);
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]!.template).toBe('invoice-sent');
+    expect(sentEmails[0]!.to).toBe('payer@test.test');
+
+    // Re-send keeps the SAME token (links stay valid).
+    const again = await invoicesSvc.send(inv.id, userId, tenantId);
+    expect(again.data.public_view_token).toBe(sent.data.public_view_token);
+  });
+
+  it('send: blocked without a customer email', async () => {
+    const c2 = await customers.create({ display_name: 'No Email Co' }, userId, tenantId);
+    const inv = await mkInvoice({ customer_id: c2.data.id });
+    await expect(invoicesSvc.send(inv.id, userId, tenantId)).rejects.toThrow(/no email/);
+  });
+
+  it('public page: token resolves to a sanitized invoice; tracking flips SENT → VIEWED', async () => {
+    const inv = await mkInvoice();
+    const sent = await invoicesSvc.send(inv.id, userId, tenantId);
+    const token = sent.data.public_view_token!;
+
+    const pub = await publicSvc.getByToken(token);
+    expect(pub.data.invoice.invoice_number).toBe(inv.invoice_number);
+    expect(pub.data.seller?.name).toContain('PayCo');
+    expect((pub.data.invoice as any).created_by).toBeUndefined(); // sanitized
+    // MH customer + KA tenant ⇒ inter-state
+    expect(pub.data.invoice.igst_amount).toBe('180.00');
+
+    await publicSvc.trackView(token);
+    await publicSvc.trackView(token);
+    const after = await invoicesSvc.get(tenantId, inv.id);
+    expect(after.data.status).toBe('VIEWED');
+    expect(after.data.view_count).toBe(2);
+    expect(after.data.first_viewed_at).toBeTruthy();
+
+    await expect(publicSvc.getByToken('bogus-token')).rejects.toThrow(/not found/i);
+  });
+
+  it('payments: partial → PARTIALLY_PAID, completion → PAID, sequential PMT numbers', async () => {
+    const inv = await mkInvoice();
+    await invoicesSvc.send(inv.id, userId, tenantId);
+
+    const p1 = await invoicesSvc.recordPayment(
+      inv.id,
+      { amount: '500.00', payment_method: 'BANK_TRANSFER' } as any,
+      userId,
+      tenantId,
+    );
+    expect(p1.data.payment_number).toMatch(/^PMT-\d{4}$/);
+    expect(p1.meta.invoice_status).toBe('PARTIALLY_PAID');
+
+    const p2 = await invoicesSvc.recordPayment(
+      inv.id,
+      { amount: '680.00', payment_method: 'UPI_DIRECT' } as any,
+      userId,
+      tenantId,
+    );
+    expect(p2.meta.invoice_status).toBe('PAID');
+    const after = await invoicesSvc.get(tenantId, inv.id);
+    expect(after.data.amount_paid).toBe('1180.00');
+    expect(after.data.amount_outstanding).toBe('0.00');
+    expect(after.data.paid_at).toBeTruthy();
+
+    const n1 = parseInt(p1.data.payment_number.slice(4), 10);
+    const n2 = parseInt(p2.data.payment_number.slice(4), 10);
+    expect(n2).toBe(n1 + 1);
+  });
+
+  it('payments: overpayment books the excess into the customer credit balance', async () => {
+    const inv = await mkInvoice(); // total 1180.00
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const p = await invoicesSvc.recordPayment(
+      inv.id,
+      { amount: '1300.00', payment_method: 'CASH' } as any,
+      userId,
+      tenantId,
+    );
+    expect(p.meta.invoice_status).toBe('PAID');
+    expect(p.meta.overpaid).toBe('120.00');
+
+    const [balance] = await dbAdmin
+      .select()
+      .from(cbTable)
+      .where(eq(cbTable.customer_id, customerId));
+    expect(parseFloat(balance!.balance_amount)).toBeGreaterThanOrEqual(120);
+  });
+
+  it('payments: rejected on DRAFT and for non-positive amounts', async () => {
+    const inv = await mkInvoice();
+    await expect(
+      invoicesSvc.recordPayment(inv.id, { amount: '10.00', payment_method: 'CASH' } as any, userId, tenantId),
+    ).rejects.toThrow(/DRAFT/);
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    await expect(
+      invoicesSvc.recordPayment(inv.id, { amount: '0.00', payment_method: 'CASH' } as any, userId, tenantId),
+    ).rejects.toThrow(/positive/);
+  });
+
+  it('razorpay webhook: idempotent on event_id; unverified events stored but not applied', async () => {
+    const webhook = new RazorpayWebhookController(dbAdmin as any, configStub as any, invoicesSvc);
+    const inv = await mkInvoice();
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const evt = {
+      id: `evt_test_${rid()}`,
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${rid()}`,
+            amount: 118000,
+            method: 'upi',
+            notes: { invoice_id: inv.id, tenant_id: tenantId },
+          },
+        },
+      },
+    };
+    const r1 = await webhook.razorpay(evt as any, undefined, undefined);
+    expect(r1.data.received).toBe(true);
+    expect(r1.data.verified).toBe(false); // no secret configured → not applied
+    const r2 = await webhook.razorpay(evt as any, undefined, undefined);
+    expect((r2.data as any).duplicate).toBe(true);
+
+    // Stored exactly once; invoice untouched (unverified).
+    const events = await dbAdmin.select().from(rweTable).where(eq(rweTable.event_id, evt.id));
+    expect(events).toHaveLength(1);
+    const after = await invoicesSvc.get(tenantId, inv.id);
+    expect(after.data.status).toBe('SENT');
+    expect(after.data.amount_paid).toBe('0.00');
   });
 });
 

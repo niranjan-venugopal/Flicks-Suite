@@ -237,6 +237,26 @@ export class InvoiceListQueryDto extends ListQueryDto {
   customer_id?: string;
 }
 
+export class RecordPaymentDto {
+  @IsNumberString() amount!: string;
+  @IsOptional() @IsString() payment_date?: string; // YYYY-MM-DD, default today
+  @IsIn([
+    'CASH',
+    'BANK_TRANSFER',
+    'CHEQUE',
+    'UPI_DIRECT',
+    'RAZORPAY_UPI',
+    'RAZORPAY_CARD',
+    'RAZORPAY_NETBANKING',
+    'RAZORPAY_WALLET',
+    'OTHER',
+  ])
+  payment_method!: string;
+  @IsOptional() @IsString() reference_number?: string;
+  @IsOptional() @IsString() razorpay_payment_id?: string;
+  @IsOptional() @IsString() @MaxLength(500) notes?: string;
+}
+
 export class CancelInvoiceDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }

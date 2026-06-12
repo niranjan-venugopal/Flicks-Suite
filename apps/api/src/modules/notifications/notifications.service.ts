@@ -96,6 +96,9 @@ type EmailTemplate =
   | 'timesheet-approved'
   | 'timesheet-rejected'
   | 'timesheet-rework'
+  // Invoicing (v3)
+  | 'invoice-sent'
+  | 'payment-received'
   // Billing
   | 'trial-ending-soon'
   | 'subscription-payment-success'
@@ -172,6 +175,33 @@ export class NotificationsService {
     const appName = 'Flicks Suite';
 
     switch (template) {
+      case 'invoice-sent': {
+        const viewUrl = String(props.viewUrl ?? '#');
+        return {
+          subject: `Invoice ${props.invoiceNumber} from ${props.tenantName ?? appName}`,
+          html: `
+            <p>Hi ${props.customerName ?? 'there'},</p>
+            <p>${props.tenantName ?? 'We'} sent you invoice <strong>${props.invoiceNumber}</strong>
+            for <strong>${props.amount}</strong>, due <strong>${props.dueDate}</strong>.</p>
+            <p style="margin:24px 0;">
+              <a href="${viewUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">View &amp; Pay</a>
+            </p>
+            <p>You can view the invoice and pay online any time from the link above.</p>
+          `,
+        };
+      }
+
+      case 'payment-received': {
+        return {
+          subject: `Payment received — ${props.invoiceNumber}`,
+          html: `
+            <p>Hi ${props.customerName ?? 'there'},</p>
+            <p>We've recorded a payment of <strong>${props.amount}</strong> against
+            invoice <strong>${props.invoiceNumber}</strong>. ${props.outstanding ? `Outstanding balance: <strong>${props.outstanding}</strong>.` : 'The invoice is now fully paid — thank you!'}</p>
+          `,
+        };
+      }
+
       case 'login-otp': {
         const { otpCode, magicLinkUrl, expiryMinutes } = props as {
           otpCode: string;

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 import { ItemsController } from './items.controller';
@@ -11,6 +12,9 @@ import { HsnSacController } from './hsn-sac.controller';
 import { HsnSacService } from './hsn-sac.service';
 import { NumberingController } from './numbering.controller';
 import { NumberingService } from './numbering.service';
+import { PublicInvoiceController } from './public-invoice.controller';
+import { PublicInvoiceService } from './public-invoice.service';
+import { RazorpayWebhookController } from './razorpay-webhook.controller';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
 
 /**
@@ -20,13 +24,15 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
  * creation (Sprint 3) can reserve numbers atomically.
  */
 @Module({
-  imports: [AuditModule, AuthModule],
+  imports: [AuditModule, AuthModule, NotificationsModule],
   controllers: [
     CustomersController,
     ItemsController,
     InvoicesController,
     HsnSacController,
     NumberingController,
+    PublicInvoiceController,
+    RazorpayWebhookController,
   ],
   providers: [
     CustomersService,
@@ -34,6 +40,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     InvoicesService,
     HsnSacService,
     NumberingService,
+    PublicInvoiceService,
     InvoicingGrantGuard,
   ],
   exports: [
