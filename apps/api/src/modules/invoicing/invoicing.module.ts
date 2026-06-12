@@ -23,6 +23,8 @@ import {
   PaymentsController,
   InvReportsController,
 } from './notes.controller';
+import { SubscriptionsService } from './subscriptions.service';
+import { SubscriptionsController } from './subscriptions.controller';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
 
 /**
@@ -44,6 +46,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     NotesController,
     PaymentsController,
     InvReportsController,
+    SubscriptionsController,
   ],
   providers: [
     CustomersService,
@@ -54,6 +57,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     PublicInvoiceService,
     NotesService,
     InvReportsService,
+    SubscriptionsService,
     InvoicingGrantGuard,
   ],
   exports: [

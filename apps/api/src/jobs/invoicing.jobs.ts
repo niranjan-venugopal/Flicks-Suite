@@ -6,8 +6,13 @@ import {
   customers,
   reminderSchedule,
   reminderSent,
+  invoiceSubscriptions,
+  invoiceSubscriptionProrationEvents,
+  auditLog,
 } from '@flicks/db/schema';
 import { NotificationsService } from '../modules/notifications/notifications.service';
+import { InvoicesService } from '../modules/invoicing/invoices.service';
+import { advanceDate, cycleAmountCents } from '../modules/invoicing/subscriptions.service';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../core/database/database.module';
 import { DatabaseService } from '../core/database/database.service';
@@ -27,6 +32,7 @@ export class InvoicingJobs {
     private readonly db: DatabaseService,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly notifications: NotificationsService,
+    private readonly invoicesService: InvoicesService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'mark-overdue-invoices' })
@@ -143,20 +149,240 @@ export class InvoicingJobs {
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'generate-subscription-invoices' })
   async generateSubscriptionInvoices(): Promise<void> {
-    // Sprint 7: invoice_subscriptions due on next_billing_date.
-    this.logger.debug('generate-subscription-invoices (stub)');
+    const n = await this.runSubscriptionGeneration();
+    if (n > 0) this.logger.log(`generate-subscription-invoices: ${n} invoice(s) generated`);
+  }
+
+  /**
+   * Generation sweep (§6.8): ACTIVE/TRIALING subscriptions whose
+   * next_billing_date has arrived get a real invoice through the same
+   * InvoicesService path as manual ones (numbering, GST, §8 bank selection),
+   * with pending proration events folded in as extra lines. The invoice is
+   * auto-sent when the customer has an email (SCHEDULED→AUTO_GENERATING→SENT),
+   * the cycle advances, and end conditions retire the profile to EXPIRED.
+   */
+  async runSubscriptionGeneration(): Promise<number> {
+    const today = new Date().toISOString().slice(0, 10);
+    const due = await this.dbAdmin
+      .select()
+      .from(invoiceSubscriptions)
+      .where(
+        and(
+          inArray(invoiceSubscriptions.status, ['ACTIVE', 'TRIALING']),
+          sql`${invoiceSubscriptions.next_billing_date} <= ${today}`,
+        ),
+      );
+
+    let generated = 0;
+    for (const sub of due) {
+      try {
+        // Pending prorations → extra lines (negative for seat removals).
+        const prorations = await this.dbAdmin
+          .select()
+          .from(invoiceSubscriptionProrationEvents)
+          .where(
+            and(
+              eq(invoiceSubscriptionProrationEvents.subscription_id, sub.id),
+              sql`${invoiceSubscriptionProrationEvents.applied_to_invoice_id} is null`,
+            ),
+          );
+
+        const baseLine =
+          sub.pricing_model === 'per_seat'
+            ? {
+                item_name: `${sub.name} (${sub.seat_count} seats)`,
+                quantity: String(sub.seat_count ?? 1),
+                rate: sub.seat_rate ?? '0',
+                gst_rate: '18',
+              }
+            : {
+                item_name: sub.name,
+                quantity: '1',
+                rate: sub.flat_amount ?? '0',
+                gst_rate: '18',
+              };
+        const prorationLines = prorations.map((ev) => ({
+          item_name: `Proration · ${ev.event_type.replace(/_/g, ' ')} (${ev.event_date})`,
+          quantity: '1',
+          rate: ev.amount,
+          gst_rate: '18',
+        }));
+
+        const billDate = sub.next_billing_date ?? today;
+        const created = await this.invoicesService.create(
+          {
+            customer_id: sub.customer_id,
+            invoice_date: billDate,
+            due_date: advanceDate(billDate, 'custom', 15), // net-15 on subscription invoices
+            currency: sub.currency,
+            reference: `Subscription ${sub.name}`,
+            line_items: [baseLine, ...prorationLines],
+          },
+          sub.created_by ?? '',
+          sub.tenant_id,
+        );
+
+        await this.dbAdmin
+          .update(invoices)
+          .set({ subscription_id: sub.id })
+          .where(eq(invoices.id, created.data.id));
+        for (const ev of prorations) {
+          await this.dbAdmin
+            .update(invoiceSubscriptionProrationEvents)
+            .set({ applied_to_invoice_id: created.data.id })
+            .where(eq(invoiceSubscriptionProrationEvents.id, ev.id));
+        }
+
+        // Auto-send (lifecycle …→SENT). Failure to email must not lose the cycle.
+        try {
+          await this.invoicesService.send(created.data.id, sub.created_by ?? '', sub.tenant_id);
+        } catch (err) {
+          this.logger.warn(
+            `Subscription ${sub.id}: invoice ${created.data.invoice_number} generated but not sent (${err instanceof Error ? err.message : 'unknown'})`,
+          );
+        }
+
+        // Advance the cycle + counters; apply end conditions.
+        const nextDate = advanceDate(billDate, sub.billing_period, sub.custom_period_days);
+        const cycles = (sub.total_cycles_billed ?? 0) + 1;
+        const billedCents =
+          Math.round(parseFloat(sub.total_amount_billed ?? '0') * 100) +
+          Math.round(parseFloat(created.data.total_amount) * 100);
+        const expired =
+          (sub.end_condition === 'after_n_cycles' && sub.end_after_cycles != null && cycles >= sub.end_after_cycles) ||
+          (sub.end_condition === 'on_date' && sub.end_date != null && nextDate > sub.end_date);
+
+        await this.dbAdmin
+          .update(invoiceSubscriptions)
+          .set({
+            next_billing_date: expired ? null : nextDate,
+            next_billing_amount: (cycleAmountCents(sub) / 100).toFixed(2),
+            total_cycles_billed: cycles,
+            total_amount_billed: (billedCents / 100).toFixed(2),
+            status: expired ? 'EXPIRED' : sub.status === 'TRIALING' && sub.trial_ends_at && nextDate > sub.trial_ends_at ? 'ACTIVE' : sub.status,
+            updated_at: new Date(),
+          })
+          .where(eq(invoiceSubscriptions.id, sub.id));
+        generated++;
+      } catch (err) {
+        this.logger.error(
+          `Subscription ${sub.id} generation failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      }
+    }
+    return generated;
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'send-pre-debit-notifications' })
   async sendPreDebitNotifications(): Promise<void> {
-    // Sprint 7: 24h before next charge.
-    this.logger.debug('send-pre-debit-notifications (stub)');
+    const n = await this.runPreDebitSweep();
+    if (n > 0) this.logger.log(`send-pre-debit-notifications: ${n} notice(s) sent`);
+  }
+
+  /**
+   * Pre-debit sweep (§6.8): 24h before the next mandate charge, notify the
+   * customer. Idempotent per (subscription, billing date) via an audit-log
+   * marker — the hourly cron can run all day without double-sending.
+   */
+  async runPreDebitSweep(): Promise<number> {
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const upcoming = await this.dbAdmin
+      .select({
+        sub: invoiceSubscriptions,
+        customer_email: customers.email,
+        customer_name: customers.display_name,
+      })
+      .from(invoiceSubscriptions)
+      .leftJoin(customers, eq(invoiceSubscriptions.customer_id, customers.id))
+      .where(
+        and(
+          inArray(invoiceSubscriptions.status, ['ACTIVE', 'TRIALING']),
+          sql`${invoiceSubscriptions.mandate_authorized_at} is not null`,
+          eq(invoiceSubscriptions.next_billing_date, tomorrow),
+        ),
+      );
+
+    let sent = 0;
+    for (const { sub, customer_email, customer_name } of upcoming) {
+      // Idempotency marker: one pre-debit audit row per (sub, billing date).
+      const [already] = await this.dbAdmin
+        .select({ id: auditLog.id })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.tenant_id, sub.tenant_id),
+            eq(auditLog.action, 'invoicing.subscription.pre_debit'),
+            eq(auditLog.resource_id, sub.id),
+            sql`${auditLog.metadata} ->> 'billing_date' = ${tomorrow}`,
+          ),
+        )
+        .limit(1);
+      if (already) continue;
+
+      if (customer_email) {
+        await this.notifications.sendEmail('subscription-pre-debit', customer_email, {
+          customerName: customer_name,
+          name: sub.name,
+          amount: `${sub.currency} ${sub.next_billing_amount ?? '0.00'}`,
+          chargeDate: tomorrow,
+        });
+      }
+      await this.dbAdmin.insert(auditLog).values({
+        tenant_id: sub.tenant_id,
+        action: 'invoicing.subscription.pre_debit',
+        resource_type: 'invoice_subscription',
+        resource_id: sub.id,
+        metadata: { billing_date: tomorrow, notified: !!customer_email },
+      });
+      sent++;
+    }
+    return sent;
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_1AM, { name: 'retry-failed-subscription-charges' })
   async retryFailedSubscriptionCharges(): Promise<void> {
-    // Sprint 7: dunning — 3 retries / 7 days → pause.
-    this.logger.debug('retry-failed-subscription-charges (stub)');
+    const n = await this.runDunningSweep();
+    if (n > 0) this.logger.log(`dunning: ${n} subscription(s) processed`);
+  }
+
+  /**
+   * Dunning sweep (§6.8): PAST_DUE subscriptions get a retry per run (the
+   * charge itself is stubbed until live Razorpay keys — each run counts a
+   * failed attempt); after 3 failures over the retry window the profile is
+   * PAUSED and the tenant sees it in the list.
+   */
+  async runDunningSweep(): Promise<number> {
+    const pastDue = await this.dbAdmin
+      .select()
+      .from(invoiceSubscriptions)
+      .where(eq(invoiceSubscriptions.status, 'PAST_DUE'));
+
+    let processed = 0;
+    for (const sub of pastDue) {
+      const failures = (sub.failed_charge_count ?? 0) + 1;
+      const exhausted = failures >= 3;
+      await this.dbAdmin
+        .update(invoiceSubscriptions)
+        .set({
+          failed_charge_count: failures,
+          last_failure_at: new Date(),
+          status: exhausted ? 'PAUSED' : 'PAST_DUE',
+          paused_at: exhausted ? new Date() : sub.paused_at,
+          updated_at: new Date(),
+        })
+        .where(eq(invoiceSubscriptions.id, sub.id));
+      if (exhausted) {
+        await this.dbAdmin.insert(auditLog).values({
+          tenant_id: sub.tenant_id,
+          action: 'invoicing.subscription.dunning_paused',
+          resource_type: 'invoice_subscription',
+          resource_id: sub.id,
+          metadata: { failures },
+        });
+      }
+      processed++;
+    }
+    return processed;
   }
 
   @Cron('0 6 * * *', { name: 'refresh-fx-rates', timeZone: 'Asia/Kolkata' })

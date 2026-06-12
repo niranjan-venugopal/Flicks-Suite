@@ -291,3 +291,31 @@ export class GenerateGstr1Dto {
   @Type(() => Number) @IsInt() @Min(2020) @Max(2100) period_year!: number;
   @IsOptional() @IsIn(['json', 'csv']) format?: string;
 }
+
+// ─── Subscriptions (Sprint 7) ───────────────────────────────────────────────
+
+export class CreateSubscriptionDto {
+  @IsString() customer_id!: string;
+  @IsString() @MaxLength(120) name!: string;
+  @IsIn(['flat_rate', 'per_seat']) pricing_model!: string;
+  @IsOptional() @IsString() currency?: string; // LOCKED at creation
+  @IsOptional() @IsNumberString() flat_amount?: string;
+  @IsOptional() @IsNumberString() seat_rate?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) seat_count?: number;
+  @IsIn(['monthly', 'quarterly', 'annually', 'custom']) billing_period!: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) custom_period_days?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(28) anchor_day?: number;
+  @IsString() start_date!: string; // YYYY-MM-DD
+  @IsOptional() @IsIn(['until_cancelled', 'after_n_cycles', 'on_date']) end_condition?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) end_after_cycles?: number;
+  @IsOptional() @IsString() end_date?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) trial_days?: number;
+}
+
+export class UpdateSeatsDto {
+  @Type(() => Number) @IsInt() @Min(1) seat_count!: number;
+}
+
+export class CancelSubscriptionDto {
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}

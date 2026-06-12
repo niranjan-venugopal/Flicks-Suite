@@ -818,7 +818,7 @@ describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () 
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const notesSvc = new NotesService(dbSvc, audit, numbering);
   const reportsSvc = new InvReportsService(dbSvc, audit);
-  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1014,6 +1014,225 @@ describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () 
 
     const sentRows = await dbAdmin.select().from(rsentTable).where(eq(rsentTable.invoice_id, inv.id));
     expect(sentRows).toHaveLength(2);
+  });
+});
+
+// ─── Sprint 7: subscriptions + mandate + dunning ──────────────────────────────
+import { SubscriptionsService } from '../modules/invoicing/subscriptions.service';
+import {
+  invoiceSubscriptions as subsTable,
+  invoiceSubscriptionProrationEvents as prorTable,
+} from '@flicks/db/schema';
+
+describe('Invoicing services (Sprint 7 — subscriptions)', () => {
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const subsSvc = new SubscriptionsService(dbSvc, audit, configStub as any);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc);
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `SubCo${rid()}`, slug: `subco-${rid()}-${Date.now()}`, status: 'trialing', state_code: 'KA' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `sub-${rid()}@test.test`, full_name: 'Sub User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const c = await customers.create(
+      { display_name: 'Retainer Client', email: 'retainer@test.test', state_code: 'KA' },
+      userId,
+      tenantId,
+    );
+    customerId = c.data.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(users).where(eq(users.id, userId));
+  });
+
+  it('creates a flat-rate profile (PENDING_MANDATE, currency locked) and activates via the mandate stub', async () => {
+    const created = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'Design retainer',
+        pricing_model: 'flat_rate',
+        flat_amount: '80000.00',
+        billing_period: 'monthly',
+        start_date: yesterday,
+      } as any,
+      userId,
+      tenantId,
+    );
+    expect(created.data.status).toBe('PENDING_MANDATE');
+    expect(created.data.currency).toBe('INR');
+    expect(created.data.next_billing_date).toBe(yesterday);
+
+    const link = await subsSvc.mandateLink(created.data.id, tenantId);
+    expect(link.data.stub).toBe(true); // no Razorpay keys configured
+
+    const active = await subsSvc.activate(created.data.id, userId, tenantId);
+    expect(active.data.status).toBe('ACTIVE');
+    expect(active.data.mandate_authorized_at).toBeTruthy();
+  });
+
+  it('generation sweep: due profile → real invoice (GST applied), auto-sent, cycle advanced', async () => {
+    sentEmails.length = 0;
+    const generated = await jobs.runSubscriptionGeneration();
+    expect(generated).toBeGreaterThanOrEqual(1);
+
+    const [sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.tenant_id, tenantId));
+    expect(sub!.total_cycles_billed).toBe(1);
+    expect(sub!.next_billing_date! > yesterday).toBe(true);
+
+    const subDetail = await subsSvc.get(tenantId, sub!.id);
+    expect(subDetail.data.invoices).toHaveLength(1);
+    const inv = subDetail.data.invoices[0]!;
+    expect(parseFloat(inv.total_amount)).toBeCloseTo(94400, 0); // 80,000 + 18% GST
+    expect(['SENT', 'VIEWED'].includes(inv.status)).toBe(true); // auto-sent
+    expect(sentEmails.some((e) => e.template === 'invoice-sent')).toBe(true);
+
+    // re-run: nothing due anymore for this profile
+    const again = await jobs.runSubscriptionGeneration();
+    const [after] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, sub!.id));
+    expect(after!.total_cycles_billed).toBe(1 + (again > 0 ? 0 : 0));
+  });
+
+  it('per-seat: seat change creates a proration event that lands on the next generated invoice', async () => {
+    const created = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'Team licences',
+        pricing_model: 'per_seat',
+        seat_rate: '1000.00',
+        seat_count: 5,
+        billing_period: 'monthly',
+        start_date: yesterday,
+      } as any,
+      userId,
+      tenantId,
+    );
+    await subsSvc.activate(created.data.id, userId, tenantId);
+
+    const updated = await subsSvc.updateSeats(created.data.id, { seat_count: 8 }, userId, tenantId);
+    expect(updated.data.seat_count).toBe(8);
+    expect(updated.meta.proration).toBeTruthy();
+
+    await jobs.runSubscriptionGeneration();
+    const detail = await subsSvc.get(tenantId, created.data.id);
+    const genInv = detail.data.invoices[0]!;
+    // 8 seats × 1000 base line (+ proration line) + GST — at least the base
+    expect(parseFloat(genInv.total_amount)).toBeGreaterThanOrEqual(8000 * 1.18 - 1);
+    const [ev] = await dbAdmin
+      .select()
+      .from(prorTable)
+      .where(eq(prorTable.subscription_id, created.data.id));
+    expect(ev!.applied_to_invoice_id).toBe(genInv.id);
+  });
+
+  it('end condition after_n_cycles retires the profile to EXPIRED', async () => {
+    const created = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'One-cycle deal',
+        pricing_model: 'flat_rate',
+        flat_amount: '500.00',
+        billing_period: 'monthly',
+        start_date: yesterday,
+        end_condition: 'after_n_cycles',
+        end_after_cycles: 1,
+      } as any,
+      userId,
+      tenantId,
+    );
+    await subsSvc.activate(created.data.id, userId, tenantId);
+    await jobs.runSubscriptionGeneration();
+    const [sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, created.data.id));
+    expect(sub!.status).toBe('EXPIRED');
+    expect(sub!.next_billing_date).toBeNull();
+  });
+
+  it('pre-debit sweep notifies once per billing date (idempotent)', async () => {
+    const created = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'Hosting',
+        pricing_model: 'flat_rate',
+        flat_amount: '4200.00',
+        billing_period: 'monthly',
+        start_date: tomorrow,
+      } as any,
+      userId,
+      tenantId,
+    );
+    await subsSvc.activate(created.data.id, userId, tenantId);
+
+    sentEmails.length = 0;
+    const first = await jobs.runPreDebitSweep();
+    expect(first).toBeGreaterThanOrEqual(1);
+    expect(sentEmails.some((e) => e.template === 'subscription-pre-debit')).toBe(true);
+
+    sentEmails.length = 0;
+    const second = await jobs.runPreDebitSweep();
+    expect(second).toBe(0); // audit-log marker blocks the re-send
+    expect(sentEmails).toHaveLength(0);
+  });
+
+  it('dunning: 3 strikes over the retry window → PAUSED; resume clears the counter', async () => {
+    const created = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'Flaky payer',
+        pricing_model: 'flat_rate',
+        flat_amount: '900.00',
+        billing_period: 'monthly',
+        start_date: yesterday,
+      } as any,
+      userId,
+      tenantId,
+    );
+    await subsSvc.activate(created.data.id, userId, tenantId);
+    await dbAdmin.update(subsTable).set({ status: 'PAST_DUE' }).where(eq(subsTable.id, created.data.id));
+
+    await jobs.runDunningSweep(); // 1
+    await jobs.runDunningSweep(); // 2
+    let [sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, created.data.id));
+    expect(sub!.status).toBe('PAST_DUE');
+    expect(sub!.failed_charge_count).toBe(2);
+
+    await jobs.runDunningSweep(); // 3 → pause
+    ;[sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, created.data.id));
+    expect(sub!.status).toBe('PAUSED');
+
+    const resumed = await subsSvc.resume(created.data.id, userId, tenantId);
+    expect(resumed.data.status).toBe('ACTIVE');
+    expect(resumed.data.failed_charge_count).toBe(0);
+  });
+
+  it('validation: per-seat needs rate+seats; pause/cancel transitions guarded', async () => {
+    await expect(
+      subsSvc.create(
+        { customer_id: customerId, name: 'Bad', pricing_model: 'per_seat', billing_period: 'monthly', start_date: yesterday } as any,
+        userId,
+        tenantId,
+      ),
+    ).rejects.toThrow(/seat_rate/);
+    const created = await subsSvc.create(
+      { customer_id: customerId, name: 'Guard', pricing_model: 'flat_rate', flat_amount: '10.00', billing_period: 'monthly', start_date: tomorrow } as any,
+      userId,
+      tenantId,
+    );
+    await expect(subsSvc.resume(created.data.id, userId, tenantId)).rejects.toThrow(/Cannot resume/);
+    const cancelled = await subsSvc.cancel(created.data.id, 'not needed', userId, tenantId);
+    expect(cancelled.data.status).toBe('CANCELLED');
   });
 });
 

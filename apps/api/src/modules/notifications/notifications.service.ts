@@ -100,6 +100,7 @@ type EmailTemplate =
   | 'invoice-sent'
   | 'payment-received'
   | 'invoice-reminder'
+  | 'subscription-pre-debit'
   // Billing
   | 'trial-ending-soon'
   | 'subscription-payment-success'
@@ -211,6 +212,18 @@ export class NotificationsService {
             <p>This is a ${props.overdue ? '<strong>payment overdue</strong>' : 'friendly'} reminder for
             invoice <strong>${props.invoiceNumber}</strong> — <strong>${props.amount}</strong>
             ${props.overdue ? 'was due' : 'is due'} on <strong>${props.dueDate}</strong>.</p>
+          `,
+        };
+      }
+
+      case 'subscription-pre-debit': {
+        return {
+          subject: `Upcoming charge: ${props.name}`,
+          html: `
+            <p>Hi ${props.customerName ?? 'there'},</p>
+            <p>A scheduled charge of <strong>${props.amount}</strong> for
+            <strong>${props.name}</strong> will be made on <strong>${props.chargeDate}</strong>
+            via your authorized mandate. No action is needed.</p>
           `,
         };
       }
