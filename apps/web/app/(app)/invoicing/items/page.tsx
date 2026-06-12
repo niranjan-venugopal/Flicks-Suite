@@ -1,20 +1,31 @@
 'use client'
 
 import { useState } from 'react'
-import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
-import { ItemModal } from '@/components/invoicing/ItemModal'
 import { useToast } from '@/components/ui/use-toast'
+import { ItemModal } from '@/components/invoicing/ItemModal'
 import { useItems, useArchiveItem, type Item } from '@/lib/api/queries/use-invoicing'
+import {
+  INVO,
+  InvoPage,
+  InvoTitle,
+  InvoBtn,
+  InvoTable,
+  InvoRow,
+  InvoSearch,
+  StatusChip,
+  InvoIcons,
+  invoTh,
+  invoTd,
+} from '@/components/invoicing/invo'
 
-const CELL: React.CSSProperties = { padding: '12px 14px', fontSize: 14, textAlign: 'left' }
-const HEAD: React.CSSProperties = { ...CELL, fontSize: 12, color: 'var(--muted)', fontWeight: 600 }
+const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : `${c} `)
 
 export default function ItemsPage() {
   const { toast } = useToast()
   const [q, setQ] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Item | null>(null)
-  const { data, isLoading, isError } = useItems({ q })
+  const { data, isLoading, isError } = useItems({ q: q || undefined })
   const archive = useArchiveItem()
 
   const rows = data?.data ?? []
@@ -30,114 +41,102 @@ export default function ItemsPage() {
   }
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <SectionHead
-        eyebrow="Invoicing"
-        title="Items"
-        sub="Reusable line items with HSN/SAC and default tax."
+    <InvoPage>
+      <InvoTitle
+        icon={InvoIcons.drafts}
         right={
-          <Btn
-            kind="primary"
-            size="sm"
-            icon={<Icon.plus size={13} />}
-            onClick={() => {
-              setEditing(null)
-              setModalOpen(true)
-            }}
-          >
-            New item
-          </Btn>
+          <>
+            <InvoSearch value={q} onChange={setQ} placeholder="Search items..." />
+            <InvoBtn
+              kind="primary"
+              height={44}
+              icon={InvoIcons.plusSmall}
+              onClick={() => {
+                setEditing(null)
+                setModalOpen(true)
+              }}
+            >
+              Add item
+            </InvoBtn>
+          </>
         }
-      />
+      >
+        Items
+      </InvoTitle>
 
-      <div style={{ display: 'flex', gap: 10, margin: '6px 0 16px' }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
-          <span style={{ position: 'absolute', left: 11, top: 9, color: 'var(--muted)' }}>
-            <Icon.search size={15} />
-          </span>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by name, code or HSN/SAC"
-            style={{
-              width: '100%',
-              padding: '9px 11px 9px 32px',
-              borderRadius: 9,
-              border: '1px solid var(--line)',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              fontSize: 14,
-            }}
-          />
+      <InvoTable
+        head={
+          <>
+            <th style={invoTh}>Item</th>
+            <th style={invoTh}>HSN/SAC</th>
+            <th style={invoTh}>Rate</th>
+            <th style={invoTh}>GST %</th>
+            <th style={invoTh}>Status</th>
+            <th style={invoTh}>Action</th>
+          </>
+        }
+      >
+        {isLoading && (
+          <tr>
+            <td style={{ ...invoTd, color: INVO.muted40 }} colSpan={6}>
+              Loading…
+            </td>
+          </tr>
+        )}
+        {isError && (
+          <tr>
+            <td style={{ ...invoTd, color: INVO.coral }} colSpan={6}>
+              Couldn’t load items. Check you’re signed in.
+            </td>
+          </tr>
+        )}
+        {rows.map((it, i) => (
+          <InvoRow key={it.id} index={i}>
+            <td style={invoTd}>
+              <div>
+                {it.name}
+                {it.description && (
+                  <div style={{ fontWeight: 600, fontSize: 12, color: INVO.muted40, marginTop: 2 }}>{it.description}</div>
+                )}
+              </div>
+            </td>
+            <td style={{ ...invoTd, color: INVO.muted60 }}>{it.hsn_sac_code ?? '—'}</td>
+            <td style={invoTd}>
+              {symbol(it.currency)}
+              {parseFloat(it.default_rate).toLocaleString('en-IN')}
+              <span style={{ color: INVO.muted40, fontSize: 12 }}> / {it.unit}</span>
+            </td>
+            <td style={{ ...invoTd, color: INVO.muted60 }}>{it.default_gst_rate ?? '—'}</td>
+            <td style={invoTd}>
+              <StatusChip status={it.status} />
+            </td>
+            <td style={invoTd}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <InvoBtn
+                  kind="chip-blue"
+                  onClick={() => {
+                    setEditing(it)
+                    setModalOpen(true)
+                  }}
+                >
+                  Edit
+                </InvoBtn>
+                <InvoBtn kind="chip-outline" onClick={() => onArchive(it)}>
+                  {it.status === 'archived' ? 'Restore' : 'Archive'}
+                </InvoBtn>
+              </div>
+            </td>
+          </InvoRow>
+        ))}
+      </InvoTable>
+
+      {!isLoading && !isError && rows.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '60px 0', color: INVO.muted30, fontWeight: 600, fontSize: 16, letterSpacing: '-0.02em' }}>
+          No items found
         </div>
-      </div>
-
-      <div className="glass" style={{ borderRadius: 14, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid var(--line)' }}>
-              <th style={HEAD}>Code</th>
-              <th style={HEAD}>Name</th>
-              <th style={HEAD}>HSN/SAC</th>
-              <th style={{ ...HEAD, textAlign: 'right' }}>Rate</th>
-              <th style={{ ...HEAD, textAlign: 'right' }}>GST %</th>
-              <th style={HEAD}>Status</th>
-              <th style={HEAD}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && (
-              <tr>
-                <td style={CELL} colSpan={7}>
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {isError && (
-              <tr>
-                <td style={{ ...CELL, color: 'var(--coral, #ff6b6b)' }} colSpan={7}>
-                  Couldn’t load items. Check you’re signed in.
-                </td>
-              </tr>
-            )}
-            {!isLoading && !isError && rows.length === 0 && (
-              <tr>
-                <td style={{ ...CELL, color: 'var(--muted)' }} colSpan={7}>
-                  No items yet — add your first one.
-                </td>
-              </tr>
-            )}
-            {rows.map((i) => (
-              <tr key={i.id} style={{ borderBottom: '1px solid var(--line)' }}>
-                <td style={{ ...CELL, fontFamily: 'var(--mono, monospace)' }}>{i.item_code}</td>
-                <td style={CELL}>{i.name}</td>
-                <td style={{ ...CELL, color: 'var(--muted)' }}>{i.hsn_sac_code ?? '—'}</td>
-                <td style={{ ...CELL, textAlign: 'right' }}>
-                  {i.currency} {i.default_rate}
-                </td>
-                <td style={{ ...CELL, textAlign: 'right' }}>{i.default_gst_rate ?? '—'}</td>
-                <td style={CELL}>
-                  <Pill tone={i.status === 'archived' ? '' : 'green'}>{i.status}</Pill>
-                </td>
-                <td style={{ ...CELL, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  <Btn
-                    kind="ghost"
-                    size="sm"
-                    icon={<Icon.edit size={13} />}
-                    onClick={() => {
-                      setEditing(i)
-                      setModalOpen(true)
-                    }}
-                  />
-                  <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} onClick={() => onArchive(i)} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      )}
 
       <ItemModal open={modalOpen} onOpenChange={setModalOpen} item={editing} />
-    </div>
+    </InvoPage>
   )
 }

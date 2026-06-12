@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Btn } from '@/components/proto'
+import { InvoBtn } from '@/components/invoicing/invo'
 import {
   Dialog,
   DialogContent,
@@ -18,18 +18,24 @@ import {
 
 const FIELD: React.CSSProperties = {
   width: '100%',
-  padding: '9px 11px',
-  borderRadius: 9,
-  border: '1px solid var(--line)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
+  height: 44,
+  background: 'rgba(255,255,255,0.05)',
+  border: '1.5px solid rgba(255,255,255,0.10)',
+  borderRadius: 10,
+  padding: '0 14px',
+  fontWeight: 600,
   fontSize: 14,
+  color: '#fff',
+  outline: 'none',
+  letterSpacing: '-0.02em',
 }
 const LABEL: React.CSSProperties = {
   display: 'block',
-  fontSize: 12,
-  color: 'var(--muted)',
-  marginBottom: 5,
+  fontWeight: 700,
+  fontSize: 13,
+  color: 'rgba(255,255,255,0.6)',
+  marginBottom: 6,
+  letterSpacing: '-0.02em',
 }
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
@@ -129,12 +135,12 @@ export function CustomerModal({
           </div>
         </div>
         <DialogFooter>
-          <Btn kind="ghost" onClick={() => onOpenChange(false)}>
+          <InvoBtn kind="outline" height={44} onClick={() => onOpenChange(false)}>
             Cancel
-          </Btn>
-          <Btn kind="primary" onClick={onSubmit} disabled={save.isPending}>
-            {save.isPending ? 'Saving…' : customer ? 'Save changes' : 'Create customer'}
-          </Btn>
+          </InvoBtn>
+          <InvoBtn kind="primary" height={44} onClick={onSubmit} disabled={save.isPending}>
+            {save.isPending ? 'Saving…' : customer ? 'Save changes' : 'Create client'}
+          </InvoBtn>
         </DialogFooter>
       </DialogContent>
     </Dialog>

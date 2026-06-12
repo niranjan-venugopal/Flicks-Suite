@@ -1,12 +1,13 @@
 'use client'
 
-import { Icon, Pill, SectionHead } from '@/components/proto'
+import { Icon } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
+import { INVO, InvoPage, InvoTitle, InvoCard } from '@/components/invoicing/invo'
 
 /**
- * Invoicing v3 scaffold page. A consistent placeholder for routes whose UI is
- * implemented in a later sprint — keeps the navigation + route group real and
- * the design language (proto components + globals.css tokens) in place.
+ * Invoicing scaffold page (Invo design language). A consistent placeholder for
+ * routes whose UI is implemented in a later sprint — keeps navigation real and
+ * the prototype look in place.
  */
 export function ScaffoldPage({
   icon = 'wallet',
@@ -23,19 +24,35 @@ export function ScaffoldPage({
 }) {
   const IconCmp = Icon[icon]
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
-      <SectionHead
-        eyebrow={eyebrow}
-        title={title}
-        sub={sub}
-        right={<Pill tone="blue">{sprint}</Pill>}
-      />
-      <div
-        className="glass"
+    <InvoPage>
+      <InvoTitle
+        right={
+          <span
+            style={{
+              padding: '4px 12px',
+              borderRadius: 999,
+              background: 'rgba(62,123,250,0.15)',
+              color: INVO.blue,
+              fontWeight: 700,
+              fontSize: 12,
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {sprint}
+          </span>
+        }
+      >
+        {title}
+      </InvoTitle>
+      {sub && (
+        <div style={{ fontWeight: 600, fontSize: 14, color: INVO.muted50, letterSpacing: '-0.02em', marginTop: -8, marginBottom: 24 }}>
+          {sub}
+        </div>
+      )}
+      <InvoCard
+        strong
         style={{
-          marginTop: 24,
           padding: '48px 32px',
-          borderRadius: 16,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -51,17 +68,18 @@ export function ScaffoldPage({
             display: 'grid',
             placeItems: 'center',
             background: 'rgba(62,123,250,0.13)',
-            color: 'var(--blue)',
+            color: INVO.blue,
           }}
         >
           <IconCmp size={26} />
         </div>
-        <div className="t-h3">Coming together in {sprint}</div>
-        <div className="t-body" style={{ color: 'var(--muted)', maxWidth: 520 }}>
-          The data model, RLS isolation, and API routes for this area are
-          scaffolded. The interactive UI lands in {sprint}.
+        <div style={{ fontWeight: 700, fontSize: 18, color: '#fff', letterSpacing: '-0.02em' }}>
+          Coming together in {sprint}
         </div>
-      </div>
-    </div>
+        <div style={{ fontWeight: 600, fontSize: 14, color: INVO.muted50, maxWidth: 520, letterSpacing: '-0.02em' }}>
+          The data model, RLS isolation, and API routes for this area are scaffolded. The interactive UI lands in {sprint}.
+        </div>
+      </InvoCard>
+    </InvoPage>
   )
 }

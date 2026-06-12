@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Btn, Pill } from '@/components/proto'
+import { InvoBtn, InvoCard, INVO } from '@/components/invoicing/invo'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useSequences,
@@ -19,14 +19,25 @@ const DOC_LABELS: Record<string, string> = {
 const FY_FORMATS = ['26-27', '2026-27', '2026-2027', '2026']
 const FIELD: React.CSSProperties = {
   width: '100%',
-  padding: '8px 10px',
-  borderRadius: 8,
-  border: '1px solid var(--line)',
-  background: 'var(--surface)',
-  color: 'var(--text)',
+  height: 44,
+  background: 'rgba(255,255,255,0.05)',
+  border: '1.5px solid rgba(255,255,255,0.10)',
+  borderRadius: 10,
+  padding: '0 12px',
+  fontWeight: 600,
   fontSize: 13,
+  color: '#fff',
+  outline: 'none',
+  letterSpacing: '-0.02em',
 }
-const LABEL: React.CSSProperties = { display: 'block', fontSize: 11, color: 'var(--muted)', marginBottom: 4 }
+const LABEL: React.CSSProperties = {
+  display: 'block',
+  fontWeight: 700,
+  fontSize: 12,
+  color: 'rgba(255,255,255,0.5)',
+  marginBottom: 5,
+  letterSpacing: '-0.02em',
+}
 
 function localPreview(s: Editable, fyLabel: string): { sample: string; tooLong: boolean; badChars: boolean } {
   const padded = String(s.starting_number || 1).padStart(s.zero_padding ?? 0, '0')
@@ -100,10 +111,10 @@ function SequenceCard({ seq }: { seq: Sequence }) {
   }
 
   return (
-    <div className="glass" style={{ borderRadius: 12, padding: 16, marginBottom: 14 }}>
+    <InvoCard style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <div style={{ fontWeight: 600 }}>{DOC_LABELS[seq.document_type] ?? seq.document_type}</div>
-        <Pill tone="blue">FY {e.fy_label}</Pill>
+        <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.02em', color: '#fff' }}>{DOC_LABELS[seq.document_type] ?? seq.document_type}</div>
+        <span style={{ padding: '4px 12px', borderRadius: 999, background: 'rgba(62,123,250,0.15)', color: INVO.blue, fontWeight: 700, fontSize: 12 }}>FY {e.fy_label}</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
         <div>
@@ -148,31 +159,27 @@ function SequenceCard({ seq }: { seq: Sequence }) {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
         <div style={{ fontSize: 13 }}>
-          <span style={{ color: 'var(--muted)' }}>Next number: </span>
-          <span style={{ fontFamily: 'var(--mono, monospace)', color: pv.tooLong || pv.badChars ? 'var(--coral, #ff6b6b)' : 'var(--text)' }}>
+          <span style={{ color: 'rgba(255,255,255,0.5)' }}>Next number: </span>
+          <span style={{ fontFamily: 'var(--mono, monospace)', color: pv.tooLong || pv.badChars ? 'var(--coral, #ff6b6b)' : '#fff' }}>
             {pv.sample}
           </span>
-          {pv.tooLong && <span style={{ color: 'var(--coral, #ff6b6b)', marginLeft: 8 }}>· over 16 chars</span>}
-          {pv.badChars && <span style={{ color: 'var(--coral, #ff6b6b)', marginLeft: 8 }}>· invalid characters</span>}
+          {pv.tooLong && <span style={{ color: '#F8786B', marginLeft: 8 }}>· over 16 chars</span>}
+          {pv.badChars && <span style={{ color: '#F8786B', marginLeft: 8 }}>· invalid characters</span>}
         </div>
-        <Btn kind="primary" size="sm" onClick={onSave} disabled={upsert.isPending}>
+        <InvoBtn kind="primary" height={40} onClick={onSave} disabled={upsert.isPending}>
           {upsert.isPending ? 'Saving…' : 'Save'}
-        </Btn>
+        </InvoBtn>
       </div>
-    </div>
+    </InvoCard>
   )
 }
 
 export function NumberingTab() {
   const { data, isLoading, isError } = useSequences()
-  if (isLoading) return <div style={{ color: 'var(--muted)' }}>Loading sequences…</div>
-  if (isError) return <div style={{ color: 'var(--coral, #ff6b6b)' }}>Couldn’t load sequences. Check you’re signed in.</div>
+  if (isLoading) return <div style={{ color: 'rgba(255,255,255,0.5)' }}>Loading sequences…</div>
+  if (isError) return <div style={{ color: '#F8786B' }}>Couldn’t load sequences. Check you’re signed in.</div>
   return (
     <div>
-      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
-        Numbers reset automatically at the start of each financial year. Numbers must be ≤16 characters and use only
-        letters, digits, “-” and “/”. Changing numbering mid-year can affect GST compliance.
-      </p>
       {(data?.data ?? []).map((seq) => (
         <SequenceCard key={seq.document_type} seq={seq} />
       ))}
