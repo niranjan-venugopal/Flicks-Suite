@@ -265,3 +265,29 @@ export class CancelInvoiceDto {
 export class WriteOffInvoiceDto {
   @IsString() @MaxLength(500) reason!: string;
 }
+
+// ─── Notes / adjustments / reports (Sprint 6) ───────────────────────────────
+
+export class CreateNoteDto {
+  @IsOptional() @IsString() invoice_id?: string;
+  @IsOptional() @IsString() customer_id?: string;
+  @IsString() reason!: string;
+  @IsOptional() @IsString() @MaxLength(500) reason_description?: string;
+  @IsNumberString() amount!: string;
+}
+
+export class CreateAdjustmentDto {
+  @IsString() customer_id!: string;
+  @IsOptional() @IsString() adjustment_date?: string;
+  @IsNumberString() amount!: string; // + customer owes more / − owes less
+  @IsOptional() @IsString() currency?: string;
+  @IsIn(['opening_balance', 'write_off', 'round_off', 'bank_charge', 'other'])
+  type!: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
+export class GenerateGstr1Dto {
+  @Type(() => Number) @IsInt() @Min(1) @Max(12) period_month!: number;
+  @Type(() => Number) @IsInt() @Min(2020) @Max(2100) period_year!: number;
+  @IsOptional() @IsIn(['json', 'csv']) format?: string;
+}

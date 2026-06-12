@@ -99,6 +99,7 @@ type EmailTemplate =
   // Invoicing (v3)
   | 'invoice-sent'
   | 'payment-received'
+  | 'invoice-reminder'
   // Billing
   | 'trial-ending-soon'
   | 'subscription-payment-success'
@@ -198,6 +199,18 @@ export class NotificationsService {
             <p>Hi ${props.customerName ?? 'there'},</p>
             <p>We've recorded a payment of <strong>${props.amount}</strong> against
             invoice <strong>${props.invoiceNumber}</strong>. ${props.outstanding ? `Outstanding balance: <strong>${props.outstanding}</strong>.` : 'The invoice is now fully paid — thank you!'}</p>
+          `,
+        };
+      }
+
+      case 'invoice-reminder': {
+        return {
+          subject: `${props.overdue ? 'Overdue' : 'Reminder'}: invoice ${props.invoiceNumber}`,
+          html: `
+            <p>Hi ${props.customerName ?? 'there'},</p>
+            <p>This is a ${props.overdue ? '<strong>payment overdue</strong>' : 'friendly'} reminder for
+            invoice <strong>${props.invoiceNumber}</strong> — <strong>${props.amount}</strong>
+            ${props.overdue ? 'was due' : 'is due'} on <strong>${props.dueDate}</strong>.</p>
           `,
         };
       }

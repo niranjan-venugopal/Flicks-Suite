@@ -804,6 +804,219 @@ describe('Org financial + bank accounts (Sprint 5)', () => {
   });
 });
 
+// ─── Sprint 6: notes, ledger, reminders, reports/GSTR-1 ──────────────────────
+import { NotesService } from '../modules/invoicing/notes.service';
+import { InvReportsService } from '../modules/invoicing/inv-reports.service';
+import { InvoicingJobs } from '../jobs/invoicing.jobs';
+import {
+  reminderSchedule as rsTable,
+  reminderSent as rsentTable,
+  customerCreditBalance as ccb6,
+} from '@flicks/db/schema';
+
+describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () => {
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const notesSvc = new NotesService(dbSvc, audit, numbering);
+  const reportsSvc = new InvReportsService(dbSvc, audit);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any);
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+
+  const mkInvoice = async (over: Record<string, unknown> = {}) =>
+    (
+      await invoicesSvc.create(
+        {
+          customer_id: customerId,
+          invoice_date: '2026-06-05',
+          due_date: '2026-06-20',
+          line_items: [{ item_name: 'Retainer', quantity: '1', rate: '1000.00', gst_rate: '18' }],
+          ...(over as object),
+        } as any,
+        userId,
+        tenantId,
+      )
+    ).data;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `RepCo${rid()}`, slug: `repco-${rid()}-${Date.now()}`, status: 'trialing', state_code: 'KA' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `rep-${rid()}@test.test`, full_name: 'Rep User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const c = await customers.create(
+      { display_name: 'Ledger Co', email: 'ledger@test.test', state_code: 'KA', gstin: '29ABCDE1234F1Z5' },
+      userId,
+      tenantId,
+    );
+    customerId = c.data.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(users).where(eq(users.id, userId));
+  });
+
+  it('credit note: CRN numbering, ISSUED, books into the customer credit balance', async () => {
+    const inv = await mkInvoice();
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const note = await notesSvc.create(
+      'credit',
+      { invoice_id: inv.id, reason: 'post_supply_discount', amount: '200.00' },
+      userId,
+      tenantId,
+    );
+    expect((note.data as any).credit_note_number).toMatch(/^CRN\/\d{2}-\d{2}\/0001$/);
+    expect(note.data.status).toBe('ISSUED');
+
+    const [balance] = await dbAdmin
+      .select()
+      .from(ccb6)
+      .where(eq(ccb6.customer_id, customerId));
+    expect(parseFloat(balance!.balance_amount)).toBeGreaterThanOrEqual(200);
+
+    const listed = await notesSvc.list(tenantId);
+    expect(listed.data.credit.some((n) => n.id === note.data.id)).toBe(true);
+  });
+
+  it('debit note: DBN numbering, no credit-balance effect', async () => {
+    const inv = await mkInvoice();
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const before = await dbAdmin.select().from(ccb6).where(eq(ccb6.customer_id, customerId));
+    const note = await notesSvc.create(
+      'debit',
+      { invoice_id: inv.id, reason: 'additional_charges', amount: '150.00' },
+      userId,
+      tenantId,
+    );
+    expect((note.data as any).debit_note_number).toMatch(/^DBN\//);
+    const after = await dbAdmin.select().from(ccb6).where(eq(ccb6.customer_id, customerId));
+    expect(after[0]?.balance_amount).toBe(before[0]?.balance_amount);
+  });
+
+  it('customer ledger: invoices debit, payments/credit notes credit, running balance', async () => {
+    const inv = await mkInvoice(); // 1180.00
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    await invoicesSvc.recordPayment(
+      inv.id,
+      { amount: '500.00', payment_method: 'UPI_DIRECT' } as any,
+      userId,
+      tenantId,
+    );
+    const stmt = await customers.statement(tenantId, customerId);
+    const lines = stmt.data.lines;
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines.some((l: any) => l.type === 'invoice' && l.debit === '1180.00')).toBe(true);
+    expect(lines.some((l: any) => l.type === 'payment' && l.credit === '500.00')).toBe(true);
+    expect(lines.some((l: any) => l.type === 'credit_note')).toBe(true);
+    // closing balance equals sum of debits − credits
+    const sum = lines.reduce(
+      (a: number, l: any) =>
+        a + Math.round(parseFloat(l.debit ?? '0') * 100) - Math.round(parseFloat(l.credit ?? '0') * 100),
+      0,
+    );
+    expect((sum / 100).toFixed(2)).toBe(stmt.data.closing_balance);
+  });
+
+  it('adjustments: create, list, delete within 24h', async () => {
+    const adj = await notesSvc.createAdjustment(
+      { customer_id: customerId, amount: '-50.00', type: 'round_off', reason: 'rounding' },
+      userId,
+      tenantId,
+    );
+    const listed = await notesSvc.listAdjustments(tenantId);
+    expect(listed.data.some((a) => a.id === adj.data!.id)).toBe(true);
+    await notesSvc.deleteAdjustment(adj.data!.id, userId, tenantId);
+    const after = await notesSvc.listAdjustments(tenantId);
+    expect(after.data.some((a) => a.id === adj.data!.id)).toBe(false);
+  });
+
+  it('payments ledger lists tenant-wide payments with invoice + customer', async () => {
+    const res = await invoicesSvc.listPayments(tenantId, {});
+    expect(res.data.length).toBeGreaterThanOrEqual(1);
+    expect(res.data[0]!.payment_number).toMatch(/^PMT-/);
+    expect(res.data[0]!.customer_name).toBe('Ledger Co');
+  });
+
+  it('aging buckets the outstanding by due date', async () => {
+    // overdue invoice (due last year) + current one
+    const overdue = await mkInvoice({ invoice_date: '2025-01-01', due_date: '2025-01-15' });
+    await dbAdmin
+      .update(schemaInvoices)
+      .set({ status: 'OVERDUE' })
+      .where(eq(schemaInvoices.id, overdue.id));
+    const current = await mkInvoice({ due_date: '2099-01-01' });
+    await invoicesSvc.send(current.id, userId, tenantId);
+
+    const aging = await reportsSvc.aging(tenantId);
+    const byBucket = Object.fromEntries(aging.data.buckets.map((b) => [b.bucket, parseFloat(b.amount)]));
+    expect(byBucket['60+ days']).toBeGreaterThanOrEqual(1180);
+    expect(byBucket['Current']).toBeGreaterThanOrEqual(1180);
+    expect(parseFloat(aging.data.total)).toBeGreaterThan(0);
+  });
+
+  it('GSTR-1: buckets B2B (registered) + CDNR, logs the export with a hash', async () => {
+    const inv = await mkInvoice({ invoice_date: '2026-06-05' });
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const res = await reportsSvc.generateGstr1(
+      { period_month: 6, period_year: 2026 } as any,
+      userId,
+      tenantId,
+    );
+    expect(res.data.summary.b2b.count).toBeGreaterThanOrEqual(1); // customer has a GSTIN
+    expect(res.data.summary.cdnr.count).toBeGreaterThanOrEqual(1); // CRN issued in June
+    expect(res.data.export.file_hash).toHaveLength(64);
+    const history = await reportsSvc.gstr1History(tenantId);
+    expect(history.data.some((h) => h.id === res.data.export.id)).toBe(true);
+  });
+
+  it('TDS receivable + Form 131 mark-received round trip', async () => {
+    const inv = await mkInvoice({ tds_rate: '10', tds_section: '393' });
+    await invoicesSvc.send(inv.id, userId, tenantId);
+    const tds = await reportsSvc.tdsReceivable(tenantId);
+    expect(parseFloat(tds.meta.total)).toBeGreaterThanOrEqual(100);
+
+    const tracking = await reportsSvc.form131Tracking(tenantId);
+    const row = tracking.data.find((r) => r.customer_id === customerId);
+    expect(row).toBeTruthy();
+    expect(row!.received).toBe(false);
+    await reportsSvc.markForm131Received(
+      { customer_id: customerId, fy_label: row!.fy_label, quarter: row!.quarter, total_tds_amount: row!.total_tds },
+      userId,
+      tenantId,
+    );
+    const after = await reportsSvc.form131Tracking(tenantId);
+    expect(after.data.find((r) => r.customer_id === customerId && r.quarter === row!.quarter)!.received).toBe(true);
+  });
+
+  it('reminders sweep: fires due steps once (idempotent on re-run)', async () => {
+    // schedule: on-due-day (0) + +7d for this tenant
+    await dbAdmin.insert(rsTable).values([
+      { tenant_id: tenantId, reminder_number: 1, offset_days: 0, scope: 'tenant', active: true },
+      { tenant_id: tenantId, reminder_number: 2, offset_days: 7, scope: 'tenant', active: true },
+    ]);
+    // overdue invoice (due 30 days ago) → both steps due
+    const inv = await mkInvoice({ invoice_date: '2026-05-01', due_date: '2026-05-13' });
+    await dbAdmin.update(schemaInvoices).set({ status: 'OVERDUE' }).where(eq(schemaInvoices.id, inv.id));
+
+    sentEmails.length = 0;
+    const first = await jobs.runRemindersSweep();
+    expect(first).toBeGreaterThanOrEqual(2);
+    expect(sentEmails.filter((e) => e.template === 'invoice-reminder').length).toBeGreaterThanOrEqual(2);
+
+    const again = await jobs.runRemindersSweep();
+    expect(again).toBe(0); // idempotent — reminder_sent unique key blocks re-sends
+
+    const sentRows = await dbAdmin.select().from(rsentTable).where(eq(rsentTable.invoice_id, inv.id));
+    expect(sentRows).toHaveLength(2);
+  });
+});
+
 // Close the shared postgres pools after every describe in this file has run,
 // so jest can exit cleanly.
 afterAll(async () => {

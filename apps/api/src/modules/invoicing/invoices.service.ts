@@ -728,6 +728,40 @@ export class InvoicesService {
     };
   }
 
+  /** Tenant-wide payments ledger (prototype ScrPayments). */
+  async listPayments(tenantId: string, query: { page?: number; limit?: number }) {
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 50, 100);
+    return this.db.withTenant(tenantId, async (tx) => {
+      const rows = await tx
+        .select({
+          id: invoicePayments.id,
+          payment_number: invoicePayments.payment_number,
+          payment_date: invoicePayments.payment_date,
+          amount: invoicePayments.amount,
+          currency: invoicePayments.currency,
+          payment_method: invoicePayments.payment_method,
+          reference_number: invoicePayments.reference_number,
+          source: invoicePayments.source,
+          invoice_id: invoicePayments.invoice_id,
+          invoice_number: invoices.invoice_number,
+          customer_name: customers.display_name,
+        })
+        .from(invoicePayments)
+        .leftJoin(invoices, eq(invoicePayments.invoice_id, invoices.id))
+        .leftJoin(customers, eq(invoicePayments.customer_id, customers.id))
+        .where(eq(invoicePayments.tenant_id, tenantId))
+        .orderBy(desc(invoicePayments.created_at))
+        .limit(limit)
+        .offset((page - 1) * limit);
+      const [{ total }] = await tx
+        .select({ total: sql<number>`count(*)::int` })
+        .from(invoicePayments)
+        .where(eq(invoicePayments.tenant_id, tenantId));
+      return { data: rows, pagination: { page, limit, total: total ?? 0 } };
+    });
+  }
+
   // ─── internals ─────────────────────────────────────────────────────────────
 
   private async fetch(tx: Db, id: string) {

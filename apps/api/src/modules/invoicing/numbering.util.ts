@@ -113,8 +113,8 @@ export function validateNumberFormat(parts: NumberFormatParts): NumberValidation
 export const DEFAULT_PREFIXES: Record<string, string> = {
   INVOICE: 'INV',
   QUOTE: 'QT',
-  CREDIT_NOTE: 'CN',
-  DEBIT_NOTE: 'DN',
+  CREDIT_NOTE: 'CRN',
+  DEBIT_NOTE: 'DBN',
 };
 
 function lastDayOfMonth(year: number, month: number): number {

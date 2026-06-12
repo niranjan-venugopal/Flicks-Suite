@@ -3,8 +3,15 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { and, eq, ilike, or, isNull, desc, sql } from 'drizzle-orm';
-import { customers } from '@flicks/db/schema';
+import { and, eq, ilike, or, isNull, desc, sql, notInArray } from 'drizzle-orm';
+import {
+  customers,
+  invoices,
+  invoicePayments,
+  creditNotes,
+  debitNotes,
+  adjustments,
+} from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import type {
@@ -198,20 +205,89 @@ export class CustomersService {
   }
 
   /**
-   * Customer statement (PRD §5). Full invoice/payment ledger arrives in Sprint
-   * 6 once invoices/payments exist; for now this returns the customer header
-   * with empty ledger sections so the route + shape are stable.
+   * Customer statement / ledger (PRD §5, §6.7): every financial event against
+   * the customer in date order with a running balance — invoices issued (+),
+   * payments (−), credit notes (−), debit notes (+), adjustments (±).
    */
   async statement(tenantId: string, id: string) {
     const customer = (await this.get(tenantId, id)).data;
+    const cents = (v: string | null | undefined) => Math.round(parseFloat(v ?? '0') * 100);
+    const money = (c: number) => (c / 100).toFixed(2);
+
+    const lines = await this.db.withTenant(tenantId, async (tx) => {
+      const invs = await tx
+        .select({
+          date: invoices.invoice_date,
+          ref: invoices.invoice_number,
+          amount: invoices.total_amount,
+          status: invoices.status,
+        })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.customer_id, id),
+            notInArray(invoices.status, ['DRAFT', 'CANCELLED', 'VOIDED']),
+          ),
+        );
+      const pays = await tx
+        .select({
+          date: invoicePayments.payment_date,
+          ref: invoicePayments.payment_number,
+          amount: invoicePayments.amount,
+          method: invoicePayments.payment_method,
+        })
+        .from(invoicePayments)
+        .where(eq(invoicePayments.customer_id, id));
+      const crns = await tx
+        .select({ date: creditNotes.credit_note_date, ref: creditNotes.credit_note_number, amount: creditNotes.total_amount })
+        .from(creditNotes)
+        .where(and(eq(creditNotes.customer_id, id), eq(creditNotes.status, 'ISSUED')));
+      const dbns = await tx
+        .select({ date: debitNotes.debit_note_date, ref: debitNotes.debit_note_number, amount: debitNotes.total_amount })
+        .from(debitNotes)
+        .where(and(eq(debitNotes.customer_id, id), eq(debitNotes.status, 'ISSUED')));
+      const adjs = await tx
+        .select({ date: adjustments.adjustment_date, ref: adjustments.type, amount: adjustments.amount, reason: adjustments.reason })
+        .from(adjustments)
+        .where(eq(adjustments.customer_id, id));
+
+      const all = [
+        ...invs.map((r) => ({ date: r.date, type: 'invoice', ref: r.ref, debit: cents(r.amount), credit: 0, detail: r.status })),
+        ...pays.map((r) => ({ date: r.date, type: 'payment', ref: r.ref, debit: 0, credit: cents(r.amount), detail: r.method })),
+        ...crns.map((r) => ({ date: r.date, type: 'credit_note', ref: r.ref, debit: 0, credit: cents(r.amount), detail: 'credit note' })),
+        ...dbns.map((r) => ({ date: r.date, type: 'debit_note', ref: r.ref, debit: cents(r.amount), credit: 0, detail: 'debit note' })),
+        ...adjs.map((r) => {
+          const c = cents(r.amount);
+          return {
+            date: r.date,
+            type: 'adjustment',
+            ref: r.ref,
+            debit: c > 0 ? c : 0,
+            credit: c < 0 ? -c : 0,
+            detail: r.reason ?? 'adjustment',
+          };
+        }),
+      ].sort((a, b) => a.date.localeCompare(b.date));
+
+      let balance = 0;
+      return all.map((l) => {
+        balance += l.debit - l.credit;
+        return {
+          ...l,
+          debit: l.debit ? money(l.debit) : null,
+          credit: l.credit ? money(l.credit) : null,
+          balance: money(balance),
+        };
+      });
+    });
+
     return {
       data: {
         customer,
         opening_balance: '0.00',
-        lines: [] as unknown[],
-        closing_balance: '0.00',
+        lines,
+        closing_balance: lines.length ? lines[lines.length - 1]!.balance : '0.00',
       },
-      meta: { note: 'Ledger populated in Sprint 6' },
     };
   }
 
