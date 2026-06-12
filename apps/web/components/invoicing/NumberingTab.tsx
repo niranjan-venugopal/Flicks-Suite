@@ -1,103 +1,108 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { InvoBtn, InvoCard, INVO } from '@/components/invoicing/invo'
+import { useEffect, useMemo, useState } from 'react'
+import { Btn, Icon, Pill, Toggle } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useSequences,
   useUpsertSequence,
   type Sequence,
-  type SequenceInput,
 } from '@/lib/api/queries/use-invoicing'
 
-const DOC_LABELS: Record<string, string> = {
-  INVOICE: 'Invoice',
-  QUOTE: 'Quote',
-  CREDIT_NOTE: 'Credit note',
-  DEBIT_NOTE: 'Debit note',
-}
-const FY_FORMATS = ['26-27', '2026-27', '2026-2027', '2026']
-const FIELD: React.CSSProperties = {
-  width: '100%',
-  height: 44,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1.5px solid rgba(255,255,255,0.10)',
-  borderRadius: 10,
-  padding: '0 12px',
-  fontWeight: 600,
-  fontSize: 13,
-  color: '#fff',
-  outline: 'none',
-  letterSpacing: '-0.02em',
-}
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 700,
-  fontSize: 12,
-  color: 'rgba(255,255,255,0.5)',
-  marginBottom: 5,
-  letterSpacing: '-0.02em',
-}
-
-function localPreview(s: Editable, fyLabel: string): { sample: string; tooLong: boolean; badChars: boolean } {
-  const padded = String(s.starting_number || 1).padStart(s.zero_padding ?? 0, '0')
-  const sample = [s.prefix, fyLabel, padded].filter((p) => p !== '').join(s.separator)
-  return { sample, tooLong: sample.length > 16, badChars: !/^[A-Za-z0-9/-]+$/.test(sample) }
-}
+/**
+ * Numbering tab — exact port of the v3 prototype's NumberingTab
+ * (screens-settings.jsx): left rail of sequence cards, editor card, live
+ * preview with GST Rule 46(b) validation pills, April-1 auto-reset row, and
+ * the mid-FY-change warning. Wired to the real sequences API.
+ */
 
 interface Editable {
   document_type: string
+  label: string
   prefix: string
   separator: string
   fy_format: string
   zero_padding: number
   starting_number: number
   fy_label: string
+  current_number: number
 }
 
-function SequenceCard({ seq }: { seq: Sequence }) {
-  const { toast } = useToast()
-  const upsert = useUpsertSequence()
-  const [e, setE] = useState<Editable>({
-    document_type: seq.document_type,
-    prefix: seq.prefix,
-    separator: seq.separator,
-    fy_format: seq.fy_format,
-    zero_padding: seq.zero_padding,
-    starting_number: seq.starting_number,
-    fy_label: seq.fy_label,
-  })
-  useEffect(() => {
-    setE({
-      document_type: seq.document_type,
-      prefix: seq.prefix,
-      separator: seq.separator,
-      fy_format: seq.fy_format,
-      zero_padding: seq.zero_padding,
-      starting_number: seq.starting_number,
-      fy_label: seq.fy_label,
-    })
-  }, [seq])
+const DOC_LABELS: Record<string, string> = {
+  INVOICE: 'Invoices',
+  QUOTE: 'Quotes',
+  CREDIT_NOTE: 'Credit notes',
+  DEBIT_NOTE: 'Debit notes',
+}
 
-  const pv = localPreview(e, e.fy_label)
+const buildNumber = (s: Editable) =>
+  [s.prefix, s.fy_label, String(Math.max(s.current_number + 1, s.starting_number)).padStart(s.zero_padding, '0')]
+    .filter(Boolean)
+    .join(s.separator)
+
+function validateNumber(str: string): string[] {
+  const issues: string[] = []
+  if (str.length > 16) issues.push(`Too long (${str.length}/16 chars)`)
+  if (!/^[A-Za-z0-9/-]+$/.test(str)) issues.push('Only A–Z, 0–9, “-” and “/” allowed')
+  return issues
+}
+
+const toEditable = (q: Sequence): Editable => ({
+  document_type: q.document_type,
+  label: DOC_LABELS[q.document_type] ?? q.document_type,
+  prefix: q.prefix,
+  separator: q.separator,
+  fy_format: q.fy_format,
+  zero_padding: q.zero_padding,
+  starting_number: q.starting_number,
+  fy_label: q.fy_label,
+  current_number: q.current_number,
+})
+
+export function NumberingTab() {
+  const { toast } = useToast()
+  const { data, isLoading, isError } = useSequences()
+  const upsert = useUpsertSequence()
+
+  const [seqs, setSeqs] = useState<Editable[]>([])
+  const [sel, setSel] = useState(0)
+  const [reset, setReset] = useState(true)
+  const [touched, setTouched] = useState(false)
+
+  useEffect(() => {
+    if (data?.data && !touched) setSeqs(data.data.map(toEditable))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
+
+  const s = seqs[sel]
+  const preview = useMemo(() => (s ? buildNumber(s) : ''), [s])
+  const issues = useMemo(() => (s ? validateNumber(preview) : []), [preview, s])
+
+  const upd = (k: keyof Editable, v: string | number) => {
+    setTouched(true)
+    setSeqs((arr) =>
+      arr.map((x, i) =>
+        i === sel
+          ? { ...x, [k]: k === 'zero_padding' || k === 'starting_number' ? Number(v) || 0 : v }
+          : x,
+      ),
+    )
+  }
 
   const onSave = async () => {
-    if (pv.tooLong || pv.badChars) {
-      toast({ title: 'Fix the number format first', variant: 'destructive' })
-      return
-    }
-    const payload: SequenceInput = {
-      document_type: e.document_type,
-      prefix: e.prefix,
-      separator: e.separator,
-      fy_format: e.fy_format,
-      zero_padding: e.zero_padding,
-      starting_number: e.starting_number,
-    }
+    if (!s || issues.length) return
     try {
-      const res = await upsert.mutateAsync(payload)
+      const res = await upsert.mutateAsync({
+        document_type: s.document_type,
+        prefix: s.prefix,
+        separator: s.separator,
+        fy_format: s.fy_format,
+        zero_padding: s.zero_padding,
+        starting_number: s.starting_number,
+      })
+      setTouched(false)
       toast({
-        title: 'Numbering saved',
+        title: `Numbering saved — next: ${res.sample ?? preview}`,
         description: res.warning,
         variant: res.warning ? 'destructive' : undefined,
       })
@@ -110,79 +115,169 @@ function SequenceCard({ seq }: { seq: Sequence }) {
     }
   }
 
-  return (
-    <InvoCard style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.02em', color: '#fff' }}>{DOC_LABELS[seq.document_type] ?? seq.document_type}</div>
-        <span style={{ padding: '4px 12px', borderRadius: 999, background: 'rgba(62,123,250,0.15)', color: INVO.blue, fontWeight: 700, fontSize: 12 }}>FY {e.fy_label}</span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
-        <div>
-          <label style={LABEL}>Prefix</label>
-          <input style={FIELD} value={e.prefix} onChange={(ev) => setE({ ...e, prefix: ev.target.value })} />
-        </div>
-        <div>
-          <label style={LABEL}>Separator</label>
-          <input style={FIELD} value={e.separator} onChange={(ev) => setE({ ...e, separator: ev.target.value })} />
-        </div>
-        <div>
-          <label style={LABEL}>FY format</label>
-          <select style={FIELD} value={e.fy_format} onChange={(ev) => setE({ ...e, fy_format: ev.target.value })}>
-            {FY_FORMATS.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label style={LABEL}>Zero padding</label>
-          <input
-            style={FIELD}
-            type="number"
-            min={0}
-            max={10}
-            value={e.zero_padding}
-            onChange={(ev) => setE({ ...e, zero_padding: Number(ev.target.value) })}
-          />
-        </div>
-        <div>
-          <label style={LABEL}>Start #</label>
-          <input
-            style={FIELD}
-            type="number"
-            min={1}
-            value={e.starting_number}
-            onChange={(ev) => setE({ ...e, starting_number: Number(ev.target.value) })}
-          />
-        </div>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }}>
-        <div style={{ fontSize: 13 }}>
-          <span style={{ color: 'rgba(255,255,255,0.5)' }}>Next number: </span>
-          <span style={{ fontFamily: 'var(--mono, monospace)', color: pv.tooLong || pv.badChars ? 'var(--coral, #ff6b6b)' : '#fff' }}>
-            {pv.sample}
-          </span>
-          {pv.tooLong && <span style={{ color: '#F8786B', marginLeft: 8 }}>· over 16 chars</span>}
-          {pv.badChars && <span style={{ color: '#F8786B', marginLeft: 8 }}>· invalid characters</span>}
-        </div>
-        <InvoBtn kind="primary" height={40} onClick={onSave} disabled={upsert.isPending}>
-          {upsert.isPending ? 'Saving…' : 'Save'}
-        </InvoBtn>
-      </div>
-    </InvoCard>
-  )
-}
+  const onReset = () => {
+    if (data?.data) setSeqs(data.data.map(toEditable))
+    setTouched(false)
+  }
 
-export function NumberingTab() {
-  const { data, isLoading, isError } = useSequences()
-  if (isLoading) return <div style={{ color: 'rgba(255,255,255,0.5)' }}>Loading sequences…</div>
-  if (isError) return <div style={{ color: '#F8786B' }}>Couldn’t load sequences. Check you’re signed in.</div>
+  if (isLoading) return <div className="t-mute">Loading sequences…</div>
+  if (isError || !s)
+    return <div style={{ color: 'var(--coral)' }} className="text-sm font-semibold">Couldn’t load sequences. Check you’re signed in.</div>
+
   return (
-    <div>
-      {(data?.data ?? []).map((seq) => (
-        <SequenceCard key={seq.document_type} seq={seq} />
-      ))}
+    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 20 }}>
+      {/* sequence picker rail */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {seqs.map((q, i) => (
+          <button
+            key={q.document_type}
+            onClick={() => setSel(i)}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 3,
+              padding: '12px 14px',
+              borderRadius: 10,
+              textAlign: 'left',
+              cursor: 'pointer',
+              background: sel === i ? 'var(--surf-2)' : 'var(--surf-1)',
+              border: `1px solid ${sel === i ? 'var(--bord-2)' : 'var(--bord)'}`,
+            }}
+          >
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: sel === i ? '#fff' : 'var(--text-2)' }}>{q.label}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', fontFamily: 'var(--font-mono)' }}>
+              {buildNumber(q)}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* editor */}
+      <div>
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 1fr', gap: 14, marginBottom: 14 }}>
+            <div>
+              <div className="label">Prefix</div>
+              <input className="input" value={s.prefix} onChange={(e) => upd('prefix', e.target.value.toUpperCase())} />
+            </div>
+            <div>
+              <div className="label">Separator</div>
+              <select className="input" value={s.separator} onChange={(e) => upd('separator', e.target.value)}>
+                <option value="/">/</option>
+                <option value="-">-</option>
+              </select>
+            </div>
+            <div>
+              <div className="label">FY token</div>
+              <select className="input" value={s.fy_format} onChange={(e) => upd('fy_format', e.target.value)}>
+                <option value="26-27">26-27</option>
+                <option value="2026-27">2026-27</option>
+                <option value="2026-2027">2026-2027</option>
+                <option value="2026">2026</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <div className="label">Pad width</div>
+              <input
+                className="input t-num"
+                type="number"
+                min={1}
+                max={8}
+                value={s.zero_padding}
+                onChange={(e) => upd('zero_padding', e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="label">Starting number</div>
+              <input
+                className="input t-num"
+                type="number"
+                min={0}
+                value={s.starting_number}
+                onChange={(e) => upd('starting_number', e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* live preview */}
+        <div className="card" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 18 }}>
+          <div>
+            <div className="t-caption" style={{ marginBottom: 6 }}>Next number</div>
+            <div
+              style={{
+                fontSize: 26,
+                fontWeight: 800,
+                letterSpacing: '-0.02em',
+                fontFamily: 'var(--font-mono)',
+                color: issues.length ? 'var(--coral)' : '#fff',
+              }}
+            >
+              {preview}
+            </div>
+          </div>
+          <div style={{ flex: 1 }} />
+          {issues.length === 0 ? (
+            <Pill tone="green" icon={<Icon.check size={12} />}>GST Rule 46(b) valid</Pill>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+              {issues.map((iss, i) => (
+                <Pill key={i} tone="coral" icon={<Icon.warn size={12} />}>{iss}</Pill>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* April 1 reset */}
+        <div className="card" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 800 }}>Auto-reset on April 1</div>
+            <div className="t-mute" style={{ fontSize: 11.5, marginTop: 2 }}>
+              On the FY boundary the sequence restarts at {String(s.starting_number).padStart(s.zero_padding, '0')} with
+              the new FY token (e.g. {s.prefix}{s.separator}25-26{s.separator}0142 → {s.prefix}{s.separator}26-27{s.separator}{String(s.starting_number).padStart(s.zero_padding, '0')}).
+            </div>
+          </div>
+          <Toggle on={reset} onChange={setReset} />
+        </div>
+
+        {/* mid-FY warning */}
+        {touched && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              padding: '12px 14px',
+              borderRadius: 10,
+              background: 'rgba(254,216,0,.1)',
+              border: '1px solid rgba(254,216,0,.3)',
+            }}
+          >
+            <span style={{ color: 'var(--yellow)', flexShrink: 0 }}>
+              <Icon.warn size={16} />
+            </span>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', lineHeight: 1.5 }}>
+              Changing prefix or starting number mid-FY can break GST compliance (consecutive numbering). Consult your CA.{' '}
+              <span style={{ color: 'var(--text-mute)' }}>
+                Gap detection is active — a resequence affordance appears to Owner/Admin if a gap is found.
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Btn kind="ghost" onClick={onReset}>Reset</Btn>
+          <Btn
+            kind="primary"
+            icon={<Icon.check size={15} />}
+            onClick={onSave}
+            disabled={issues.length > 0 || upsert.isPending}
+          >
+            {upsert.isPending ? 'Saving…' : 'Save numbering'}
+          </Btn>
+        </div>
+      </div>
     </div>
   )
 }

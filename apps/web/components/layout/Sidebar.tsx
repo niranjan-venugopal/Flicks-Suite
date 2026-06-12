@@ -66,12 +66,16 @@ const ADMIN_NAV: NavSection[] = [
         id: 'invoicing',
         label: 'Invoicing',
         icon: 'wallet',
+        // Exact INV_SUBITEMS order/labels from the v3 prototype (shell-v3.jsx).
         children: [
           { href: '/invoicing', label: 'Overview' },
           { href: '/invoicing/invoices', label: 'Invoices' },
-          { href: '/invoicing/customers', label: 'Customers' },
-          { href: '/invoicing/items', label: 'Items' },
+          { href: '/invoicing/quotes', label: 'Quotes / Estimates' },
           { href: '/invoicing/recurring', label: 'Recurring' },
+          { href: '/invoicing/customers', label: 'Customers' },
+          { href: '/invoicing/items', label: 'Items / Catalogue' },
+          { href: '/invoicing/notes', label: 'Credit & Debit notes' },
+          { href: '/invoicing/payments', label: 'Payments' },
           { href: '/invoicing/reports', label: 'Reports' },
           { href: '/invoicing/settings', label: 'Settings' },
         ],

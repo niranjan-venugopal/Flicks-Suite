@@ -1,82 +1,278 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
 import { NumberingTab } from '@/components/invoicing/NumberingTab'
-import { INVO, InvoPage, InvoTitle, InvoIcons } from '@/components/invoicing/invo'
+import { useOrgFinancial } from '@/lib/api/queries/use-invoicing'
 
-// PRD §7.1 — the seven Invoicing Settings sub-tabs. Numbering is live;
-// the rest land in Sprints 6–9 and render as visibly disabled tabs.
-const TABS: { id: string; label: string; live: boolean }[] = [
-  { id: 'numbering', label: 'Numbering', live: true },
-  { id: 'template', label: 'Template', live: false },
-  { id: 'email', label: 'Email & Reminders', live: false },
-  { id: 'payments', label: 'Payments', live: false },
-  { id: 'currencies', label: 'Currencies', live: false },
-  { id: 'tax', label: 'Tax codes', live: false },
-  { id: 'compliance', label: 'Compliance', live: false },
-]
+/**
+ * Invoicing Settings (PRD §7.1) — exact port of the v3 prototype's
+ * ScrInvSettings (screens-settings.jsx): segmented tab bar + the seven
+ * sub-tabs in the HRMS-blended design language. Numbering is fully wired;
+ * the remaining tabs render the approved layout and pick up persistence in
+ * Sprints 6–9.
+ */
+
+const TABS = ['Numbering', 'Template', 'Email & Reminders', 'Payments', 'Currencies', 'Tax codes', 'Compliance']
+
+function SettingRow({ label, sub, children }: { label: string; sub?: string; children?: ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 0', borderBottom: '1px solid var(--bord)' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 800 }}>{label}</div>
+        {sub && <div className="t-mute" style={{ fontSize: 11.5, marginTop: 2 }}>{sub}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
 
 export default function InvoicingSettingsPage() {
-  const [tab, setTab] = useState<string>('numbering')
+  const [tab, setTab] = useState('Numbering')
+  const { data: fin } = useOrgFinancial()
+  const [sendAsLink, setSendAsLink] = useState(true)
+  const [partialPayments, setPartialPayments] = useState(true)
+  const [currencies, setCurrencies] = useState<Record<string, boolean>>({ USD: true, EUR: true, GBP: false })
+  const [eInvoice, setEInvoice] = useState(false)
 
   return (
-    <InvoPage>
-      <InvoTitle icon={InvoIcons.settings}>Invoice settings</InvoTitle>
+    <div style={{ padding: '26px 28px 72px' }}>
+      <SectionHead
+        title="Invoice settings"
+        sub="Numbering, template, email, payments, currencies, tax codes and compliance — per PRD §7.1."
+      />
 
-      {/* §7.1 sub-tabs — underline pattern from the Invo prototype, with
-          disabled (not-yet-live) tabs muted + a Soon chip. */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid rgba(255,255,255,0.08)', marginBottom: 4, flexWrap: 'wrap' }}>
+      {/* segmented tab bar — prototype style */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 4,
+          padding: 4,
+          background: 'var(--surf-1)',
+          border: '1px solid var(--bord)',
+          borderRadius: 11,
+          marginBottom: 20,
+          flexWrap: 'wrap',
+        }}
+      >
         {TABS.map((t) => (
-          <div
-            key={t.id}
-            onClick={() => t.live && setTab(t.id)}
+          <button
+            key={t}
+            onClick={() => setTab(t)}
             style={{
-              padding: '8px 16px',
-              cursor: t.live ? 'pointer' : 'not-allowed',
-              fontWeight: 700,
-              fontSize: 14,
-              letterSpacing: '-0.02em',
-              color: tab === t.id ? '#fff' : t.live ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.18)',
-              borderBottom: tab === t.id ? '2px solid #fff' : '2px solid transparent',
-              marginBottom: -2,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              whiteSpace: 'nowrap',
+              padding: '8px 13px',
+              borderRadius: 7,
+              border: 'none',
+              cursor: 'pointer',
+              background: tab === t ? 'var(--surf-3)' : 'transparent',
+              color: tab === t ? '#fff' : 'var(--text-2)',
+              fontSize: 12,
+              fontWeight: 800,
             }}
           >
-            {t.label}
-            {!t.live && (
-              <span
-                style={{
-                  padding: '1px 7px',
-                  borderRadius: 999,
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'rgba(255,255,255,0.3)',
-                  fontWeight: 700,
-                  fontSize: 10,
-                  letterSpacing: '0.02em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Soon
-              </span>
-            )}
-          </div>
+            {t}
+          </button>
         ))}
       </div>
 
-      <div style={{ marginTop: 24 }}>
-        {tab === 'numbering' && (
-          <>
-            <p style={{ fontWeight: 600, fontSize: 13, color: INVO.muted50, marginBottom: 20, letterSpacing: '-0.02em', maxWidth: 720 }}>
-              Numbers reset automatically at the start of each financial year. Numbers must be ≤16 characters and use
-              only letters, digits, “-” and “/”. Changing numbering mid-year can affect GST compliance.
-            </p>
-            <NumberingTab />
-          </>
-        )}
-      </div>
-    </InvoPage>
+      {tab === 'Numbering' && <NumberingTab />}
+
+      {tab === 'Template' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20 }}>
+          <div className="card">
+            <SettingRow label="Active template" sub="One polished default ships in v3">
+              <Pill tone="blue" dot>Default · Classic</Pill>
+            </SettingRow>
+            <SettingRow label="Brand color" sub="Used for accents on the invoice">
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['#3E7BFA', '#27D280', '#9B7BFA', '#F8786B'].map((c) => (
+                  <div
+                    key={c}
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: 7,
+                      background: c,
+                      border: c === '#3E7BFA' ? '2px solid #fff' : '2px solid transparent',
+                      cursor: 'pointer',
+                    }}
+                  />
+                ))}
+              </div>
+            </SettingRow>
+            <SettingRow label="Logo override" sub="Defaults to company logo">
+              <Btn kind="secondary" size="sm" icon={<Icon.upload size={13} />}>Upload</Btn>
+            </SettingRow>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                marginTop: 16,
+                padding: '11px 14px',
+                borderRadius: 10,
+                background: 'var(--surf-1)',
+                border: '1px solid var(--bord)',
+              }}
+            >
+              <Icon.info size={15} style={{ color: 'var(--text-mute)' }} />
+              <span className="t-mute" style={{ fontSize: 12 }}>More templates &amp; full customization — coming soon (P2).</span>
+            </div>
+          </div>
+          <div
+            style={{
+              aspectRatio: '3/4',
+              borderRadius: 12,
+              border: '1px dashed var(--bord-2)',
+              background: 'repeating-linear-gradient(135deg, var(--surf-1), var(--surf-1) 10px, transparent 10px, transparent 20px)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              color: 'var(--text-faint)',
+            }}
+          >
+            <Icon.doc size={28} />
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>template preview</div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'Email & Reminders' && (
+        <div className="card" style={{ maxWidth: 680 }}>
+          <SettingRow label="From name" sub="Sender shown on emails">
+            <input className="input" defaultValue={fin?.data?.legal_name ?? ''} placeholder="Your company" style={{ width: 220 }} />
+          </SettingRow>
+          <SettingRow label="Reply-to">
+            <input className="input" placeholder="finance@yourco.com" style={{ width: 220 }} />
+          </SettingRow>
+          <SettingRow label="Send as link (no PDF)" sub="Customer gets the hosted page link">
+            <Toggle on={sendAsLink} onChange={setSendAsLink} />
+          </SettingRow>
+          <div style={{ marginTop: 16 }}>
+            <div className="label">Reminder schedule (up to 10)</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {['−3d', 'Due day', '+3d', '+7d', '+14d', '+30d'].map((r, i) => (
+                <Pill key={i} tone={i < 4 ? 'blue' : ''} dot={i < 4}>{r}</Pill>
+              ))}
+            </div>
+            <div className="t-mute" style={{ fontSize: 11.5, marginTop: 8 }}>Reminder sending goes live with Sprint 6.</div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'Payments' && (
+        <div className="card" style={{ maxWidth: 680 }}>
+          <SettingRow label="UPI ID" sub="Shown as QR on INR invoices">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="input" placeholder="yourco@hdfcbank" style={{ width: 200, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+              <Btn kind="secondary" size="sm">Test</Btn>
+            </div>
+          </SettingRow>
+          <SettingRow label="Razorpay" sub="Cards · UPI · Netbanking · international">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Pill tone="">Not connected</Pill>
+              <Btn kind="secondary" size="sm" disabled title="Connect flow arrives with live keys (Sprint 9)">Connect</Btn>
+            </div>
+          </SettingRow>
+          <SettingRow label="Partial payments" sub="Allow customers to pay in parts">
+            <Toggle on={partialPayments} onChange={setPartialPayments} />
+          </SettingRow>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginTop: 14,
+              padding: '10px 13px',
+              borderRadius: 10,
+              background: 'var(--surf-1)',
+              border: '1px solid var(--bord)',
+            }}
+          >
+            <Icon.lock size={14} style={{ color: 'var(--text-mute)' }} />
+            <span className="t-mute" style={{ fontSize: 12 }}>Razorpay disconnect is restricted to the Owner.</span>
+          </div>
+        </div>
+      )}
+
+      {tab === 'Currencies' && (
+        <div className="card" style={{ maxWidth: 680 }}>
+          <SettingRow label="INR · Indian Rupee" sub="Base currency">
+            <Pill tone="green" dot>Locked on</Pill>
+          </SettingRow>
+          {([['USD', 'US Dollar'], ['EUR', 'Euro'], ['GBP', 'Pound Sterling']] as const).map(([c, n]) => (
+            <SettingRow key={c} label={`${c} · ${n}`}>
+              <Toggle on={currencies[c]!} onChange={(v) => setCurrencies((cur) => ({ ...cur, [c]: v }))} />
+            </SettingRow>
+          ))}
+          <SettingRow label="FX source" sub="openexchangerates · snapshot at invoice creation">
+            <Btn kind="secondary" size="sm" icon={<Icon.refresh size={13} />} disabled title="Live FX refresh arrives in Sprint 7">
+              Refresh
+            </Btn>
+          </SettingRow>
+        </div>
+      )}
+
+      {tab === 'Tax codes' && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden', maxWidth: 680 }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Type</th>
+                <th>Description</th>
+                <th style={{ textAlign: 'right' }}>Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                ['998314', 'SAC', 'IT design & development', '18%'],
+                ['998315', 'SAC', 'Hosting & infrastructure', '18%'],
+                ['8523', 'HSN', 'Software media', '18%'],
+                ['998313', 'SAC', 'IT consulting & support', '18%'],
+              ] as const).map((r, i) => (
+                <tr key={i}>
+                  {r.map((c, j) => (
+                    <td
+                      key={j}
+                      style={
+                        j === 0
+                          ? { fontFamily: 'var(--font-mono)', fontSize: 12 }
+                          : j === 3
+                            ? { textAlign: 'right', fontWeight: 800 }
+                            : undefined
+                      }
+                    >
+                      {c}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'Compliance' && (
+        <div className="card" style={{ maxWidth: 680 }}>
+          <SettingRow label="GST registered" sub={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Organization'}>
+            <Pill tone={fin?.data?.gstin ? 'green' : ''} dot={!!fin?.data?.gstin}>
+              {fin?.data?.gstin ? 'Active' : 'Not set'}
+            </Pill>
+          </SettingRow>
+          <SettingRow label="Place of supply default" sub="From company state">
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{fin?.data?.state_code ?? '—'}</span>
+          </SettingRow>
+          <SettingRow label="TDS Section 393" sub="Income Tax Act 2025 · payment codes">
+            <Pill tone="yellow">illustrative · pending sign-off</Pill>
+          </SettingRow>
+          <SettingRow label="e-Invoice (IRP)" sub="Above ₹5cr turnover threshold">
+            <Toggle on={eInvoice} onChange={setEInvoice} />
+          </SettingRow>
+        </div>
+      )}
+    </div>
   )
 }
