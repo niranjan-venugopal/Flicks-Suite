@@ -7,6 +7,7 @@ import {
   useCustomers,
   useSaveInvoice,
   useSendInvoice,
+  useBankAccounts,
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
@@ -51,6 +52,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const save = useSaveInvoice()
   const send = useSendInvoice()
   const { data: customersData } = useCustomers({})
+  const { data: banksData } = useBankAccounts()
 
   const [customerId, setCustomerId] = useState(invoice?.customer_id ?? '')
   const [invoiceDate, setInvoiceDate] = useState(invoice?.invoice_date ?? today())
@@ -64,6 +66,9 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const [tdsSection, setTdsSection] = useState(invoice?.tds_section ?? '')
   const [tdsCode, setTdsCode] = useState(invoice?.tds_payment_code ?? '')
   const [tdsRate, setTdsRate] = useState(invoice?.tds_rate ?? '')
+  const [bankAccountId, setBankAccountId] = useState<string>(
+    ((invoice as unknown as { bank_account_id?: string | null })?.bank_account_id) ?? '',
+  )
   const [notes, setNotes] = useState(invoice?.notes ?? '')
   const [terms, setTerms] = useState(invoice?.terms_and_conditions ?? '')
   const [lines, setLines] = useState<InvoiceLineInput[]>(
@@ -82,6 +87,23 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
 
   const customers = customersData?.data ?? []
   const customer = customers.find((c) => c.id === customerId)
+  const bankAccounts = (banksData?.data ?? []).filter((b) => b.is_active)
+  const currencyDefaults = banksData?.meta?.currency_defaults ?? {}
+  // Mirror of the §8 server-side selection for display: override → currency
+  // default → overall default → first active.
+  const resolvedBankId =
+    bankAccountId ||
+    currencyDefaults[currency] ||
+    bankAccounts.find((b) => b.is_default)?.id ||
+    bankAccounts[0]?.id ||
+    ''
+  const resolvedBank = bankAccounts.find((b) => b.id === resolvedBankId)
+  const swiftWarning =
+    currency !== 'INR' && resolvedBank && !resolvedBank.swift_bic
+      ? 'Add a SWIFT/BIC to this account to accept international transfers — Razorpay/UPI are still offered.'
+      : currency !== 'INR' && !resolvedBank
+        ? 'No bank account yet — add one under Organization → Financial details.'
+        : undefined
 
   const taxTreatment = useMemo(() => {
     if (invoice?.tax_treatment) return invoice.tax_treatment
@@ -130,6 +152,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       tds_rate: tdsRate || undefined,
       notes: notes || undefined,
       terms_and_conditions: terms || undefined,
+      bank_account_id: bankAccountId || undefined,
       line_items: valid,
     }
     try {
@@ -321,6 +344,44 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 <input style={invoField()} inputMode="decimal" placeholder="10" value={tdsRate} onChange={(e) => setTdsRate(e.target.value)} />
               </div>
             </div>
+          </InvoCard>
+
+          {/* Bank account (§8 — auto-picked by currency, overridable) */}
+          <InvoCard style={{ marginBottom: 20 }}>
+            <InvoCardTitle>Bank account on invoice</InvoCardTitle>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+              <div>
+                <label style={invoLabel}>Account</label>
+                <select style={invoField()} value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)}>
+                  <option value="" style={{ color: '#000' }}>
+                    Auto ({currency} default)
+                  </option>
+                  {bankAccounts.map((b) => (
+                    <option key={b.id} value={b.id} style={{ color: '#000' }}>
+                      {b.bank_name} …{b.account_number.slice(-4)}
+                      {b.is_default ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ paddingTop: 24, fontWeight: 600, fontSize: 12, color: INVO.muted40, lineHeight: 1.5 }}>
+                {resolvedBank ? (
+                  <>
+                    Will render: <span style={{ color: '#fff' }}>{resolvedBank.bank_name}</span> ·{' '}
+                    {currency === 'INR'
+                      ? `IFSC ${resolvedBank.ifsc ?? '—'}`
+                      : `SWIFT ${resolvedBank.swift_bic ?? '—'}`}
+                  </>
+                ) : (
+                  'No bank account — the invoice renders without a bank-transfer block.'
+                )}
+              </div>
+            </div>
+            {swiftWarning && (
+              <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(254,216,0,0.08)', border: '1px solid rgba(254,216,0,0.25)', fontWeight: 600, fontSize: 12, color: '#FED800' }}>
+                {swiftWarning}
+              </div>
+            )}
           </InvoCard>
 
           {/* Notes */}

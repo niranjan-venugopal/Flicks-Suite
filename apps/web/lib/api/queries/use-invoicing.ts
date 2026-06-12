@@ -224,6 +224,7 @@ export interface InvoiceInput {
   tds_rate?: string
   notes?: string
   terms_and_conditions?: string
+  bank_account_id?: string
   line_items: InvoiceLineInput[]
 }
 
@@ -422,7 +423,16 @@ export interface PublicInvoicePayload {
   payment_options: {
     upi: { upi_id: string; display_name: string | null } | null
     razorpay: { key_id: string } | null
-    bank_transfer: null
+    bank_transfer: {
+      beneficiary_name: string
+      account_number: string
+      account_type: string | null
+      bank_name: string
+      branch: string | null
+      ifsc: string | null
+      swift_bic: string | null
+      bank_address: string | null
+    } | null
     allow_partial: boolean
   }
   show_powered_by: boolean
@@ -440,4 +450,98 @@ export function usePublicInvoice(token: string | undefined) {
 export function trackPublicView(token: string) {
   // Fire-and-forget view pixel; failures must never break the page.
   api.post(`/api/v1/public/inv/${token}/track`).catch(() => {})
+}
+
+// ─── Organization → Financial + bank accounts (Sprint 5) ───────────────────
+
+export interface OrgFinancial {
+  name: string
+  legal_name: string | null
+  gstin: string | null
+  pan: string | null
+  cin: string | null
+  fiscal_year_start_month: number
+  currency: string
+  address_line1: string | null
+  address_line2: string | null
+  city: string | null
+  state_code: string | null
+  postal_code: string | null
+}
+
+export interface BankAccount {
+  id: string
+  beneficiary_name: string
+  account_number: string
+  account_type: string
+  bank_name: string
+  branch: string | null
+  ifsc: string | null
+  swift_bic: string | null
+  bank_address: string | null
+  is_default: boolean
+  is_active: boolean
+}
+
+export type BankAccountInput = Partial<Omit<BankAccount, 'id'>> & {
+  beneficiary_name: string
+  account_number: string
+  bank_name: string
+}
+
+export function useOrgFinancial() {
+  return useQuery({
+    queryKey: ['org-financial'],
+    queryFn: () => api.get<{ data: OrgFinancial }>('/api/v1/org/financial'),
+  })
+}
+
+export function useUpdateOrgFinancial() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: Partial<OrgFinancial>) =>
+      api.patch<{ data: OrgFinancial }>('/api/v1/org/financial', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-financial'] }),
+  })
+}
+
+export function useBankAccounts() {
+  return useQuery({
+    queryKey: ['org-financial', 'bank-accounts'],
+    queryFn: () =>
+      api.get<{ data: BankAccount[]; meta: { currency_defaults: Record<string, string> } }>(
+        '/api/v1/org/financial/bank-accounts',
+      ),
+  })
+}
+
+export function useSaveBankAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: BankAccountInput & { id?: string }) =>
+      id
+        ? api.patch<{ data: BankAccount; warning?: string }>(`/api/v1/org/financial/bank-accounts/${id}`, data)
+        : api.post<{ data: BankAccount; warning?: string }>('/api/v1/org/financial/bank-accounts', data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-financial'] }),
+  })
+}
+
+export function useBankAccountAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'set-default' | 'delete' }) =>
+      action === 'delete'
+        ? api.delete(`/api/v1/org/financial/bank-accounts/${id}`)
+        : api.post(`/api/v1/org/financial/bank-accounts/${id}/set-default`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-financial'] }),
+  })
+}
+
+export function useSetCurrencyDefault() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { currency: string; bank_account_id: string }) =>
+      api.put('/api/v1/org/financial/currency-default', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-financial'] }),
+  })
 }

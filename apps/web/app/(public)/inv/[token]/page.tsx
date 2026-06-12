@@ -86,21 +86,54 @@ function PaymentBlock({ payload }: { payload: PublicInvoicePayload }) {
           </InvoBtn>
         </div>
 
-        {/* Bank transfer — Sprint 5 */}
-        <div
-          style={{
-            gridColumn: '1 / -1',
-            padding: 18,
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px dashed rgba(255,255,255,0.12)',
-            fontWeight: 600,
-            fontSize: 13,
-            color: INVO.muted40,
-          }}
-        >
-          Bank transfer details (account, IFSC/SWIFT) appear here once the seller adds a bank account.
-        </div>
+        {/* Bank transfer (§8): INR ⇒ IFSC; foreign currency ⇒ SWIFT + bank address */}
+        {opts.bank_transfer ? (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              padding: 18,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', marginBottom: 12 }}>Bank transfer</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              {(
+                [
+                  ['Beneficiary', opts.bank_transfer.beneficiary_name],
+                  ['Account number', opts.bank_transfer.account_number],
+                  ['Bank', `${opts.bank_transfer.bank_name}${opts.bank_transfer.branch ? ` · ${opts.bank_transfer.branch}` : ''}`],
+                  ...(opts.bank_transfer.ifsc ? [['IFSC', opts.bank_transfer.ifsc] as [string, string]] : []),
+                  ...(opts.bank_transfer.swift_bic ? [['SWIFT / BIC', opts.bank_transfer.swift_bic] as [string, string]] : []),
+                  ...(opts.bank_transfer.bank_address ? [['Bank address', opts.bank_transfer.bank_address] as [string, string]] : []),
+                ] as [string, string][]
+              ).map(([label, value]) => (
+                <div key={label}>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: INVO.muted40, textTransform: 'uppercase', letterSpacing: '-0.01em', marginBottom: 4 }}>
+                    {label}
+                  </div>
+                  <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#fff', wordBreak: 'break-word' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              padding: 18,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px dashed rgba(255,255,255,0.12)',
+              fontWeight: 600,
+              fontSize: 13,
+              color: INVO.muted40,
+            }}
+          >
+            Bank transfer details are not available for this invoice.
+          </div>
+        )}
       </div>
     </InvoCard>
   )
