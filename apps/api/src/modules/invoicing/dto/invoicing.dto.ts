@@ -182,10 +182,65 @@ export class PreviewNumberDto {
   @IsOptional() @IsString() on_date?: string;
 }
 
+// ─── Invoices (Sprint 3) ────────────────────────────────────────────────────
+
+export class InvoiceLineDto {
+  @IsOptional() @IsString() item_id?: string;
+  @IsString() @MaxLength(200) item_name!: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() hsn_sac_code?: string;
+  @IsNumberString() quantity!: string;
+  @IsOptional() @IsString() unit?: string;
+  @IsNumberString() rate!: string;
+  @IsOptional() @IsNumberString() gst_rate?: string;
+  @IsOptional() @IsNumberString() cess_rate?: string;
+}
+
 export class CreateInvoiceDto {
   @IsString() customer_id!: string;
-  @IsString() invoice_date!: string;
+  @IsString() invoice_date!: string; // YYYY-MM-DD
   @IsString() due_date!: string;
   @IsOptional() @IsString() currency?: string;
-  @IsOptional() @IsArray() line_items?: unknown[];
+  @IsOptional() @IsString() reference?: string;
+  @IsOptional() @IsString() place_of_supply?: string;
+  @IsOptional()
+  @IsIn(['INTRA_STATE', 'INTER_STATE', 'EXPORT', 'B2C_LARGE', 'B2C_SMALL'])
+  tax_treatment?: string;
+  @IsOptional() @IsIn(['percent', 'fixed']) discount_type?: string;
+  @IsOptional() @IsNumberString() discount_value?: string;
+  @IsOptional() @IsString() tds_section?: string;
+  @IsOptional() @IsString() tds_payment_code?: string;
+  @IsOptional() @IsNumberString() tds_rate?: string;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() terms_and_conditions?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceLineDto)
+  line_items!: InvoiceLineDto[];
+}
+
+export class UpdateInvoiceDto extends CreateInvoiceDto {
+  @IsOptional() @IsString() declare customer_id: string;
+  @IsOptional() @IsString() declare invoice_date: string;
+  @IsOptional() @IsString() declare due_date: string;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceLineDto)
+  declare line_items: InvoiceLineDto[];
+}
+
+export class InvoiceListQueryDto extends ListQueryDto {
+  @ApiPropertyOptional({ description: 'Filter by customer' })
+  @IsOptional()
+  @IsString()
+  customer_id?: string;
+}
+
+export class CancelInvoiceDto {
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
+export class WriteOffInvoiceDto {
+  @IsString() @MaxLength(500) reason!: string;
 }
