@@ -161,8 +161,11 @@ const notificationsStub = {
   },
 } as unknown as import('../modules/notifications/notifications.service').NotificationsService;
 
+import { OrgFinancialService } from '../modules/org-financial/org-financial.service';
+const orgFinancial = new OrgFinancialService(dbSvc, audit);
+
 describe('Invoicing services (Sprint 3 — invoices)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -367,7 +370,7 @@ import {
 } from '@flicks/db/schema';
 
 describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const publicSvc = new PublicInvoiceService(dbAdmin as any);
   let tenantId: string;
   let userId: string;
@@ -546,6 +549,258 @@ describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
     const after = await invoicesSvc.get(tenantId, inv.id);
     expect(after.data.status).toBe('SENT');
     expect(after.data.amount_paid).toBe('0.00');
+  });
+});
+
+// ─── Sprint 5: Organization → Financial + bank accounts (§7.2 / §8) ──────────
+import { PublicInvoiceService as PubSvc5 } from '../modules/invoicing/public-invoice.service';
+
+describe('Org financial + bank accounts (Sprint 5)', () => {
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const publicSvc = new PubSvc5(dbAdmin as any);
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+  let inrAccountId: string;
+  let fxAccountId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({
+        name: `BankCo${rid()}`,
+        slug: `bankco-${rid()}-${Date.now()}`,
+        status: 'trialing',
+        state_code: 'KA',
+        legal_name: 'BankCo Private Limited',
+      })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `bank-${rid()}@test.test`, full_name: 'Bank User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const c = await customers.create(
+      { display_name: 'FX Buyer', email: 'fx@test.test', state_code: 'KA' },
+      userId,
+      tenantId,
+    );
+    customerId = c.data.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(users).where(eq(users.id, userId));
+  });
+
+  it('updates GSTIN/PAN on the tenant (single source of truth) and validates formats', async () => {
+    const updated = await orgFinancial.updateFinancial(
+      { gstin: '29ABCDE1234F1Z5', pan: 'ABCDE1234F', legal_name: 'BankCo Private Limited' },
+      userId,
+      tenantId,
+    );
+    expect(updated.data!.gstin).toBe('29ABCDE1234F1Z5');
+    const read = await orgFinancial.getFinancial(tenantId);
+    expect(read.data.pan).toBe('ABCDE1234F');
+  });
+
+  it('creates an INR account (IFSC) — first account auto-defaults; warns on beneficiary mismatch', async () => {
+    const created = await orgFinancial.createBankAccount(
+      {
+        beneficiary_name: 'Some Other Name',
+        account_number: '50100123456789',
+        bank_name: 'HDFC Bank',
+        branch: 'Koramangala',
+        ifsc: 'HDFC0001234',
+      },
+      userId,
+      tenantId,
+    );
+    inrAccountId = created.data.id;
+    expect(created.data.is_default).toBe(true);
+    expect(created.warning).toMatch(/doesn't match your legal name/);
+  });
+
+  it('rejects an account with neither IFSC nor SWIFT, and SWIFT without bank address', async () => {
+    await expect(
+      orgFinancial.createBankAccount(
+        { beneficiary_name: 'X', account_number: '1', bank_name: 'Y' },
+        userId,
+        tenantId,
+      ),
+    ).rejects.toThrow(/IFSC.*SWIFT|SWIFT.*IFSC/);
+    await expect(
+      orgFinancial.createBankAccount(
+        { beneficiary_name: 'X', account_number: '1', bank_name: 'Y', swift_bic: 'HDFCINBB' },
+        userId,
+        tenantId,
+      ),
+    ).rejects.toThrow(/Bank address is required/);
+  });
+
+  it('malformed IFSC/SWIFT rejected by the DB CHECK as backstop', async () => {
+    await expect(
+      dbAdmin.execute(
+        // bypasses the DTO on purpose — the DB constraint must still hold
+        (await import('drizzle-orm')).sql`INSERT INTO tenant_bank_accounts
+          (tenant_id, beneficiary_name, account_number, bank_name, ifsc)
+          VALUES (${tenantId}, 'X', '1', 'Y', 'BADIFSC')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('creates an FX account (SWIFT + address) and sets it as the USD default', async () => {
+    const created = await orgFinancial.createBankAccount(
+      {
+        beneficiary_name: 'BankCo Private Limited',
+        account_number: '99880011223344',
+        bank_name: 'HDFC Bank',
+        account_type: 'EEFC',
+        swift_bic: 'HDFCINBBXXX',
+        bank_address: 'HDFC Bank, Sandoz Branch, Mumbai 400069, India',
+        ifsc: 'HDFC0009999',
+      },
+      userId,
+      tenantId,
+    );
+    fxAccountId = created.data.id;
+    expect(created.warning).toBeUndefined();
+    await orgFinancial.setCurrencyDefault(
+      { currency: 'USD', bank_account_id: fxAccountId },
+      userId,
+      tenantId,
+    );
+    const listed = await orgFinancial.listBankAccounts(tenantId, 'owner');
+    expect(listed.meta.currency_defaults['USD']).toBe(fxAccountId);
+  });
+
+  it('blocks a no-SWIFT account from becoming a foreign-currency default', async () => {
+    await expect(
+      orgFinancial.setCurrencyDefault(
+        { currency: 'USD', bank_account_id: inrAccountId },
+        userId,
+        tenantId,
+      ),
+    ).rejects.toThrow(/no SWIFT/);
+  });
+
+  it('masks account numbers for non-privileged roles, full for owner', async () => {
+    const asOwner = await orgFinancial.listBankAccounts(tenantId, 'owner');
+    expect(asOwner.data[0]!.account_number).not.toContain('•');
+    const asAuditor = await orgFinancial.listBankAccounts(tenantId, 'auditor');
+    const masked = asAuditor.data.find((a) => a.id === inrAccountId)!;
+    expect(masked.account_number).toMatch(/^•+6789$/);
+  });
+
+  it('set-default moves the overall default atomically (single default invariant)', async () => {
+    await orgFinancial.setDefault(fxAccountId, userId, tenantId);
+    const listed = await orgFinancial.listBankAccounts(tenantId, 'owner');
+    const defaults = listed.data.filter((a) => a.is_default);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0]!.id).toBe(fxAccountId);
+  });
+
+  it('§8 selection: INR invoice picks overall default; USD invoice picks the USD currency default', async () => {
+    const mk = (currency: string) =>
+      invoicesSvc.create(
+        {
+          customer_id: customerId,
+          invoice_date: '2026-06-12',
+          due_date: '2026-07-12',
+          currency,
+          line_items: [{ item_name: 'Svc', quantity: '1', rate: '100.00', gst_rate: '18' }],
+        } as any,
+        userId,
+        tenantId,
+      );
+    // overall default is now the FX account; INR has no currency default → falls to overall
+    const inr = await mk('INR');
+    expect(inr.data.bank_account_id).toBe(fxAccountId);
+    const usd = await mk('USD');
+    expect(usd.data.bank_account_id).toBe(fxAccountId);
+
+    // explicit override wins
+    const overridden = await invoicesSvc.create(
+      {
+        customer_id: customerId,
+        invoice_date: '2026-06-12',
+        due_date: '2026-07-12',
+        currency: 'INR',
+        bank_account_id: inrAccountId,
+        line_items: [{ item_name: 'Svc', quantity: '1', rate: '50.00', gst_rate: '18' }],
+      } as any,
+      userId,
+      tenantId,
+    );
+    expect(overridden.data.bank_account_id).toBe(inrAccountId);
+  });
+
+  it('§8 acceptance: public page shows IFSC for INR and SWIFT+address for USD; currency change swaps the block', async () => {
+    // INR invoice on the INR account → IFSC visible, SWIFT hidden
+    const inr = await invoicesSvc.create(
+      {
+        customer_id: customerId,
+        invoice_date: '2026-06-12',
+        due_date: '2026-07-12',
+        currency: 'INR',
+        bank_account_id: inrAccountId,
+        line_items: [{ item_name: 'Svc', quantity: '1', rate: '100.00', gst_rate: '18' }],
+      } as any,
+      userId,
+      tenantId,
+    );
+    const sentInr = await invoicesSvc.send(inr.data.id, userId, tenantId);
+    const pubInr = await publicSvc.getByToken(sentInr.data.public_view_token!);
+    const btInr = pubInr.data.payment_options.bank_transfer!;
+    expect(btInr.ifsc).toBe('HDFC0001234');
+    expect(btInr.swift_bic).toBeNull();
+    expect(btInr.account_number).toBe('50100123456789'); // full number on the invoice itself
+
+    // Change the same draft to USD → §8: block swaps to SWIFT + bank address
+    const usdDraft = await invoicesSvc.create(
+      {
+        customer_id: customerId,
+        invoice_date: '2026-06-12',
+        due_date: '2026-07-12',
+        currency: 'INR',
+        line_items: [{ item_name: 'Svc', quantity: '1', rate: '100.00', gst_rate: '18' }],
+      } as any,
+      userId,
+      tenantId,
+    );
+    await invoicesSvc.update(usdDraft.data.id, { currency: 'USD' } as any, userId, tenantId);
+    const sentUsd = await invoicesSvc.send(usdDraft.data.id, userId, tenantId);
+    const pubUsd = await publicSvc.getByToken(sentUsd.data.public_view_token!);
+    const btUsd = pubUsd.data.payment_options.bank_transfer!;
+    expect(btUsd.swift_bic).toBe('HDFCINBBXXX');
+    expect(btUsd.bank_address).toContain('Mumbai');
+    expect(btUsd.ifsc).toBeNull();
+    // UPI never offered on a USD invoice
+    expect(pubUsd.data.payment_options.upi).toBeNull();
+  });
+
+  it('deleting an account clears its currency defaults and soft-deletes', async () => {
+    const extra = await orgFinancial.createBankAccount(
+      {
+        beneficiary_name: 'BankCo Private Limited',
+        account_number: '11112222',
+        bank_name: 'ICICI',
+        swift_bic: 'ICICINBB',
+        bank_address: 'ICICI, BKC, Mumbai',
+      },
+      userId,
+      tenantId,
+    );
+    await orgFinancial.setCurrencyDefault(
+      { currency: 'EUR', bank_account_id: extra.data.id },
+      userId,
+      tenantId,
+    );
+    await orgFinancial.deleteBankAccount(extra.data.id, userId, tenantId);
+    const listed = await orgFinancial.listBankAccounts(tenantId, 'owner');
+    expect(listed.data.some((a) => a.id === extra.data.id)).toBe(false);
+    expect(listed.meta.currency_defaults['EUR']).toBeUndefined();
   });
 });
 

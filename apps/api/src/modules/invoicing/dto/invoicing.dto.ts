@@ -213,6 +213,7 @@ export class CreateInvoiceDto {
   @IsOptional() @IsNumberString() tds_rate?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms_and_conditions?: string;
+  @IsOptional() @IsString() bank_account_id?: string;
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InvoiceLineDto)

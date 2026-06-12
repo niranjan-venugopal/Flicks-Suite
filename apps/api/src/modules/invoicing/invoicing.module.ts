@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrgFinancialModule } from '../org-financial/org-financial.module';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 import { ItemsController } from './items.controller';
@@ -24,7 +25,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
  * creation (Sprint 3) can reserve numbers atomically.
  */
 @Module({
-  imports: [AuditModule, AuthModule, NotificationsModule],
+  imports: [AuditModule, AuthModule, NotificationsModule, OrgFinancialModule],
   controllers: [
     CustomersController,
     ItemsController,

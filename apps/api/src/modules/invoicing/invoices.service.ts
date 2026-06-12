@@ -21,6 +21,7 @@ import { AuditService } from '../audit/audit.service';
 import { NumberingService } from './numbering.service';
 import { computeInvoice, deriveTaxTreatment, type TaxTreatment } from './tax.util';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OrgFinancialService } from '../org-financial/org-financial.service';
 import type {
   CreateInvoiceDto,
   UpdateInvoiceDto,
@@ -47,6 +48,7 @@ export class InvoicesService {
     private readonly numbering: NumberingService,
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly orgFinancial: OrgFinancialService,
   ) {}
 
   // ─── list / get ────────────────────────────────────────────────────────────
@@ -164,6 +166,15 @@ export class InvoicesService {
         dto.invoice_date,
       );
 
+      // §8: bank account — explicit override → currency default → overall
+      // default → first active → none.
+      const bankAccountId = await this.orgFinancial.resolveForInvoice(
+        tx,
+        tenantId,
+        currency,
+        dto.bank_account_id,
+      );
+
       const [inv] = await tx
         .insert(invoices)
         .values({
@@ -188,6 +199,7 @@ export class InvoicesService {
           tds_rate: dto.tds_rate,
           notes: dto.notes,
           terms_and_conditions: dto.terms_and_conditions,
+          bank_account_id: bankAccountId,
           ...computed.totals,
           amount_paid: '0',
           amount_outstanding: computed.totals.total_amount,
@@ -292,6 +304,19 @@ export class InvoicesService {
         tdsRate,
       });
 
+      const newCurrency = dto.currency ?? existing.currency;
+      // §8: re-resolve the bank account when the currency changed or an
+      // explicit override was provided; otherwise keep the stored choice.
+      const bankAccountId =
+        dto.bank_account_id !== undefined || newCurrency !== existing.currency
+          ? await this.orgFinancial.resolveForInvoice(
+              tx,
+              tenantId,
+              newCurrency,
+              dto.bank_account_id ?? null,
+            )
+          : existing.bank_account_id;
+
       const [inv] = await tx
         .update(invoices)
         .set({
@@ -299,7 +324,8 @@ export class InvoicesService {
           invoice_date: invoiceDate,
           due_date: dueDate,
           reference: dto.reference ?? existing.reference,
-          currency: dto.currency ?? existing.currency,
+          currency: newCurrency,
+          bank_account_id: bankAccountId,
           place_of_supply:
             dto.place_of_supply ?? existing.place_of_supply ?? customer.state_code,
           tax_treatment: treatment,
@@ -390,6 +416,7 @@ export class InvoicesService {
         tds_rate: src.tds_rate ?? undefined,
         notes: src.notes ?? undefined,
         terms_and_conditions: src.terms_and_conditions ?? undefined,
+        bank_account_id: src.bank_account_id ?? undefined,
         line_items: src.line_items.map((l) => ({
           item_id: l.item_id ?? undefined,
           item_name: l.item_name,

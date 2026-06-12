@@ -11,6 +11,7 @@ import {
   customers,
   tenants,
   invoicingSettings,
+  tenantBankAccounts,
 } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -134,6 +135,36 @@ export class PublicInvoiceService {
       terms_and_conditions: inv.terms_and_conditions,
     };
 
+    // §8 render rule: INR (domestic) ⇒ IFSC + account number, no SWIFT;
+    // foreign currency ⇒ SWIFT/BIC + account number + bank address.
+    let bankTransfer: Record<string, string | null> | null = null;
+    if (inv.bank_account_id) {
+      const [bank] = await this.dbAdmin
+        .select()
+        .from(tenantBankAccounts)
+        .where(
+          and(
+            eq(tenantBankAccounts.id, inv.bank_account_id),
+            eq(tenantBankAccounts.is_active, true),
+            isNull(tenantBankAccounts.deleted_at),
+          ),
+        )
+        .limit(1);
+      if (bank) {
+        const isInr = inv.currency === 'INR';
+        bankTransfer = {
+          beneficiary_name: bank.beneficiary_name,
+          account_number: bank.account_number,
+          account_type: bank.account_type,
+          bank_name: bank.bank_name,
+          branch: bank.branch,
+          ifsc: isInr ? bank.ifsc : null,
+          swift_bic: isInr ? null : bank.swift_bic,
+          bank_address: isInr ? null : bank.bank_address,
+        };
+      }
+    }
+
     const paymentOptions = {
       // UPI QR renders for INR only (§9.3) and only when configured.
       upi:
@@ -143,8 +174,7 @@ export class PublicInvoiceService {
       // Razorpay button is shown when the tenant connected an account (stub
       // until live keys; the public page renders it disabled otherwise).
       razorpay: settings?.razorpay_key_id ? { key_id: settings.razorpay_key_id } : null,
-      // Bank transfer block arrives with Organization → Financial (Sprint 5).
-      bank_transfer: null as null,
+      bank_transfer: bankTransfer,
       allow_partial: settings?.allow_partial_payments ?? true,
     };
 

@@ -32,6 +32,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { InvoicingModule } from './modules/invoicing/invoicing.module';
+import { OrgFinancialModule } from './modules/org-financial/org-financial.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -137,6 +138,7 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
     ReportsModule,
     AuditModule,
     InvoicingModule,
+    OrgFinancialModule,
   ],
   controllers: [HealthController],
   providers: [
