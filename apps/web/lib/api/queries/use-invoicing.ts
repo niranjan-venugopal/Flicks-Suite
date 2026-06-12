@@ -646,3 +646,72 @@ export function useGenerateGstr1() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'reports'] }),
   })
 }
+
+// ─── Subscriptions (Sprint 7) ───────────────────────────────────────────────
+
+export interface SubscriptionRow {
+  id: string
+  name: string
+  status: string
+  pricing_model: string
+  currency: string
+  flat_amount: string | null
+  seat_rate: string | null
+  seat_count: number | null
+  billing_period: string
+  next_billing_date: string | null
+  total_cycles_billed: number | null
+  failed_charge_count: number | null
+  mandate_authorized_at: string | null
+  customer_name: string | null
+  customer_id: string
+}
+
+export interface SubscriptionInput {
+  customer_id: string
+  name: string
+  pricing_model: 'flat_rate' | 'per_seat'
+  flat_amount?: string
+  seat_rate?: string
+  seat_count?: number
+  billing_period: 'monthly' | 'quarterly' | 'annually'
+  start_date: string
+  trial_days?: number
+}
+
+export function useSubscriptions() {
+  return useQuery({
+    queryKey: ['invoicing', 'subscriptions'],
+    queryFn: () => api.get<{ data: SubscriptionRow[]; meta: { mrr: string } }>('/api/v1/subscriptions'),
+  })
+}
+
+export function useCreateSubscription() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: SubscriptionInput) =>
+      api.post<{ data: SubscriptionRow }>('/api/v1/subscriptions', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'subscriptions'] }),
+  })
+}
+
+export function useSubscriptionAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'activate' | 'pause' | 'resume' | 'cancel' }) =>
+      api.post<{ data: SubscriptionRow }>(`/api/v1/subscriptions/${id}/${action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'subscriptions'] }),
+  })
+}
+
+export function useUpdateSeats() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, seat_count }: { id: string; seat_count: number }) =>
+      api.post<{ data: SubscriptionRow; meta: { proration: { amount: string } | null } }>(
+        `/api/v1/subscriptions/${id}/update-seats`,
+        { seat_count },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'subscriptions'] }),
+  })
+}
