@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useCustomers,
@@ -48,6 +48,10 @@ const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color:
  */
 export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  // Quote mode when creating from /invoicing/new?type=quote (existing docs keep
+  // their own document_type).
+  const isQuote = invoice ? invoice.document_type === 'QUOTE' : searchParams?.get('type') === 'quote'
   const { toast } = useToast()
   const save = useSaveInvoice()
   const send = useSendInvoice()
@@ -153,6 +157,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       notes: notes || undefined,
       terms_and_conditions: terms || undefined,
       bank_account_id: bankAccountId || undefined,
+      document_type: isQuote ? 'QUOTE' : undefined,
       line_items: valid,
     }
     try {
@@ -161,9 +166,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
         const sent = await send.mutateAsync(res.data.id)
         toast({ title: `Invoice ${res.data.invoice_number} sent`, description: sent.meta.public_url })
       } else {
-        toast({ title: invoice ? 'Draft updated' : `Draft ${res.data.invoice_number} created` })
+        const noun = isQuote ? 'Quote' : 'Draft'
+        toast({ title: invoice ? `${noun} updated` : `${noun} ${res.data.invoice_number} created` })
       }
-      router.push('/invoicing/invoices')
+      router.push(isQuote ? '/invoicing/quotes' : '/invoicing/invoices')
     } catch (err) {
       toast({
         title: 'Could not save invoice',

@@ -238,6 +238,9 @@ function invoicingChildrenFromGrants(grants: ModuleGrant[]): NavChild[] {
     )
   }
   // 'edit' implies the create/manage surfaces; capabilities widen 'view'.
+  if (invoicing?.access_level === 'edit') {
+    children.push({ href: '/invoicing/quotes', label: 'Quotes / Estimates' })
+  }
   if (invoicing?.access_level === 'edit' || caps.manage_customers) {
     children.push({ href: '/invoicing/customers', label: 'Customers' })
   }

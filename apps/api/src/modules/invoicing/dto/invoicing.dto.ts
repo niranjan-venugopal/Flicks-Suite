@@ -214,6 +214,7 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() terms_and_conditions?: string;
   @IsOptional() @IsString() bank_account_id?: string;
+  @IsOptional() @IsIn(['INVOICE', 'QUOTE']) document_type?: string;
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InvoiceLineDto)
@@ -236,6 +237,11 @@ export class InvoiceListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsString()
   customer_id?: string;
+
+  @ApiPropertyOptional({ enum: ['INVOICE', 'QUOTE'] })
+  @IsOptional()
+  @IsIn(['INVOICE', 'QUOTE'])
+  document_type?: string;
 }
 
 export class RecordPaymentDto {

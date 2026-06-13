@@ -59,6 +59,8 @@ export class InvoicesService {
     const offset = (page - 1) * limit;
 
     const conditions = [eq(invoices.tenant_id, tenantId)];
+    if (query.document_type)
+      conditions.push(eq(invoices.document_type, query.document_type));
     if (query.status) conditions.push(eq(invoices.status, query.status));
     if (query.customer_id)
       conditions.push(eq(invoices.customer_id, query.customer_id));
@@ -158,11 +160,15 @@ export class InvoicesService {
         tdsRate: dto.tds_rate ?? null,
       });
 
+      // Quotes share the invoices table + lifecycle; they differ by
+      // document_type and use the QUOTE numbering sequence.
+      const docType = dto.document_type === 'QUOTE' ? 'QUOTE' : 'INVOICE';
+
       // Atomic number reservation inside this tenant transaction (§6.4).
       const reserved = await this.numbering.reserveNext(
         tx,
         tenantId,
-        'INVOICE',
+        docType,
         dto.invoice_date,
       );
 
@@ -181,7 +187,7 @@ export class InvoicesService {
           tenant_id: tenantId,
           customer_id: customer.id,
           invoice_number: reserved.formatted,
-          document_type: 'INVOICE',
+          document_type: docType,
           status: 'DRAFT',
           invoice_date: dto.invoice_date,
           due_date: dto.due_date,
@@ -510,6 +516,53 @@ export class InvoicesService {
       resourceType: 'invoice',
       resourceId: id,
       metadata: { reason },
+    });
+    return { data: inv };
+  }
+
+  /**
+   * Convert a QUOTE into an INVOICE in place (§6.5). Promotes the document to
+   * the INVOICE series with a freshly reserved invoice number and a DRAFT
+   * status, keeping the line items. Only quotes that haven't been cancelled/
+   * voided can convert.
+   */
+  async convertToInvoice(id: string, userId: string, tenantId: string) {
+    const inv = await this.db.withTenant(tenantId, async (tx) => {
+      const existing = await this.fetch(tx, id);
+      if (existing.document_type !== 'QUOTE') {
+        throw new BadRequestException('Only quotes can be converted to invoices');
+      }
+      if (['CANCELLED', 'VOIDED'].includes(existing.status)) {
+        throw new BadRequestException(`Cannot convert a ${existing.status} quote`);
+      }
+      const reserved = await this.numbering.reserveNext(
+        tx,
+        tenantId,
+        'INVOICE',
+        existing.invoice_date,
+      );
+      const [row] = await tx
+        .update(invoices)
+        .set({
+          document_type: 'INVOICE',
+          invoice_number: reserved.formatted,
+          fy_label: reserved.fyLabel,
+          status: 'DRAFT',
+          quote_number: existing.invoice_number, // keep the original quote ref
+          updated_by: userId,
+          updated_at: new Date(),
+        })
+        .where(eq(invoices.id, id))
+        .returning();
+      return row!;
+    });
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.quote.convert',
+      resourceType: 'invoice',
+      resourceId: id,
+      afterState: { invoice_number: inv.invoice_number },
     });
     return { data: inv };
   }

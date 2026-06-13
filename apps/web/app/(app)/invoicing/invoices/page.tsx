@@ -101,8 +101,9 @@ export default function InvoicesPage() {
   const { data, isLoading, isError } = useInvoices({
     q: q || undefined,
     status: tab === 'all' ? undefined : tab,
+    document_type: 'INVOICE',
   })
-  const { data: draftsData } = useInvoices({ status: 'DRAFT' })
+  const { data: draftsData } = useInvoices({ status: 'DRAFT', document_type: 'INVOICE' })
   const action = useInvoiceAction()
   const send = useSendInvoice()
   const [payingInvoice, setPayingInvoice] = useState<InvoiceRow | null>(null)

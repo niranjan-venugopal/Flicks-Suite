@@ -71,6 +71,13 @@ export class InvoicesController {
     return this.invoices.duplicate(id, user.sub, user.tenantId);
   }
 
+  @Post(':id/convert-to-invoice')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({ summary: 'Convert a quote into an invoice (new invoice number, DRAFT)' })
+  convertToInvoice(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.invoices.convertToInvoice(id, user.sub, user.tenantId);
+  }
+
   @Post(':id/cancel')
   @RequireGrant('invoicing', 'edit')
   @ApiOperation({ summary: 'Cancel an invoice (auto credit note arrives in Sprint 6)' })

@@ -359,6 +359,38 @@ describe('Invoicing services (Sprint 3 — invoices)', () => {
       ),
     ).rejects.toThrow(/line item/);
   });
+
+  it('creates a QUOTE on the QUOTE series and converts it to an INVOICE (Sprint 10 §D)', async () => {
+    const quote = await invoicesSvc.create(
+      {
+        customer_id: customerId,
+        invoice_date: '2026-06-10',
+        due_date: '2026-07-10',
+        document_type: 'QUOTE',
+        line_items: [{ item_name: 'Estimate', quantity: '1', rate: '1000', gst_rate: '18' }],
+      },
+      userId,
+      tenantId,
+    );
+    expect(quote.data.document_type).toBe('QUOTE');
+    expect(quote.data.invoice_number).toMatch(/^QT/); // QUOTE prefix
+
+    // Quotes are excluded from the INVOICE-filtered list and present in QUOTE.
+    const invoiceList = await invoicesSvc.list(tenantId, { document_type: 'INVOICE' } as never);
+    expect(invoiceList.data.every((r) => r.document_type === 'INVOICE')).toBe(true);
+    const quoteList = await invoicesSvc.list(tenantId, { document_type: 'QUOTE' } as never);
+    expect(quoteList.data.some((r) => r.id === quote.data.id)).toBe(true);
+
+    // Convert → promoted to the INVOICE series, DRAFT, keeps the quote ref.
+    const converted = await invoicesSvc.convertToInvoice(quote.data.id, userId, tenantId);
+    expect(converted.data.document_type).toBe('INVOICE');
+    expect(converted.data.invoice_number).toMatch(/^INV/);
+    expect(converted.data.status).toBe('DRAFT');
+
+    await expect(
+      invoicesSvc.convertToInvoice(converted.data.id, userId, tenantId),
+    ).rejects.toThrow(/Only quotes/);
+  });
 });
 
 // ─── Sprint 4: send, public page, payments, webhook ──────────────────────────

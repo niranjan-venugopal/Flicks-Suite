@@ -225,6 +225,7 @@ export interface InvoiceInput {
   notes?: string
   terms_and_conditions?: string
   bank_account_id?: string
+  document_type?: 'INVOICE' | 'QUOTE'
   line_items: InvoiceLineInput[]
 }
 
@@ -276,13 +277,14 @@ export interface InvoiceDetail extends InvoiceRow {
 }
 
 export function useInvoices(
-  params: { page?: number; q?: string; status?: string; customer_id?: string } = {},
+  params: { page?: number; q?: string; status?: string; customer_id?: string; document_type?: string } = {},
 ) {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.q) qs.set('q', params.q)
   if (params.status) qs.set('status', params.status)
   if (params.customer_id) qs.set('customer_id', params.customer_id)
+  if (params.document_type) qs.set('document_type', params.document_type)
   return useQuery({
     queryKey: ['invoicing', 'invoices', params],
     queryFn: () => api.get<Paginated<InvoiceRow>>(`/api/v1/invoices?${qs.toString()}`),
@@ -317,7 +319,7 @@ export function useInvoiceAction() {
       body,
     }: {
       id: string
-      action: 'duplicate' | 'cancel' | 'void' | 'write-off'
+      action: 'duplicate' | 'cancel' | 'void' | 'write-off' | 'convert-to-invoice'
       body?: Record<string, unknown>
     }) => api.post<{ data: InvoiceDetail }>(`/api/v1/invoices/${id}/${action}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
