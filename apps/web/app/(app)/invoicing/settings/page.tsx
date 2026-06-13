@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
 import { InvoPage } from '@/components/invoicing/invo'
 import { NumberingTab } from '@/components/invoicing/NumberingTab'
@@ -23,9 +23,26 @@ import { useToast } from '@/components/ui/use-toast'
 const TABS = ['Numbering', 'Template', 'Email & Reminders', 'Payments', 'Currencies', 'Tax codes', 'Compliance']
 const BRAND_COLORS = ['#3E7BFA', '#27D280', '#9B7BFA', '#F8786B']
 
-function SettingRow({ label, sub, children }: { label: string; sub?: string; children?: ReactNode }) {
+// Blended idiom (matches NumberingTab): each tab is a flex column of cards.
+const TAB_WRAP: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 720 }
+const GRID_2: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }
+
+// Label-above-input field (NumberingTab style). `full` spans both grid columns.
+function Field({ label, hint, full, children }: { label: string; hint?: string; full?: boolean; children: ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 0', borderBottom: '1px solid var(--bord)' }}>
+    <div style={full ? { gridColumn: '1 / -1' } : undefined}>
+      <label className="label">{label}</label>
+      {children}
+      {hint && <div className="t-mute" style={{ fontSize: 11, marginTop: 6 }}>{hint}</div>}
+    </div>
+  )
+}
+
+// A standalone toggle/status card — the "Auto-reset on April 1" pattern from NumberingTab:
+// title + sub on the left, control on the right.
+function ToggleRow({ label, sub, children }: { label: string; sub?: string; children?: ReactNode }) {
+  return (
+    <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 800 }}>{label}</div>
         {sub && <div className="t-mute" style={{ fontSize: 11.5, marginTop: 2 }}>{sub}</div>}
@@ -126,96 +143,103 @@ export default function InvoicingSettingsPage() {
       {tab === 'Numbering' && <NumberingTab />}
 
       {tab === 'Template' && (
-        <div className="card" style={{ maxWidth: 680 }}>
-          <SettingRow label="Active template" sub="One polished default ships in v3">
-            <Pill tone="blue" dot>Default · Classic</Pill>
-          </SettingRow>
-          <SettingRow label="Brand color" sub="Used for accents on the invoice">
-            <div style={{ display: 'flex', gap: 8 }}>
-              {BRAND_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => set('brand_color_override', c)}
-                  aria-label={c}
-                  style={{
-                    width: 24, height: 24, borderRadius: 7, background: c, cursor: 'pointer',
-                    border: draft.brand_color_override === c ? '2px solid #fff' : '2px solid transparent',
-                  }}
+        <div style={TAB_WRAP}>
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 18 }}>Template &amp; branding</div>
+            <div style={{ ...GRID_2, alignItems: 'start' }}>
+              <Field label="Active template" hint="One polished default ships in v3">
+                <Pill tone="blue" dot>Default · Classic</Pill>
+              </Field>
+              <Field label="Brand color" hint="Used for accents on the invoice">
+                <div style={{ display: 'flex', gap: 8, height: 38, alignItems: 'center' }}>
+                  {BRAND_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => set('brand_color_override', c)}
+                      aria-label={c}
+                      style={{
+                        width: 26, height: 26, borderRadius: 7, background: c, cursor: 'pointer',
+                        border: draft.brand_color_override === c ? '2px solid #fff' : '2px solid transparent',
+                      }}
+                    />
+                  ))}
+                </div>
+              </Field>
+              <Field label="Default invoice notes" full>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={draft.default_invoice_notes ?? ''}
+                  onChange={(e) => set('default_invoice_notes', e.target.value)}
+                  placeholder="Thanks for your business!"
+                  style={{ width: '100%', resize: 'vertical' }}
                 />
-              ))}
+              </Field>
+              <Field label="Default terms & conditions" full>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={draft.default_terms_and_conditions ?? ''}
+                  onChange={(e) => set('default_terms_and_conditions', e.target.value)}
+                  placeholder="Payment due within the stated terms."
+                  style={{ width: '100%', resize: 'vertical' }}
+                />
+              </Field>
             </div>
-          </SettingRow>
-          <SettingRow label="Show UPI QR on PDF" sub="Render the UPI intent QR on INR invoices">
+          </div>
+          <ToggleRow label="Show UPI QR on PDF" sub="Render the UPI intent QR on INR invoices">
             <Toggle on={!!draft.show_upi_qr_on_pdf} onChange={(v) => set('show_upi_qr_on_pdf', v)} />
-          </SettingRow>
-          <div style={{ paddingTop: 14 }}>
-            <div className="label">Default invoice notes</div>
-            <textarea
-              className="input"
-              rows={2}
-              value={draft.default_invoice_notes ?? ''}
-              onChange={(e) => set('default_invoice_notes', e.target.value)}
-              placeholder="Thanks for your business!"
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </div>
-          <div style={{ paddingTop: 14 }}>
-            <div className="label">Default terms &amp; conditions</div>
-            <textarea
-              className="input"
-              rows={2}
-              value={draft.default_terms_and_conditions ?? ''}
-              onChange={(e) => set('default_terms_and_conditions', e.target.value)}
-              placeholder="Payment due within the stated terms."
-              style={{ width: '100%', resize: 'vertical' }}
-            />
-          </div>
+          </ToggleRow>
         </div>
       )}
 
       {tab === 'Email & Reminders' && (
-        <div className="card" style={{ maxWidth: 680 }}>
-          <SettingRow label="From name" sub="Sender shown on emails">
-            <input
-              className="input"
-              value={draft.email_sender_name ?? ''}
-              onChange={(e) => set('email_sender_name', e.target.value)}
-              placeholder={fin?.data?.legal_name ?? 'Your company'}
-              style={{ width: 240 }}
-            />
-          </SettingRow>
-          <SettingRow label="Reply-to">
-            <input
-              className="input"
-              value={draft.email_reply_to ?? ''}
-              onChange={(e) => set('email_reply_to', e.target.value)}
-              placeholder="finance@yourco.com"
-              style={{ width: 240 }}
-            />
-          </SettingRow>
-          <SettingRow label="CC owner on customer emails" sub="Owner gets a copy of every send">
-            <Toggle on={!!draft.cc_owner_on_customer_emails} onChange={(v) => set('cc_owner_on_customer_emails', v)} />
-          </SettingRow>
-          <div style={{ paddingTop: 14 }}>
-            <div className="label">Email signature</div>
-            <textarea
-              className="input"
-              rows={2}
-              value={draft.email_signature ?? ''}
-              onChange={(e) => set('email_signature', e.target.value)}
-              placeholder="— The Acme Finance team"
-              style={{ width: '100%', resize: 'vertical' }}
-            />
+        <div style={TAB_WRAP}>
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 18 }}>Sender</div>
+            <div style={{ ...GRID_2, alignItems: 'start' }}>
+              <Field label="From name" hint="Sender shown on emails">
+                <input
+                  className="input"
+                  value={draft.email_sender_name ?? ''}
+                  onChange={(e) => set('email_sender_name', e.target.value)}
+                  placeholder={fin?.data?.legal_name ?? 'Your company'}
+                  style={{ width: '100%' }}
+                />
+              </Field>
+              <Field label="Reply-to">
+                <input
+                  className="input"
+                  value={draft.email_reply_to ?? ''}
+                  onChange={(e) => set('email_reply_to', e.target.value)}
+                  placeholder="finance@yourco.com"
+                  style={{ width: '100%' }}
+                />
+              </Field>
+              <Field label="Email signature" full>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={draft.email_signature ?? ''}
+                  onChange={(e) => set('email_signature', e.target.value)}
+                  placeholder="— The Acme Finance team"
+                  style={{ width: '100%', resize: 'vertical' }}
+                />
+              </Field>
+            </div>
           </div>
-          <div style={{ marginTop: 16 }}>
-            <div className="label">Reminder schedule</div>
+          <ToggleRow label="CC owner on customer emails" sub="Owner gets a copy of every send">
+            <Toggle on={!!draft.cc_owner_on_customer_emails} onChange={(v) => set('cc_owner_on_customer_emails', v)} />
+          </ToggleRow>
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 14 }}>Reminder schedule</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {['−3d', 'Due day', '+3d', '+7d', '+14d', '+30d'].map((r, i) => (
                 <Pill key={i} tone={i < 4 ? 'blue' : ''} dot={i < 4}>{r}</Pill>
               ))}
             </div>
-            <div className="t-mute" style={{ fontSize: 11.5, marginTop: 8 }}>
+            <div className="t-mute" style={{ fontSize: 11.5, marginTop: 12 }}>
               The hourly reminder sweep is live; per-schedule editing arrives with the schedule editor.
             </div>
           </div>
@@ -223,39 +247,44 @@ export default function InvoicingSettingsPage() {
       )}
 
       {tab === 'Payments' && (
-        <div className="card" style={{ maxWidth: 680 }}>
-          <SettingRow label="UPI ID" sub="Shown as QR on INR invoices">
-            <input
-              className="input"
-              value={draft.upi_id ?? ''}
-              onChange={(e) => set('upi_id', e.target.value)}
-              placeholder="yourco@hdfcbank"
-              style={{ width: 220, fontFamily: 'var(--font-mono)', fontSize: 12 }}
-            />
-          </SettingRow>
-          <SettingRow label="UPI display name" sub="Beneficiary name on the QR">
-            <input
-              className="input"
-              value={draft.upi_display_name ?? ''}
-              onChange={(e) => set('upi_display_name', e.target.value)}
-              placeholder="Acme Pvt Ltd"
-              style={{ width: 220 }}
-            />
-          </SettingRow>
-          <SettingRow label="Razorpay" sub="Cards · UPI · Netbanking · international">
+        <div style={TAB_WRAP}>
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 18 }}>UPI</div>
+            <div style={GRID_2}>
+              <Field label="UPI ID" hint="Shown as QR on INR invoices">
+                <input
+                  className="input"
+                  value={draft.upi_id ?? ''}
+                  onChange={(e) => set('upi_id', e.target.value)}
+                  placeholder="yourco@hdfcbank"
+                  style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                />
+              </Field>
+              <Field label="UPI display name" hint="Beneficiary name on the QR">
+                <input
+                  className="input"
+                  value={draft.upi_display_name ?? ''}
+                  onChange={(e) => set('upi_display_name', e.target.value)}
+                  placeholder="Acme Pvt Ltd"
+                  style={{ width: '100%' }}
+                />
+              </Field>
+            </div>
+          </div>
+          <ToggleRow label="Razorpay" sub="Cards · UPI · Netbanking · international">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Pill tone={settings?.razorpay_webhook_configured ? 'green' : ''} dot={settings?.razorpay_webhook_configured}>
                 {settings?.razorpay_webhook_configured ? 'Connected' : 'Not connected'}
               </Pill>
               <Btn kind="secondary" size="sm" disabled title="Connect flow arrives with live keys">Connect</Btn>
             </div>
-          </SettingRow>
-          <SettingRow label="Partial payments" sub="Allow customers to pay in parts">
+          </ToggleRow>
+          <ToggleRow label="Partial payments" sub="Allow customers to pay in parts">
             <Toggle on={!!draft.allow_partial_payments} onChange={(v) => set('allow_partial_payments', v)} />
-          </SettingRow>
+          </ToggleRow>
           <div
             style={{
-              display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, padding: '10px 13px',
+              display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px',
               borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)',
             }}
           >
@@ -266,72 +295,83 @@ export default function InvoicingSettingsPage() {
       )}
 
       {tab === 'Currencies' && (
-        <div className="card" style={{ maxWidth: 680 }}>
-          <SettingRow label="INR · Indian Rupee" sub="Base currency">
+        <div style={TAB_WRAP}>
+          <ToggleRow label="INR · Indian Rupee" sub="Base currency">
             <Pill tone="green" dot>Locked on</Pill>
-          </SettingRow>
+          </ToggleRow>
           {([['USD', 'US Dollar'], ['EUR', 'Euro'], ['GBP', 'Pound Sterling']] as const).map(([c, n]) => (
-            <SettingRow key={c} label={`${c} · ${n}`}>
+            <ToggleRow key={c} label={`${c} · ${n}`} sub="Enable to invoice in this currency">
               <Toggle on={currencies[c]!} onChange={(v) => setCurrencies((cur) => ({ ...cur, [c]: v }))} />
-            </SettingRow>
+            </ToggleRow>
           ))}
-          <SettingRow label="FX source" sub="openexchangerates · snapshot at invoice creation">
+          <ToggleRow label="FX source" sub="openexchangerates · snapshot at invoice creation">
             <Pill tone="">Config-gated</Pill>
-          </SettingRow>
+          </ToggleRow>
         </div>
       )}
 
       {tab === 'Tax codes' && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden', maxWidth: 680 }}>
-          <table className="tbl">
-            <thead>
-              <tr><th>Code</th><th>Type</th><th>Description</th><th style={{ textAlign: 'right' }}>Rate</th></tr>
-            </thead>
-            <tbody>
-              {([
-                ['998314', 'SAC', 'IT design & development', '18%'],
-                ['998315', 'SAC', 'Hosting & infrastructure', '18%'],
-                ['8523', 'HSN', 'Software media', '18%'],
-                ['998313', 'SAC', 'IT consulting & support', '18%'],
-              ] as const).map((r, i) => (
-                <tr key={i}>
-                  {r.map((c, j) => (
-                    <td key={j} style={j === 0 ? { fontFamily: 'var(--font-mono)', fontSize: 12 } : j === 3 ? { textAlign: 'right', fontWeight: 800 } : undefined}>{c}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={TAB_WRAP}>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--bord)' }}>
+              <div className="t-h3">Saved HSN / SAC codes</div>
+              <div className="t-mute" style={{ fontSize: 11.5, marginTop: 2 }}>Reused across items and invoices for GST.</div>
+            </div>
+            <table className="tbl">
+              <thead>
+                <tr><th>Code</th><th>Type</th><th>Description</th><th style={{ textAlign: 'right' }}>Rate</th></tr>
+              </thead>
+              <tbody>
+                {([
+                  ['998314', 'SAC', 'IT design & development', '18%'],
+                  ['998315', 'SAC', 'Hosting & infrastructure', '18%'],
+                  ['8523', 'HSN', 'Software media', '18%'],
+                  ['998313', 'SAC', 'IT consulting & support', '18%'],
+                ] as const).map((r, i) => (
+                  <tr key={i}>
+                    {r.map((c, j) => (
+                      <td key={j} style={j === 0 ? { fontFamily: 'var(--font-mono)', fontSize: 12 } : j === 3 ? { textAlign: 'right', fontWeight: 800 } : undefined}>{c}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {tab === 'Compliance' && (
-        <div className="card" style={{ maxWidth: 680 }}>
-          <SettingRow label="GST registered" sub={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Organization'}>
-            <Pill tone={fin?.data?.gstin ? 'green' : ''} dot={!!fin?.data?.gstin}>
-              {fin?.data?.gstin ? 'Active' : 'Not set'}
-            </Pill>
-          </SettingRow>
-          <SettingRow label="Place of supply default" sub="From company state">
-            <span style={{ fontSize: 13, fontWeight: 700 }}>{fin?.data?.state_code ?? '—'}</span>
-          </SettingRow>
-          <SettingRow label="Filing frequency" sub="GSTR-1 cadence">
-            <select
-              className="input"
-              value={draft.filing_frequency ?? 'monthly'}
-              onChange={(e) => set('filing_frequency', e.target.value)}
-              style={{ width: 160 }}
-            >
-              <option value="monthly">Monthly</option>
-              <option value="quarterly">Quarterly (QRMP)</option>
-            </select>
-          </SettingRow>
-          <SettingRow label="Composition scheme" sub="Composition dealers don't charge GST">
+        <div style={TAB_WRAP}>
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 18 }}>GST</div>
+            <div style={{ ...GRID_2, alignItems: 'start' }}>
+              <Field label="GST registered" hint={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Organization'}>
+                <Pill tone={fin?.data?.gstin ? 'green' : ''} dot={!!fin?.data?.gstin}>
+                  {fin?.data?.gstin ? 'Active' : 'Not set'}
+                </Pill>
+              </Field>
+              <Field label="Place of supply default" hint="From company state">
+                <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 700, paddingTop: 6 }}>{fin?.data?.state_code ?? '—'}</span>
+              </Field>
+              <Field label="Filing frequency" hint="GSTR-1 cadence">
+                <select
+                  className="input"
+                  value={draft.filing_frequency ?? 'monthly'}
+                  onChange={(e) => set('filing_frequency', e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly (QRMP)</option>
+                </select>
+              </Field>
+            </div>
+          </div>
+          <ToggleRow label="Composition scheme" sub="Composition dealers don't charge GST">
             <Toggle on={!!draft.composition_scheme} onChange={(v) => set('composition_scheme', v)} />
-          </SettingRow>
-          <SettingRow label="Auto-suggest TDS" sub="Pre-fill Section 393 on eligible invoices">
+          </ToggleRow>
+          <ToggleRow label="Auto-suggest TDS" sub="Pre-fill Section 393 on eligible invoices">
             <Toggle on={!!draft.auto_suggest_tds} onChange={(v) => set('auto_suggest_tds', v)} />
-          </SettingRow>
+          </ToggleRow>
         </div>
       )}
 
