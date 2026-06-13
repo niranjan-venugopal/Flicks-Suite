@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { and, eq } from 'drizzle-orm';
-import { membershipGrants, tenantModuleToggles } from '@flicks/db/schema';
+import { membershipGrants, memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { DatabaseService } from '../../database/database.service';
 import {
@@ -52,21 +52,29 @@ export class InvoicingGrantGuard implements CanActivate {
       user: JwtPayload;
     };
 
-    // FAM module toggle (PRD §10.1): the per-tenant invoicing toggle WINS over
-    // any role/grant. If FAM has disabled invoicing for this workspace, nobody
-    // — not even an owner — may touch /invoicing/*. Checked before the
-    // @RequireGrant short-circuit so it covers every invoicing endpoint, not
-    // just the grant-decorated ones. Platform admins (FAM) bypass — they manage
-    // the toggle and never read invoice content here anyway.
+    // Two gates that WIN over any role/grant, checked before the @RequireGrant
+    // short-circuit so they cover every invoicing endpoint (not just
+    // grant-decorated ones). Platform admins (FAM) bypass — they manage toggles
+    // and never read invoice content here.
+    //   1. FAM module toggle (§10.1): if invoicing is disabled for this
+    //      workspace, nobody — not even an owner — may touch /invoicing/*.
+    //   2. Membership liveness (§3.5): a revoked/expired auditor or member
+    //      keeps a valid JWT until it expires; re-check status + access window
+    //      on every request so revocation takes effect immediately rather than
+    //      lingering for the token's TTL.
     if (user && !user.isPlatformAdmin && user.tenantId) {
-      const enabled = await this.isModuleEnabled(
-        user.tenantId,
+      const { moduleEnabled, membershipActive } = await this.loadAccessContext(
+        user,
         'invoicing',
-        user.sub,
       );
-      if (!enabled) {
+      if (!moduleEnabled) {
         throw new ForbiddenException(
           'Invoicing is disabled for this workspace by the platform administrator',
+        );
+      }
+      if (!membershipActive) {
+        throw new ForbiddenException(
+          'Your access to this workspace is no longer active',
         );
       }
     }
@@ -94,31 +102,58 @@ export class InvoicingGrantGuard implements CanActivate {
   }
 
   /**
-   * Whether `module` is enabled for the tenant. Defaults to ENABLED when no
-   * explicit toggle row exists (PRD §10.1: invoicing is on by default). Read
-   * inside the tenant RLS context.
+   * Load the two pre-grant gates in a single tenant-context round-trip:
+   *  - moduleEnabled: defaults to ENABLED when no toggle row exists (§10.1).
+   *  - membershipActive: the caller's membership must still be `active` and
+   *    within its access window (§3.5). Missing/deactivated/expired → false.
+   *      (No membershipId on the JWT → treated as not-active for safety.)
    */
-  private async isModuleEnabled(
-    tenantId: string,
+  private async loadAccessContext(
+    user: JwtPayload,
     module: string,
-    userId: string,
-  ): Promise<boolean> {
-    const rows = await this.db.withTenant(
-      tenantId,
-      (tx) =>
-        tx
+  ): Promise<{ moduleEnabled: boolean; membershipActive: boolean }> {
+    return this.db.withTenant(
+      user.tenantId,
+      async (tx) => {
+        const toggleRows = await tx
           .select({ enabled: tenantModuleToggles.enabled })
           .from(tenantModuleToggles)
           .where(
             and(
-              eq(tenantModuleToggles.tenant_id, tenantId),
+              eq(tenantModuleToggles.tenant_id, user.tenantId),
               eq(tenantModuleToggles.module, module),
             ),
           )
-          .limit(1),
-      userId,
+          .limit(1);
+        const moduleEnabled =
+          toggleRows.length === 0 ? true : toggleRows[0]!.enabled;
+
+        let membershipActive = false;
+        if (user.membershipId) {
+          const memRows = await tx
+            .select({
+              status: memberships.status,
+              expires: memberships.access_expires_at,
+            })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.id, user.membershipId),
+                eq(memberships.tenant_id, user.tenantId),
+              ),
+            )
+            .limit(1);
+          const m = memRows[0];
+          membershipActive =
+            !!m &&
+            m.status === 'active' &&
+            (!m.expires || m.expires.getTime() > Date.now());
+        }
+
+        return { moduleEnabled, membershipActive };
+      },
+      user.sub,
     );
-    return rows.length === 0 ? true : rows[0]!.enabled;
   }
 
   private async hasGrant(

@@ -1353,6 +1353,13 @@ describe('Members & auditor role (Sprint 8)', () => {
   });
 
   it('grant guard allows invoicing:view but denies invoicing:edit for the default auditor', async () => {
+    // A real session implies an accepted (active) membership; activate the
+    // invited row so the guard's liveness gate (Sprint 10 §C) passes and we're
+    // testing the grant logic itself.
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'active', accepted_at: new Date() })
+      .where(eq(membershipsTable.id, auditorMembershipA));
     const jwt = {
       sub: auditorUserId,
       tenantId: tenantA,
@@ -1564,6 +1571,7 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
   let tenantId: string;
   let ownerId: string;
   let auditorId: string;
+  let ownerMembershipId: string;
 
   beforeAll(async () => {
     const [t] = await dbAdmin
@@ -1581,7 +1589,11 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
       .values({ email: `famaud-${rid()}@test.test`, full_name: 'FamAuditor', status: 'active' })
       .returning();
     auditorId = a!.id;
-    await dbAdmin.insert(membershipsTable).values({ tenant_id: tenantId, user_id: ownerId, role: 'owner', status: 'active' });
+    const [om] = await dbAdmin
+      .insert(membershipsTable)
+      .values({ tenant_id: tenantId, user_id: ownerId, role: 'owner', status: 'active' })
+      .returning();
+    ownerMembershipId = om!.id;
     await dbAdmin.insert(membershipsTable).values({ tenant_id: tenantId, user_id: auditorId, role: 'auditor', status: 'active', is_external: true });
   });
 
@@ -1591,13 +1603,13 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
     await dbAdmin.delete(usersTable).where(eq(usersTable.id, auditorId));
   });
 
-  const guardFor = (tid: string, uid: string) => {
+  const guardFor = (tid: string, uid: string, membershipId: string) => {
     const reflector = { getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }) } as never;
     const guard = new InvoicingGrantGuard(reflector, dbSvc);
     const ctx = {
       switchToHttp: () => ({
         getRequest: () => ({
-          user: { sub: uid, tenantId: tid, membershipId: 'm', role: 'owner', isPlatformAdmin: false },
+          user: { sub: uid, tenantId: tid, membershipId, role: 'owner', isPlatformAdmin: false },
         }),
       }),
       getHandler: () => () => {},
@@ -1609,18 +1621,18 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
   it('defaults invoicing ENABLED and the guard allows access', async () => {
     const mods = await fam.getTenantModules(tenantId);
     expect(mods.data.find((m) => m.module === 'invoicing')!.enabled).toBe(true);
-    await expect(guardFor(tenantId, ownerId)).resolves.toBe(true);
+    await expect(guardFor(tenantId, ownerId, ownerMembershipId)).resolves.toBe(true);
   });
 
   it('FAM disabling invoicing makes the guard deny even an owner (toggle wins over grant)', async () => {
     await fam.setTenantModule(tenantId, 'invoicing', false, ownerId);
     const mods = await fam.getTenantModules(tenantId);
     expect(mods.data.find((m) => m.module === 'invoicing')!.enabled).toBe(false);
-    await expect(guardFor(tenantId, ownerId)).rejects.toThrow(/disabled/i);
+    await expect(guardFor(tenantId, ownerId, ownerMembershipId)).rejects.toThrow(/disabled/i);
 
     // Re-enable restores access.
     await fam.setTenantModule(tenantId, 'invoicing', true, ownerId);
-    await expect(guardFor(tenantId, ownerId)).resolves.toBe(true);
+    await expect(guardFor(tenantId, ownerId, ownerMembershipId)).resolves.toBe(true);
   });
 
   it('seat split counts billable members vs non-billable auditors', async () => {
@@ -1647,6 +1659,104 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
     expect(metrics.data).toHaveProperty('tenantsWithAuditor');
     expect(metrics.data).toHaveProperty('medianCompaniesPerAuditor');
     expect(typeof metrics.data.tenantsWithInvoices).toBe('number');
+  });
+});
+
+describe('Invoicing guard — membership liveness on every request (Sprint 10 §C)', () => {
+  // A revoked/expired auditor keeps a valid JWT until it expires; the guard
+  // must re-check membership status + access window so revocation takes effect
+  // immediately, regardless of still-present grant rows.
+  let tenantId: string;
+  let auditorUserId: string;
+  let auditorMembershipId: string;
+
+  const reflector = {
+    getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }),
+  } as never;
+  const guard = new InvoicingGrantGuard(reflector, dbSvc);
+  const canActivate = (membershipId: string) => {
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: {
+            sub: auditorUserId,
+            tenantId,
+            membershipId,
+            role: 'auditor',
+            isPlatformAdmin: false,
+          },
+        }),
+      }),
+      getHandler: () => () => {},
+      getClass: () => class {},
+    } as never;
+    return guard.canActivate(ctx);
+  };
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `LiveCo${rid()}`, slug: `live-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `live-${rid()}@test.test`, full_name: 'Live Auditor', status: 'active' })
+      .returning();
+    auditorUserId = u!.id;
+    const [m] = await dbAdmin
+      .insert(membershipsTable)
+      .values({ tenant_id: tenantId, user_id: auditorUserId, role: 'auditor', status: 'active', is_external: true })
+      .returning();
+    auditorMembershipId = m!.id;
+    // Grant invoicing:view so the request would pass the grant gate — proving
+    // the liveness gate (not the grant gate) is what denies after revocation.
+    await dbSvc.withTenant(
+      tenantId,
+      (tx) =>
+        tx.insert(membershipGrantsTable).values({
+          tenant_id: tenantId,
+          membership_id: auditorMembershipId,
+          module: 'invoicing',
+          access_level: 'view',
+          capabilities: {},
+        }),
+      auditorUserId,
+    );
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, auditorUserId));
+  });
+
+  it('allows an active granted auditor', async () => {
+    await expect(canActivate(auditorMembershipId)).resolves.toBe(true);
+  });
+
+  it('denies immediately once the membership is deactivated (grants still present)', async () => {
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'deactivated' })
+      .where(eq(membershipsTable.id, auditorMembershipId));
+    await expect(canActivate(auditorMembershipId)).rejects.toThrow(/no longer active/i);
+    // Reactivate for the next case.
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'active' })
+      .where(eq(membershipsTable.id, auditorMembershipId));
+  });
+
+  it('denies when the access window has elapsed', async () => {
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ access_expires_at: new Date(Date.now() - 24 * 3600 * 1000) })
+      .where(eq(membershipsTable.id, auditorMembershipId));
+    await expect(canActivate(auditorMembershipId)).rejects.toThrow(/no longer active/i);
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ access_expires_at: null })
+      .where(eq(membershipsTable.id, auditorMembershipId));
   });
 });
 
