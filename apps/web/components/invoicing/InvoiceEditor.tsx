@@ -294,9 +294,17 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
           <InvoCard style={{ marginBottom: 20 }}>
             <InvoCardTitle>Line items</InvoCardTitle>
             <div style={{ display: 'grid', gridTemplateColumns: lineGrid, gap: 8, marginBottom: 10 }}>
-              {['Description', ...(isDomestic ? ['HSN/SAC'] : []), 'Qty', `Rate (${symbol(currency).trim()})`, ...(isDomestic ? ['GST %'] : []), 'Amount', ''].map((h) => (
-                <div key={h} style={{ fontWeight: 700, fontSize: 12, color: INVO.muted40, letterSpacing: '-0.01em' }}>
-                  {h}
+              {[
+                { h: 'Description', a: 'left' as const },
+                ...(isDomestic ? [{ h: 'HSN/SAC', a: 'left' as const }] : []),
+                { h: 'Qty', a: 'right' as const },
+                { h: `Rate (${symbol(currency).trim()})`, a: 'right' as const },
+                ...(isDomestic ? [{ h: 'GST %', a: 'right' as const }] : []),
+                { h: 'Amount', a: 'right' as const },
+                { h: '', a: 'left' as const },
+              ].map((c, i) => (
+                <div key={i} style={{ fontWeight: 700, fontSize: 12, color: INVO.muted40, letterSpacing: '-0.01em', textAlign: c.a }}>
+                  {c.h}
                 </div>
               ))}
             </div>
@@ -319,14 +327,14 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   />
                 )}
                 <input
-                  style={invoField(true)}
+                  style={{ ...invoField(true), textAlign: 'right' }}
                   inputMode="decimal"
                   value={l.quantity}
                   onChange={(e) => setLine(i, { quantity: e.target.value })}
                   onKeyDown={onLineKeyDown}
                 />
                 <input
-                  style={invoField(true)}
+                  style={{ ...invoField(true), textAlign: 'right' }}
                   inputMode="decimal"
                   placeholder="0.00"
                   value={l.rate}
@@ -335,14 +343,14 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 />
                 {isDomestic && (
                   <input
-                    style={invoField(true)}
+                    style={{ ...invoField(true), textAlign: 'right' }}
                     inputMode="decimal"
                     value={l.gst_rate ?? ''}
                     onChange={(e) => setLine(i, { gst_rate: e.target.value })}
                     onKeyDown={onLineKeyDown}
                   />
                 )}
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                   {symbol(currency)}
                   {lineAmount(l).toLocaleString('en-IN')}
                 </div>
