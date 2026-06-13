@@ -33,21 +33,19 @@ interface LogoMarkProps {
 
 export function LogoMark({ size = 32, style }: LogoMarkProps) {
   return (
-    <div
+    <img
+      src="/spec-pfp.png"
+      alt="Flicks Suite"
+      width={size}
+      height={size}
       style={{
         width: size,
         height: size,
         borderRadius: size * 0.28,
-        background: 'linear-gradient(135deg, #3E7BFA 0%, #5A95FF 60%, #9B7BFA 100%)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: '0 6px 16px rgba(62,123,250,.4), inset 0 1px 0 rgba(255,255,255,.3)',
+        objectFit: 'cover',
         flexShrink: 0,
         ...style,
       }}
-    >
-      <Logo size={size * 0.62} color="#fff" />
-    </div>
+    />
   )
 }
