@@ -4,7 +4,6 @@ import {
   IsNotEmpty,
   IsOptional,
   Length,
-  IsUUID,
   Matches,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -60,8 +59,16 @@ export class RefreshTokenDto {
 
 export class SelectTenantDto {
   @ApiProperty({ description: 'Tenant UUID to switch to' })
-  @IsUUID()
   @IsNotEmpty()
+  // Validate UUID *format* (8-4-4-4-12 hex) rather than @IsUUID(), which also
+  // enforces the RFC version/variant nibbles. Postgres' `uuid` type accepts any
+  // 128-bit value in that shape, so seed/demo tenants created with non-RFC ids
+  // (e.g. 11111111-1111-1111-1111-111111111111) are valid everywhere — RLS,
+  // joins, /me — yet @IsUUID() would reject them here and 400 every company
+  // switch into such a tenant. Match Postgres' notion of a UUID instead.
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'tenantId must be a valid UUID',
+  })
   tenantId: string;
 }
 

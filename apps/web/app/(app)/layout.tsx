@@ -86,15 +86,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     // Recover from a revoked/expired current tenant exactly once per load.
     if (currentTenantRevoked && !recoveryFired.current) {
       recoveryFired.current = true
-      if (activeMemberships.length === 1) {
+      const soleActive = activeMemberships.length === 1 ? activeMemberships[0] : null
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      if (soleActive && uuid.test(soleActive.tenantId ?? '')) {
         // Re-scope the JWT into the only company they can still use.
         switchCompany.mutate({
-          tenantId: activeMemberships[0]!.tenantId,
+          tenantId: soleActive.tenantId,
           redirectTo: freshRole === 'auditor' ? '/invoicing' : '/dashboard',
         })
       } else {
-        // None left, or several to choose from → let them pick / see the
-        // empty state rather than sitting on a dead workspace.
+        // None left, several to choose from, or a membership without a usable
+        // tenant id → let them pick / see the empty state rather than auto-
+        // firing a switch that can't succeed.
         router.replace('/my-companies')
       }
     }
