@@ -3,6 +3,8 @@ import {
   Get,
   Post,
   Put,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -27,6 +29,7 @@ import {
   UpsertFeatureFlagDto,
   UpsertCohortDto,
   TenantListQueryDto,
+  ToggleModuleDto,
 } from './fam.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -304,5 +307,63 @@ export class FamController {
       page: page ? Number(page) : 1,
       limit: limit ? Number(limit) : 50,
     });
+  }
+
+  // ─── Invoicing v3: module toggles, auditor registry, seats, metrics (§10) ──
+
+  @Get('tenants/:id/modules')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Per-module enablement for a tenant' })
+  async getTenantModules(@Param('id') id: string) {
+    return this.famService.getTenantModules(id);
+  }
+
+  @Patch('tenants/:id/modules/:module')
+  @Roles('fam')
+  @ApiOperation({
+    summary: 'Enable/disable a module for a tenant (toggle wins over grants)',
+  })
+  async toggleTenantModule(
+    @Param('id') id: string,
+    @Param('module') module: string,
+    @Body() dto: ToggleModuleDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.famService.setTenantModule(id, module, dto.enabled, user.sub);
+  }
+
+  @Get('auditors')
+  @Roles('fam')
+  @ApiOperation({
+    summary: 'Auditor-link registry — auditor ↔ companies ↔ status ↔ window',
+  })
+  async getAuditorRegistry() {
+    return this.famService.getAuditorRegistry();
+  }
+
+  @Delete('auditors/:userId/companies/:tenantId')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke an auditor link (service-role)' })
+  async revokeAuditorLink(
+    @Param('userId') userId: string,
+    @Param('tenantId') tenantId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.famService.revokeAuditorLink(userId, tenantId, user.sub);
+  }
+
+  @Get('tenants/:id/seats')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Seat split — billable members vs non-billable auditors' })
+  async getTenantSeats(@Param('id') id: string) {
+    return this.famService.getTenantSeats(id);
+  }
+
+  @Get('invoicing-metrics')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Anonymized aggregate invoicing/auditor metrics (no content)' })
+  async getInvoicingMetrics() {
+    return this.famService.getInvoicingMetrics();
   }
 }

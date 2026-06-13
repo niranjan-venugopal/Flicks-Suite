@@ -166,3 +166,9 @@ export class TenantListQueryDto {
   @Type(() => Number)
   limit?: number = 20;
 }
+
+export class ToggleModuleDto {
+  @ApiProperty({ description: 'Enable or disable the module for this tenant' })
+  @IsBoolean()
+  enabled!: boolean;
+}

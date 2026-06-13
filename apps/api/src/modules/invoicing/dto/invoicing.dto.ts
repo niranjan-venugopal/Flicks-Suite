@@ -319,3 +319,49 @@ export class UpdateSeatsDto {
 export class CancelSubscriptionDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
+
+// ─── Invoicing settings + setup wizard (Sprint 9 — PRD §7.1, §11) ────────────
+
+export class UpdateInvSettingsDto {
+  @IsOptional() @IsString() default_currency?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) default_payment_terms_days?: number;
+  @IsOptional() @IsNumberString() default_gst_rate?: string;
+  @IsOptional() @IsString() default_invoice_notes?: string;
+  @IsOptional() @IsString() default_terms_and_conditions?: string;
+  @IsOptional() @IsString() invoice_template?: string;
+  @IsOptional() @IsString() brand_color_override?: string;
+  @IsOptional() @IsBoolean() show_gstin_on_pdf?: boolean;
+  @IsOptional() @IsBoolean() show_tds_section_on_pdf?: boolean;
+  @IsOptional() @IsBoolean() show_upi_qr_on_pdf?: boolean;
+  @IsOptional() @IsBoolean() show_powered_by_footer?: boolean;
+  @IsOptional() @IsString() email_sender_name?: string;
+  @IsOptional() @IsString() email_reply_to?: string;
+  @IsOptional() @IsString() email_signature?: string;
+  @IsOptional() @IsBoolean() cc_owner_on_customer_emails?: boolean;
+  @IsOptional() @IsArray() @IsString({ each: true }) additional_cc_emails?: string[];
+  @IsOptional() @IsString() upi_id?: string;
+  @IsOptional() @IsString() upi_display_name?: string;
+  @IsOptional() @IsBoolean() allow_partial_payments?: boolean;
+  @IsOptional() @IsIn(['monthly', 'quarterly']) filing_frequency?: string;
+  @IsOptional() @IsNumberString() declared_aato?: string;
+  @IsOptional() @IsBoolean() composition_scheme?: boolean;
+  @IsOptional() @IsString() default_tds_section?: string;
+  @IsOptional() @IsString() default_tds_payment_code?: string;
+  @IsOptional() @IsNumberString() default_tds_rate?: string;
+  @IsOptional() @IsBoolean() auto_suggest_tds?: boolean;
+}
+
+export class UpdateSetupProgressDto {
+  @IsOptional() @IsString() @MaxLength(60) current_step?: string;
+  @IsOptional() @IsBoolean() business_details_confirmed?: boolean;
+  @IsOptional() @IsBoolean() upi_configured?: boolean;
+  @IsOptional() @IsBoolean() razorpay_connected?: boolean;
+  @IsOptional() @IsBoolean() template_chosen?: boolean;
+  @IsOptional() @IsBoolean() numbering_configured?: boolean;
+  @IsOptional() @IsBoolean() payment_terms_set?: boolean;
+  @IsOptional() @IsBoolean() currencies_enabled?: boolean;
+  @IsOptional() @IsBoolean() default_gst_set?: boolean;
+  @IsOptional() @IsBoolean() default_notes_set?: boolean;
+  @IsOptional() @IsBoolean() email_signature_set?: boolean;
+  @IsOptional() @IsBoolean() reminder_schedule_set?: boolean;
+}

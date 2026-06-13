@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { and, eq } from 'drizzle-orm';
-import { membershipGrants } from '@flicks/db/schema';
+import { membershipGrants, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { DatabaseService } from '../../database/database.service';
 import {
@@ -48,15 +48,35 @@ export class InvoicingGrantGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const { user } = context.switchToHttp().getRequest() as {
+      user: JwtPayload;
+    };
+
+    // FAM module toggle (PRD §10.1): the per-tenant invoicing toggle WINS over
+    // any role/grant. If FAM has disabled invoicing for this workspace, nobody
+    // — not even an owner — may touch /invoicing/*. Checked before the
+    // @RequireGrant short-circuit so it covers every invoicing endpoint, not
+    // just the grant-decorated ones. Platform admins (FAM) bypass — they manage
+    // the toggle and never read invoice content here anyway.
+    if (user && !user.isPlatformAdmin && user.tenantId) {
+      const enabled = await this.isModuleEnabled(
+        user.tenantId,
+        'invoicing',
+        user.sub,
+      );
+      if (!enabled) {
+        throw new ForbiddenException(
+          'Invoicing is disabled for this workspace by the platform administrator',
+        );
+      }
+    }
+
     const requirement = this.reflector.getAllAndOverride<GrantRequirement>(
       REQUIRE_GRANT_KEY,
       [context.getHandler(), context.getClass()],
     );
     if (!requirement) return true; // not grant-governed
 
-    const { user } = context.switchToHttp().getRequest() as {
-      user: JwtPayload;
-    };
     if (!user) throw new ForbiddenException('Access denied');
     if (user.isPlatformAdmin) return true;
 
@@ -71,6 +91,34 @@ export class InvoicingGrantGuard implements CanActivate {
       );
     }
     return true;
+  }
+
+  /**
+   * Whether `module` is enabled for the tenant. Defaults to ENABLED when no
+   * explicit toggle row exists (PRD §10.1: invoicing is on by default). Read
+   * inside the tenant RLS context.
+   */
+  private async isModuleEnabled(
+    tenantId: string,
+    module: string,
+    userId: string,
+  ): Promise<boolean> {
+    const rows = await this.db.withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .select({ enabled: tenantModuleToggles.enabled })
+          .from(tenantModuleToggles)
+          .where(
+            and(
+              eq(tenantModuleToggles.tenant_id, tenantId),
+              eq(tenantModuleToggles.module, module),
+            ),
+          )
+          .limit(1),
+      userId,
+    );
+    return rows.length === 0 ? true : rows[0]!.enabled;
   }
 
   private async hasGrant(

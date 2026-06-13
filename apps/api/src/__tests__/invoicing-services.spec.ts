@@ -1485,6 +1485,171 @@ describe('Members & auditor role (Sprint 8)', () => {
   });
 });
 
+// ─── Sprint 9: FAM toggles + guard, settings/setup, registry, seats, metrics ──
+import { InvSettingsService } from '../modules/invoicing/inv-settings.service';
+import { FamService } from '../modules/fam/fam.service';
+
+describe('Invoicing settings + setup wizard (Sprint 9)', () => {
+  const settings = new InvSettingsService(dbSvc, dbAdmin as never, audit);
+  let tenantId: string;
+  let userId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `SetCo${rid()}`, slug: `set-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `set-${rid()}@test.test`, full_name: 'Set User', status: 'active' })
+      .returning();
+    userId = u!.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, userId));
+  });
+
+  it('creates a settings row on first read and persists partial updates', async () => {
+    const first = await settings.getSettings(tenantId, userId);
+    expect(first.data.default_currency).toBe('INR');
+    // Secret never leaked; only a configured flag.
+    expect('razorpay_webhook_secret' in first.data).toBe(false);
+    expect(first.data.razorpay_webhook_configured).toBe(false);
+
+    const updated = await settings.updateSettings(tenantId, userId, {
+      default_payment_terms_days: 45,
+      upi_id: 'acme@hdfcbank',
+      email_signature: '— Acme Finance',
+    });
+    expect(updated.data.default_payment_terms_days).toBe(45);
+    expect(updated.data.upi_id).toBe('acme@hdfcbank');
+
+    // Persisted + other fields untouched.
+    const reread = await settings.getSettings(tenantId, userId);
+    expect(reread.data.default_payment_terms_days).toBe(45);
+    expect(reread.data.default_gst_rate).toBe('18.00');
+  });
+
+  it('tracks setup-wizard progress with a derived percentage and completion', async () => {
+    const start = await settings.getSetupProgress(tenantId, userId);
+    expect(start.data.percent_complete).toBe(0);
+    expect(start.data.is_complete).toBe(false);
+
+    await settings.updateSetupProgress(tenantId, userId, {
+      business_details_confirmed: true,
+      numbering_configured: true,
+      current_step: 'payment_terms',
+    });
+    const mid = await settings.getSetupProgress(tenantId, userId);
+    expect(mid.data.completed_steps).toBe(2);
+    expect(mid.data.percent_complete).toBe(Math.round((2 / 11) * 100));
+
+    const done = await settings.completeWizard(tenantId, userId);
+    expect(done.data.is_complete).toBe(true);
+    expect(done.data.wizard_completed_at).not.toBeNull();
+  });
+});
+
+describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
+  const fam = new FamService(
+    dbAdmin as never,
+    audit,
+    {} as never, // authService — unused by these methods
+    {} as never, // notifications — unused
+    {} as never, // analytics — unused
+  );
+  let tenantId: string;
+  let ownerId: string;
+  let auditorId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `FamCo${rid()}`, slug: `fam-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    tenantId = t!.id;
+    const [o] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `famown-${rid()}@test.test`, full_name: 'FamOwner', status: 'active' })
+      .returning();
+    ownerId = o!.id;
+    const [a] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `famaud-${rid()}@test.test`, full_name: 'FamAuditor', status: 'active' })
+      .returning();
+    auditorId = a!.id;
+    await dbAdmin.insert(membershipsTable).values({ tenant_id: tenantId, user_id: ownerId, role: 'owner', status: 'active' });
+    await dbAdmin.insert(membershipsTable).values({ tenant_id: tenantId, user_id: auditorId, role: 'auditor', status: 'active', is_external: true });
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, ownerId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, auditorId));
+  });
+
+  const guardFor = (tid: string, uid: string) => {
+    const reflector = { getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }) } as never;
+    const guard = new InvoicingGrantGuard(reflector, dbSvc);
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          user: { sub: uid, tenantId: tid, membershipId: 'm', role: 'owner', isPlatformAdmin: false },
+        }),
+      }),
+      getHandler: () => () => {},
+      getClass: () => class {},
+    } as never;
+    return guard.canActivate(ctx);
+  };
+
+  it('defaults invoicing ENABLED and the guard allows access', async () => {
+    const mods = await fam.getTenantModules(tenantId);
+    expect(mods.data.find((m) => m.module === 'invoicing')!.enabled).toBe(true);
+    await expect(guardFor(tenantId, ownerId)).resolves.toBe(true);
+  });
+
+  it('FAM disabling invoicing makes the guard deny even an owner (toggle wins over grant)', async () => {
+    await fam.setTenantModule(tenantId, 'invoicing', false, ownerId);
+    const mods = await fam.getTenantModules(tenantId);
+    expect(mods.data.find((m) => m.module === 'invoicing')!.enabled).toBe(false);
+    await expect(guardFor(tenantId, ownerId)).rejects.toThrow(/disabled/i);
+
+    // Re-enable restores access.
+    await fam.setTenantModule(tenantId, 'invoicing', true, ownerId);
+    await expect(guardFor(tenantId, ownerId)).resolves.toBe(true);
+  });
+
+  it('seat split counts billable members vs non-billable auditors', async () => {
+    const seats = await fam.getTenantSeats(tenantId);
+    expect(seats.data.billable).toBe(1);
+    expect(seats.data.auditors).toBe(1);
+  });
+
+  it('auditor registry groups companies by auditor and revoke deactivates the link', async () => {
+    const registry = await fam.getAuditorRegistry();
+    const entry = registry.data.find((e) => e.userId === auditorId);
+    expect(entry).toBeTruthy();
+    expect(entry!.companies.some((c) => c.tenantId === tenantId)).toBe(true);
+
+    const revoked = await fam.revokeAuditorLink(auditorId, tenantId, ownerId);
+    expect(revoked.data.status).toBe('deactivated');
+
+    const seatsAfter = await fam.getTenantSeats(tenantId);
+    expect(seatsAfter.data.auditors).toBe(0);
+  });
+
+  it('invoicing metrics return anonymized aggregates (no content)', async () => {
+    const metrics = await fam.getInvoicingMetrics();
+    expect(metrics.data).toHaveProperty('tenantsWithAuditor');
+    expect(metrics.data).toHaveProperty('medianCompaniesPerAuditor');
+    expect(typeof metrics.data.tenantsWithInvoices).toBe('number');
+  });
+});
+
 // Close the shared postgres pools after every describe in this file has run,
 // so jest can exit cleanly.
 afterAll(async () => {

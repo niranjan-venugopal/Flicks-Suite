@@ -5,7 +5,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, gte, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
 
 // The Specflicks-internal "platform tenant" that exists only to give the
 // FAM admin a JWT tenant_id without making them a member of any customer
@@ -24,6 +24,10 @@ import {
   featureFlags,
   tenantCohorts,
   impersonationSessions,
+  tenantModuleToggles,
+  membershipGrants,
+  tenantBankAccounts,
+  invoices,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -1606,6 +1610,252 @@ export class FamService {
         createdAt: r.createdAt.toISOString(),
       })),
       pagination: { page, limit, total: Number(n ?? 0) },
+    };
+  }
+
+  // ─── Invoicing v3 (§10): module toggles, auditor registry, seats, metrics ──
+  //
+  // Service-role only. FAM never reads invoice CONTENT here — only enablement,
+  // membership/seat metadata, and anonymized aggregates.
+
+  private static readonly MANAGED_MODULES = ['invoicing', 'payroll', 'expenses'];
+
+  /** Per-module enablement for one tenant. Invoicing defaults ENABLED. */
+  async getTenantModules(tenantId: string) {
+    const rows = await this.dbAdmin
+      .select({
+        module: tenantModuleToggles.module,
+        enabled: tenantModuleToggles.enabled,
+        updatedAt: tenantModuleToggles.updated_at,
+      })
+      .from(tenantModuleToggles)
+      .where(eq(tenantModuleToggles.tenant_id, tenantId));
+
+    const byModule = new Map(rows.map((r) => [r.module, r]));
+    return {
+      data: FamService.MANAGED_MODULES.map((module) => {
+        const row = byModule.get(module);
+        return {
+          module,
+          // Invoicing is on by default; payroll/expenses are reserved (off).
+          enabled: row ? row.enabled : module === 'invoicing',
+          live: module === 'invoicing',
+          updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : null,
+        };
+      }),
+    };
+  }
+
+  /** Enable/disable a module for a tenant (the guard reads this; wins over grants). */
+  async setTenantModule(
+    tenantId: string,
+    module: string,
+    enabled: boolean,
+    actorUserId: string,
+  ) {
+    if (!FamService.MANAGED_MODULES.includes(module)) {
+      throw new BadRequestException(`Unknown module: ${module}`);
+    }
+    const [tenant] = await this.dbAdmin
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if (!tenant) throw new NotFoundException('Tenant not found');
+
+    const [row] = await this.dbAdmin
+      .insert(tenantModuleToggles)
+      .values({ tenant_id: tenantId, module, enabled, updated_by: actorUserId })
+      .onConflictDoUpdate({
+        target: [tenantModuleToggles.tenant_id, tenantModuleToggles.module],
+        set: { enabled, updated_by: actorUserId, updated_at: new Date() },
+      })
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'fam.module_toggled',
+      resourceType: 'tenant_module_toggle',
+      resourceId: row.id,
+      afterState: { module, enabled },
+    });
+
+    return { data: { module: row.module, enabled: row.enabled } };
+  }
+
+  /** Auditor-link registry: every auditor membership ↔ company ↔ status ↔ window. */
+  async getAuditorRegistry() {
+    const rows = await this.dbAdmin
+      .select({
+        userId: memberships.user_id,
+        tenantId: memberships.tenant_id,
+        status: memberships.status,
+        isExternal: memberships.is_external,
+        accessExpiresAt: memberships.access_expires_at,
+        invitedAt: memberships.invited_at,
+        email: users.email,
+        fullName: users.full_name,
+        tenantName: tenants.name,
+      })
+      .from(memberships)
+      .innerJoin(users, eq(memberships.user_id, users.id))
+      .innerJoin(tenants, eq(memberships.tenant_id, tenants.id))
+      .where(eq(memberships.role, 'auditor'))
+      .orderBy(users.email, tenants.name);
+
+    // Group by auditor (email): one row per auditor, list of linked companies.
+    const byUser = new Map<
+      string,
+      {
+        userId: string;
+        email: string | null;
+        fullName: string | null;
+        companies: Array<{
+          tenantId: string;
+          tenantName: string;
+          status: string;
+          isExternal: boolean;
+          accessExpiresAt: string | null;
+        }>;
+      }
+    >();
+    for (const r of rows) {
+      const entry = byUser.get(r.userId) ?? {
+        userId: r.userId,
+        email: r.email,
+        fullName: r.fullName,
+        companies: [],
+      };
+      entry.companies.push({
+        tenantId: r.tenantId,
+        tenantName: r.tenantName,
+        status: r.status,
+        isExternal: r.isExternal,
+        accessExpiresAt: r.accessExpiresAt
+          ? r.accessExpiresAt.toISOString()
+          : null,
+      });
+      byUser.set(r.userId, entry);
+    }
+
+    return { data: Array.from(byUser.values()) };
+  }
+
+  /** Revoke a single auditor↔company link (deactivate the membership). */
+  async revokeAuditorLink(
+    userId: string,
+    tenantId: string,
+    actorUserId: string,
+  ) {
+    const [membership] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.role, 'auditor'),
+        ),
+      )
+      .limit(1);
+    if (!membership) throw new NotFoundException('Auditor link not found');
+
+    const [updated] = await this.dbAdmin
+      .update(memberships)
+      .set({ status: 'deactivated' })
+      .where(eq(memberships.id, membership.id))
+      .returning();
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'fam.auditor_link_revoked',
+      resourceType: 'membership',
+      resourceId: membership.id,
+      beforeState: { status: membership.status },
+      afterState: { status: updated.status },
+    });
+
+    return { data: { userId, tenantId, status: updated.status } };
+  }
+
+  /** Member (billable) vs auditor (non-billable) seat split for one tenant. */
+  async getTenantSeats(tenantId: string) {
+    const [row] = await this.dbAdmin
+      .select({
+        billable: sql<number>`count(*) filter (where ${memberships.role} <> 'auditor' and ${memberships.status} = 'active')::int`,
+        auditors: sql<number>`count(*) filter (where ${memberships.role} = 'auditor' and ${memberships.status} = 'active')::int`,
+        pending: sql<number>`count(*) filter (where ${memberships.status} = 'invited')::int`,
+      })
+      .from(memberships)
+      .where(eq(memberships.tenant_id, tenantId));
+
+    return {
+      data: {
+        billable: Number(row?.billable ?? 0),
+        auditors: Number(row?.auditors ?? 0),
+        pending: Number(row?.pending ?? 0),
+      },
+    };
+  }
+
+  /**
+   * Anonymized aggregate metrics (PRD §10.4). Counts and distributions only —
+   * never customer/amount/description content.
+   */
+  async getInvoicingMetrics() {
+    // Auditor reach.
+    const auditorRows = await this.dbAdmin
+      .select({
+        tenantId: memberships.tenant_id,
+        userId: memberships.user_id,
+      })
+      .from(memberships)
+      .where(
+        and(eq(memberships.role, 'auditor'), eq(memberships.status, 'active')),
+      );
+    const tenantsWithAuditor = new Set(auditorRows.map((r) => r.tenantId));
+    const companiesByAuditor = new Map<string, number>();
+    for (const r of auditorRows) {
+      companiesByAuditor.set(
+        r.userId,
+        (companiesByAuditor.get(r.userId) ?? 0) + 1,
+      );
+    }
+    const perAuditorCounts = Array.from(companiesByAuditor.values()).sort(
+      (a, b) => a - b,
+    );
+    const multiCompanyAuditors = perAuditorCounts.filter((c) => c > 1).length;
+    const median =
+      perAuditorCounts.length === 0
+        ? 0
+        : perAuditorCounts[Math.floor((perAuditorCounts.length - 1) / 2)]!;
+
+    // Bank-account adoption + SWIFT (foreign-currency) usage.
+    const bankRows = await this.dbAdmin
+      .select({ tenantId: tenantBankAccounts.tenant_id, swift: tenantBankAccounts.swift_bic })
+      .from(tenantBankAccounts);
+    const tenantsWithBank = new Set(bankRows.map((r) => r.tenantId));
+    const tenantsWithSwift = new Set(
+      bankRows.filter((r) => r.swift).map((r) => r.tenantId),
+    );
+
+    // Invoicing adoption (tenants that have created ≥1 invoice) — count only.
+    const invoicedRows = await this.dbAdmin
+      .selectDistinct({ tenantId: invoices.tenant_id })
+      .from(invoices)
+      .where(eq(invoices.document_type, 'INVOICE'));
+
+    return {
+      data: {
+        tenantsWithAuditor: tenantsWithAuditor.size,
+        multiCompanyAuditors,
+        medianCompaniesPerAuditor: median,
+        tenantsWithBankAccount: tenantsWithBank.size,
+        tenantsUsingForeignCurrency: tenantsWithSwift.size,
+        tenantsWithInvoices: invoicedRows.length,
+      },
     };
   }
 }
