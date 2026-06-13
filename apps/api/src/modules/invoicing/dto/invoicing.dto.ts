@@ -351,6 +351,12 @@ export class UpdateInvSettingsDto {
   @IsOptional() @IsBoolean() auto_suggest_tds?: boolean;
 }
 
+export class GrantFamConsentDto {
+  @IsOptional() @IsArray() @IsString({ each: true }) scope?: string[];
+  @IsOptional() @IsString() expires_at?: string;
+  @IsOptional() @IsString() @MaxLength(200) note?: string;
+}
+
 export class UpdateSetupProgressDto {
   @IsOptional() @IsString() @MaxLength(60) current_step?: string;
   @IsOptional() @IsBoolean() business_details_confirmed?: boolean;

@@ -1760,6 +1760,66 @@ describe('Invoicing guard — membership liveness on every request (Sprint 10 §
   });
 });
 
+describe('FAM consented-debug (Sprint 10 §E)', () => {
+  const auditWithPlatform = {
+    log: async () => {},
+    logPlatform: async () => {},
+  } as never;
+  const settings = new InvSettingsService(dbSvc, dbAdmin as never, auditWithPlatform);
+  const fam = new FamService(
+    dbAdmin as never,
+    auditWithPlatform,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+  let tenantId: string;
+  let ownerId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `ConsentCo${rid()}`, slug: `con-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    tenantId = t!.id;
+    const [o] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `con-${rid()}@test.test`, full_name: 'Consent Owner', status: 'active' })
+      .returning();
+    ownerId = o!.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, ownerId));
+  });
+
+  it('FAM debug is denied without active consent', async () => {
+    await expect(fam.getInvoicingDebug(tenantId, ownerId)).rejects.toThrow(/consent/i);
+  });
+
+  it('grant → FAM debug returns counts/metadata; revoke → denied again', async () => {
+    const granted = await settings.grantFamConsent(tenantId, ownerId, {
+      scope: ['invoice_counts', 'audit'],
+      note: 'FY25-26 support ticket',
+    });
+    expect(granted.data.scope).toContain('invoice_counts');
+
+    const current = await settings.getFamConsent(tenantId, ownerId);
+    expect(current.data).not.toBeNull();
+
+    const debug = await fam.getInvoicingDebug(tenantId, ownerId);
+    expect(debug.data).toHaveProperty('invoiceStatusDistribution');
+    expect(debug.data).toHaveProperty('webhookEvents');
+    expect(debug.data).toHaveProperty('auditEntries');
+    expect(debug.data.consent.scope).toContain('invoice_counts');
+
+    await settings.revokeFamConsent(tenantId, ownerId);
+    expect((await settings.getFamConsent(tenantId, ownerId)).data).toBeNull();
+    await expect(fam.getInvoicingDebug(tenantId, ownerId)).rejects.toThrow(/consent/i);
+  });
+});
+
 // Close the shared postgres pools after every describe in this file has run,
 // so jest can exit cleanly.
 afterAll(async () => {

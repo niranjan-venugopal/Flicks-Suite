@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -13,9 +14,11 @@ import { InvSettingsService } from './inv-settings.service';
 import {
   UpdateInvSettingsDto,
   UpdateSetupProgressDto,
+  GrantFamConsentDto,
 } from './dto/invoicing.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
+import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
 import type { JwtPayload } from '@flicks/shared/types';
 
@@ -71,5 +74,32 @@ export class InvSettingsController {
   @ApiOperation({ summary: 'Mark the setup wizard complete' })
   completeWizard(@CurrentUser() user: JwtPayload) {
     return this.settings.completeWizard(user.tenantId, user.sub);
+  }
+
+  // ─── FAM debug consent (PRD §10.5) — owner-only ─────────────────────────────
+
+  @Get('fam-consent')
+  @Roles('owner')
+  @ApiOperation({ summary: 'Current FAM debug-access consent for this workspace' })
+  getFamConsent(@CurrentUser() user: JwtPayload) {
+    return this.settings.getFamConsent(user.tenantId, user.sub);
+  }
+
+  @Post('fam-consent')
+  @Roles('owner')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Grant FAM time-boxed, revocable debug access (counts/logs only)',
+  })
+  grantFamConsent(@Body() dto: GrantFamConsentDto, @CurrentUser() user: JwtPayload) {
+    return this.settings.grantFamConsent(user.tenantId, user.sub, dto);
+  }
+
+  @Delete('fam-consent')
+  @Roles('owner')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke FAM debug access' })
+  revokeFamConsent(@CurrentUser() user: JwtPayload) {
+    return this.settings.revokeFamConsent(user.tenantId, user.sub);
   }
 }

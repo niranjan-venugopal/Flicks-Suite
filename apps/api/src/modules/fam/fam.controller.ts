@@ -366,4 +366,14 @@ export class FamController {
   async getInvoicingMetrics() {
     return this.famService.getInvoicingMetrics();
   }
+
+  @Get('tenants/:id/invoicing-debug')
+  @Roles('fam')
+  @ApiOperation({
+    summary: 'Consented debug (§10.5) — counts/log metadata, requires active tenant consent',
+  })
+  @ApiResponse({ status: 403, description: 'No active debug consent from this tenant' })
+  async getInvoicingDebug(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.famService.getInvoicingDebug(id, user.sub);
+  }
 }

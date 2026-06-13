@@ -3,9 +3,10 @@ import {
   Logger,
   Inject,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 
 // The Specflicks-internal "platform tenant" that exists only to give the
 // FAM admin a JWT tenant_id without making them a member of any customer
@@ -28,6 +29,10 @@ import {
   membershipGrants,
   tenantBankAccounts,
   invoices,
+  invoicingDebugConsents,
+  razorpayWebhookEvents,
+  auditLog,
+  notifications,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -1855,6 +1860,110 @@ export class FamService {
         tenantsWithBankAccount: tenantsWithBank.size,
         tenantsUsingForeignCurrency: tenantsWithSwift.size,
         tenantsWithInvoices: invoicedRows.length,
+      },
+    };
+  }
+
+  /**
+   * Consented debug (PRD §10.5). Requires an ACTIVE consent row from the
+   * tenant's Owner; returns invoice count/status distribution + webhook/email/
+   * audit LOG METADATA only (never amounts/customers/descriptions). Every
+   * access is written to the platform audit log.
+   */
+  async getInvoicingDebug(tenantId: string, actorUserId: string) {
+    const [consent] = await this.dbAdmin
+      .select()
+      .from(invoicingDebugConsents)
+      .where(
+        and(
+          eq(invoicingDebugConsents.tenant_id, tenantId),
+          isNull(invoicingDebugConsents.revoked_at),
+          or(
+            isNull(invoicingDebugConsents.expires_at),
+            gt(invoicingDebugConsents.expires_at, new Date()),
+          ),
+        ),
+      )
+      .orderBy(desc(invoicingDebugConsents.created_at))
+      .limit(1);
+
+    if (!consent) {
+      throw new ForbiddenException(
+        'No active debug consent from this tenant. Ask the Owner to grant access under Invoicing → Settings.',
+      );
+    }
+
+    // Invoice status distribution (counts only).
+    const statusRows = await this.dbAdmin
+      .select({ status: invoices.status, n: sql<number>`count(*)::int` })
+      .from(invoices)
+      .where(and(eq(invoices.tenant_id, tenantId), eq(invoices.document_type, 'INVOICE')))
+      .groupBy(invoices.status);
+
+    // Razorpay webhook log (metadata only).
+    const recentWebhooks = await this.dbAdmin
+      .select({
+        eventType: razorpayWebhookEvents.event_type,
+        verified: razorpayWebhookEvents.signature_verified,
+        processed: razorpayWebhookEvents.processed,
+        createdAt: razorpayWebhookEvents.created_at,
+      })
+      .from(razorpayWebhookEvents)
+      .where(eq(razorpayWebhookEvents.tenant_id, tenantId))
+      .orderBy(desc(razorpayWebhookEvents.created_at))
+      .limit(10);
+
+    // Recent audit entries (action/resource only — no before/after content).
+    const recentAudit = await this.dbAdmin
+      .select({
+        action: auditLog.action,
+        resourceType: auditLog.resource_type,
+        createdAt: auditLog.created_at,
+      })
+      .from(auditLog)
+      .where(eq(auditLog.tenant_id, tenantId))
+      .orderBy(desc(auditLog.created_at))
+      .limit(15);
+
+    // Email/notification delivery (type + count only — never the message body).
+    const emailRows = await this.dbAdmin
+      .select({ type: notifications.type, n: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(eq(notifications.tenant_id, tenantId))
+      .groupBy(notifications.type);
+
+    // Audit the access itself (logged + revocable, PRD §10.5).
+    await this.auditService.logPlatform({
+      actorUserId,
+      action: 'fam.invoicing_debug_viewed',
+      targetTenantId: tenantId,
+      metadata: { consentId: consent.id, scope: consent.scope },
+    });
+
+    return {
+      data: {
+        consent: {
+          id: consent.id,
+          scope: consent.scope,
+          expiresAt: consent.expires_at ? consent.expires_at.toISOString() : null,
+          grantedAt: consent.created_at.toISOString(),
+        },
+        invoiceStatusDistribution: statusRows.map((r) => ({
+          status: r.status,
+          count: Number(r.n),
+        })),
+        webhookEvents: recentWebhooks.map((w) => ({
+          eventType: w.eventType,
+          verified: w.verified,
+          processed: w.processed,
+          createdAt: w.createdAt.toISOString(),
+        })),
+        auditEntries: recentAudit.map((a) => ({
+          action: a.action,
+          resourceType: a.resourceType,
+          createdAt: a.createdAt.toISOString(),
+        })),
+        notificationsByType: emailRows.map((e) => ({ type: e.type, count: Number(e.n) })),
       },
     };
   }

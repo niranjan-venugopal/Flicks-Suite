@@ -1267,8 +1267,30 @@ export const invoiceSubscriptionsRelations = relations(
   }),
 );
 
+// ─── invoicing_debug_consents (FAM consented-debug, §10.5) ──────────────────────
+
+export const invoicingDebugConsents = pgTable(
+  'invoicing_debug_consents',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    granted_by: uuid('granted_by').references(() => users.id),
+    scope: text('scope').array().notNull().default([]),
+    note: text('note'),
+    expires_at: timestamp('expires_at', { withTimezone: true }),
+    revoked_at: timestamp('revoked_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_invoicing_debug_consents_tenant').on(t.tenant_id)],
+);
+
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
+export type InvoicingDebugConsent = typeof invoicingDebugConsents.$inferSelect;
+export type NewInvoicingDebugConsent = typeof invoicingDebugConsents.$inferInsert;
 export type HsnSacCode = typeof hsnSacCodes.$inferSelect;
 export type NewHsnSacCode = typeof hsnSacCodes.$inferInsert;
 export type TenantHsnSacCode = typeof tenantHsnSacCodes.$inferSelect;

@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, gt } from 'drizzle-orm';
 import {
   invoicingSettings,
   invoicingSetupProgress,
+  invoicingDebugConsents,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -214,5 +215,99 @@ export class InvSettingsService {
       percent_complete: Math.round((done / steps.length) * 100),
       is_complete: !!row.wizard_completed_at,
     };
+  }
+
+  // ─── FAM debug consent (PRD §10.5) — owner grants/revokes; FAM reads via fam.service ──
+
+  async getFamConsent(tenantId: string, userId: string) {
+    const rows = await this.db.withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .select()
+          .from(invoicingDebugConsents)
+          .where(
+            and(
+              eq(invoicingDebugConsents.tenant_id, tenantId),
+              isNull(invoicingDebugConsents.revoked_at),
+              or(
+                isNull(invoicingDebugConsents.expires_at),
+                gt(invoicingDebugConsents.expires_at, new Date()),
+              ),
+            ),
+          )
+          .orderBy(invoicingDebugConsents.created_at),
+      userId,
+    );
+    return { data: rows[rows.length - 1] ?? null };
+  }
+
+  async grantFamConsent(
+    tenantId: string,
+    userId: string,
+    dto: { scope?: string[]; expires_at?: string; note?: string },
+  ) {
+    const expiresAt = dto.expires_at ? new Date(`${dto.expires_at}T23:59:59.999Z`) : null;
+    const row = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        // Supersede any current active grant, then insert the new one.
+        await tx
+          .update(invoicingDebugConsents)
+          .set({ revoked_at: new Date(), updated_at: new Date() })
+          .where(
+            and(
+              eq(invoicingDebugConsents.tenant_id, tenantId),
+              isNull(invoicingDebugConsents.revoked_at),
+            ),
+          );
+        const [created] = await tx
+          .insert(invoicingDebugConsents)
+          .values({
+            tenant_id: tenantId,
+            granted_by: userId,
+            scope: dto.scope ?? ['invoice_counts', 'webhook_log', 'email_log', 'audit'],
+            note: dto.note ?? null,
+            expires_at: expiresAt,
+          })
+          .returning();
+        return created!;
+      },
+      userId,
+    );
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.fam_debug_consent_granted',
+      resourceType: 'invoicing_debug_consent',
+      resourceId: row.id,
+      afterState: { scope: row.scope, expires_at: dto.expires_at ?? null },
+    });
+    return { data: row };
+  }
+
+  async revokeFamConsent(tenantId: string, userId: string) {
+    await this.db.withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .update(invoicingDebugConsents)
+          .set({ revoked_at: new Date(), updated_at: new Date() })
+          .where(
+            and(
+              eq(invoicingDebugConsents.tenant_id, tenantId),
+              isNull(invoicingDebugConsents.revoked_at),
+            ),
+          ),
+      userId,
+    );
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.fam_debug_consent_revoked',
+      resourceType: 'invoicing_debug_consent',
+    });
+    return { data: { revoked: true } };
   }
 }
