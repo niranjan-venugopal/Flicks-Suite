@@ -60,8 +60,10 @@ function Address({ lines }: { lines: (string | null | undefined)[] }) {
 export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) {
   const { invoice, line_items, customer, seller } = payload
   const cur = invoice.currency
-  const isIntra = invoice.tax_treatment === 'INTRA_STATE'
-  const tdsCents = Math.round(parseFloat(invoice.tds_amount ?? '0') * 100)
+  // GST + TDS are India-only — non-INR invoices render neither (matches the editor).
+  const isDomestic = (cur ?? 'INR') === 'INR'
+  const isIntra = invoice.tax_treatment === 'INTRA_STATE' && isDomestic
+  const tdsCents = isDomestic ? Math.round(parseFloat(invoice.tds_amount ?? '0') * 100) : 0
 
   return (
     <div
@@ -155,7 +157,7 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
             <th style={th}>HSN/SAC</th>
             <th style={{ ...th, textAlign: 'right' }}>Qty</th>
             <th style={{ ...th, textAlign: 'right' }}>Rate</th>
-            <th style={{ ...th, textAlign: 'right' }}>GST %</th>
+            {isDomestic && <th style={{ ...th, textAlign: 'right' }}>GST %</th>}
             <th style={{ ...th, textAlign: 'right' }}>Amount</th>
           </tr>
         </thead>
@@ -174,7 +176,7 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
                 {l.unit ? ` ${l.unit}` : ''}
               </td>
               <td style={{ ...td, textAlign: 'right' }}>{money(l.rate, cur)}</td>
-              <td style={{ ...td, textAlign: 'right', color: INVO.muted60 }}>{l.gst_rate ?? '0'}</td>
+              {isDomestic && <td style={{ ...td, textAlign: 'right', color: INVO.muted60 }}>{l.gst_rate ?? '0'}</td>}
               <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{money(l.taxable_amount ?? l.rate, cur)}</td>
             </tr>
           ))}
@@ -194,7 +196,7 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
               <span style={{ ...sumValue, color: INVO.coral }}>− {money(invoice.discount_amount, cur)}</span>
             </div>
           )}
-          {isIntra ? (
+          {isDomestic && (isIntra ? (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={sumLabel}>CGST</span>
@@ -210,8 +212,8 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
               <span style={sumLabel}>{invoice.tax_treatment === 'EXPORT' ? 'IGST (zero-rated export)' : 'IGST'}</span>
               <span style={sumValue}>{money(invoice.igst_amount, cur)}</span>
             </div>
-          )}
-          {parseFloat(invoice.cess_amount ?? '0') > 0 && (
+          ))}
+          {isDomestic && parseFloat(invoice.cess_amount ?? '0') > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={sumLabel}>Cess</span>
               <span style={sumValue}>{money(invoice.cess_amount, cur)}</span>

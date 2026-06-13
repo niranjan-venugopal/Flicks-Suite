@@ -162,4 +162,42 @@ describe('GST/TDS engine (PRD §6.1 / §6.2)', () => {
       expect(r.totals.sgst_amount).toBe('6.25');
     });
   });
+
+  describe('currency gate — GST/TDS are India-only (Sprint 11 §1)', () => {
+    it('zeroes GST and TDS for a non-INR invoice even with rates + INTRA treatment', () => {
+      const r = computeInvoice({
+        lines: [{ quantity: '1', rate: '1000', gst_rate: '18', cess_rate: '2' }],
+        taxTreatment: 'INTRA_STATE',
+        tdsRate: '10',
+        currency: 'USD',
+      });
+      expect(r.totals.cgst_amount).toBe('0.00');
+      expect(r.totals.sgst_amount).toBe('0.00');
+      expect(r.totals.igst_amount).toBe('0.00');
+      expect(r.totals.cess_amount).toBe('0.00');
+      expect(r.totals.tds_amount).toBe('0.00');
+      expect(r.totals.total_amount).toBe('1000.00');
+      expect(r.totals.net_receivable).toBe('1000.00');
+    });
+
+    it('still charges GST + TDS for an INR invoice', () => {
+      const r = computeInvoice({
+        lines: [{ quantity: '1', rate: '1000', gst_rate: '18' }],
+        taxTreatment: 'INTER_STATE',
+        tdsRate: '10',
+        currency: 'INR',
+      });
+      expect(r.totals.igst_amount).toBe('180.00');
+      expect(r.totals.tds_amount).toBe('100.00'); // 10% of taxable 1000
+      expect(r.totals.net_receivable).toBe('1080.00'); // 1180 − 100
+    });
+
+    it('defaults to INR (domestic) when currency is omitted', () => {
+      const r = computeInvoice({
+        lines: [{ quantity: '1', rate: '1000', gst_rate: '18' }],
+        taxTreatment: 'INTER_STATE',
+      });
+      expect(r.totals.igst_amount).toBe('180.00');
+    });
+  });
 });

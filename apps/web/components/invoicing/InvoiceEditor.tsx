@@ -24,6 +24,7 @@ import {
   invoField,
   invoLabel,
 } from '@/components/invoicing/invo'
+import { TDS_CODES, isGstCurrency } from '@/lib/invoicing/constants'
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 const emptyLine = (): InvoiceLineInput => ({ item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
@@ -37,6 +38,8 @@ const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === '
 
 // Line-items grid: Description | HSN/SAC | Qty | Rate | GST% | Amount | ✕
 const LINE_GRID = '1fr 110px 64px 110px 64px 110px 32px'
+// Foreign-currency invoices carry no GST — drop the GST% column.
+const LINE_GRID_NO_GST = '1fr 110px 64px 110px 110px 32px'
 
 const sumRowLabel: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: INVO.muted50, letterSpacing: '-0.02em' }
 const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }
@@ -115,10 +118,28 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     return 'INTER_STATE'
   }, [invoice?.tax_treatment, customer])
 
+  // GST + TDS are India-only — non-INR invoices show/charge neither.
+  const isDomestic = isGstCurrency(currency)
+  const lineGrid = isDomestic ? LINE_GRID : LINE_GRID_NO_GST
+
   const totals = useMemo(
-    () => computeTotals({ lines, taxTreatment, discountType, discountValue, tdsRate }),
-    [lines, taxTreatment, discountType, discountValue, tdsRate],
+    () => computeTotals({ lines, taxTreatment, discountType, discountValue, tdsRate, currency }),
+    [lines, taxTreatment, discountType, discountValue, tdsRate, currency],
   )
+
+  // Apply a TDS payment code: auto-fill section 393 + its standard rate.
+  const applyTdsCode = (code: string) => {
+    const found = TDS_CODES.find((c) => c.code === code)
+    if (!found) {
+      setTdsCode('')
+      setTdsSection('')
+      setTdsRate('')
+      return
+    }
+    setTdsCode(found.code)
+    setTdsSection('393')
+    setTdsRate(found.rate)
+  }
 
   useEffect(() => {
     if (!invoice && customer?.default_currency) setCurrency(customer.default_currency)
@@ -151,9 +172,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       reference: reference || undefined,
       discount_type: discountType || undefined,
       discount_value: discountType ? discountValue || '0' : undefined,
-      tds_section: tdsSection || undefined,
-      tds_payment_code: tdsCode || undefined,
-      tds_rate: tdsRate || undefined,
+      // TDS is India-only — never send it for non-INR invoices.
+      tds_section: isDomestic ? tdsSection || undefined : undefined,
+      tds_payment_code: isDomestic ? tdsCode || undefined : undefined,
+      tds_rate: isDomestic ? tdsRate || undefined : undefined,
       notes: notes || undefined,
       terms_and_conditions: terms || undefined,
       bank_account_id: bankAccountId || undefined,
@@ -241,15 +263,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
           {/* Line items */}
           <InvoCard style={{ marginBottom: 20 }}>
             <InvoCardTitle>Line items</InvoCardTitle>
-            <div style={{ display: 'grid', gridTemplateColumns: LINE_GRID, gap: 8, marginBottom: 10 }}>
-              {['Description', 'HSN/SAC', 'Qty', `Rate (${symbol(currency).trim()})`, 'GST %', 'Amount', ''].map((h) => (
+            <div style={{ display: 'grid', gridTemplateColumns: lineGrid, gap: 8, marginBottom: 10 }}>
+              {['Description', 'HSN/SAC', 'Qty', `Rate (${symbol(currency).trim()})`, ...(isDomestic ? ['GST %'] : []), 'Amount', ''].map((h) => (
                 <div key={h} style={{ fontWeight: 700, fontSize: 12, color: INVO.muted40, letterSpacing: '-0.01em' }}>
                   {h}
                 </div>
               ))}
             </div>
             {lines.map((l, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: LINE_GRID, gap: 8, marginBottom: 10, alignItems: 'center' }}>
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: lineGrid, gap: 8, marginBottom: 10, alignItems: 'center' }}>
                 <input
                   style={invoField(true)}
                   placeholder="Description"
@@ -279,13 +301,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   onChange={(e) => setLine(i, { rate: e.target.value })}
                   onKeyDown={onLineKeyDown}
                 />
-                <input
-                  style={invoField(true)}
-                  inputMode="decimal"
-                  value={l.gst_rate ?? ''}
-                  onChange={(e) => setLine(i, { gst_rate: e.target.value })}
-                  onKeyDown={onLineKeyDown}
-                />
+                {isDomestic && (
+                  <input
+                    style={invoField(true)}
+                    inputMode="decimal"
+                    value={l.gst_rate ?? ''}
+                    onChange={(e) => setLine(i, { gst_rate: e.target.value })}
+                    onKeyDown={onLineKeyDown}
+                  />
+                )}
                 <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }}>
                   {symbol(currency)}
                   {lineAmount(l).toLocaleString('en-IN')}
@@ -305,50 +329,64 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
             </div>
           </InvoCard>
 
-          {/* Discount + TDS */}
+          {/* Discount (+ TDS for INR only) */}
           <InvoCard style={{ marginBottom: 20 }}>
-            <InvoCardTitle>Discount & TDS</InvoCardTitle>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
-              <div>
-                <label style={invoLabel}>Discount</label>
-                <select
-                  style={invoField()}
-                  value={discountType}
-                  onChange={(e) => setDiscountType(e.target.value as 'percent' | 'fixed' | '')}
-                >
-                  <option value="" style={{ color: '#000' }}>
-                    None
-                  </option>
-                  <option value="percent" style={{ color: '#000' }}>
-                    Percent %
-                  </option>
-                  <option value="fixed" style={{ color: '#000' }}>
-                    Fixed
-                  </option>
-                </select>
+            <InvoCardTitle>{isDomestic ? 'Discount & TDS' : 'Discount'}</InvoCardTitle>
+            <div style={{ display: 'grid', gridTemplateColumns: isDomestic ? '1fr 1fr' : '1fr', gap: 20 }}>
+              {/* Discount */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={invoLabel}>Discount</label>
+                  <select
+                    style={invoField()}
+                    value={discountType}
+                    onChange={(e) => setDiscountType(e.target.value as 'percent' | 'fixed' | '')}
+                  >
+                    <option value="" style={{ color: '#000' }}>None</option>
+                    <option value="percent" style={{ color: '#000' }}>Percent %</option>
+                    <option value="fixed" style={{ color: '#000' }}>Fixed</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={invoLabel}>{discountType === 'percent' ? 'Percent' : 'Amount'}</label>
+                  <input
+                    style={{ ...invoField(), opacity: discountType ? 1 : 0.4 }}
+                    inputMode="decimal"
+                    disabled={!discountType}
+                    value={discountValue}
+                    onChange={(e) => setDiscountValue(e.target.value)}
+                  />
+                </div>
               </div>
-              <div>
-                <label style={invoLabel}>{discountType === 'percent' ? 'Percent' : 'Amount'}</label>
-                <input
-                  style={{ ...invoField(), opacity: discountType ? 1 : 0.4 }}
-                  inputMode="decimal"
-                  disabled={!discountType}
-                  value={discountValue}
-                  onChange={(e) => setDiscountValue(e.target.value)}
-                />
-              </div>
-              <div>
-                <label style={invoLabel}>TDS section</label>
-                <input style={invoField()} placeholder="393" value={tdsSection} onChange={(e) => setTdsSection(e.target.value)} />
-              </div>
-              <div>
-                <label style={invoLabel}>Payment code</label>
-                <input style={invoField()} placeholder="10XX" value={tdsCode} onChange={(e) => setTdsCode(e.target.value)} />
-              </div>
-              <div>
-                <label style={invoLabel}>TDS rate %</label>
-                <input style={invoField()} inputMode="decimal" placeholder="10" value={tdsRate} onChange={(e) => setTdsRate(e.target.value)} />
-              </div>
+
+              {/* TDS — single Section-393 payment-code dropdown (prototype). */}
+              {isDomestic && (
+                <div>
+                  <label style={invoLabel}>TDS · Section 393 (payment code)</label>
+                  <select style={invoField()} value={tdsCode} onChange={(e) => applyTdsCode(e.target.value)}>
+                    <option value="" style={{ color: '#000' }}>No TDS</option>
+                    {TDS_CODES.map((c) => (
+                      <option key={c.code} value={c.code} style={{ color: '#000' }}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  {parseFloat(tdsRate || '0') > 0 && (
+                    <div
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        marginTop: 10, padding: '9px 12px', borderRadius: 9,
+                        background: 'rgba(62,123,250,.10)', border: '1px solid rgba(62,123,250,.25)',
+                      }}
+                    >
+                      <span style={{ fontSize: 12, fontWeight: 800, color: INVO.blue }}>Net receivable ({tdsRate}% TDS)</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: INVO.blue }}>
+                        {symbol(currency)}{parseFloat(totals.net_receivable).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </InvoCard>
 
@@ -425,7 +463,8 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <span style={{ ...sumRowValue, color: INVO.coral }}>− {money(totals.discount_amount)}</span>
                 </div>
               )}
-              {taxTreatment === 'INTRA_STATE' ? (
+              {/* GST rows — India (INR) only. */}
+              {isDomestic && (taxTreatment === 'INTRA_STATE' ? (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={sumRowLabel}>CGST</span>
@@ -441,8 +480,8 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <span style={sumRowLabel}>{taxTreatment === 'EXPORT' ? 'IGST (export — zero-rated)' : 'IGST'}</span>
                   <span style={sumRowValue}>{money(totals.igst_amount)}</span>
                 </div>
-              )}
-              {parseFloat(totals.cess_amount) > 0 && (
+              ))}
+              {isDomestic && parseFloat(totals.cess_amount) > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={sumRowLabel}>Cess</span>
                   <span style={sumRowValue}>{money(totals.cess_amount)}</span>

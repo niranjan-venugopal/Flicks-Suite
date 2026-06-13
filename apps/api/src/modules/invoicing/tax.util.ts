@@ -62,6 +62,12 @@ export interface ComputeInput {
   discountType?: 'percent' | 'fixed' | null;
   discountValue?: string | null; // percent (0–100) or fixed amount
   tdsRate?: string | null; // percent of taxable base
+  /**
+   * Invoice currency. GST and TDS are India-domestic taxes — they apply only
+   * to INR invoices. Any other currency is treated as international: GST is
+   * zero-rated and TDS is not withheld (PRD §6.1/§6.2; matches the editor UI).
+   */
+  currency?: string | null;
 }
 
 export interface ComputeResult {
@@ -130,8 +136,10 @@ export function computeInvoice(input: ComputeInput): ComputeResult {
   }
 
   // 3. Per-line taxes on the post-discount taxable amount.
-  const isExport = input.taxTreatment === 'EXPORT';
-  const isIntra = input.taxTreatment === 'INTRA_STATE';
+  // GST/TDS are India-only: non-INR invoices are international (no GST, no TDS).
+  const isDomestic = (input.currency ?? 'INR') === 'INR';
+  const isExport = input.taxTreatment === 'EXPORT' || !isDomestic;
+  const isIntra = input.taxTreatment === 'INTRA_STATE' && isDomestic;
 
   const lines: ComputedLine[] = input.lines.map((l, i) => {
     const lineAmount = lineAmounts[i]!;
@@ -175,7 +183,8 @@ export function computeInvoice(input: ComputeInput): ComputeResult {
   const grandTotal = taxableTotal + cgstTotal + sgstTotal + igstTotal + cessTotal;
 
   // 5. TDS on the taxable base; net receivable = total − TDS (PRD §6.2).
-  const tdsRate = parseFloat(input.tdsRate ?? '0') || 0;
+  //    TDS is India-domestic — never withheld on non-INR invoices.
+  const tdsRate = isDomestic ? parseFloat(input.tdsRate ?? '0') || 0 : 0;
   const tds = pct(taxableTotal, tdsRate);
 
   return {

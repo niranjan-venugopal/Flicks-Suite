@@ -158,6 +158,7 @@ export class InvoicesService {
         discountType: (dto.discount_type as 'percent' | 'fixed') ?? null,
         discountValue: dto.discount_value ?? null,
         tdsRate: dto.tds_rate ?? null,
+        currency, // gates GST/TDS to INR (§6.1/§6.2)
       });
 
       // Quotes share the invoices table + lifecycle; they differ by
@@ -308,6 +309,7 @@ export class InvoicesService {
         discountType,
         discountValue,
         tdsRate,
+        currency: dto.currency ?? existing.currency, // gates GST/TDS to INR
       });
 
       const newCurrency = dto.currency ?? existing.currency;

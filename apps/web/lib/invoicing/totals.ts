@@ -38,6 +38,9 @@ export function computeTotals(opts: {
   discountType?: 'percent' | 'fixed' | ''
   discountValue?: string
   tdsRate?: string
+  // GST/TDS are India-only — non-INR invoices carry neither (mirrors the
+  // backend tax.util.computeInvoice gate).
+  currency?: string
 }): EditorTotals {
   const lineAmounts = opts.lines.map((l) => {
     const qty = parseFloat(l.quantity || '0')
@@ -60,8 +63,9 @@ export function computeTotals(opts: {
     }
   }
 
-  const isExport = opts.taxTreatment === 'EXPORT'
-  const isIntra = opts.taxTreatment === 'INTRA_STATE'
+  const isDomestic = (opts.currency ?? 'INR') === 'INR'
+  const isExport = opts.taxTreatment === 'EXPORT' || !isDomestic
+  const isIntra = opts.taxTreatment === 'INTRA_STATE' && isDomestic
   let cgst = 0,
     sgst = 0,
     igst = 0,
@@ -81,7 +85,7 @@ export function computeTotals(opts: {
     cess += pct(t, c)
   })
   const total = taxable + cgst + sgst + igst + cess
-  const tds = pct(taxable, parseFloat(opts.tdsRate || '0') || 0)
+  const tds = isDomestic ? pct(taxable, parseFloat(opts.tdsRate || '0') || 0) : 0
 
   return {
     subtotal: fromCents(subtotal),
