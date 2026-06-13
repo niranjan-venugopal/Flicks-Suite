@@ -17,9 +17,11 @@ export function Logo({ size = 28, color = '#fff', style }: LogoProps) {
       fill={color}
       style={{ flexShrink: 0, ...style }}
     >
-      <path d="M1.73 16.74L6.34 16.74L6.34 27.73C6.34 29.36 8.38 30.14 9.47 28.88L21.1 15.44C22.14 14.26 21.31 12.43 19.74 12.43L15.12 12.43L15.12 1.44C15.12 -0.19 13.08 -0.97 11.99 0.29L0.36 13.73C-0.68 14.91 0.15 16.74 1.73 16.74Z" />
-      <rect x="0" y="9.5" width="7" height="2.2" rx="1.1" />
-      <rect x="0" y="14" width="4" height="2.2" rx="1.1" />
+      {/* Bold lightning bolt */}
+      <path d="M22.5 5L13 19L18.5 19L16 30L25.5 16.5L20 16.5Z" />
+      {/* Motion / speed lines (top longer, bottom shorter) */}
+      <rect x="3" y="13.8" width="8" height="2.8" rx="1.4" />
+      <rect x="3" y="18.2" width="5.2" height="2.8" rx="1.4" />
     </svg>
   )
 }
