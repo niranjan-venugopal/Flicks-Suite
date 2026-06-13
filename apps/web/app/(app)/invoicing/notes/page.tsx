@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Btn, SectionHead } from '@/components/proto'
+import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { useNotes, useIssueNote, useInvoices, type NoteRow } from '@/lib/api/queries/use-invoicing'
@@ -121,40 +122,35 @@ function NoteModal({
 
 function NotesTable({ rows, tone }: { rows: NoteRow[]; tone: 'credit' | 'debit' }) {
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <table className="tbl w-full">
-        <thead>
-          <tr>
-            <th>Note no</th>
-            <th>Against</th>
-            <th style={{ textAlign: 'right' }}>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={3} className="t-mute">None yet</td>
-            </tr>
-          )}
-          {rows.map((n) => (
-            <tr key={n.id}>
-              <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.number}</td>
-              <td>
-                {n.customer_name ?? '—'}
-                {n.invoice_number ? ` · ${n.invoice_number}` : ''}
-              </td>
-              <td
-                className="t-num"
-                style={{ textAlign: 'right', fontWeight: 800, color: tone === 'credit' ? 'var(--coral)' : 'var(--green)' }}
-              >
-                {tone === 'credit' ? '−' : '+'}
-                {fmt(n.total_amount, n.currency)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <InvoTable
+      head={
+        <>
+          <th style={invoTh}>Note no</th>
+          <th style={invoTh}>Against</th>
+          <th style={{ ...invoTh, textAlign: 'right' }}>Amount</th>
+        </>
+      }
+    >
+      {rows.length === 0 ? (
+        <tr>
+          <td colSpan={3} style={{ ...invoTd, color: INVO.muted40 }}>None yet</td>
+        </tr>
+      ) : (
+        rows.map((n, i) => (
+          <InvoRow key={n.id} index={i}>
+            <td style={{ ...invoTd, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{n.number}</td>
+            <td style={invoTd}>
+              {n.customer_name ?? '—'}
+              {n.invoice_number ? ` · ${n.invoice_number}` : ''}
+            </td>
+            <td style={{ ...invoTd, textAlign: 'right', fontWeight: 800, color: tone === 'credit' ? INVO.coral : INVO.green }}>
+              {tone === 'credit' ? '−' : '+'}
+              {fmt(n.total_amount, n.currency)}
+            </td>
+          </InvoRow>
+        ))
+      )}
+    </InvoTable>
   )
 }
 
@@ -164,7 +160,7 @@ export default function NotesPage() {
   const [modal, setModal] = useState<'credit' | 'debit' | null>(null)
 
   return (
-    <div style={{ padding: '26px 28px 72px' }}>
+    <InvoPage>
       <SectionHead
         title="Credit & Debit notes"
         sub="GST CDNR documents with their own numbering series — credit notes book into the customer's credit balance."
@@ -194,6 +190,6 @@ export default function NotesPage() {
         </div>
       )}
       <NoteModal open={!!modal} kind={modal ?? 'credit'} onClose={() => setModal(null)} />
-    </div>
+    </InvoPage>
   )
 }

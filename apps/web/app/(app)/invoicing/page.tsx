@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { Btn, Icon, Kpi, Pill, SectionHead, BarChart } from '@/components/proto'
+import { InvoPage } from '@/components/invoicing/invo'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useInvDashboard, useAging, useInvoices, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
@@ -77,7 +78,7 @@ function Dashboard({ readOnly }: { readOnly: boolean }) {
   }
 
   return (
-    <div style={{ padding: '26px 28px 72px' }}>
+    <InvoPage>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
         <SectionHead title="Invoicing overview" sub="Receivables, aging and recent activity at a glance." />
         {!readOnly && (
@@ -187,7 +188,7 @@ function Dashboard({ readOnly }: { readOnly: boolean }) {
           </div>
         </div>
       </div>
-    </div>
+    </InvoPage>
   )
 }
 
@@ -248,7 +249,8 @@ function SetupWizard({ progress }: { progress: SetupProgress }) {
   }
 
   return (
-    <div style={{ padding: '26px 28px 72px', maxWidth: 820, margin: '0 auto' }}>
+    <InvoPage>
+     <div style={{ maxWidth: 820, margin: '0 auto' }}>
       <SectionHead title="Set up Invoicing" sub="A few quick steps and you'll send your first GST-compliant invoice." />
 
       <div style={{ marginTop: 4 }}>
@@ -314,6 +316,7 @@ function SetupWizard({ progress }: { progress: SetupProgress }) {
           {complete.isPending ? 'Saving…' : 'Save → Create first invoice'}
         </Btn>
       </div>
-    </div>
+     </div>
+    </InvoPage>
   )
 }

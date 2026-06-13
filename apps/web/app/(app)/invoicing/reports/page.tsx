@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Download, ShieldCheck, Calculator, Clock, RefreshCw, Check } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
+import { InvoPage } from '@/components/invoicing/invo'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useAging,
@@ -73,7 +74,7 @@ export default function InvReportsPage() {
   ]
 
   return (
-    <div style={{ padding: '26px 28px 72px' }}>
+    <InvoPage>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
         <SectionHead
           title="Invoicing reports"
@@ -184,6 +185,6 @@ export default function InvReportsPage() {
           </div>
         )}
       </div>
-    </div>
+    </InvoPage>
   )
 }

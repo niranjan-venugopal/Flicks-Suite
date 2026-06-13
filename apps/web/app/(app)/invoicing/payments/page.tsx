@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
+import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import { usePayments, useInvoices, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
 import type { PillTone } from '@/components/proto/Pill'
@@ -39,7 +40,7 @@ export default function PaymentsPage() {
   )
 
   return (
-    <div style={{ padding: '26px 28px 72px' }}>
+    <InvoPage glow="green">
       <SectionHead
         title="Payments"
         sub={`${rows.length} payments recorded · manual and Razorpay in one ledger`}
@@ -50,45 +51,42 @@ export default function PaymentsPage() {
         }
       />
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table className="tbl w-full">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Payment #</th>
-              <th>Invoice</th>
-              <th>Customer</th>
-              <th>Method</th>
-              <th style={{ textAlign: 'right' }}>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && (
-              <tr><td colSpan={6} className="t-mute">Loading…</td></tr>
-            )}
-            {!isLoading && rows.length === 0 && (
-              <tr><td colSpan={6} className="t-mute">No payments yet — record one against an open invoice.</td></tr>
-            )}
-            {rows.map((p) => (
-              <tr key={p.id}>
-                <td className="t-mute">{dateFmt(p.payment_date)}</td>
-                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.payment_number}</td>
-                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.invoice_number ?? '—'}</td>
-                <td>{p.customer_name ?? '—'}</td>
-                <td>
-                  <Pill tone={methodTone(p.payment_method)}>
-                    {methodLabel[p.payment_method] ?? p.payment_method}
-                    {p.currency !== 'INR' ? ` · ${p.currency}` : ''}
-                  </Pill>
-                </td>
-                <td className="t-num" style={{ textAlign: 'right', fontWeight: 800 }}>
-                  {fmt(p.amount, p.currency)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <InvoTable
+        head={
+          <>
+            <th style={invoTh}>Date</th>
+            <th style={invoTh}>Payment #</th>
+            <th style={invoTh}>Invoice</th>
+            <th style={invoTh}>Customer</th>
+            <th style={invoTh}>Method</th>
+            <th style={{ ...invoTh, textAlign: 'right' }}>Amount</th>
+          </>
+        }
+      >
+        {isLoading && (
+          <tr><td colSpan={6} style={{ ...invoTd, color: INVO.muted40 }}>Loading…</td></tr>
+        )}
+        {!isLoading && rows.length === 0 && (
+          <tr><td colSpan={6} style={{ ...invoTd, color: INVO.muted30 }}>No payments yet — record one against an open invoice.</td></tr>
+        )}
+        {rows.map((p, i) => (
+          <InvoRow key={p.id} index={i}>
+            <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(p.payment_date)}</td>
+            <td style={{ ...invoTd, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.payment_number}</td>
+            <td style={{ ...invoTd, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.invoice_number ?? '—'}</td>
+            <td style={invoTd}>{p.customer_name ?? '—'}</td>
+            <td style={invoTd}>
+              <Pill tone={methodTone(p.payment_method)}>
+                {methodLabel[p.payment_method] ?? p.payment_method}
+                {p.currency !== 'INR' ? ` · ${p.currency}` : ''}
+              </Pill>
+            </td>
+            <td style={{ ...invoTd, textAlign: 'right', fontWeight: 800 }}>
+              {fmt(p.amount, p.currency)}
+            </td>
+          </InvoRow>
+        ))}
+      </InvoTable>
 
       {/* Invoice picker → existing PaymentModal */}
       {pickerOpen && (
@@ -128,6 +126,6 @@ export default function PaymentsPage() {
       )}
 
       <PaymentModal open={!!paying} onOpenChange={(v) => !v && setPaying(null)} invoice={paying} />
-    </div>
+    </InvoPage>
   )
 }

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { RefreshCw, Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead, Toggle } from '@/components/proto'
+import { InvoPage } from '@/components/invoicing/invo'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -218,7 +219,7 @@ export default function RecurringPage() {
   }
 
   return (
-    <div style={{ padding: '26px 28px 72px' }}>
+    <InvoPage glow="green">
       <SectionHead
         title="Recurring"
         sub={`${active.length} active profiles · MRR ${inr(data?.meta.mrr ?? '0')}`}
@@ -286,6 +287,6 @@ export default function RecurringPage() {
       </div>
 
       <SubscriptionModal open={modal} onClose={() => setModal(false)} />
-    </div>
+    </InvoPage>
   )
 }

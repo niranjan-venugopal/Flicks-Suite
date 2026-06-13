@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
+import { InvoPage } from '@/components/invoicing/invo'
 import { NumberingTab } from '@/components/invoicing/NumberingTab'
 import { useOrgFinancial } from '@/lib/api/queries/use-invoicing'
 import {
@@ -95,7 +96,7 @@ export default function InvoicingSettingsPage() {
   const [currencies, setCurrencies] = useState<Record<string, boolean>>({ USD: true, EUR: true, GBP: false })
 
   return (
-    <div style={{ padding: '26px 28px 96px' }}>
+    <InvoPage>
       <SectionHead
         title="Invoice settings"
         sub="Numbering, template, email, payments, currencies, tax codes and compliance — per PRD §7.1."
@@ -350,6 +351,6 @@ export default function InvoicingSettingsPage() {
           </Btn>
         </div>
       )}
-    </div>
+    </InvoPage>
   )
 }
