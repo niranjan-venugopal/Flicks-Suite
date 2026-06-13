@@ -8,6 +8,7 @@ import { useAuthStore } from '@/lib/stores/auth.store'
 import { useInvDashboard, useAging, useInvoices, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 import { daysToGstr1 } from '@/components/invoicing/CompanySwitcher'
+import { formatMoney } from '@/lib/invoicing/constants'
 import {
   useSetupProgress,
   useUpdateSetupProgress,
@@ -25,9 +26,6 @@ import {
  *    (Auditor, and Manager/Employee without edit) get a ReadOnlyBanner and no
  *    create/CTA controls.
  */
-
-const inr = (v: string | number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(v))
 
 const EDIT_ROLES = new Set(['OWNER', 'HR_ADMIN', 'FINANCE'])
 
@@ -66,6 +64,9 @@ function Dashboard({ readOnly }: { readOnly: boolean }) {
   const aging = agingRes?.data
   const recent = (invRes?.data ?? []).slice(0, 6)
   const gstr1Days = daysToGstr1()
+  // KPI/aging amounts are in the workspace base currency (server-scoped).
+  const cur = d?.currency ?? 'INR'
+  const inr = (v: string | number) => formatMoney(v, cur)
 
   if (isLoading) {
     return (
@@ -135,7 +136,7 @@ function Dashboard({ readOnly }: { readOnly: boolean }) {
                     <td>{r.customer_name ?? '—'}</td>
                     <td className="t-mute" style={{ fontSize: 12 }}>{r.due_date}</td>
                     <td><StatusPill status={r.status} /></td>
-                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{inr(r.total_amount)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{formatMoney(r.total_amount, r.currency)}</td>
                   </tr>
                 ))}
               </tbody>

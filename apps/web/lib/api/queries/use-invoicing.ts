@@ -602,21 +602,49 @@ export function usePayments() {
 export interface AgingData {
   buckets: { bucket: string; amount: string }[]
   total: string
+  currency?: string
 }
 
-export function useAging() {
+export interface ReportsContext {
+  countryCode: string
+  baseCurrency: string
+  currencies: string[]
+}
+
+export function useReportsContext() {
   return useQuery({
-    queryKey: ['invoicing', 'reports', 'aging'],
-    queryFn: () => api.get<{ data: AgingData }>('/api/v1/invoicing/reports/aging'),
+    queryKey: ['invoicing', 'reports', 'context'],
+    queryFn: () => api.get<{ data: ReportsContext }>('/api/v1/invoicing/reports/context'),
+    staleTime: 5 * 60_000,
   })
 }
 
-export function useInvDashboard() {
+const curQs = (currency?: string) => (currency ? `?currency=${encodeURIComponent(currency)}` : '')
+
+export function useAging(currency?: string) {
   return useQuery({
-    queryKey: ['invoicing', 'reports', 'dashboard'],
+    queryKey: ['invoicing', 'reports', 'aging', currency ?? 'base'],
+    queryFn: () => api.get<{ data: AgingData }>(`/api/v1/invoicing/reports/aging${curQs(currency)}`),
+  })
+}
+
+export interface InvDashboardData {
+  total: number
+  open: number
+  overdue: number
+  paid: number
+  outstanding: string
+  collected: string
+  tds: string
+  currency: string
+}
+
+export function useInvDashboard(currency?: string) {
+  return useQuery({
+    queryKey: ['invoicing', 'reports', 'dashboard', currency ?? 'base'],
     queryFn: () =>
-      api.get<{ data: { total: number; open: number; overdue: number; paid: number; outstanding: string; collected: string; tds: string } }>(
-        '/api/v1/invoicing/reports/dashboard',
+      api.get<{ data: InvDashboardData }>(
+        `/api/v1/invoicing/reports/dashboard${curQs(currency)}`,
       ),
   })
 }

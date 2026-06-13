@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
 import { and, eq, gte, lte, inArray, notInArray, sql, desc } from 'drizzle-orm';
 import {
@@ -8,8 +12,11 @@ import {
   customers,
   gstr1Exports,
   form131Received,
+  tenants,
+  invoicingSettings,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
+import type { Db } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import type { GenerateGstr1Dto } from './dto/invoicing.dto';
 
@@ -34,10 +41,81 @@ export class InvReportsService {
     private readonly audit: AuditService,
   ) {}
 
+  // ─── reports context (country + currency, for a global platform) ────────────
+
+  /**
+   * Drives the reports UI on a global platform: the tenant's country (gates the
+   * India-only GST/TDS/GSTR-1 cards), its base currency, and the distinct
+   * currencies actually present on its invoices (populates the currency
+   * selector). All KPI endpoints are scoped to a single currency so totals are
+   * never summed across currencies.
+   */
+  async reportsContext(tenantId: string) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const [tenant] = await tx
+        .select({ countryCode: tenants.country_code, currency: tenants.currency })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+      const [settings] = await tx
+        .select({ defaultCurrency: invoicingSettings.default_currency })
+        .from(invoicingSettings)
+        .where(eq(invoicingSettings.tenant_id, tenantId))
+        .limit(1);
+      const present = await tx
+        .selectDistinct({ currency: invoices.currency })
+        .from(invoices)
+        .where(eq(invoices.tenant_id, tenantId));
+
+      const baseCurrency = settings?.defaultCurrency ?? tenant?.currency ?? 'INR';
+      const currencies = Array.from(
+        new Set([baseCurrency, ...present.map((p) => p.currency)]),
+      );
+      return {
+        data: {
+          countryCode: tenant?.countryCode ?? 'IN',
+          baseCurrency,
+          currencies,
+        },
+      };
+    });
+  }
+
+  /** Tenant's base currency — used when a report request omits ?currency. */
+  private async baseCurrency(tx: Db, tenantId: string): Promise<string> {
+    const [settings] = await tx
+      .select({ defaultCurrency: invoicingSettings.default_currency })
+      .from(invoicingSettings)
+      .where(eq(invoicingSettings.tenant_id, tenantId))
+      .limit(1);
+    if (settings?.defaultCurrency) return settings.defaultCurrency;
+    const [tenant] = await tx
+      .select({ currency: tenants.currency })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    return tenant?.currency ?? 'INR';
+  }
+
+  /** Reject India-only reports for non-India tenants (PRD: global platform). */
+  private async assertIndia(tx: Db, tenantId: string): Promise<void> {
+    const [tenant] = await tx
+      .select({ countryCode: tenants.country_code })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if ((tenant?.countryCode ?? 'IN') !== 'IN') {
+      throw new ForbiddenException(
+        'GST / GSTR-1 / TDS reports are available only for India-based organizations',
+      );
+    }
+  }
+
   // ─── dashboard / aging / revenue / tds ──────────────────────────────────────
 
-  async dashboard(tenantId: string) {
+  async dashboard(tenantId: string, currency?: string) {
     return this.db.withTenant(tenantId, async (tx) => {
+      const cur = currency ?? (await this.baseCurrency(tx, tenantId));
       const [counts] = await tx
         .select({
           total: sql<number>`count(*)::int`,
@@ -49,15 +127,16 @@ export class InvReportsService {
           tds: sql<string>`coalesce(sum(${invoices.tds_amount}) filter (where ${invoices.status} not in ('DRAFT','CANCELLED','VOIDED')), 0)::text`,
         })
         .from(invoices)
-        .where(eq(invoices.tenant_id, tenantId));
-      return { data: counts };
+        .where(and(eq(invoices.tenant_id, tenantId), eq(invoices.currency, cur)));
+      return { data: { ...counts, currency: cur } };
     });
   }
 
   /** Receivables aging buckets: Current / 1–30 / 31–60 / 60+ (by due date). */
-  async aging(tenantId: string) {
-    const rows = await this.db.withTenant(tenantId, (tx) =>
-      tx
+  async aging(tenantId: string, currency?: string) {
+    const { rows, cur } = await this.db.withTenant(tenantId, async (tx) => {
+      const cur = currency ?? (await this.baseCurrency(tx, tenantId));
+      const rows = await tx
         .select({
           due_date: invoices.due_date,
           outstanding: invoices.amount_outstanding,
@@ -65,9 +144,14 @@ export class InvReportsService {
         })
         .from(invoices)
         .where(
-          and(eq(invoices.tenant_id, tenantId), inArray(invoices.status, OPEN_STATUSES)),
-        ),
-    );
+          and(
+            eq(invoices.tenant_id, tenantId),
+            eq(invoices.currency, cur),
+            inArray(invoices.status, OPEN_STATUSES),
+          ),
+        );
+      return { rows, cur };
+    });
     const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime();
     const buckets = { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 };
     for (const r of rows) {
@@ -81,6 +165,7 @@ export class InvReportsService {
     }
     return {
       data: {
+        currency: cur,
         buckets: [
           { bucket: 'Current', amount: money(buckets.current) },
           { bucket: '1–30 days', amount: money(buckets.d1_30) },
@@ -93,9 +178,10 @@ export class InvReportsService {
   }
 
   /** Monthly invoiced revenue for the trailing 6 months (non-draft/cancelled). */
-  async revenue(tenantId: string) {
-    const rows = await this.db.withTenant(tenantId, (tx) =>
-      tx
+  async revenue(tenantId: string, currency?: string) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const cur = currency ?? (await this.baseCurrency(tx, tenantId));
+      const rows = await tx
         .select({
           month: sql<string>`to_char(date_trunc('month', ${invoices.invoice_date}::date), 'YYYY-MM')`,
           total: sql<string>`coalesce(sum(${invoices.total_amount}), 0)::text`,
@@ -103,19 +189,24 @@ export class InvReportsService {
         })
         .from(invoices)
         .where(
-          and(eq(invoices.tenant_id, tenantId), notInArray(invoices.status, NON_REVENUE)),
+          and(
+            eq(invoices.tenant_id, tenantId),
+            eq(invoices.currency, cur),
+            notInArray(invoices.status, NON_REVENUE),
+          ),
         )
         .groupBy(sql`1`)
         .orderBy(sql`1 desc`)
-        .limit(6),
-    );
-    return { data: rows };
+        .limit(6);
+      return { data: rows, meta: { currency: cur } };
+    });
   }
 
   /** TDS receivable: TDS withheld by customers on live invoices (§6.2). */
   async tdsReceivable(tenantId: string) {
-    const rows = await this.db.withTenant(tenantId, (tx) =>
-      tx
+    const rows = await this.db.withTenant(tenantId, async (tx) => {
+      await this.assertIndia(tx, tenantId); // TDS is India-specific
+      return tx
         .select({
           invoice_number: invoices.invoice_number,
           invoice_date: invoices.invoice_date,
@@ -135,8 +226,8 @@ export class InvReportsService {
             sql`${invoices.tds_amount} > 0`,
           ),
         )
-        .orderBy(desc(invoices.invoice_date)),
-    );
+        .orderBy(desc(invoices.invoice_date));
+    });
     const total = rows.reduce((a, r) => a + toCents(r.tds_amount), 0);
     return { data: rows, meta: { total: money(total), count: rows.length } };
   }
@@ -151,6 +242,7 @@ export class InvReportsService {
     const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
 
     const result = await this.db.withTenant(tenantId, async (tx) => {
+      await this.assertIndia(tx, tenantId); // GSTR-1 is an India GST return
       const invs = await tx
         .select({
           invoice_number: invoices.invoice_number,
@@ -311,14 +403,15 @@ export class InvReportsService {
   }
 
   async gstr1History(tenantId: string) {
-    const rows = await this.db.withTenant(tenantId, (tx) =>
-      tx
+    const rows = await this.db.withTenant(tenantId, async (tx) => {
+      await this.assertIndia(tx, tenantId);
+      return tx
         .select()
         .from(gstr1Exports)
         .where(eq(gstr1Exports.tenant_id, tenantId))
         .orderBy(desc(gstr1Exports.created_at))
-        .limit(24),
-    );
+        .limit(24);
+    });
     return { data: rows };
   }
 
@@ -327,6 +420,7 @@ export class InvReportsService {
   /** Per customer × FY quarter: expected TDS vs whether Form 131 arrived. */
   async form131Tracking(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
+      await this.assertIndia(tx, tenantId); // Form 131 is India FY-quarter TDS
       // Expected TDS from live invoices, grouped into Indian FY quarters
       // (Q1 = Apr–Jun … Q4 = Jan–Mar).
       const expected = await tx

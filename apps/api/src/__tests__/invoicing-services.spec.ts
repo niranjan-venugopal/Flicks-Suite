@@ -1852,6 +1852,68 @@ describe('FAM consented-debug (Sprint 10 §E)', () => {
   });
 });
 
+// ─── Sprint 11 §3: reports go global — per-currency + India-gated GST ─────────
+describe('Reports — per-currency totals + India gate (Sprint 11 §3)', () => {
+  const reports = new InvReportsService(dbSvc, audit);
+  const invSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenantsTable)
+      .values({ name: `RepCo${rid()}`, slug: `rep-${rid()}-${Date.now()}`, status: 'active', country_code: 'IN' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(usersTable)
+      .values({ email: `rep-${rid()}@test.test`, full_name: 'Rep User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const c = await customers.create({ display_name: 'Globex' }, userId, tenantId);
+    customerId = c.data.id;
+    const line = { item_name: 'Work', quantity: '1', rate: '1000', gst_rate: '18' };
+    // Two INR, one USD.
+    await invSvc.create({ customer_id: customerId, invoice_date: '2026-06-01', due_date: '2026-07-01', currency: 'INR', line_items: [line] }, userId, tenantId);
+    await invSvc.create({ customer_id: customerId, invoice_date: '2026-06-02', due_date: '2026-07-02', currency: 'INR', line_items: [line] }, userId, tenantId);
+    await invSvc.create({ customer_id: customerId, invoice_date: '2026-06-03', due_date: '2026-07-03', currency: 'USD', line_items: [line] }, userId, tenantId);
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenantsTable).where(eq(tenantsTable.id, tenantId));
+    await dbAdmin.delete(usersTable).where(eq(usersTable.id, userId));
+  });
+
+  it('dashboard is scoped to one currency (never summed across)', async () => {
+    const inr = await reports.dashboard(tenantId, 'INR');
+    const usd = await reports.dashboard(tenantId, 'USD');
+    expect(inr.data.currency).toBe('INR');
+    expect(inr.data.total).toBe(2);
+    expect(usd.data.currency).toBe('USD');
+    expect(usd.data.total).toBe(1);
+  });
+
+  it('reportsContext lists the base + the currencies actually present', async () => {
+    const ctx = await reports.reportsContext(tenantId);
+    expect(ctx.data.countryCode).toBe('IN');
+    expect(ctx.data.currencies.sort()).toEqual(['INR', 'USD']);
+  });
+
+  it('India-only reports (GSTR-1 / TDS / Form-131) are forbidden for a non-India tenant', async () => {
+    await dbAdmin.update(tenantsTable).set({ country_code: 'US' }).where(eq(tenantsTable.id, tenantId));
+    await expect(reports.tdsReceivable(tenantId)).rejects.toThrow(/India/i);
+    await expect(reports.gstr1History(tenantId)).rejects.toThrow(/India/i);
+    await expect(reports.form131Tracking(tenantId)).rejects.toThrow(/India/i);
+    await expect(
+      reports.generateGstr1({ period_month: 6, period_year: 2026 } as never, userId, tenantId),
+    ).rejects.toThrow(/India/i);
+    // Universal reports still work.
+    const ag = await reports.aging(tenantId, 'USD');
+    expect(ag.data.currency).toBe('USD');
+  });
+});
+
 // Close the shared postgres pools after every describe in this file has run,
 // so jest can exit cleanly.
 afterAll(async () => {

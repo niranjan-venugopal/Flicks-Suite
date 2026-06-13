@@ -95,25 +95,32 @@ export class PaymentsController {
 export class InvReportsController {
   constructor(private readonly reports: InvReportsService) {}
 
+  @Get('context')
+  @RequireGrant('reports', 'view')
+  @ApiOperation({ summary: 'Country + base/available currencies for the reports UI' })
+  context(@CurrentUser() user: JwtPayload) {
+    return this.reports.reportsContext(user.tenantId);
+  }
+
   @Get('dashboard')
   @RequireGrant('reports', 'view')
-  @ApiOperation({ summary: 'Headline counts + outstanding/collected/TDS' })
-  dashboard(@CurrentUser() user: JwtPayload) {
-    return this.reports.dashboard(user.tenantId);
+  @ApiOperation({ summary: 'Headline counts + outstanding/collected/TDS (per currency)' })
+  dashboard(@CurrentUser() user: JwtPayload, @Query('currency') currency?: string) {
+    return this.reports.dashboard(user.tenantId, currency);
   }
 
   @Get('aging')
   @RequireGrant('reports', 'view')
-  @ApiOperation({ summary: 'Receivables aging buckets' })
-  aging(@CurrentUser() user: JwtPayload) {
-    return this.reports.aging(user.tenantId);
+  @ApiOperation({ summary: 'Receivables aging buckets (per currency)' })
+  aging(@CurrentUser() user: JwtPayload, @Query('currency') currency?: string) {
+    return this.reports.aging(user.tenantId, currency);
   }
 
   @Get('revenue')
   @RequireGrant('reports', 'view')
-  @ApiOperation({ summary: 'Monthly invoiced revenue (6 months)' })
-  revenue(@CurrentUser() user: JwtPayload) {
-    return this.reports.revenue(user.tenantId);
+  @ApiOperation({ summary: 'Monthly invoiced revenue (6 months, per currency)' })
+  revenue(@CurrentUser() user: JwtPayload, @Query('currency') currency?: string) {
+    return this.reports.revenue(user.tenantId, currency);
   }
 
   @Get('tds-receivable')
