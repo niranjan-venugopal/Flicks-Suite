@@ -25,7 +25,14 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
 
   const isAuditor = currentUser?.role === 'AUDITOR'
   const linked = companies.data?.data ?? []
-  const multi = linked.length > 1
+  // Allow the dropdown whenever there's a company to switch INTO — i.e. more
+  // than one linked company, OR a single linked company that isn't the one the
+  // session is currently scoped to (the revoked-current-tenant case, where the
+  // active tenant has dropped out of `linked` entirely).
+  const canSwitch =
+    linked.length > 1 ||
+    (linked.length === 1 && linked[0]!.tenantId !== currentUser?.tenantId)
+  const landingPath = isAuditor ? '/invoicing' : '/dashboard'
   const tenantName = currentTenant?.name ?? 'Workspace'
   const subtitle = isAuditor
     ? `Auditor · ${linked.length || 1} ${linked.length === 1 ? 'company' : 'companies'}`
@@ -55,7 +62,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
     <div ref={rootRef} style={{ padding: '12px 12px 0', position: 'relative' }}>
       <button
         type="button"
-        onClick={() => multi && setOpen((o) => !o)}
+        onClick={() => canSwitch && setOpen((o) => !o)}
         style={{
           width: '100%',
           display: 'flex',
@@ -65,7 +72,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
           borderRadius: 10,
           background: 'var(--surf-1)',
           border: '1px solid var(--bord)',
-          cursor: multi ? 'pointer' : 'default',
+          cursor: canSwitch ? 'pointer' : 'default',
         }}
       >
         <div className="avatar sm" style={{ background: avBg(tenantName) }}>
@@ -87,7 +94,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
             {subtitle}
           </div>
         </div>
-        {multi && (
+        {canSwitch && (
           <Icon.chevD
             size={14}
             style={{
@@ -99,7 +106,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
         )}
       </button>
 
-      {open && multi && (
+      {open && canSwitch && (
         <div
           style={{
             position: 'absolute',
@@ -134,7 +141,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
                 disabled={switchCompany.isPending}
                 onClick={() => {
                   setOpen(false)
-                  if (!active) switchCompany.mutate(c.tenantId)
+                  if (!active) switchCompany.mutate({ tenantId: c.tenantId, redirectTo: landingPath })
                 }}
                 style={{
                   width: '100%',

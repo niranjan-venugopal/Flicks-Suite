@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
+import { useToast } from '@/components/ui/use-toast'
 
 /**
  * Auditor role hooks (Sprint 8, PRD §3/§4.4): My Companies + company switch,
@@ -80,13 +81,27 @@ export function useSeats() {
  * (pending invites are accepted on switch) and re-issues the JWT cookies for
  * the chosen tenant. On success we hard-navigate: a full reload tears down
  * every cached query from the previous tenant in one stroke.
+ *
+ * On failure we surface the server's reason (e.g. "Your access to this company
+ * has been revoked") via a toast instead of a silent console 400 — the
+ * previous version swallowed the error, so a rejected switch looked like
+ * nothing happened.
  */
 export function useSwitchCompany() {
+  const { toast } = useToast()
   return useMutation({
-    mutationFn: (tenantId: string) =>
+    mutationFn: ({ tenantId }: { tenantId: string; redirectTo?: string }) =>
       api.post<{ expiresIn: number }>('/api/v1/auth/switch-company', { tenantId }),
-    onSuccess: () => {
-      window.location.assign('/dashboard')
+    onSuccess: (_data, vars) => {
+      window.location.assign(vars.redirectTo ?? '/dashboard')
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not switch company',
+        description:
+          err instanceof Error ? err.message : 'Please try again in a moment.',
+        variant: 'destructive',
+      })
     },
   })
 }

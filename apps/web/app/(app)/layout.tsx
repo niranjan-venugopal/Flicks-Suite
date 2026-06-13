@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
@@ -8,6 +8,7 @@ import { Topbar } from '@/components/layout/Topbar'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
+import { useSwitchCompany } from '@/lib/api/queries/use-members'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -49,6 +50,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     !onboarding.data.submittedForReview &&
     onboarding.data.employeeId !== null
 
+  // ─── Revoked-current-tenant recovery (Invoicing v3 auditors) ──────────────
+  // If the session is still scoped to a tenant the user no longer has ACTIVE
+  // access to (e.g. an auditor whose current company just revoked them), the
+  // JWT keeps pointing at the dead tenant and every screen shows it. Detect
+  // that and recover: silently switch into the sole remaining active company,
+  // or send them to My Companies to choose when there are several / none.
+  const switchCompany = useSwitchCompany()
+  const recoveryFired = useRef(false)
+  const currentMembership = meData?.currentMembership ?? null
+  const activeMemberships = (meData?.memberships ?? []).filter(
+    (m) => m.status === 'active',
+  )
+  // Only meaningful once /me has resolved; impersonation + platform admins +
+  // joining employees are handled by their own redirects below.
+  const currentTenantRevoked =
+    !!meData &&
+    !isImpersonating &&
+    !isPlatformAdmin &&
+    (!currentMembership || currentMembership.status !== 'active')
+
   useEffect(() => {
     if (!isLoading && (isError || !isAuthenticated)) {
       router.replace('/login')
@@ -60,8 +81,35 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
     if (needsOnboarding) {
       router.replace('/onboarding/employee')
+      return
     }
-  }, [isLoading, isError, isAuthenticated, isPlatformAdmin, needsOnboarding, router])
+    // Recover from a revoked/expired current tenant exactly once per load.
+    if (currentTenantRevoked && !recoveryFired.current) {
+      recoveryFired.current = true
+      if (activeMemberships.length === 1) {
+        // Re-scope the JWT into the only company they can still use.
+        switchCompany.mutate({
+          tenantId: activeMemberships[0]!.tenantId,
+          redirectTo: freshRole === 'auditor' ? '/invoicing' : '/dashboard',
+        })
+      } else {
+        // None left, or several to choose from → let them pick / see the
+        // empty state rather than sitting on a dead workspace.
+        router.replace('/my-companies')
+      }
+    }
+  }, [
+    isLoading,
+    isError,
+    isAuthenticated,
+    isPlatformAdmin,
+    needsOnboarding,
+    currentTenantRevoked,
+    activeMemberships,
+    freshRole,
+    switchCompany,
+    router,
+  ])
 
   // Don't render the app shell until /me has resolved. Otherwise the
   // persisted Zustand store re-hydrates with the PREVIOUS session's role

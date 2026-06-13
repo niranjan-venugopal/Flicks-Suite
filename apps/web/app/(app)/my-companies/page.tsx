@@ -78,7 +78,7 @@ export default function MyCompaniesPage() {
                 type="button"
                 disabled={switchCompany.isPending}
                 onClick={() => {
-                  if (!active) switchCompany.mutate(c.tenantId)
+                  if (!active) switchCompany.mutate({ tenantId: c.tenantId, redirectTo: '/invoicing' })
                 }}
                 style={{
                   display: 'flex',

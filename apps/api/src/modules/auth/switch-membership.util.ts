@@ -1,7 +1,9 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { memberships, type Membership } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
+
+const logger = new Logger('SwitchMembership');
 
 /**
  * Resolve (and, where appropriate, activate) the membership a user is
@@ -39,15 +41,28 @@ export async function resolveSwitchMembership(
     .limit(1);
 
   if (!membership) {
+    // The two parties that should always agree — /me/companies (which lists a
+    // tenant) and this switch (which can't find its membership) — have
+    // diverged. Log enough to tell "wrong user_id" apart from "wrong
+    // tenant_id" without dumping PII.
+    logger.warn(
+      `switch rejected: no membership row for user ${userId.slice(0, 8)}… + tenant ${tenantId.slice(0, 8)}…`,
+    );
     throw new BadRequestException('No active membership found for this tenant');
   }
   if (membership.status === 'deactivated') {
+    logger.warn(
+      `switch rejected: membership ${membership.id.slice(0, 8)}… for tenant ${tenantId.slice(0, 8)}… is deactivated (revoked)`,
+    );
     throw new ForbiddenException('Your access to this company has been revoked');
   }
   if (
     membership.access_expires_at &&
     membership.access_expires_at.getTime() < Date.now()
   ) {
+    logger.warn(
+      `switch rejected: access window for membership ${membership.id.slice(0, 8)}… expired at ${membership.access_expires_at.toISOString()}`,
+    );
     throw new ForbiddenException('Your access window for this company has expired');
   }
 
