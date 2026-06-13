@@ -97,16 +97,16 @@ export class InvReportsService {
     return tenant?.currency ?? 'INR';
   }
 
-  /** Reject India-only reports for non-India tenants (PRD: global platform). */
-  private async assertIndia(tx: Db, tenantId: string): Promise<void> {
-    const [tenant] = await tx
-      .select({ countryCode: tenants.country_code })
-      .from(tenants)
-      .where(eq(tenants.id, tenantId))
-      .limit(1);
-    if ((tenant?.countryCode ?? 'IN') !== 'IN') {
+  /**
+   * GST / GSTR-1 / TDS / Form-131 are India-domestic and only meaningful when
+   * the workspace's BASE currency is INR. A company registered with a non-INR
+   * base currency (e.g. USD) sees none of these (PRD: global platform).
+   */
+  private async assertGstEligible(tx: Db, tenantId: string): Promise<void> {
+    const base = await this.baseCurrency(tx, tenantId);
+    if (base !== 'INR') {
       throw new ForbiddenException(
-        'GST / GSTR-1 / TDS reports are available only for India-based organizations',
+        'GST / GSTR-1 / TDS reports are available only when the workspace base currency is INR',
       );
     }
   }
@@ -205,7 +205,7 @@ export class InvReportsService {
   /** TDS receivable: TDS withheld by customers on live invoices (§6.2). */
   async tdsReceivable(tenantId: string) {
     const rows = await this.db.withTenant(tenantId, async (tx) => {
-      await this.assertIndia(tx, tenantId); // TDS is India-specific
+      await this.assertGstEligible(tx, tenantId); // TDS is India-specific
       return tx
         .select({
           invoice_number: invoices.invoice_number,
@@ -242,7 +242,7 @@ export class InvReportsService {
     const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
 
     const result = await this.db.withTenant(tenantId, async (tx) => {
-      await this.assertIndia(tx, tenantId); // GSTR-1 is an India GST return
+      await this.assertGstEligible(tx, tenantId); // GSTR-1 is an India GST return
       const invs = await tx
         .select({
           invoice_number: invoices.invoice_number,
@@ -404,7 +404,7 @@ export class InvReportsService {
 
   async gstr1History(tenantId: string) {
     const rows = await this.db.withTenant(tenantId, async (tx) => {
-      await this.assertIndia(tx, tenantId);
+      await this.assertGstEligible(tx, tenantId);
       return tx
         .select()
         .from(gstr1Exports)
@@ -420,7 +420,7 @@ export class InvReportsService {
   /** Per customer × FY quarter: expected TDS vs whether Form 131 arrived. */
   async form131Tracking(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
-      await this.assertIndia(tx, tenantId); // Form 131 is India FY-quarter TDS
+      await this.assertGstEligible(tx, tenantId); // Form 131 is India FY-quarter TDS
       // Expected TDS from live invoices, grouped into Indian FY quarters
       // (Q1 = Apr–Jun … Q4 = Jan–Mar).
       const expected = await tx

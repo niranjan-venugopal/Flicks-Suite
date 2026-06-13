@@ -26,11 +26,10 @@ export default function InvReportsPage() {
   const { toast } = useToast()
   const { data: ctx } = useReportsContext()
   const baseCurrency = ctx?.data.baseCurrency ?? 'INR'
-  const currencies = ctx?.data.currencies ?? ['INR']
-  const isIndia = (ctx?.data.countryCode ?? 'IN') === 'IN'
-
-  const [picked, setPicked] = useState<string | null>(null)
-  const currency = picked ?? baseCurrency
+  // The report currency is fixed to the workspace base currency (no selector),
+  // and GST/GSTR-1/TDS only apply when that base is INR.
+  const currency = baseCurrency
+  const showGst = baseCurrency === 'INR'
   const money = (v: string | number) => formatMoney(v, currency)
 
   const { data: aging } = useAging(currency)
@@ -63,7 +62,7 @@ export default function InvReportsPage() {
 
   // Universal KPIs (every country) + India-only GST cards.
   const kpis = [
-    ...(isIndia
+    ...(showGst
       ? [
           { t: 'GSTR-1 export', d: `${monthLabel} period file`, icon: ShieldCheck, c: 'var(--coral)', cta: 'Export JSON', onClick: onExport, busy: generate.isPending },
           { t: 'TDS receivable', d: `${formatMoney(tds?.meta.total ?? 0, 'INR')} across ${tds?.meta.count ?? 0} invoices`, icon: Calculator, c: 'var(--blue)', cta: 'Section 393', onClick: undefined, busy: false },
@@ -78,23 +77,11 @@ export default function InvReportsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
         <SectionHead
           title="Invoicing reports"
-          sub={isIndia
-            ? 'Receivables, revenue & GST — GSTR-1 / TDS for India, Tally & GST-portal compatible.'
-            : 'Receivables, revenue & collections across your invoicing currencies.'}
+          sub={showGst
+            ? `Receivables, revenue & GST in ${currency} — GSTR-1 / TDS, Tally & GST-portal compatible.`
+            : `Receivables, revenue & collections in ${currency}.`}
         />
-        {currencies.length > 1 && (
-          <select
-            className="input"
-            value={currency}
-            onChange={(e) => setPicked(e.target.value)}
-            style={{ width: 140, marginTop: 4 }}
-            aria-label="Report currency"
-          >
-            {currencies.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        )}
+        <Pill tone="">{currency}</Pill>
       </div>
 
       {/* KPI cards */}
@@ -115,7 +102,7 @@ export default function InvReportsPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isIndia ? '1fr 1fr' : '1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: showGst ? '1fr 1fr' : '1fr', gap: 16 }}>
         {/* Aging (universal) */}
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -141,7 +128,7 @@ export default function InvReportsPage() {
         </div>
 
         {/* GSTR-1 summary — India only */}
-        {isIndia && (
+        {showGst && (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div className="t-h3">GSTR-1 · {monthLabel}</div>

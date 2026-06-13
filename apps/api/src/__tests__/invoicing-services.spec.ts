@@ -1900,16 +1900,18 @@ describe('Reports — per-currency totals + India gate (Sprint 11 §3)', () => {
     expect(ctx.data.currencies.sort()).toEqual(['INR', 'USD']);
   });
 
-  it('India-only reports (GSTR-1 / TDS / Form-131) are forbidden for a non-India tenant', async () => {
-    await dbAdmin.update(tenantsTable).set({ country_code: 'US' }).where(eq(tenantsTable.id, tenantId));
-    await expect(reports.tdsReceivable(tenantId)).rejects.toThrow(/India/i);
-    await expect(reports.gstr1History(tenantId)).rejects.toThrow(/India/i);
-    await expect(reports.form131Tracking(tenantId)).rejects.toThrow(/India/i);
+  it('GST reports (GSTR-1 / TDS / Form-131) are forbidden when the base currency is not INR', async () => {
+    await dbAdmin.update(tenantsTable).set({ currency: 'USD' }).where(eq(tenantsTable.id, tenantId));
+    await expect(reports.tdsReceivable(tenantId)).rejects.toThrow(/INR/i);
+    await expect(reports.gstr1History(tenantId)).rejects.toThrow(/INR/i);
+    await expect(reports.form131Tracking(tenantId)).rejects.toThrow(/INR/i);
     await expect(
       reports.generateGstr1({ period_month: 6, period_year: 2026 } as never, userId, tenantId),
-    ).rejects.toThrow(/India/i);
-    // Universal reports still work.
-    const ag = await reports.aging(tenantId, 'USD');
+    ).rejects.toThrow(/INR/i);
+    // Universal reports still work; base currency is now USD.
+    const ctx = await reports.reportsContext(tenantId);
+    expect(ctx.data.baseCurrency).toBe('USD');
+    const ag = await reports.aging(tenantId);
     expect(ag.data.currency).toBe('USD');
   });
 });
