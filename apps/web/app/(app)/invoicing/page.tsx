@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { Btn, Icon, Kpi, Pill, SectionHead, BarChart } from '@/components/proto'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useInvDashboard, useAging, useInvoices, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 import { daysToGstr1 } from '@/components/invoicing/CompanySwitcher'
 import {
   useSetupProgress,
@@ -33,24 +34,26 @@ const EDIT_ROLES = new Set(['OWNER', 'HR_ADMIN', 'FINANCE'])
 export default function InvoicingHome() {
   const { currentUser } = useAuthStore()
   const role = currentUser?.role
-  const canEdit = !!role && EDIT_ROLES.has(role)
+  // Setup wizard is a workspace-owner concern (Owner/Admin/Finance); the
+  // editable CTAs on the dashboard follow the effective grant (so a manager
+  // the Owner granted invoicing:edit also gets them).
+  const isOwnerRole = !!role && EDIT_ROLES.has(role)
+  const access = useInvoicingAccess()
 
   const { data: progressRes, isLoading: progressLoading } = useSetupProgress()
   const progress = progressRes?.data
 
-  // Edit-capable users still onboarding see the wizard; everyone else (and all
-  // completed workspaces) go straight to the dashboard.
-  if (progressLoading) {
+  if (progressLoading || access.isLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
         <Loader2 className="w-7 h-7 animate-spin" style={{ color: 'var(--text-mute)' }} />
       </div>
     )
   }
-  if (canEdit && progress && !progress.is_complete) {
+  if (isOwnerRole && progress && !progress.is_complete) {
     return <SetupWizard progress={progress} />
   }
-  return <Dashboard readOnly={!canEdit} />
+  return <Dashboard readOnly={!access.canEdit} />
 }
 
 // ─── Dashboard ──────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 /**
  * Auditor role hooks (Sprint 8, PRD §3/§4.4): My Companies + company switch,
@@ -116,6 +117,42 @@ export function useInviteAuditor() {
       qc.invalidateQueries({ queryKey: ['settings', 'members', 'seats'] })
     },
   })
+}
+
+/**
+ * Effective invoicing access for the current user in the active company,
+ * mirroring the server-side InvoicingGrantGuard so the UI only offers actions
+ * the API will actually allow:
+ *  - Owner/Admin/Finance: full (FULL_ACCESS_ROLES).
+ *  - Auditor/Manager/Employee: from membership_grants on the active company
+ *    (invoicing access_level + capabilities; reports separately).
+ * Capability keys match the backend @RequireGrant decorators exactly
+ * (`send`, `record_payment`, `manage_customers`).
+ */
+export function useInvoicingAccess() {
+  const { currentUser } = useAuthStore()
+  const role = currentUser?.role
+  const full = role === 'OWNER' || role === 'HR_ADMIN' || role === 'FINANCE'
+  const grantDriven = role === 'AUDITOR' || role === 'MANAGER' || role === 'EMPLOYEE'
+  const companies = useMyCompanies(grantDriven)
+
+  const grants =
+    companies.data?.data.find((c) => c.tenantId === currentUser?.tenantId)?.grants ?? []
+  const inv = grants.find((g) => g.module === 'invoicing')
+  const reports = grants.find((g) => g.module === 'reports')
+  const caps = inv?.capabilities ?? {}
+  const level = full ? 'edit' : (inv?.access_level ?? 'none')
+  const canEdit = level === 'edit'
+
+  return {
+    isLoading: grantDriven && companies.isLoading,
+    canView: full || level === 'view' || level === 'edit',
+    canEdit,
+    canSend: canEdit && (full || caps.send === true),
+    canRecordPayments: canEdit && (full || caps.record_payment === true),
+    canManageCustomers: full || (canEdit && caps.manage_customers === true),
+    canViewReports: full || (!!reports && reports.access_level !== 'none'),
+  }
 }
 
 export function useUpdateGrants() {

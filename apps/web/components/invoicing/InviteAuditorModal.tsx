@@ -42,7 +42,7 @@ function toGrantPayload(g: GrantKeys): InviteAuditorPayload['grants'] {
       access_level: g.edit ? 'edit' : 'view',
       capabilities: {
         ...(g.send ? { send: true } : {}),
-        ...(g.record ? { record_payments: true } : {}),
+        ...(g.record ? { record_payment: true } : {}),
         ...(g.customers ? { manage_customers: true } : {}),
       },
     })

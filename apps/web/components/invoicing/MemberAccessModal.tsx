@@ -39,7 +39,7 @@ export function MemberAccessModal({
 
   const [level, setLevel] = useState<Level>((invoicing?.access_level as Level) ?? 'none')
   const [send, setSend] = useState(!!initialCaps.send)
-  const [record, setRecord] = useState(!!initialCaps.record_payments)
+  const [record, setRecord] = useState(!!initialCaps.record_payment)
   const [customers, setCustomers] = useState(!!initialCaps.manage_customers)
   const [reportsOn, setReportsOn] = useState(!!reports && reports.access_level !== 'none')
 
@@ -54,7 +54,7 @@ export function MemberAccessModal({
         access_level: level,
         capabilities: {
           ...(send ? { send: true } : {}),
-          ...(record ? { record_payments: true } : {}),
+          ...(record ? { record_payment: true } : {}),
           ...(customers ? { manage_customers: true } : {}),
         },
       })

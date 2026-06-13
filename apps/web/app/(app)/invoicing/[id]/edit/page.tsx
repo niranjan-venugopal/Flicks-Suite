@@ -3,12 +3,20 @@
 import { useParams } from 'next/navigation'
 import { InvoiceEditor } from '@/components/invoicing/InvoiceEditor'
 import { useInvoice } from '@/lib/api/queries/use-invoicing'
+import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 
 export default function EditInvoicePage() {
   const params = useParams<{ id: string }>()
   const { data, isLoading, isError } = useInvoice(params?.id)
+  const access = useInvoicingAccess()
 
-  if (isLoading) return <div style={{ padding: 32, color: 'var(--muted)' }}>Loading invoice…</div>
+  if (isLoading || access.isLoading) return <div style={{ padding: 32, color: 'var(--muted)' }}>Loading invoice…</div>
+  if (!access.canEdit)
+    return (
+      <div style={{ padding: 32, color: 'var(--text-mute)' }}>
+        You have view-only access to Invoicing — editing invoices isn’t permitted for your role.
+      </div>
+    )
   if (isError || !data?.data)
     return <div style={{ padding: 32, color: 'var(--coral, #ff6b6b)' }}>Couldn’t load this invoice.</div>
   if (data.data.status !== 'DRAFT')

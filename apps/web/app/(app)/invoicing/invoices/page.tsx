@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { useInvoices, useInvoiceAction, useSendInvoice, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import {
   INVO,
@@ -94,6 +95,7 @@ const dateFmt = (iso: string) =>
 export default function InvoicesPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const access = useInvoicingAccess()
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
   const { data, isLoading, isError } = useInvoices({
@@ -154,9 +156,11 @@ export default function InvoicesPage() {
         right={
           <>
             <InvoSearch value={q} onChange={setQ} placeholder="Search invoices..." />
-            <InvoBtn kind="primary" icon={InvoIcons.plus} onClick={() => router.push('/invoicing/new')}>
-              Create invoice
-            </InvoBtn>
+            {access.canEdit && (
+              <InvoBtn kind="primary" icon={InvoIcons.plus} onClick={() => router.push('/invoicing/new')}>
+                Create invoice
+              </InvoBtn>
+            )}
           </>
         }
       >
@@ -211,28 +215,30 @@ export default function InvoicesPage() {
             </td>
             <td style={invoTd}>
               <div style={{ display: 'flex', gap: 8 }}>
-                {inv.status === 'DRAFT' ? (
-                  <>
-                    <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/edit`)}>
-                      Edit
-                    </InvoBtn>
-                    <InvoBtn kind="chip-blue" onClick={() => onSend(inv)}>
-                      Send
-                    </InvoBtn>
-                  </>
-                ) : (
-                  <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
-                    View
+                {inv.status === 'DRAFT' && access.canEdit && (
+                  <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/edit`)}>
+                    Edit
                   </InvoBtn>
                 )}
-                {['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status) && (
-                  <InvoBtn kind="chip-blue" onClick={() => setPayingInvoice(inv)}>
-                    Record payment
+                {inv.status === 'DRAFT' && access.canSend && (
+                  <InvoBtn kind="chip-blue" onClick={() => onSend(inv)}>
+                    Send
                   </InvoBtn>
                 )}
-                <InvoBtn kind="chip-outline" onClick={() => onDuplicate(inv)}>
-                  Duplicate
+                <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
+                  View
                 </InvoBtn>
+                {access.canRecordPayments &&
+                  ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status) && (
+                    <InvoBtn kind="chip-blue" onClick={() => setPayingInvoice(inv)}>
+                      Record payment
+                    </InvoBtn>
+                  )}
+                {access.canEdit && (
+                  <InvoBtn kind="chip-outline" onClick={() => onDuplicate(inv)}>
+                    Duplicate
+                  </InvoBtn>
+                )}
               </div>
             </td>
           </InvoRow>
