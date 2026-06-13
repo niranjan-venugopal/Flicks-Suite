@@ -90,7 +90,7 @@ function normaliseRole(role: string | undefined | null): UserRole {
     case 'manager':
       return 'MANAGER'
     case 'finance':
-      return 'HR_ADMIN'
+      return 'FINANCE'
     case 'auditor':
       return 'AUDITOR'
     default:

@@ -211,9 +211,9 @@ function navFor(role: UserRole | undefined): NavSection[] {
       return FAM_NAV
     case 'OWNER':
     case 'HR_ADMIN':
-      // OWNER shares HR_ADMIN's nav for now; the prototype's OWNER_NAV
-      // variant (with Documents, Calendar, Audit log) lands when those
-      // pages exist as real surfaces in Sprint 2.
+    case 'FINANCE':
+      // Owner/Admin/Finance get the full sidebar incl. the complete Invoicing
+      // section (they have full invoicing access by role).
       return ADMIN_NAV
     case 'MANAGER':
       return MANAGER_NAV
@@ -223,14 +223,13 @@ function navFor(role: UserRole | undefined): NavSection[] {
   }
 }
 
-// Auditor nav is grant-driven (prototype ROLE_CFG.Auditor): the sidebar shows
-// only the invoicing sub-items their membership_grants unlock for the active
-// company, plus the cross-company My Companies surface.
-function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
+// Build the Invoicing sub-items a grant set unlocks (PRD §3 grant model). Used
+// for Auditors AND for Manager/Employee whom the Owner has granted invoicing
+// access — the same membership_grants mechanism drives both.
+function invoicingChildrenFromGrants(grants: ModuleGrant[]): NavChild[] {
   const invoicing = grants.find((g) => g.module === 'invoicing')
   const reports = grants.find((g) => g.module === 'reports')
   const caps = invoicing?.capabilities ?? {}
-
   const children: NavChild[] = []
   if (invoicing && invoicing.access_level !== 'none') {
     children.push(
@@ -238,12 +237,24 @@ function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
       { href: '/invoicing/invoices', label: 'Invoices' },
     )
   }
-  if (caps.manage_customers) children.push({ href: '/invoicing/customers', label: 'Customers' })
+  // 'edit' implies the create/manage surfaces; capabilities widen 'view'.
+  if (invoicing?.access_level === 'edit' || caps.manage_customers) {
+    children.push({ href: '/invoicing/customers', label: 'Customers' })
+  }
+  if (invoicing?.access_level === 'edit') {
+    children.push({ href: '/invoicing/items', label: 'Items / Catalogue' })
+  }
   if (caps.record_payments) children.push({ href: '/invoicing/payments', label: 'Payments' })
   if (reports && reports.access_level !== 'none') {
     children.push({ href: '/invoicing/reports', label: 'Reports' })
   }
+  return children
+}
 
+// Auditor nav (prototype ROLE_CFG.Auditor): the cross-company My Companies
+// surface + the grant-driven invoicing sub-items for the active company.
+function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
+  const children = invoicingChildrenFromGrants(grants)
   return [
     {
       section: 'main',
@@ -252,15 +263,19 @@ function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
       ],
     },
     ...(children.length
-      ? [
-          {
-            section: 'main',
-            items: [
-              { id: 'invoicing', label: 'Invoicing', icon: 'wallet' as IconKey, children },
-            ],
-          },
-        ]
+      ? [{ section: 'main', items: [{ id: 'invoicing', label: 'Invoicing', icon: 'wallet' as IconKey, children }] }]
       : []),
+  ]
+}
+
+// Manager/Employee see Invoicing ONLY if the Owner granted it (membership_grants).
+// Their base HRMS nav stays; the granted invoicing section is appended.
+function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSection[] {
+  const children = invoicingChildrenFromGrants(grants)
+  if (!children.length) return base
+  return [
+    ...base,
+    { section: 'main', items: [{ id: 'invoicing', label: 'Invoicing', icon: 'wallet' as IconKey, children }] },
   ]
 }
 
@@ -271,21 +286,25 @@ export function Sidebar() {
   const pathname = usePathname() ?? '/'
   const role = currentUser?.role
 
-  // Auditor sidebar is grant-driven: read the active company's grants from the
-  // same /me/companies payload the switcher uses.
-  const myCompanies = useMyCompanies(role === 'AUDITOR')
+  // Grant-driven roles read the active company's grants from the same
+  // /me/companies payload the switcher uses: Auditors always, and
+  // Manager/Employee so the Owner can grant them invoicing access.
+  const grantDriven = role === 'AUDITOR' || role === 'MANAGER' || role === 'EMPLOYEE'
+  const myCompanies = useMyCompanies(grantDriven)
   const activeGrants = useMemo<ModuleGrant[]>(() => {
-    if (role !== 'AUDITOR') return []
+    if (!grantDriven) return []
     return (
       myCompanies.data?.data.find((c) => c.tenantId === currentUser?.tenantId)
         ?.grants ?? []
     )
-  }, [role, myCompanies.data, currentUser?.tenantId])
+  }, [grantDriven, myCompanies.data, currentUser?.tenantId])
 
-  const nav = useMemo(
-    () => (role === 'AUDITOR' ? auditorNavFor(activeGrants) : navFor(role)),
-    [role, activeGrants],
-  )
+  const nav = useMemo(() => {
+    if (role === 'AUDITOR') return auditorNavFor(activeGrants)
+    if (role === 'MANAGER') return withGrantedInvoicing(MANAGER_NAV, activeGrants)
+    if (role === 'EMPLOYEE') return withGrantedInvoicing(EMPLOYEE_NAV, activeGrants)
+    return navFor(role)
+  }, [role, activeGrants])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.
   // FAM admins live under /fam/* and have no tenant approvals queue.

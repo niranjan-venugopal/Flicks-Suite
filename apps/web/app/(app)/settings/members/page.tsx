@@ -15,6 +15,7 @@ import {
 } from '@/lib/api/queries/use-settings'
 import { useSeats } from '@/lib/api/queries/use-members'
 import { InviteAuditorModal } from '@/components/invoicing/InviteAuditorModal'
+import { MemberAccessModal } from '@/components/invoicing/MemberAccessModal'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -89,6 +90,7 @@ export default function MembersSettingsPage() {
   const reactivate = useReactivateMember()
   const { toast } = useToast()
   const [inviteAuditorOpen, setInviteAuditorOpen] = useState(false)
+  const [accessFor, setAccessFor] = useState<Member | null>(null)
 
   const allItems = data?.data ?? []
   const auditors = useMemo(() => allItems.filter((m) => m.role === 'auditor'), [allItems])
@@ -367,14 +369,21 @@ export default function MembersSettingsPage() {
                     </td>
                     <td style={{ padding: '12px 14px' }}>{statusPill(m.status)}</td>
                     <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                      <Btn
-                        kind="ghost"
-                        size="sm"
-                        onClick={() => handleStatusToggle(m)}
-                        disabled={!canEdit || deactivate.isPending || reactivate.isPending}
-                      >
-                        {m.status === 'deactivated' ? 'Reactivate' : 'Deactivate'}
-                      </Btn>
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
+                        {canEdit && (m.role === 'manager' || m.role === 'employee') && (
+                          <Btn kind="ghost" size="sm" onClick={() => setAccessFor(m)}>
+                            Invoicing access
+                          </Btn>
+                        )}
+                        <Btn
+                          kind="ghost"
+                          size="sm"
+                          onClick={() => handleStatusToggle(m)}
+                          disabled={!canEdit || deactivate.isPending || reactivate.isPending}
+                        >
+                          {m.status === 'deactivated' ? 'Reactivate' : 'Deactivate'}
+                        </Btn>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -385,6 +394,15 @@ export default function MembersSettingsPage() {
       </div>
 
       <InviteAuditorModal open={inviteAuditorOpen} onClose={() => setInviteAuditorOpen(false)} />
+      {accessFor && (
+        <MemberAccessModal
+          open={!!accessFor}
+          onClose={() => setAccessFor(null)}
+          membershipId={accessFor.id}
+          memberName={displayName(accessFor)}
+          currentGrants={accessFor.grants ?? []}
+        />
+      )}
     </SettingsLayout>
   )
 }
