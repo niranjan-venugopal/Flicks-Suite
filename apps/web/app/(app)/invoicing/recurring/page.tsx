@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { RefreshCw, Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead, Toggle } from '@/components/proto'
-import { InvoPage } from '@/components/invoicing/invo'
+import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -230,61 +230,60 @@ export default function RecurringPage() {
         }
       />
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table className="tbl w-full">
-          <thead>
-            <tr>
-              <th>Profile</th>
-              <th>Customer</th>
-              <th>Cadence</th>
-              <th>Next run</th>
-              <th style={{ textAlign: 'right' }}>Amount</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && <tr><td colSpan={7} className="t-mute">Loading…</td></tr>}
-            {!isLoading && rows.length === 0 && (
-              <tr><td colSpan={7} className="t-mute">No subscriptions yet — create a recurring profile.</td></tr>
-            )}
-            {rows.map((s) => (
-              <tr key={s.id}>
-                <td>
-                  <b>{s.name}</b>
-                  {s.pricing_model === 'per_seat' && <div className="t-mute text-xs">{s.seat_count} seats × {inr(s.seat_rate ?? 0, s.currency)}</div>}
-                </td>
-                <td>{s.customer_name ?? '—'}</td>
-                <td className="capitalize">{s.billing_period}</td>
-                <td className="t-mute">{s.next_billing_date ?? '—'}</td>
-                <td className="t-num" style={{ textAlign: 'right', fontWeight: 800 }}>{inr(cycleAmount(s), s.currency)}</td>
-                <td>
-                  <Pill tone={STATUS_TONE[s.status] ?? ''} dot>{s.status.replace(/_/g, ' ').toLowerCase()}</Pill>
-                </td>
-                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {s.status === 'PENDING_MANDATE' && (
-                    <Btn kind="secondary" size="sm" onClick={() => onAction(s, 'activate')}>Authorize mandate</Btn>
-                  )}
-                  {['ACTIVE', 'TRIALING'].includes(s.status) && (
-                    <>
-                      {s.pricing_model === 'per_seat' && (
-                        <Btn kind="ghost" size="sm" onClick={() => onSeats(s)}>Seats</Btn>
-                      )}
-                      <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'pause')}>Pause</Btn>
-                    </>
-                  )}
-                  {s.status === 'PAUSED' && (
-                    <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'resume')}>Resume</Btn>
-                  )}
-                  {!['CANCELLED', 'EXPIRED'].includes(s.status) && (
-                    <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'cancel')}>Cancel</Btn>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <InvoTable
+        head={
+          <>
+            <th style={invoTh}>Profile</th>
+            <th style={invoTh}>Customer</th>
+            <th style={invoTh}>Cadence</th>
+            <th style={invoTh}>Next run</th>
+            <th style={{ ...invoTh, textAlign: 'right' }}>Amount</th>
+            <th style={invoTh}>Status</th>
+            <th style={invoTh}></th>
+          </>
+        }
+      >
+        {isLoading && <tr><td colSpan={7} style={{ ...invoTd, color: INVO.muted40 }}>Loading…</td></tr>}
+        {!isLoading && rows.length === 0 && (
+          <tr><td colSpan={7} style={{ ...invoTd, color: INVO.muted30 }}>No subscriptions yet — create a recurring profile.</td></tr>
+        )}
+        {rows.map((s, i) => (
+          <InvoRow key={s.id} index={i}>
+            <td style={invoTd}>
+              <b>{s.name}</b>
+              {s.pricing_model === 'per_seat' && <div style={{ ...invoTd, padding: 0, fontSize: 12, color: INVO.muted40 }}>{s.seat_count} seats × {inr(s.seat_rate ?? 0, s.currency)}</div>}
+            </td>
+            <td style={invoTd}>{s.customer_name ?? '—'}</td>
+            <td style={{ ...invoTd, textTransform: 'capitalize' }}>{s.billing_period}</td>
+            <td style={{ ...invoTd, color: INVO.muted60 }}>{s.next_billing_date ?? '—'}</td>
+            <td style={{ ...invoTd, textAlign: 'right', fontWeight: 800 }}>{inr(cycleAmount(s), s.currency)}</td>
+            <td style={invoTd}>
+              <Pill tone={STATUS_TONE[s.status] ?? ''} dot>{s.status.replace(/_/g, ' ').toLowerCase()}</Pill>
+            </td>
+            <td style={{ ...invoTd, textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                {s.status === 'PENDING_MANDATE' && (
+                  <Btn kind="secondary" size="sm" onClick={() => onAction(s, 'activate')}>Authorize mandate</Btn>
+                )}
+                {['ACTIVE', 'TRIALING'].includes(s.status) && (
+                  <>
+                    {s.pricing_model === 'per_seat' && (
+                      <Btn kind="ghost" size="sm" onClick={() => onSeats(s)}>Seats</Btn>
+                    )}
+                    <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'pause')}>Pause</Btn>
+                  </>
+                )}
+                {s.status === 'PAUSED' && (
+                  <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'resume')}>Resume</Btn>
+                )}
+                {!['CANCELLED', 'EXPIRED'].includes(s.status) && (
+                  <Btn kind="ghost" size="sm" onClick={() => onAction(s, 'cancel')}>Cancel</Btn>
+                )}
+              </div>
+            </td>
+          </InvoRow>
+        ))}
+      </InvoTable>
 
       <SubscriptionModal open={modal} onClose={() => setModal(false)} />
     </InvoPage>

@@ -36,10 +36,11 @@ const plusDays = (iso: string, days: number) => {
 }
 const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : `${c} `)
 
-// Line-items grid: Description | HSN/SAC | Qty | Rate | GST% | Amount | ✕
+// Line-items grid (INR): Description | HSN/SAC | Qty | Rate | GST% | Amount | ✕
 const LINE_GRID = '1fr 110px 64px 110px 64px 110px 32px'
-// Foreign-currency invoices carry no GST — drop the GST% column.
-const LINE_GRID_NO_GST = '1fr 110px 64px 110px 110px 32px'
+// Foreign-currency invoices are international — no GST and no HSN/SAC (both are
+// India GST concepts): Description | Qty | Rate | Amount | ✕
+const LINE_GRID_INTL = '1fr 64px 110px 110px 32px'
 
 const sumRowLabel: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: INVO.muted50, letterSpacing: '-0.02em' }
 const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }
@@ -120,7 +121,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
 
   // GST + TDS are India-only — non-INR invoices show/charge neither.
   const isDomestic = isGstCurrency(currency)
-  const lineGrid = isDomestic ? LINE_GRID : LINE_GRID_NO_GST
+  const lineGrid = isDomestic ? LINE_GRID : LINE_GRID_INTL
 
   const totals = useMemo(
     () => computeTotals({ lines, taxTreatment, discountType, discountValue, tdsRate, currency }),
@@ -160,10 +161,17 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     return Number.isFinite(n) ? n : 0
   }
 
-  const onSave = async (thenSend = false) => {
-    if (!customerId) return toast({ title: 'Pick a client first', variant: 'destructive' })
+  /** Validate + persist the draft; returns the saved invoice id (or null). */
+  const persist = async (): Promise<{ id: string; invoice_number: string } | null> => {
+    if (!customerId) {
+      toast({ title: 'Pick a client first', variant: 'destructive' })
+      return null
+    }
     const valid = lines.filter((l) => l.item_name.trim() && l.rate)
-    if (!valid.length) return toast({ title: 'Add at least one line item', variant: 'destructive' })
+    if (!valid.length) {
+      toast({ title: 'Add at least one line item', variant: 'destructive' })
+      return null
+    }
     const payload: InvoiceInput = {
       customer_id: customerId,
       invoice_date: invoiceDate,
@@ -182,19 +190,41 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       document_type: isQuote ? 'QUOTE' : undefined,
       line_items: valid,
     }
+    const res = await save.mutateAsync({ id: invoice?.id, ...payload })
+    return { id: res.data.id, invoice_number: res.data.invoice_number }
+  }
+
+  const onSave = async (thenSend = false) => {
     try {
-      const res = await save.mutateAsync({ id: invoice?.id, ...payload })
+      const saved = await persist()
+      if (!saved) return
       if (thenSend) {
-        const sent = await send.mutateAsync(res.data.id)
-        toast({ title: `Invoice ${res.data.invoice_number} sent`, description: sent.meta.public_url })
+        const sent = await send.mutateAsync(saved.id)
+        toast({ title: `Invoice ${saved.invoice_number} sent`, description: sent.meta.public_url })
       } else {
         const noun = isQuote ? 'Quote' : 'Draft'
-        toast({ title: invoice ? `${noun} updated` : `${noun} ${res.data.invoice_number} created` })
+        toast({ title: invoice ? `${noun} updated` : `${noun} ${saved.invoice_number} created` })
       }
       router.push(isQuote ? '/invoicing/quotes' : '/invoicing/invoices')
     } catch (err) {
       toast({
         title: 'Could not save invoice',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Preview the current draft (prototype's editor "Preview" CTA). Saves first so
+  // the full-page preview renders exactly what's been entered, then opens it.
+  const onPreview = async () => {
+    try {
+      const saved = await persist()
+      if (!saved) return
+      router.push(`/invoicing/${saved.id}/preview`)
+    } catch (err) {
+      toast({
+        title: 'Could not open preview',
         description: err instanceof Error ? err.message : undefined,
         variant: 'destructive',
       })
@@ -264,7 +294,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
           <InvoCard style={{ marginBottom: 20 }}>
             <InvoCardTitle>Line items</InvoCardTitle>
             <div style={{ display: 'grid', gridTemplateColumns: lineGrid, gap: 8, marginBottom: 10 }}>
-              {['Description', 'HSN/SAC', 'Qty', `Rate (${symbol(currency).trim()})`, ...(isDomestic ? ['GST %'] : []), 'Amount', ''].map((h) => (
+              {['Description', ...(isDomestic ? ['HSN/SAC'] : []), 'Qty', `Rate (${symbol(currency).trim()})`, ...(isDomestic ? ['GST %'] : []), 'Amount', ''].map((h) => (
                 <div key={h} style={{ fontWeight: 700, fontSize: 12, color: INVO.muted40, letterSpacing: '-0.01em' }}>
                   {h}
                 </div>
@@ -279,13 +309,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   onChange={(e) => setLine(i, { item_name: e.target.value })}
                   onKeyDown={onLineKeyDown}
                 />
-                <input
-                  style={invoField(true)}
-                  placeholder="998314"
-                  value={l.hsn_sac_code ?? ''}
-                  onChange={(e) => setLine(i, { hsn_sac_code: e.target.value })}
-                  onKeyDown={onLineKeyDown}
-                />
+                {isDomestic && (
+                  <input
+                    style={invoField(true)}
+                    placeholder="998314"
+                    value={l.hsn_sac_code ?? ''}
+                    onChange={(e) => setLine(i, { hsn_sac_code: e.target.value })}
+                    onKeyDown={onLineKeyDown}
+                  />
+                )}
                 <input
                   style={invoField(true)}
                   inputMode="decimal"
@@ -519,6 +551,9 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               </InvoBtn>
               <InvoBtn kind="outline" full height={52} onClick={() => onSave(false)} disabled={save.isPending}>
                 {save.isPending ? 'Saving…' : invoice ? 'Save changes' : 'Save as draft'}
+              </InvoBtn>
+              <InvoBtn kind="secondary" full height={44} onClick={onPreview} disabled={save.isPending}>
+                Preview
               </InvoBtn>
             </div>
           </InvoCard>

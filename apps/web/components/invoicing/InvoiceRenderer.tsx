@@ -154,7 +154,7 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
         <thead>
           <tr style={{ borderBottom: INVO.headBorder, borderTop: INVO.headBorder }}>
             <th style={{ ...th, width: '44%' }}>Description</th>
-            <th style={th}>HSN/SAC</th>
+            {isDomestic && <th style={th}>HSN/SAC</th>}
             <th style={{ ...th, textAlign: 'right' }}>Qty</th>
             <th style={{ ...th, textAlign: 'right' }}>Rate</th>
             {isDomestic && <th style={{ ...th, textAlign: 'right' }}>GST %</th>}
@@ -170,7 +170,7 @@ export function InvoiceRenderer({ payload }: { payload: PublicInvoicePayload }) 
                   <div style={{ fontWeight: 600, fontSize: 12, color: INVO.muted40, marginTop: 2 }}>{l.description}</div>
                 )}
               </td>
-              <td style={{ ...td, color: INVO.muted60 }}>{l.hsn_sac_code ?? '—'}</td>
+              {isDomestic && <td style={{ ...td, color: INVO.muted60 }}>{l.hsn_sac_code ?? '—'}</td>}
               <td style={{ ...td, textAlign: 'right', color: INVO.muted60 }}>
                 {parseFloat(l.quantity).toLocaleString('en-IN')}
                 {l.unit ? ` ${l.unit}` : ''}
