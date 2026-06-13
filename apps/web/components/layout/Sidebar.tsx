@@ -184,6 +184,14 @@ const FAM_NAV: NavSection[] = [
         ],
       },
       {
+        id: 'fam-invoicing-group',
+        label: 'Invoicing',
+        icon: 'wallet',
+        children: [
+          { href: '/fam/invoicing', label: 'Modules & auditors' },
+        ],
+      },
+      {
         id: 'fam-platform-group',
         label: 'Platform',
         icon: 'zap',
