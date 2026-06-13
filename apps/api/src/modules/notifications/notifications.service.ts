@@ -243,8 +243,10 @@ export class NotificationsService {
             <p style="margin:24px 0;">
               <a href="${props.magicLinkUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">Accept invite &amp; sign in</a>
             </p>
-            <p>Auditor seats are non-billable. If you already use ${appName}, this company
-            appears under <strong>My companies</strong> the next time you sign in.</p>
+            <p>Auditor seats are non-billable. If the button doesn't work, you can also just
+            <strong>sign in at ${appName} with this email address</strong> — your access to
+            <strong>${props.companyName}</strong> activates automatically, and the company
+            appears under <strong>My companies</strong>.</p>
           `,
         };
       }

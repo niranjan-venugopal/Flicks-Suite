@@ -240,21 +240,32 @@ export class AuthService {
     // treat anything consumed within the last 60s as still valid — same
     // user, same click, same outcome.
     const idempotencyWindow = new Date(Date.now() - 60 * 1000);
+    // Look up by token hash WITHOUT the expiry filter first, then check expiry
+    // explicitly. This lets us tell "no such token" apart from "expired" in the
+    // logs — the two used to collapse into one opaque 401, which made invite
+    // magic-link issues (e.g. a token that doesn't exist in the DB the API is
+    // pointed at) impossible to diagnose from the response alone.
     const candidates = await this.db
       .select()
       .from(authOtps)
-      .where(
-        and(
-          eq(authOtps.magic_link_token, tokenHash),
-          gt(authOtps.expires_at, new Date()),
-        ),
-      )
+      .where(eq(authOtps.magic_link_token, tokenHash))
       .orderBy(desc(authOtps.created_at))
       .limit(1);
 
     const otp = candidates[0];
 
     if (!otp) {
+      this.logger.warn(
+        `Magic link rejected: no auth_otps row for token hash ${tokenHash.slice(0, 12)}… ` +
+          `(token not present in this database)`,
+      );
+      throw new UnauthorizedException('Invalid or expired magic link');
+    }
+
+    if (otp.expires_at.getTime() <= Date.now()) {
+      this.logger.warn(
+        `Magic link rejected: token for ${otp.email} expired at ${otp.expires_at.toISOString()}`,
+      );
       throw new UnauthorizedException('Invalid or expired magic link');
     }
 
