@@ -20,17 +20,50 @@ async function bootstrap() {
   const corsOrigins = configService
     .get<string>('CORS_ORIGINS', 'http://localhost:3000')
     .split(',')
-    .map((o) => o.trim());
+    .map((o) => o.trim())
+    .filter(Boolean);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+  const isProd = nodeEnv === 'production';
 
-  // Security headers
+  // Fail fast on dangerous CORS in production: a wildcard with credentials
+  // would let any site make authenticated cross-origin calls.
+  if (isProd) {
+    if (corsOrigins.some((o) => o.includes('*'))) {
+      throw new Error('CORS_ORIGINS must not contain a wildcard in production');
+    }
+    const bad = corsOrigins.filter((o) => !/^https?:\/\/.+/i.test(o));
+    if (bad.length) {
+      throw new Error(`CORS_ORIGINS has invalid origin(s): ${bad.join(', ')}`);
+    }
+    // Nudge operators toward a strong signing key (HMAC-SHA256 wants 256 bits).
+    const jwtSecret = configService.get<string>('JWT_SECRET') ?? '';
+    if (jwtSecret.length < 48) {
+      logger.warn(
+        'JWT_SECRET is shorter than 48 chars — rotate to a stronger key: `openssl rand -base64 48`',
+      );
+    }
+  }
+
+  // Security headers. The API serves only JSON + Swagger UI (no app HTML), so
+  // the prod CSP allows inline script/style (Swagger needs it) while locking
+  // down object/base/frame. The real app CSP lives in apps/web/next.config.ts.
   app.use(
     helmet({
       crossOriginEmbedderPolicy: false,
-      contentSecurityPolicy:
-        nodeEnv === 'production'
-          ? undefined
-          : false,
+      contentSecurityPolicy: isProd
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "'unsafe-inline'"],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", 'data:', 'https:'],
+              connectSrc: ["'self'"],
+              objectSrc: ["'none'"],
+              baseUri: ["'self'"],
+              frameAncestors: ["'none'"],
+            },
+          }
+        : false,
     }),
   );
 
