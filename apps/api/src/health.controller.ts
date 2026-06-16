@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { sql } from 'drizzle-orm';
 import { Public } from './core/auth/decorators/public.decorator';
 import { DB_SERVICE_ROLE } from './core/database/database.module';
@@ -10,6 +11,7 @@ import type { DbAdmin } from '@flicks/db';
 // main.ts) so the monitor URL is simply https://api.flickssuite.com/healthz.
 @ApiTags('Health')
 @Controller('healthz')
+@SkipThrottle() // uptime monitors / k8s probes poll frequently — never rate-limit
 export class HealthController {
   private readonly startedAt = Date.now();
 

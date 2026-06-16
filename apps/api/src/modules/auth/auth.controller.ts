@@ -43,7 +43,9 @@ export class AuthController {
   @Public()
   @Post('request-otp')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 3600000 } })
+  // Override the 'short' throttler for this route: 5 OTP requests / hour / IP.
+  // (The throttler is named — the previous `default` key matched nothing.)
+  @Throttle({ short: { limit: 5, ttl: 3600000 } })
   @ApiOperation({
     summary: 'Request OTP',
     description:
@@ -63,6 +65,9 @@ export class AuthController {
   @Public()
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
+  // Throttle brute-force on the 6-digit code: 15 attempts / minute / IP
+  // (the service also caps attempts per individual OTP).
+  @Throttle({ short: { limit: 15, ttl: 60000 } })
   @ApiOperation({
     summary: 'Verify OTP',
     description: 'Verify the 6-digit OTP. Issues JWT cookies on success.',
@@ -101,6 +106,7 @@ export class AuthController {
   @Public()
   @Get('magic-link')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { limit: 20, ttl: 60000 } })
   @ApiOperation({
     summary: 'Verify magic link',
     description: 'Verify the magic link token from email.',

@@ -13,6 +13,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -167,6 +168,8 @@ export class FamController {
   @Post('impersonate')
   @Roles('fam')
   @HttpCode(HttpStatus.OK)
+  // Tightly rate-limit the most sensitive platform action: 5 starts / minute.
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Start impersonation session for a target user' })
   @ApiResponse({ status: 200, description: 'Impersonation token issued + cookies set' })
   async startImpersonation(

@@ -1,8 +1,8 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ClsModule } from 'nestjs-cls';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -16,6 +16,8 @@ import { AnalyticsModule } from './core/analytics/analytics.module';
 import { HealthController } from './health.controller';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
+import { JwtAuthGuard } from './core/auth/guards/jwt-auth.guard';
+import { RolesGuard } from './core/auth/guards/roles.guard';
 
 // Feature modules
 import { AuthModule } from './modules/auth/auth.module';
@@ -76,20 +78,16 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
 
     PassportModule.register({ defaultStrategy: 'jwt' }),
 
-    ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          { name: 'short', ttl: 1000, limit: 10 },
-          { name: 'medium', ttl: 10000, limit: 50 },
-          { name: 'long', ttl: 60000, limit: 200 },
-        ],
-        storage: {
-          host: config.get<string>('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get<string>('REDIS_PASSWORD'),
-        } as unknown as undefined,
-      }),
+    // In-memory throttling (single-instance beta). The previous Redis `storage`
+    // object was cast to `undefined` and silently ignored — and, more
+    // importantly, no ThrottlerGuard was ever registered, so every @Throttle
+    // was inert. The guard is now wired as an APP_GUARD below.
+    ThrottlerModule.forRoot({
+      throttlers: [
+        { name: 'short', ttl: 1000, limit: 10 },
+        { name: 'medium', ttl: 10000, limit: 50 },
+        { name: 'long', ttl: 60000, limit: 200 },
+      ],
     }),
 
     ClsModule.forRoot({
@@ -147,6 +145,14 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
     // Capture unhandled exceptions into Sentry, then let the existing
     // HttpExceptionFilter (registered in main.ts) format the response.
     { provide: APP_FILTER, useClass: SentryGlobalFilter },
+    // Global guards (execute in registration order): rate-limit first, then
+    // authenticate (JWT → req.user), then enforce @Roles. Registered here as
+    // APP_GUARD (rather than main.ts useGlobalGuards) so they participate in DI
+    // — ThrottlerGuard needs the throttler storage/options, and the auth guards
+    // gain DI for audit logging of denials.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
     JwtStrategy,
     NotificationsGateway,
     DailySnapshotsJob,

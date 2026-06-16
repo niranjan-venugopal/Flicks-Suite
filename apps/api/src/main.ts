@@ -2,14 +2,12 @@ import 'dotenv/config';
 // Sentry init MUST run before any other module is imported so its
 // auto-instrumentation can patch them. No-op when SENTRY_DSN is unset.
 import './instrument';
-import { NestFactory, Reflector } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './core/common/filters/http-exception.filter';
-import { JwtAuthGuard } from './core/auth/guards/jwt-auth.guard';
-import { RolesGuard } from './core/auth/guards/roles.guard';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
@@ -66,18 +64,11 @@ async function bootstrap() {
   // Global filters
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  // Global guards. Order matters: JwtAuthGuard runs first and populates
-  // req.user from the JWT, then RolesGuard reads req.user to enforce the
-  // @Roles(...) decorators. RolesGuard short-circuits to allow when a route
-  // has no @Roles metadata (and JwtAuthGuard already lets @Public routes
-  // through), so only role-restricted handlers are gated. Without this second
-  // guard the @Roles decorators were inert — any authenticated user could call
-  // role-restricted endpoints, including the RLS-bypassing /fam/* routes.
-  const reflector = app.get(Reflector);
-  app.useGlobalGuards(
-    new JwtAuthGuard(reflector),
-    new RolesGuard(reflector),
-  );
+  // Global guards (ThrottlerGuard → JwtAuthGuard → RolesGuard) are registered
+  // as APP_GUARD providers in AppModule so they participate in DI. Order there
+  // matters: rate-limit, then authenticate (populate req.user), then enforce
+  // @Roles. RolesGuard allows when a route has no @Roles metadata, and
+  // JwtAuthGuard lets @Public routes through.
 
   // Swagger
   const swaggerConfig = new DocumentBuilder()

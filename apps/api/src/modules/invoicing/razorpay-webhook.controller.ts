@@ -8,6 +8,7 @@ import {
   HttpCode,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
@@ -45,6 +46,7 @@ interface RazorpayEvent {
  */
 @ApiTags('Webhooks')
 @Controller('webhooks')
+@SkipThrottle() // Razorpay can burst events; idempotency + signature gate it instead
 export class RazorpayWebhookController {
   private readonly logger = new Logger(RazorpayWebhookController.name);
 

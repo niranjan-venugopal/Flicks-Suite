@@ -14,6 +14,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
@@ -34,6 +35,8 @@ export class MembersController {
   @Post('invite-auditor')
   @Roles('admin')
   @HttpCode(HttpStatus.CREATED)
+  // Invite sends an email — cap to 10 / minute to prevent invite spam.
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiOperation({
     summary: 'Invite an auditor (non-billable, grant-scoped seat)',
     description:
