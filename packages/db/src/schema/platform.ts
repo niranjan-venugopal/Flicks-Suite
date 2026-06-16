@@ -123,6 +123,10 @@ export const users = pgTable(
     // FAM logins are gated on this being non-null (PRD §11.6).
     totp_secret: text('totp_secret'),
     totp_enrolled_at: timestamp('totp_enrolled_at', { withTimezone: true }),
+    // TOTP brute-force lockout + single-use backup codes (Sprint 13 §E).
+    totp_failed_attempts: integer('totp_failed_attempts').notNull().default(0),
+    totp_locked_until: timestamp('totp_locked_until', { withTimezone: true }),
+    totp_backup_codes: jsonb('totp_backup_codes').$type<Array<{ h: string; u: string | null }>>(),
     status: userStatusEnum('status').notNull().default('active'),
     last_login_at: timestamp('last_login_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true })

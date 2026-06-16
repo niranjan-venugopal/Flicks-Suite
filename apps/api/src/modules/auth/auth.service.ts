@@ -45,6 +45,30 @@ function generateSecureToken(length = 32): string {
   return crypto.randomBytes(length).toString('hex');
 }
 
+// TOTP brute-force lockout (Sprint 13 §E).
+const MAX_TOTP_ATTEMPTS = 5;
+const TOTP_LOCK_MS = 15 * 60 * 1000;
+
+/** Normalise a backup code (strip separators/case) before hashing/comparing. */
+const normaliseBackupCode = (code: string) =>
+  sha256(code.replace(/[^a-z0-9]/gi, '').toLowerCase());
+
+/** Generate `n` single-use backup codes — plaintext (shown once) + stored hashes. */
+function generateBackupCodes(n = 10): {
+  plain: string[];
+  stored: Array<{ h: string; u: string | null }>;
+} {
+  const plain: string[] = [];
+  const stored: Array<{ h: string; u: string | null }> = [];
+  for (let i = 0; i < n; i++) {
+    const raw = crypto.randomBytes(5).toString('hex'); // 10 hex chars
+    const code = `${raw.slice(0, 5)}-${raw.slice(5)}`;
+    plain.push(code);
+    stored.push({ h: normaliseBackupCode(code), u: null });
+  }
+  return { plain, stored };
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -1289,8 +1313,14 @@ export class AuthService {
     return { secret, otpauthUrl: this.totpService.keyUri(user.email, secret) };
   }
 
-  /** Confirm enrolment by verifying the first code. Sets totp_enrolled_at. */
-  async confirmTotpEnrollment(userId: string, code: string): Promise<{ ok: true }> {
+  /**
+   * Confirm enrolment by verifying the first code. Sets totp_enrolled_at and
+   * issues 10 single-use backup codes (returned in plaintext exactly once).
+   */
+  async confirmTotpEnrollment(
+    userId: string,
+    code: string,
+  ): Promise<{ ok: true; backupCodes: string[] }> {
     const [user] = await this.dbAdmin
       .select({ secret: users.totp_secret })
       .from(users)
@@ -1303,11 +1333,41 @@ export class AuthService {
     if (!this.totpService.verify(code, secret)) {
       throw new UnauthorizedException('Invalid code. Check your authenticator and try again.');
     }
+    const { plain, stored } = generateBackupCodes();
     await this.dbAdmin
       .update(users)
-      .set({ totp_enrolled_at: new Date(), updated_at: new Date() })
+      .set({
+        totp_enrolled_at: new Date(),
+        totp_backup_codes: stored,
+        totp_failed_attempts: 0,
+        totp_locked_until: null,
+        updated_at: new Date(),
+      })
       .where(eq(users.id, userId));
-    return { ok: true };
+    return { ok: true, backupCodes: plain };
+  }
+
+  /**
+   * Consume a single-use backup code as a TOTP fallback. Marks it used and
+   * returns true on success; false when no unused code matches.
+   */
+  private async consumeBackupCode(
+    userId: string,
+    code: string,
+    stored: Array<{ h: string; u: string | null }> | null | undefined,
+  ): Promise<boolean> {
+    if (!stored?.length) return false;
+    const target = normaliseBackupCode(code);
+    const idx = stored.findIndex((c) => c.h === target && !c.u);
+    if (idx === -1) return false;
+    const updated = stored.map((c, i) =>
+      i === idx ? { ...c, u: new Date().toISOString() } : c,
+    );
+    await this.dbAdmin
+      .update(users)
+      .set({ totp_backup_codes: updated, updated_at: new Date() })
+      .where(eq(users.id, userId));
+    return true;
   }
 
   /** Complete a login challenge: verify the TOTP code and issue the session. */
@@ -1343,7 +1403,36 @@ export class AuthService {
     if (!user?.totp_secret || !user.totp_enrolled_at) {
       throw new UnauthorizedException('TOTP is not set up for this account.');
     }
-    if (!this.totpService.verify(code, this.totpService.decrypt(user.totp_secret))) {
+
+    // Lockout gate: too many recent failures temporarily blocks all attempts.
+    if (user.totp_locked_until && user.totp_locked_until.getTime() > Date.now()) {
+      throw new UnauthorizedException(
+        'Too many failed attempts. Try again in a few minutes.',
+      );
+    }
+
+    // Accept a valid TOTP code OR a single-use backup code.
+    const totpOk = this.totpService.verify(
+      code,
+      this.totpService.decrypt(user.totp_secret),
+    );
+    const backupOk = totpOk
+      ? false
+      : await this.consumeBackupCode(user.id, code, user.totp_backup_codes);
+
+    if (!totpOk && !backupOk) {
+      const attempts = (user.totp_failed_attempts ?? 0) + 1;
+      const locked = attempts >= MAX_TOTP_ATTEMPTS;
+      await this.dbAdmin
+        .update(users)
+        .set({
+          totp_failed_attempts: locked ? 0 : attempts,
+          totp_locked_until: locked
+            ? new Date(Date.now() + TOTP_LOCK_MS)
+            : user.totp_locked_until,
+          updated_at: new Date(),
+        })
+        .where(eq(users.id, user.id));
       await this.writeAuthEvent({
         email: user.email,
         userId: user.id,
@@ -1352,7 +1441,19 @@ export class AuthService {
         userAgent,
         deviceId,
       });
-      throw new UnauthorizedException('Invalid authentication code.');
+      throw new UnauthorizedException(
+        locked
+          ? 'Too many failed attempts. Your account is locked for 15 minutes.'
+          : 'Invalid authentication code.',
+      );
+    }
+
+    // Success — clear any accumulated failure state.
+    if ((user.totp_failed_attempts ?? 0) > 0 || user.totp_locked_until) {
+      await this.dbAdmin
+        .update(users)
+        .set({ totp_failed_attempts: 0, totp_locked_until: null, updated_at: new Date() })
+        .where(eq(users.id, user.id));
     }
 
     const { accessToken, refreshToken } = await this.issueTokenPair(
