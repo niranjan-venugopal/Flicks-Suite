@@ -46,6 +46,7 @@ const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, not
 const guard = new InvoicingGrantGuard(
   { getAllAndOverride: () => guardReq } as never,
   dbSvc,
+  audit,
 );
 let guardReq: GrantRequirement;
 const allows = async (req: GrantRequirement, user: Partial<JwtPayload>) => {

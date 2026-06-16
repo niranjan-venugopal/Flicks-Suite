@@ -39,6 +39,29 @@ export interface AuditSearchFilters {
   limit?: number;
 }
 
+// Keys whose values must never be persisted in clear text inside audit
+// before/after state or metadata (defence-in-depth — most of these are already
+// encrypted columns, but DTO snapshots can carry raw values).
+const SENSITIVE_KEY = /pan|account_number|bank_account|ifsc|swift|password|secret|token|otp|api[_-]?key|webhook|cvv|card_number/i;
+
+/** Recursively mask sensitive string/number values, keeping the last 4 chars. */
+function maskSensitive(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(maskSensitive);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_KEY.test(k) && (typeof v === 'string' || typeof v === 'number')) {
+        const s = String(v);
+        out[k] = s.length <= 4 ? '••••' : `••••${s.slice(-4)}`;
+      } else {
+        out[k] = maskSensitive(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
@@ -64,11 +87,11 @@ export class AuditService {
           action: dto.action,
           resource_type: dto.resourceType,
           resource_id: nullIfEmpty(dto.resourceId),
-          before_state: dto.beforeState ?? null,
-          after_state: dto.afterState ?? null,
+          before_state: (maskSensitive(dto.beforeState) as Record<string, unknown>) ?? null,
+          after_state: (maskSensitive(dto.afterState) as Record<string, unknown>) ?? null,
           ip_address: dto.ipAddress,
           user_agent: dto.userAgent,
-          metadata: dto.metadata ?? null,
+          metadata: (maskSensitive(dto.metadata) as Record<string, unknown>) ?? null,
         }),
       );
     } catch (err) {

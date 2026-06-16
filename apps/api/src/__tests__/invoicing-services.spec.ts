@@ -1341,7 +1341,7 @@ describe('Members & auditor role (Sprint 8)', () => {
     const reflector = {
       getAllAndOverride: () => req,
     } as unknown as Reflector;
-    const guard = new InvoicingGrantGuard(reflector, dbSvc);
+    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
     const ctx = {
       switchToHttp: () => ({ getRequest: () => ({ user }) }),
       getHandler: () => function handler() {},
@@ -1637,7 +1637,7 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
 
   const guardFor = (tid: string, uid: string, membershipId: string) => {
     const reflector = { getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }) } as never;
-    const guard = new InvoicingGrantGuard(reflector, dbSvc);
+    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
     const ctx = {
       switchToHttp: () => ({
         getRequest: () => ({
@@ -1705,7 +1705,7 @@ describe('Invoicing guard — membership liveness on every request (Sprint 10 §
   const reflector = {
     getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }),
   } as never;
-  const guard = new InvoicingGrantGuard(reflector, dbSvc);
+  const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
   const canActivate = (membershipId: string) => {
     const ctx = {
       switchToHttp: () => ({
@@ -1773,6 +1773,35 @@ describe('Invoicing guard — membership liveness on every request (Sprint 10 §
       .where(eq(membershipsTable.id, auditorMembershipId));
     await expect(canActivate(auditorMembershipId)).rejects.toThrow(/no longer active/i);
     // Reactivate for the next case.
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'active' })
+      .where(eq(membershipsTable.id, auditorMembershipId));
+  });
+
+  it('writes an authz.denied audit entry on denial (Sprint 13 D)', async () => {
+    const logSpy = jest.fn(async () => {});
+    const spyGuard = new InvoicingGrantGuard(reflector, dbSvc, { log: logSpy } as never);
+    await dbAdmin
+      .update(membershipsTable)
+      .set({ status: 'deactivated' })
+      .where(eq(membershipsTable.id, auditorMembershipId));
+    const ctx = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          method: 'GET',
+          url: '/invoicing/invoices',
+          headers: {},
+          user: { sub: auditorUserId, tenantId, membershipId: auditorMembershipId, role: 'auditor', isPlatformAdmin: false },
+        }),
+      }),
+      getHandler: () => () => {},
+      getClass: () => class {},
+    } as never;
+    await expect(spyGuard.canActivate(ctx)).rejects.toThrow();
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'authz.denied', resourceType: 'invoicing' }),
+    );
     await dbAdmin
       .update(membershipsTable)
       .set({ status: 'active' })

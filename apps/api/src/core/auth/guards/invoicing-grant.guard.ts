@@ -7,8 +7,10 @@ import {
 import { Reflector } from '@nestjs/core';
 import { and, eq } from 'drizzle-orm';
 import { membershipGrants, memberships, tenantModuleToggles } from '@flicks/db/schema';
+import type { Request } from 'express';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { DatabaseService } from '../../database/database.service';
+import { AuditService } from '../../../modules/audit/audit.service';
 import {
   REQUIRE_GRANT_KEY,
   type GrantRequirement,
@@ -45,12 +47,12 @@ export class InvoicingGrantGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly db: DatabaseService,
+    private readonly audit: AuditService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const { user } = context.switchToHttp().getRequest() as {
-      user: JwtPayload;
-    };
+    const req = context.switchToHttp().getRequest<Request & { user?: JwtPayload }>();
+    const user = req.user as JwtPayload;
 
     // Two gates that WIN over any role/grant, checked before the @RequireGrant
     // short-circuit so they cover every invoicing endpoint (not just
@@ -68,11 +70,13 @@ export class InvoicingGrantGuard implements CanActivate {
         'invoicing',
       );
       if (!moduleEnabled) {
+        await this.logDenied(req, user, 'module_disabled');
         throw new ForbiddenException(
           'Invoicing is disabled for this workspace by the platform administrator',
         );
       }
       if (!membershipActive) {
+        await this.logDenied(req, user, 'membership_inactive');
         throw new ForbiddenException(
           'Your access to this workspace is no longer active',
         );
@@ -94,11 +98,42 @@ export class InvoicingGrantGuard implements CanActivate {
     // Auditor (and any opt-granted standard role): consult membership_grants.
     const allowed = await this.hasGrant(user, requirement);
     if (!allowed) {
+      await this.logDenied(req, user, 'missing_grant', requirement);
       throw new ForbiddenException(
         `Missing grant: ${requirement.module}:${requirement.level}`,
       );
     }
     return true;
+  }
+
+  /**
+   * Record a denied invoicing-access attempt to the tenant audit log so probing
+   * is visible to Owners/Auditors. Best-effort — AuditService.log never throws.
+   */
+  private async logDenied(
+    req: Request & { user?: JwtPayload },
+    user: JwtPayload | undefined,
+    reason: string,
+    requirement?: GrantRequirement,
+  ): Promise<void> {
+    if (!user?.tenantId) return;
+    await this.audit.log({
+      tenantId: user.tenantId,
+      actorUserId: user.sub,
+      action: 'authz.denied',
+      resourceType: 'invoicing',
+      metadata: {
+        reason,
+        method: req.method,
+        path: req.originalUrl ?? req.url,
+        role: user.role,
+        ...(requirement
+          ? { module: requirement.module, level: requirement.level, capability: requirement.capability }
+          : {}),
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers?.['user-agent'],
+    });
   }
 
   /**
