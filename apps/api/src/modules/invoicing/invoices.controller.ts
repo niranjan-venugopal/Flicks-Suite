@@ -7,9 +7,13 @@ import {
   Param,
   Query,
   UseGuards,
+  Res,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiProduces } from '@nestjs/swagger';
 import { InvoicesService } from './invoices.service';
+import { PublicInvoiceService } from './public-invoice.service';
+import { InvoicePdfService } from './invoice-pdf.service';
 import {
   InvoiceListQueryDto,
   CreateInvoiceDto,
@@ -28,13 +32,36 @@ import type { JwtPayload } from '@flicks/shared/types';
 @UseGuards(InvoicingGrantGuard)
 @Controller('invoices')
 export class InvoicesController {
-  constructor(private readonly invoices: InvoicesService) {}
+  constructor(
+    private readonly invoices: InvoicesService,
+    private readonly publicInvoices: PublicInvoiceService,
+    private readonly pdf: InvoicePdfService,
+  ) {}
 
   @Get()
   @RequireGrant('invoicing', 'view')
   @ApiOperation({ summary: 'List invoices (filter by status/customer/search)' })
   list(@Query() query: InvoiceListQueryDto, @CurrentUser() user: JwtPayload) {
     return this.invoices.list(user.tenantId, query);
+  }
+
+  @Get(':id/pdf')
+  @RequireGrant('invoicing', 'view')
+  @ApiProduces('application/pdf')
+  @ApiOperation({ summary: 'Download the invoice as a PDF' })
+  async downloadPdf(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    const { data } = await this.publicInvoices.getById(user.tenantId, id);
+    const buffer = await this.pdf.render(data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${this.pdf.fileName(data)}"`,
+    );
+    res.send(buffer);
   }
 
   @Get(':id')

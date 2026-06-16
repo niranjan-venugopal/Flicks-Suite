@@ -15,6 +15,7 @@ import { NumberingController } from './numbering.controller';
 import { NumberingService } from './numbering.service';
 import { PublicInvoiceController } from './public-invoice.controller';
 import { PublicInvoiceService } from './public-invoice.service';
+import { InvoicePdfService } from './invoice-pdf.service';
 import { RazorpayWebhookController } from './razorpay-webhook.controller';
 import { NotesService } from './notes.service';
 import { InvReportsService } from './inv-reports.service';
@@ -58,6 +59,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     HsnSacService,
     NumberingService,
     PublicInvoiceService,
+    InvoicePdfService,
     NotesService,
     InvReportsService,
     SubscriptionsService,

@@ -1,8 +1,10 @@
-import { Controller, Get, Post, Param } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { Controller, Get, Post, Param, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiProduces } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { PublicInvoiceService } from './public-invoice.service';
+import { InvoicePdfService } from './invoice-pdf.service';
 
 /**
  * Public hosted-invoice endpoints (PRD §9.3) — no auth; the signed token
@@ -12,7 +14,10 @@ import { PublicInvoiceService } from './public-invoice.service';
 @ApiTags('Public — Hosted invoice')
 @Controller('public/inv')
 export class PublicInvoiceController {
-  constructor(private readonly publicInvoices: PublicInvoiceService) {}
+  constructor(
+    private readonly publicInvoices: PublicInvoiceService,
+    private readonly pdf: InvoicePdfService,
+  ) {}
 
   @Get(':token')
   @Public()
@@ -20,6 +25,22 @@ export class PublicInvoiceController {
   @ApiOperation({ summary: 'Customer view: invoice + payment options' })
   get(@Param('token') token: string) {
     return this.publicInvoices.getByToken(token);
+  }
+
+  @Get(':token/pdf')
+  @Public()
+  @Throttle({ medium: { ttl: 10000, limit: 20 } })
+  @ApiProduces('application/pdf')
+  @ApiOperation({ summary: 'Customer: download the invoice as a PDF' })
+  async pdfByToken(@Param('token') token: string, @Res() res: Response) {
+    const { data } = await this.publicInvoices.getByToken(token);
+    const buffer = await this.pdf.render(data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${this.pdf.fileName(data)}"`,
+    );
+    res.send(buffer);
   }
 
   @Post(':token/track')
