@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -18,6 +18,7 @@ import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
 import { JwtAuthGuard } from './core/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './core/auth/guards/roles.guard';
+import { RequestIdInterceptor } from './core/common/interceptors/request-id.interceptor';
 
 // Feature modules
 import { AuthModule } from './modules/auth/auth.module';
@@ -153,6 +154,8 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Echo the ClsModule request id back as X-Request-ID for log correlation.
+    { provide: APP_INTERCEPTOR, useClass: RequestIdInterceptor },
     JwtStrategy,
     NotificationsGateway,
     DailySnapshotsJob,

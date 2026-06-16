@@ -78,10 +78,13 @@ async function bootstrap() {
   // Cookie parser
   app.use(cookieParser());
 
-  // Global prefix — /healthz stays at the root so the uptime monitor URL is
-  // a clean https://api.flickssuite.com/healthz.
+  // Global prefix — /healthz and /readyz stay at the root so monitor/probe URLs
+  // are clean (e.g. https://api.flickssuite.com/healthz).
   app.setGlobalPrefix('api/v1', {
-    exclude: [{ path: 'healthz', method: RequestMethod.GET }],
+    exclude: [
+      { path: 'healthz', method: RequestMethod.GET },
+      { path: 'readyz', method: RequestMethod.GET },
+    ],
   });
 
   // Global pipes
