@@ -49,21 +49,6 @@ export class PublicInvoiceService {
     return this.assemble(inv);
   }
 
-  /**
-   * Same assembled view as getByToken, but resolved by invoice id within a
-   * tenant (for the authenticated "Download PDF" action). Service-role read is
-   * safe here because we filter by tenant_id explicitly.
-   */
-  async getById(tenantId: string, id: string) {
-    const [inv] = await this.dbAdmin
-      .select()
-      .from(invoices)
-      .where(and(eq(invoices.id, id), eq(invoices.tenant_id, tenantId)))
-      .limit(1);
-    if (!inv) throw new NotFoundException('Invoice not found');
-    return this.assemble(inv);
-  }
-
   private async assemble(inv: typeof invoices.$inferSelect) {
     const [lines, [customer], [tenant], [settings]] = await Promise.all([
       this.dbAdmin

@@ -33,12 +33,14 @@ export class PublicInvoiceController {
   @ApiProduces('application/pdf')
   @ApiOperation({ summary: 'Customer: download the invoice as a PDF' })
   async pdfByToken(@Param('token') token: string, @Res() res: Response) {
+    // Validates the token (throws 404/410 if bad/expired) and gives us the
+    // invoice number for the file name; the render then screenshots the page.
     const { data } = await this.publicInvoices.getByToken(token);
-    const buffer = await this.pdf.render(data);
+    const buffer = await this.pdf.renderInvoiceByToken(token);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${this.pdf.fileName(data)}"`,
+      `attachment; filename="${this.pdf.fileName(String(data.invoice.invoice_number))}"`,
     );
     res.send(buffer);
   }

@@ -126,6 +126,37 @@ export class InvoicesService {
     });
   }
 
+  /**
+   * Return the invoice's public-view token (the key for the hosted page that
+   * the PDF renderer screenshots), minting + persisting one if absent. Lets the
+   * authenticated "Download PDF" action reuse the exact hosted invoice page.
+   */
+  async ensurePublicToken(
+    tenantId: string,
+    id: string,
+  ): Promise<{ token: string; invoiceNumber: string }> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const [inv] = await tx
+        .select({
+          token: invoices.public_view_token,
+          number: invoices.invoice_number,
+        })
+        .from(invoices)
+        .where(and(eq(invoices.id, id), eq(invoices.tenant_id, tenantId)))
+        .limit(1);
+      if (!inv) throw new NotFoundException('Invoice not found');
+      let token = inv.token;
+      if (!token) {
+        token = crypto.randomBytes(24).toString('base64url');
+        await tx
+          .update(invoices)
+          .set({ public_view_token: token })
+          .where(eq(invoices.id, id));
+      }
+      return { token, invoiceNumber: inv.number };
+    });
+  }
+
   // ─── create / update (DRAFT only) ─────────────────────────────────────────
 
   async create(dto: CreateInvoiceDto, userId: string, tenantId: string) {
