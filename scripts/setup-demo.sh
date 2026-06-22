@@ -165,6 +165,13 @@ CREATE INDEX IF NOT EXISTS "account_deletion_requests_tenant_idx"
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_secret" text;
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_enrolled_at" timestamptz;
 
+-- TOTP brute-force lockout + single-use backup codes —
+-- matches packages/db/drizzle/0020_account_security.sql. Inlined so login
+-- (auth verify-otp reads these) works on databases that predate Sprint 13 §E.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_failed_attempts" integer NOT NULL DEFAULT 0;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_locked_until" timestamptz;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totp_backup_codes" jsonb;
+
 -- notification_preferences — matches packages/db/drizzle/0008_notification_preferences.sql.
 CREATE TABLE IF NOT EXISTS "notification_preferences" (
   "id"         uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
