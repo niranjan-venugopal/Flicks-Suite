@@ -369,9 +369,24 @@ export function InvoTable({ head, children }: { head: ReactNode; children: React
   )
 }
 
-export function InvoRow({ index, children }: { index: number; children: ReactNode }) {
+export function InvoRow({
+  index,
+  children,
+  onClick,
+}: {
+  index: number
+  children: ReactNode
+  onClick?: () => void
+}) {
   return (
-    <tr style={{ borderBottom: INVO.rowBorder, background: index % 2 === 0 ? 'transparent' : INVO.zebra }}>
+    <tr
+      onClick={onClick}
+      style={{
+        borderBottom: INVO.rowBorder,
+        background: index % 2 === 0 ? 'transparent' : INVO.zebra,
+        cursor: onClick ? 'pointer' : undefined,
+      }}
+    >
       {children}
     </tr>
   )
@@ -498,6 +513,12 @@ export function InvoSearch({
 // ─── prototype SVG icons ─────────────────────────────────────────────────────
 
 export const InvoIcons = {
+  download: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M8 2v8m0 0 3-3m-3 3L5 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  ),
   invoices: (
     <svg width="24" height="24" viewBox="0 0 22 22" fill="none">
       <rect x="3" y="1" width="14" height="18" rx="2" stroke="white" strokeWidth="1.5" fill="none" />

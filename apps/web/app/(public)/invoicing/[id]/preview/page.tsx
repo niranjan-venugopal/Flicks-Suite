@@ -4,7 +4,10 @@ import { useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { InvoiceRenderer } from '@/components/invoicing/InvoiceRenderer'
-import { INVO, InvoBtn } from '@/components/invoicing/invo'
+import { INVO, InvoBtn, InvoIcons } from '@/components/invoicing/invo'
+import { Toggle } from '@/components/proto/Toggle'
+import { PaymentModal } from '@/components/invoicing/PaymentModal'
+import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 import {
   useInvoice,
   useSendInvoice,
@@ -85,10 +88,12 @@ export default function InvoicePreviewPage() {
   const router = useRouter()
   const { toast } = useToast()
   const { data, isLoading, isError } = useInvoice(params?.id)
+  const access = useInvoicingAccess()
   const send = useSendInvoice()
   const downloadPdf = useDownloadInvoicePdf()
   const [publicUrl, setPublicUrl] = useState<string | null>(null)
-  const [pdfTheme, setPdfTheme] = useState<'dark' | 'light'>('dark')
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [payingOpen, setPayingOpen] = useState(false)
 
   const payload = useMemo(() => (data?.data ? toPayload(data.data) : null), [data])
   const inv = data?.data
@@ -115,10 +120,13 @@ export default function InvoicePreviewPage() {
     toast({ title: 'Public link copied' })
   }
 
+  const canRecordPayment =
+    !!inv && access.canRecordPayments && ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status)
+
   const onDownloadPdf = async () => {
     if (!inv) return
     try {
-      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number, theme: pdfTheme })
+      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number, theme })
     } catch (err) {
       toast({
         title: 'Could not download PDF',
@@ -157,49 +165,30 @@ export default function InvoicePreviewPage() {
           <InvoBtn kind="secondary" height={40} onClick={onCopyLink}>
             Copy link
           </InvoBtn>
-          {/* PDF theme picker — dark (app look) vs light (white document) */}
+          {canRecordPayment && (
+            <InvoBtn kind="secondary" height={40} onClick={() => setPayingOpen(true)}>
+              Record payment
+            </InvoBtn>
+          )}
+          {/* Light/Dark switch — re-themes the live preview AND the downloaded PDF */}
           <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 2,
-              padding: 3,
-              borderRadius: 10,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}
-            title="Choose the PDF style"
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            title="Light or dark — applies to the preview and the PDF"
           >
-            {(['dark', 'light'] as const).map((th) => (
-              <button
-                key={th}
-                type="button"
-                onClick={() => setPdfTheme(th)}
-                style={{
-                  height: 32,
-                  padding: '0 12px',
-                  borderRadius: 8,
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontWeight: 700,
-                  fontSize: 12,
-                  textTransform: 'capitalize',
-                  background: pdfTheme === th ? INVO.blue : 'transparent',
-                  color: pdfTheme === th ? '#fff' : INVO.muted50,
-                }}
-              >
-                {th}
-              </button>
-            ))}
+            <Toggle on={theme === 'light'} onChange={(v) => setTheme(v ? 'light' : 'dark')} />
+            <span style={{ fontWeight: 700, fontSize: 13, color: INVO.muted60, width: 38 }}>
+              {theme === 'light' ? 'Light' : 'Dark'}
+            </span>
           </div>
           <InvoBtn
-            kind="secondary"
+            kind="outline"
             height={40}
+            icon={InvoIcons.download}
             disabled={!inv || downloadPdf.isPending}
-            title={`Download a ${pdfTheme} PDF of this invoice`}
+            title={`Download a ${theme} PDF of this invoice`}
             onClick={onDownloadPdf}
           >
-            {downloadPdf.isPending ? 'Preparing…' : 'Download PDF'}
+            {downloadPdf.isPending ? 'Preparing…' : 'PDF'}
           </InvoBtn>
           {inv && !['PAID', 'CANCELLED', 'VOIDED', 'WRITE_OFF'].includes(inv.status) && (
             <InvoBtn kind="primary" height={40} onClick={onSend} disabled={send.isPending}>
@@ -209,15 +198,18 @@ export default function InvoicePreviewPage() {
         </div>
       </div>
 
-      <div style={{ padding: '40px 24px' }}>
+      {/* Document area re-themes with the toggle (toolbar above stays dark chrome). */}
+      <div style={{ padding: '40px 24px', background: theme === 'light' ? '#f4f5f7' : '#01010D', minHeight: '70vh' }}>
         {isLoading && <div style={{ textAlign: 'center', color: INVO.muted40, fontWeight: 600 }}>Loading preview…</div>}
         {isError && (
           <div style={{ textAlign: 'center', color: INVO.coral, fontWeight: 600 }}>
             Couldn’t load this invoice. Check you’re signed in.
           </div>
         )}
-        {payload && <InvoiceRenderer payload={payload} />}
+        {payload && <InvoiceRenderer payload={payload} theme={theme} />}
       </div>
+
+      <PaymentModal open={payingOpen} onOpenChange={setPayingOpen} invoice={inv ?? null} />
     </div>
   )
 }

@@ -367,6 +367,26 @@ export function useDownloadInvoicePdf() {
   })
 }
 
+/** Public (customer) download of the hosted invoice PDF, by token + theme. */
+export function useDownloadPublicInvoicePdf() {
+  return useMutation({
+    mutationFn: async ({
+      token,
+      invoiceNumber,
+      theme,
+    }: {
+      token: string
+      invoiceNumber: string
+      theme?: 'dark' | 'light'
+    }) => {
+      const q = theme === 'light' ? '?theme=light' : ''
+      const { blob, filename } = await api.download(`/api/v1/public/inv/${token}/pdf${q}`)
+      const safe = (invoiceNumber || 'invoice').replace(/[^A-Za-z0-9._-]/g, '_')
+      saveBlob(blob, filename ?? `${safe}.pdf`)
+    },
+  })
+}
+
 // ─── Send / payments / public (Sprint 4) ────────────────────────────────────
 
 export function useSendInvoice() {

@@ -8,10 +8,10 @@ import {
   useInvoiceAction,
   useSendInvoice,
   useDownloadInvoicePdf,
+  useRecordPayment,
   type InvoiceRow,
 } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
-import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import {
   INVO,
   InvoPage,
@@ -113,8 +113,9 @@ export default function InvoicesPage() {
   const action = useInvoiceAction()
   const send = useSendInvoice()
   const downloadPdf = useDownloadInvoicePdf()
-  const [payingInvoice, setPayingInvoice] = useState<InvoiceRow | null>(null)
+  const record = useRecordPayment()
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [markingId, setMarkingId] = useState<string | null>(null)
 
   const rows = data?.data ?? []
   const drafts = (draftsData?.data ?? []).slice(0, 3)
@@ -144,6 +145,31 @@ export default function InvoicesPage() {
       })
     } finally {
       setDownloadingId(null)
+    }
+  }
+
+  const onMarkPaid = async (inv: InvoiceRow) => {
+    const amount = inv.amount_outstanding ?? inv.total_amount
+    if (!window.confirm(`Mark ${inv.invoice_number} as paid? This records ${fmt(amount, inv.currency)} as received.`)) {
+      return
+    }
+    setMarkingId(inv.id)
+    try {
+      const res = await record.mutateAsync({
+        id: inv.id,
+        amount,
+        payment_method: 'OTHER',
+        payment_date: new Date().toISOString().slice(0, 10),
+      })
+      toast({ title: `Invoice ${inv.invoice_number} marked as paid`, description: `Status: ${res.meta.invoice_status}` })
+    } catch (err) {
+      toast({
+        title: 'Could not mark as paid',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    } finally {
+      setMarkingId(null)
     }
   }
 
@@ -228,7 +254,7 @@ export default function InvoicesPage() {
           </tr>
         )}
         {rows.map((inv, i) => (
-          <InvoRow key={inv.id} index={i}>
+          <InvoRow key={inv.id} index={i} onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
             <td style={{ ...invoTd, color: INVO.muted60 }}>{inv.invoice_number}</td>
             <td style={invoTd}>{inv.customer_name ?? '—'}</td>
             <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(inv.invoice_date)}</td>
@@ -237,7 +263,8 @@ export default function InvoicesPage() {
             <td style={invoTd}>
               <StatusChip status={inv.status} />
             </td>
-            <td style={invoTd}>
+            {/* Actions: stop row-click navigation when a button is pressed */}
+            <td style={invoTd} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', gap: 8 }}>
                 {inv.status === 'DRAFT' && access.canEdit && (
                   <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/edit`)}>
@@ -249,9 +276,6 @@ export default function InvoicesPage() {
                     Send
                   </InvoBtn>
                 )}
-                <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
-                  View
-                </InvoBtn>
                 <InvoBtn
                   kind="chip-outline"
                   disabled={downloadingId === inv.id}
@@ -262,8 +286,12 @@ export default function InvoicesPage() {
                 </InvoBtn>
                 {access.canRecordPayments &&
                   ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status) && (
-                    <InvoBtn kind="chip-blue" onClick={() => setPayingInvoice(inv)}>
-                      Record payment
+                    <InvoBtn
+                      kind="chip-blue"
+                      disabled={markingId === inv.id}
+                      onClick={() => onMarkPaid(inv)}
+                    >
+                      {markingId === inv.id ? 'Marking…' : 'Mark as paid'}
                     </InvoBtn>
                   )}
                 {access.canEdit && (
@@ -276,12 +304,6 @@ export default function InvoicesPage() {
           </InvoRow>
         ))}
       </InvoTable>
-
-      <PaymentModal
-        open={!!payingInvoice}
-        onOpenChange={(v) => !v && setPayingInvoice(null)}
-        invoice={payingInvoice}
-      />
     </InvoPage>
   )
 }
