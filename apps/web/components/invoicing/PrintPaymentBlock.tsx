@@ -40,7 +40,7 @@ export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }
 
   const card: React.CSSProperties = {
     maxWidth: 820,
-    margin: '20px auto 0',
+    margin: '16px auto 0',
     background: INVO.cardBgStrong,
     borderRadius: 16,
     padding: '28px 32px',

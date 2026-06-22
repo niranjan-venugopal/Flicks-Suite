@@ -8,6 +8,7 @@ import { INVO, InvoBtn } from '@/components/invoicing/invo'
 import {
   useInvoice,
   useSendInvoice,
+  useDownloadInvoicePdf,
   type InvoiceDetail,
   type PublicInvoicePayload,
 } from '@/lib/api/queries/use-invoicing'
@@ -85,6 +86,7 @@ export default function InvoicePreviewPage() {
   const { toast } = useToast()
   const { data, isLoading, isError } = useInvoice(params?.id)
   const send = useSendInvoice()
+  const downloadPdf = useDownloadInvoicePdf()
   const [publicUrl, setPublicUrl] = useState<string | null>(null)
 
   const payload = useMemo(() => (data?.data ? toPayload(data.data) : null), [data])
@@ -110,6 +112,19 @@ export default function InvoicePreviewPage() {
     if (!url) return toast({ title: 'Send the invoice first to generate its public link' })
     await navigator.clipboard.writeText(url)
     toast({ title: 'Public link copied' })
+  }
+
+  const onDownloadPdf = async () => {
+    if (!inv) return
+    try {
+      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number })
+    } catch (err) {
+      toast({
+        title: 'Could not download PDF',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
   }
 
   return (
@@ -141,8 +156,14 @@ export default function InvoicePreviewPage() {
           <InvoBtn kind="secondary" height={40} onClick={onCopyLink}>
             Copy link
           </InvoBtn>
-          <InvoBtn kind="secondary" height={40} disabled title="PDF arrives in Sprint 6">
-            Download PDF
+          <InvoBtn
+            kind="secondary"
+            height={40}
+            disabled={!inv || downloadPdf.isPending}
+            title="Download a PDF of this invoice"
+            onClick={onDownloadPdf}
+          >
+            {downloadPdf.isPending ? 'Preparing…' : 'Download PDF'}
           </InvoBtn>
           {inv && !['PAID', 'CANCELLED', 'VOIDED', 'WRITE_OFF'].includes(inv.status) && (
             <InvoBtn kind="primary" height={40} onClick={onSend} disabled={send.isPending}>

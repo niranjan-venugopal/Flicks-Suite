@@ -20,34 +20,39 @@ export default function InvoicePrintPage() {
   const { data, isError } = usePublicInvoice(token)
 
   return (
-    <div
-      style={{ minHeight: '100vh', background: '#01010D', padding: '28px' }}
-      data-invoice-root={data?.data ? 'ready' : undefined}
-    >
-      {isError && (
-        <div style={{ textAlign: 'center', color: INVO.coral, fontWeight: 600, paddingTop: 80 }}>
-          This invoice link is invalid or has expired.
-        </div>
-      )}
-      {data?.data && (
-        <>
-          <InvoiceRenderer payload={data.data} />
-          <PrintPaymentBlock payload={data.data} />
-          {data.data.show_powered_by && (
-            <div
-              style={{
-                textAlign: 'center',
-                marginTop: 24,
-                fontWeight: 600,
-                fontSize: 11,
-                color: INVO.muted30,
-              }}
-            >
-              Powered by Flicks Suite
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <>
+      {/* Full-bleed dark page: paint html/body so any area below short content
+          (or extra pages) stays on-theme instead of white. */}
+      <style>{`html,body{background:#01010D;margin:0}`}</style>
+      <div
+        style={{ background: '#01010D', padding: '20px' }}
+        data-invoice-root={data?.data ? 'ready' : undefined}
+      >
+        {isError && (
+          <div style={{ textAlign: 'center', color: INVO.coral, fontWeight: 600, paddingTop: 80 }}>
+            This invoice link is invalid or has expired.
+          </div>
+        )}
+        {data?.data && (
+          <>
+            <InvoiceRenderer payload={data.data} />
+            <PrintPaymentBlock payload={data.data} />
+            {data.data.show_powered_by && (
+              <div
+                style={{
+                  textAlign: 'center',
+                  marginTop: 20,
+                  fontWeight: 600,
+                  fontSize: 11,
+                  color: INVO.muted30,
+                }}
+              >
+                Powered by Flicks Suite
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
   )
 }
