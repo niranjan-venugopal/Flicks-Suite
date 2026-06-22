@@ -70,6 +70,7 @@ const TENANT =
 const OWNER_EMAIL = process.env['DEMO_OWNER_EMAIL'] ?? 'niranjan@demo.co';
 const CUSTOMER_ID = 'de300000-0000-4000-8000-000000000001';
 const INVOICE_ID = 'de100000-0000-4000-8000-000000000001';
+const BANK_ID = 'de4ba00c-0000-4000-8000-000000000001';
 
 const sql = postgres(url, { max: 1 });
 
@@ -133,6 +134,27 @@ async function main() {
       (${TENANT}, ${INVOICE_ID}, 2, 'Design system', 'Component library + design tokens', '998314',
        2, 'pkg', 2500, 18, 5000, 5000, 900, 5900)
   `;
+
+  // Payment rails so the PDF's UPI QR + bank-transfer block actually render:
+  //  - invoicing_settings.upi_id drives the UPI QR (INR only).
+  //  - a bank account linked via invoices.bank_account_id drives the bank block.
+  await sql`
+    INSERT INTO invoicing_settings (tenant_id, default_currency, upi_id, upi_display_name, show_upi_qr_on_pdf)
+    VALUES (${TENANT}, 'INR', 'demoinc@hdfcbank', 'Demo INC', true)
+    ON CONFLICT (tenant_id) DO UPDATE
+      SET upi_id = EXCLUDED.upi_id,
+          upi_display_name = EXCLUDED.upi_display_name,
+          show_upi_qr_on_pdf = true
+  `;
+  await sql`
+    INSERT INTO tenant_bank_accounts (
+      id, tenant_id, beneficiary_name, account_number, account_type, bank_name, branch, ifsc, is_default, is_active
+    ) VALUES (
+      ${BANK_ID}, ${TENANT}, 'Demo INC', '50200116982393', 'current', 'HDFC Bank', 'Chennai', 'HDFC0001234', true, true
+    )
+    ON CONFLICT (id) DO NOTHING
+  `;
+  await sql`UPDATE invoices SET bank_account_id = ${BANK_ID} WHERE id = ${INVOICE_ID}`;
 
   const [inv] = await sql<
     { invoice_number: string; status: string; currency: string; total_amount: string }[]

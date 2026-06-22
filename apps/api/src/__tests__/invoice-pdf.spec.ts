@@ -53,15 +53,15 @@ describe('Invoice PDF generation — Puppeteer (Sprint 13 §B)', () => {
     browser.newPage.mockClear();
   });
 
-  it('builds the hosted-page URL from the configured base', () => {
-    expect(service.invoiceUrl('tok123')).toBe('https://pay.example.com/inv/tok123');
+  it('builds the print-page URL from the configured base', () => {
+    expect(service.invoiceUrl('tok123')).toBe('https://pay.example.com/inv/tok123/print');
   });
 
   it('navigates the hosted invoice page and returns a printed PDF', async () => {
     const buf = await service.renderInvoiceByToken('tok123');
     expect(isPdf(buf)).toBe(true);
     expect(page.goto).toHaveBeenCalledWith(
-      'https://pay.example.com/inv/tok123',
+      'https://pay.example.com/inv/tok123/print',
       expect.objectContaining({ waitUntil: 'networkidle0' }),
     );
     expect(page.pdf).toHaveBeenCalledWith(

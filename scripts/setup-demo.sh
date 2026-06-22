@@ -847,6 +847,23 @@ INSERT INTO invoice_line_items (
    2, 'Design system', 'Component library + design tokens', '998314',
    2, 'pkg', 2500, 18, 5000, 5000, 900, 5900);
 
+-- Payment rails so the PDF's UPI QR + bank-transfer block render for the demo.
+INSERT INTO invoicing_settings (tenant_id, default_currency, upi_id, upi_display_name, show_upi_qr_on_pdf)
+VALUES ('11111111-1111-1111-1111-111111111111', 'INR', 'demoinc@hdfcbank', 'Demo INC', true)
+ON CONFLICT (tenant_id) DO UPDATE
+  SET upi_id = EXCLUDED.upi_id, upi_display_name = EXCLUDED.upi_display_name, show_upi_qr_on_pdf = true;
+
+INSERT INTO tenant_bank_accounts (
+  id, tenant_id, beneficiary_name, account_number, account_type, bank_name, branch, ifsc, is_default, is_active
+) VALUES (
+  'de4ba00c-0000-4000-8000-000000000001', '11111111-1111-1111-1111-111111111111',
+  'Demo INC', '50200116982393', 'current', 'HDFC Bank', 'Chennai', 'HDFC0001234', true, true
+)
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE invoices SET bank_account_id = 'de4ba00c-0000-4000-8000-000000000001'
+  WHERE id = 'de100000-0000-4000-8000-000000000001';
+
 SQL
 
 echo "✅ Demo data ready (rich seed)."

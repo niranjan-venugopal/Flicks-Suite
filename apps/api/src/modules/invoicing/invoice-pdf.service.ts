@@ -61,12 +61,16 @@ export class InvoicePdfService implements OnModuleDestroy {
     return b;
   }
 
-  /** Hosted page URL for a given public-view token. */
+  /**
+   * Print/PDF view URL for a given public-view token. We render the dedicated
+   * `/print` page (document-only: no app chrome, no interactive pay buttons,
+   * static UPI QR + bank details) rather than the interactive customer page.
+   */
   invoiceUrl(token: string): string {
     const base = this.config
       .get<string>('PUBLIC_INVOICE_BASE_URL', 'http://localhost:3000')
       .replace(/\/+$/, '');
-    return `${base}/inv/${token}`;
+    return `${base}/inv/${token}/print`;
   }
 
   /** Render the hosted invoice page to a PDF buffer. */
@@ -85,10 +89,13 @@ export class InvoicePdfService implements OnModuleDestroy {
       await page
         .waitForSelector('[data-invoice-root]', { timeout: 5_000 })
         .catch(() => undefined);
+      // Zero margins: the print page is full-bleed dark, so any PDF margin would
+      // show as a white border around the document. The page supplies its own
+      // padding.
       const pdf = await page.pdf({
         format: 'A4',
         printBackground: true,
-        margin: { top: '16px', bottom: '16px', left: '16px', right: '16px' },
+        margin: { top: '0', bottom: '0', left: '0', right: '0' },
       });
       return Buffer.from(pdf);
     } finally {
