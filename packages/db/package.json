@@ -12,6 +12,7 @@
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",
     "seed": "tsx src/seed.ts",
+    "seed:invoice": "tsx src/seed-demo-invoice.ts",
     "studio": "drizzle-kit studio"
   },
   "dependencies": {

@@ -12,6 +12,7 @@
     "db:generate": "pnpm --filter @flicks/db generate",
     "db:migrate": "pnpm --filter @flicks/db migrate",
     "db:seed": "pnpm --filter @flicks/db seed",
+    "db:seed:invoice": "pnpm --filter @flicks/db seed:invoice",
     "db:studio": "pnpm --filter @flicks/db studio",
     "setup:db": "bash scripts/setup-db.sh",
     "setup:database": "bash scripts/setup-database.sh",
