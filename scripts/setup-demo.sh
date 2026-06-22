@@ -790,6 +790,58 @@ ON CONFLICT (id) DO NOTHING;
 
 SQL
 
+# ─── Invoicing: one ready-to-open invoice ────────────────────────────────────
+# setup-demo.sh is HRMS-focused; without this the Invoices screen is empty and
+# the "PDF" download button has no target. Seeds a customer + a SENT invoice
+# (2 line items, inter-state IGST @ 18%) into Demo Co. Idempotent: fixed UUIDs,
+# ON CONFLICT, and a delete-then-insert for line items (no natural unique key).
+# Mirrors packages/db/src/seed-demo-invoice.ts (same UUIDs → the two are safe to
+# run in any combination).
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
+INSERT INTO customers (
+  id, tenant_id, customer_code, display_name, legal_name, email,
+  country_code, state_code, is_gst_registered, gstin, default_currency, status,
+  billing_address_line1, billing_city, billing_state, billing_postal_code, billing_country
+) VALUES (
+  'de300000-0000-4000-8000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'DEMO-CUST-01', 'Acme Test Pvt Ltd', 'Acme Test Private Limited', 'ap@acme.test',
+  'IN', '29', true, '29ABCDE1234F1Z5', 'INR', 'active',
+  '4th Floor, Tech Park, Outer Ring Road', 'Bengaluru', 'Karnataka', '560103', 'India'
+)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO invoices (
+  id, tenant_id, customer_id, invoice_number, document_type, status,
+  invoice_date, due_date, fy_label, currency,
+  subtotal, taxable_amount, igst_amount, total_amount, net_receivable, amount_outstanding,
+  place_of_supply, tax_treatment, notes, created_by
+) VALUES (
+  'de100000-0000-4000-8000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'de300000-0000-4000-8000-000000000001',
+  'INV-DEMO-0001', 'INVOICE', 'SENT',
+  current_date - 5, current_date + 10, '2026-27', 'INR',
+  15000, 15000, 2700, 17700, 17700, 17700,
+  '27', 'inter_state', 'Demo invoice seeded for PDF-download testing.',
+  '22222222-2222-2222-2222-222222222220'  -- niranjan@demo.co (Owner)
+)
+ON CONFLICT (id) DO NOTHING;
+
+DELETE FROM invoice_line_items WHERE invoice_id = 'de100000-0000-4000-8000-000000000001';
+INSERT INTO invoice_line_items (
+  tenant_id, invoice_id, line_number, item_name, description, hsn_sac_code,
+  quantity, unit, rate, gst_rate, line_amount, taxable_amount, igst_amount, line_total
+) VALUES
+  ('11111111-1111-1111-1111-111111111111', 'de100000-0000-4000-8000-000000000001',
+   1, 'Consulting — platform build', 'Senior engineering retainer', '998314',
+   10, 'hrs', 1000, 18, 10000, 10000, 1800, 11800),
+  ('11111111-1111-1111-1111-111111111111', 'de100000-0000-4000-8000-000000000001',
+   2, 'Design system', 'Component library + design tokens', '998314',
+   2, 'pkg', 2500, 18, 5000, 5000, 900, 5900);
+
+SQL
+
 echo "✅ Demo data ready (rich seed)."
 echo
 echo "Tenant:    Demo Co"
@@ -808,3 +860,5 @@ echo "  • 30 days × 8 employees of attendance history (mostly present, some l
 echo "  • 4 leave requests (1 pending, 2 approved, 1 rejected)"
 echo "  • 2 attendance regularizations (pending)"
 echo "  • 8 leave types (CL, SL, EL, ML, PL, CO, WFH, LOP) + 25 holidays"
+echo "  • 1 invoice INV-DEMO-0001 (SENT, ₹17,700) for customer 'Acme Test Pvt Ltd'"
+echo "      → Invoicing → Invoices → click 'PDF' to test the download"
