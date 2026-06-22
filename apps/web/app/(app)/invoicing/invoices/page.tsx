@@ -3,7 +3,13 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
-import { useInvoices, useInvoiceAction, useSendInvoice, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import {
+  useInvoices,
+  useInvoiceAction,
+  useSendInvoice,
+  useDownloadInvoicePdf,
+  type InvoiceRow,
+} from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import {
@@ -106,7 +112,9 @@ export default function InvoicesPage() {
   const { data: draftsData } = useInvoices({ status: 'DRAFT', document_type: 'INVOICE' })
   const action = useInvoiceAction()
   const send = useSendInvoice()
+  const downloadPdf = useDownloadInvoicePdf()
   const [payingInvoice, setPayingInvoice] = useState<InvoiceRow | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
   const rows = data?.data ?? []
   const drafts = (draftsData?.data ?? []).slice(0, 3)
@@ -121,6 +129,21 @@ export default function InvoicesPage() {
         description: err instanceof Error ? err.message : undefined,
         variant: 'destructive',
       })
+    }
+  }
+
+  const onDownloadPdf = async (inv: InvoiceRow) => {
+    setDownloadingId(inv.id)
+    try {
+      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number })
+    } catch (err) {
+      toast({
+        title: 'Could not download PDF',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    } finally {
+      setDownloadingId(null)
     }
   }
 
@@ -228,6 +251,14 @@ export default function InvoicesPage() {
                 )}
                 <InvoBtn kind="chip-blue" onClick={() => router.push(`/invoicing/${inv.id}/preview`)}>
                   View
+                </InvoBtn>
+                <InvoBtn
+                  kind="chip-outline"
+                  disabled={downloadingId === inv.id}
+                  title="Download a PDF of the hosted invoice"
+                  onClick={() => onDownloadPdf(inv)}
+                >
+                  {downloadingId === inv.id ? 'Preparing…' : 'PDF'}
                 </InvoBtn>
                 {access.canRecordPayments &&
                   ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID'].includes(inv.status) && (

@@ -326,6 +326,38 @@ export function useInvoiceAction() {
   })
 }
 
+/**
+ * Trigger a browser "Save As" for an in-memory Blob. Creates a transient object
+ * URL behind a synthetic <a download>, then revokes it. Browser-only — only ever
+ * called from a click handler.
+ */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Download an invoice as a PDF (server renders the hosted page via Chromium).
+ * Hits GET /invoices/:id/pdf, which streams an `attachment` — we turn the Blob
+ * into a browser download named after the server's Content-Disposition, falling
+ * back to the invoice number.
+ */
+export function useDownloadInvoicePdf() {
+  return useMutation({
+    mutationFn: async ({ id, invoiceNumber }: { id: string; invoiceNumber: string }) => {
+      const { blob, filename } = await api.download(`/api/v1/invoices/${id}/pdf`)
+      const safe = (invoiceNumber || 'invoice').replace(/[^A-Za-z0-9._-]/g, '_')
+      saveBlob(blob, filename ?? `${safe}.pdf`)
+    },
+  })
+}
+
 // ─── Send / payments / public (Sprint 4) ────────────────────────────────────
 
 export function useSendInvoice() {

@@ -5,14 +5,19 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import type { Request } from 'express';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
+import { AuditService } from '../../../modules/audit/audit.service';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(
+    private reflector: Reflector,
+    private readonly audit: AuditService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,
       [context.getHandler(), context.getClass()],
@@ -22,9 +27,10 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    const { user } = context.switchToHttp().getRequest() as {
-      user: JwtPayload;
-    };
+    const req = context
+      .switchToHttp()
+      .getRequest<Request & { user?: JwtPayload }>();
+    const user = req.user;
 
     if (!user) {
       throw new ForbiddenException('Access denied');
@@ -58,11 +64,42 @@ export class RolesGuard implements CanActivate {
     });
 
     if (!hasRole) {
+      await this.logDenied(req, user, requiredRoles);
       throw new ForbiddenException(
         `Insufficient permissions. Required: ${requiredRoles.join(' or ')}`,
       );
     }
 
     return true;
+  }
+
+  /**
+   * Record a denied @Roles(...) attempt to the tenant audit log so RBAC probing
+   * is visible to Owners/Auditors alongside the invoicing-grant denials emitted
+   * by InvoicingGrantGuard. Best-effort — AuditService.log never throws. We skip
+   * when there is no tenant context to scope the row to (e.g. the no-user gate
+   * above, or a platform-level token without a tenantId).
+   */
+  private async logDenied(
+    req: Request & { user?: JwtPayload },
+    user: JwtPayload,
+    requiredRoles: UserRole[],
+  ): Promise<void> {
+    if (!user.tenantId) return;
+    await this.audit.log({
+      tenantId: user.tenantId,
+      actorUserId: user.sub,
+      action: 'authz.denied',
+      resourceType: 'rbac',
+      metadata: {
+        reason: 'insufficient_role',
+        method: req.method,
+        path: req.originalUrl ?? req.url,
+        role: user.role,
+        requiredRoles,
+      },
+      ipAddress: req.ip,
+      userAgent: req.headers?.['user-agent'],
+    });
   }
 }
