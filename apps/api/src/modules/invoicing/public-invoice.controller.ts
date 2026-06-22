@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiProduces } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -32,11 +32,15 @@ export class PublicInvoiceController {
   @Throttle({ medium: { ttl: 10000, limit: 20 } })
   @ApiProduces('application/pdf')
   @ApiOperation({ summary: 'Customer: download the invoice as a PDF' })
-  async pdfByToken(@Param('token') token: string, @Res() res: Response) {
+  async pdfByToken(
+    @Param('token') token: string,
+    @Res() res: Response,
+    @Query('theme') theme?: string,
+  ) {
     // Validates the token (throws 404/410 if bad/expired) and gives us the
-    // invoice number for the file name; the render then screenshots the page.
+    // invoice number for the file name; the render then prints the print page.
     const { data } = await this.publicInvoices.getByToken(token);
-    const buffer = await this.pdf.renderInvoiceByToken(token);
+    const buffer = await this.pdf.renderInvoiceByToken(token, theme);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',

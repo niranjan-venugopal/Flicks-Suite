@@ -65,17 +65,20 @@ export class InvoicePdfService implements OnModuleDestroy {
    * Print/PDF view URL for a given public-view token. We render the dedicated
    * `/print` page (document-only: no app chrome, no interactive pay buttons,
    * static UPI QR + bank details) rather than the interactive customer page.
+   * `theme` picks the document palette: 'light' renders the white variant;
+   * anything else (incl. undefined) keeps the dark default.
    */
-  invoiceUrl(token: string): string {
+  invoiceUrl(token: string, theme?: string): string {
     const base = this.config
       .get<string>('PUBLIC_INVOICE_BASE_URL', 'http://localhost:3000')
       .replace(/\/+$/, '');
-    return `${base}/inv/${token}/print`;
+    const query = theme === 'light' ? '?theme=light' : '';
+    return `${base}/inv/${token}/print${query}`;
   }
 
   /** Render the hosted invoice page to a PDF buffer. */
-  async renderInvoiceByToken(token: string): Promise<Buffer> {
-    return this.renderUrl(this.invoiceUrl(token));
+  async renderInvoiceByToken(token: string, theme?: string): Promise<Buffer> {
+    return this.renderUrl(this.invoiceUrl(token, theme));
   }
 
   async renderUrl(url: string): Promise<Buffer> {

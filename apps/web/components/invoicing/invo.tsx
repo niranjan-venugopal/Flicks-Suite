@@ -43,6 +43,70 @@ export const INVO = {
   zebra: 'rgba(255,255,255,0.01)',
 } as const
 
+// ─── Invoice document theme (dark = app default, light = print/PDF option) ────
+
+export type InvoiceThemeName = 'dark' | 'light'
+
+export interface InvoicePalette {
+  name: InvoiceThemeName
+  pageBg: string
+  cardBg: string
+  cardBorder: string
+  cardShadow: string
+  text: string
+  muted30: string
+  muted40: string
+  muted50: string
+  muted60: string
+  headBorder: string
+  rowBorder: string
+  divider: string
+  qrBoxBg: string
+  qrBoxBorder: string
+  qrModule: string
+}
+
+const DARK_PALETTE: InvoicePalette = {
+  name: 'dark',
+  pageBg: '#01010D',
+  cardBg: INVO.cardBgStrong,
+  cardBorder: '1px solid rgba(255,255,255,0.06)',
+  cardShadow: 'none',
+  text: '#fff',
+  muted30: INVO.muted30,
+  muted40: INVO.muted40,
+  muted50: INVO.muted50,
+  muted60: INVO.muted60,
+  headBorder: INVO.headBorder,
+  rowBorder: INVO.rowBorder,
+  divider: 'rgba(255,255,255,0.1)',
+  qrBoxBg: '#ffffff',
+  qrBoxBorder: 'none',
+  qrModule: '#01010D',
+}
+
+const LIGHT_PALETTE: InvoicePalette = {
+  name: 'light',
+  pageBg: '#ffffff',
+  cardBg: '#ffffff',
+  cardBorder: '1px solid #e7e9f0',
+  cardShadow: '0 1px 3px rgba(16,24,40,0.06)',
+  text: '#101828',
+  muted30: '#b0b7c3',
+  muted40: '#98a2b3',
+  muted50: '#667085',
+  muted60: '#475467',
+  headBorder: '1px solid #eaecf0',
+  rowBorder: '1px solid #f0f1f4',
+  divider: '#e4e7ec',
+  qrBoxBg: '#ffffff',
+  qrBoxBorder: '1px solid #eaecf0',
+  qrModule: '#101828',
+}
+
+export const invoiceTheme = (name: InvoiceThemeName | undefined): InvoicePalette =>
+  name === 'light' ? LIGHT_PALETTE : DARK_PALETTE
+
 const FONT: CSSProperties = { fontFamily: 'inherit', letterSpacing: '-0.02em' }
 
 // ─── page wrapper with ambient glows ────────────────────────────────────────
@@ -227,8 +291,32 @@ const CHIP_STYLES: Record<string, { label: string; bg: string; color: string }> 
   archived: { label: 'Archived', bg: 'rgba(255,255,255,0.08)', color: INVO.muted40 },
 }
 
-export function StatusChip({ status }: { status: string }) {
-  const s = CHIP_STYLES[status] ?? { label: status, bg: 'rgba(255,255,255,0.08)', color: INVO.muted60 }
+// Light-theme chip colors (the translucent-white neutrals above vanish on a
+// white page). Only differs from CHIP_STYLES in bg + a readable text shade;
+// labels are reused from CHIP_STYLES.
+const CHIP_STYLES_LIGHT: Record<string, { bg: string; color: string }> = {
+  PAID: { bg: '#E7F8EF', color: '#067647' },
+  SENT: { bg: '#FEF7E6', color: '#B54708' },
+  VIEWED: { bg: '#FEF7E6', color: '#B54708' },
+  PARTIALLY_PAID: { bg: '#FEF7E6', color: '#B54708' },
+  OVERDUE: { bg: '#FEECEB', color: '#B42318' },
+  DRAFT: { bg: '#F2F4F7', color: '#475467' },
+  CANCELLED: { bg: '#F2F4F7', color: '#667085' },
+  VOIDED: { bg: '#F2F4F7', color: '#667085' },
+  WRITE_OFF: { bg: '#FEECEB', color: '#B42318' },
+  DISPUTED: { bg: '#FEECEB', color: '#B42318' },
+  REFUNDED: { bg: '#EAF0FE', color: '#3E7BFA' },
+  active: { bg: '#E7F8EF', color: '#067647' },
+  archived: { bg: '#F2F4F7', color: '#667085' },
+}
+
+export function StatusChip({ status, theme = 'dark' }: { status: string; theme?: InvoiceThemeName }) {
+  const base = CHIP_STYLES[status] ?? { label: status, bg: 'rgba(255,255,255,0.08)', color: INVO.muted60 }
+  const light = CHIP_STYLES_LIGHT[status]
+  const s =
+    theme === 'light'
+      ? { label: base.label, bg: light?.bg ?? '#F2F4F7', color: light?.color ?? '#475467' }
+      : base
   return (
     <span
       style={{

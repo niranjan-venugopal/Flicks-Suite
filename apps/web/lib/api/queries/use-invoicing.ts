@@ -350,8 +350,17 @@ function saveBlob(blob: Blob, filename: string) {
  */
 export function useDownloadInvoicePdf() {
   return useMutation({
-    mutationFn: async ({ id, invoiceNumber }: { id: string; invoiceNumber: string }) => {
-      const { blob, filename } = await api.download(`/api/v1/invoices/${id}/pdf`)
+    mutationFn: async ({
+      id,
+      invoiceNumber,
+      theme,
+    }: {
+      id: string
+      invoiceNumber: string
+      theme?: 'dark' | 'light'
+    }) => {
+      const q = theme === 'light' ? '?theme=light' : ''
+      const { blob, filename } = await api.download(`/api/v1/invoices/${id}/pdf${q}`)
       const safe = (invoiceNumber || 'invoice').replace(/[^A-Za-z0-9._-]/g, '_')
       saveBlob(blob, filename ?? `${safe}.pdf`)
     },

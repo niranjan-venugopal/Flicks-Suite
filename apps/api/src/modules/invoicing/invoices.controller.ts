@@ -51,12 +51,13 @@ export class InvoicesController {
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
+    @Query('theme') theme?: string,
   ) {
     const { token, invoiceNumber } = await this.invoices.ensurePublicToken(
       user.tenantId,
       id,
     );
-    const buffer = await this.pdf.renderInvoiceByToken(token);
+    const buffer = await this.pdf.renderInvoiceByToken(token, theme);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',

@@ -1,7 +1,7 @@
 'use client'
 
 import { QRCodeSVG } from 'qrcode.react'
-import { INVO } from '@/components/invoicing/invo'
+import { INVO, invoiceTheme, type InvoiceThemeName } from '@/components/invoicing/invo'
 import type { PublicInvoicePayload } from '@/lib/api/queries/use-invoicing'
 
 /**
@@ -11,7 +11,7 @@ import type { PublicInvoicePayload } from '@/lib/api/queries/use-invoicing'
  * printed/forwarded invoice: a scannable UPI QR (INR only, amount + invoice
  * prefilled) and the seller's bank-transfer details. Renders nothing when the
  * invoice is already settled or no payment rails are configured, so the PDF
- * stays clean. Same dark theme as InvoiceRenderer.
+ * stays clean. `theme` matches InvoiceRenderer (dark default / light document).
  */
 
 const symbol = (c: string) =>
@@ -21,30 +21,37 @@ const money = (v: string | null | undefined, c: string) => {
   return `${symbol(c)}${Number.isFinite(n) ? n.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : v}`
 }
 
-const cap: React.CSSProperties = {
-  fontWeight: 700,
-  fontSize: 11,
-  color: INVO.muted40,
-  letterSpacing: '-0.01em',
-  textTransform: 'uppercase',
-  marginBottom: 4,
-}
-
-export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }) {
+export function PrintPaymentBlock({
+  payload,
+  theme = 'dark',
+}: {
+  payload: PublicInvoicePayload
+  theme?: InvoiceThemeName
+}) {
   const { invoice, payment_options: opts, seller } = payload
   const cur = invoice.currency
+  const t = invoiceTheme(theme)
   const outstanding = parseFloat(invoice.amount_outstanding ?? invoice.total_amount)
   const settled =
     ['PAID', 'CANCELLED', 'VOIDED', 'WRITE_OFF', 'REFUNDED'].includes(invoice.status) ||
     outstanding <= 0
 
+  const cap: React.CSSProperties = {
+    fontWeight: 700,
+    fontSize: 11,
+    color: t.muted40,
+    letterSpacing: '-0.01em',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  }
   const card: React.CSSProperties = {
     maxWidth: 820,
     margin: '16px auto 0',
-    background: INVO.cardBgStrong,
+    background: t.cardBg,
     borderRadius: 16,
     padding: '28px 32px',
-    border: '1px solid rgba(255,255,255,0.06)',
+    border: t.cardBorder,
+    boxShadow: t.cardShadow,
     breakInside: 'avoid',
   }
 
@@ -87,7 +94,7 @@ export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }
         style={{
           fontWeight: 700,
           fontSize: 16,
-          color: '#fff',
+          color: t.text,
           letterSpacing: '-0.02em',
           marginBottom: 18,
         }}
@@ -97,11 +104,20 @@ export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }
       <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start' }}>
         {upiLink && opts.upi && (
           <div style={{ textAlign: 'center', flexShrink: 0 }}>
-            <div style={{ background: '#fff', borderRadius: 12, padding: 10, width: 150, height: 150 }}>
-              <QRCodeSVG value={upiLink} size={130} bgColor="#ffffff" fgColor="#01010D" level="M" />
+            <div
+              style={{
+                background: t.qrBoxBg,
+                border: t.qrBoxBorder,
+                borderRadius: 12,
+                padding: 10,
+                width: 150,
+                height: 150,
+              }}
+            >
+              <QRCodeSVG value={upiLink} size={130} bgColor={t.qrBoxBg} fgColor={t.qrModule} level="M" />
             </div>
             <div style={{ ...cap, marginTop: 10 }}>Scan to pay · UPI</div>
-            <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#fff', marginTop: 4 }}>
+            <div style={{ fontFamily: 'monospace', fontSize: 12, color: t.text, marginTop: 4 }}>
               {opts.upi.upi_id}
             </div>
           </div>
@@ -125,7 +141,7 @@ export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }
                       style={{
                         fontFamily: 'monospace',
                         fontSize: 13,
-                        color: '#fff',
+                        color: t.text,
                         wordBreak: 'break-word',
                       }}
                     >
@@ -136,14 +152,14 @@ export function PrintPaymentBlock({ payload }: { payload: PublicInvoicePayload }
               </div>
             </>
           ) : (
-            <div style={{ fontWeight: 600, fontSize: 13, color: INVO.muted50, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: t.muted50, lineHeight: 1.6 }}>
               Pay {seller?.name ?? 'the seller'} directly by scanning the UPI code with any UPI app
               (GPay, PhonePe, Paytm, etc.).
             </div>
           )}
-          <div style={{ fontWeight: 600, fontSize: 12, color: INVO.muted50, marginTop: 16 }}>
+          <div style={{ fontWeight: 600, fontSize: 12, color: t.muted50, marginTop: 16 }}>
             Amount payable:{' '}
-            <span style={{ color: '#fff', fontWeight: 700 }}>
+            <span style={{ color: t.text, fontWeight: 700 }}>
               {money(invoice.amount_outstanding ?? invoice.total_amount, cur)}
             </span>{' '}
             · Ref {invoice.invoice_number}

@@ -88,6 +88,7 @@ export default function InvoicePreviewPage() {
   const send = useSendInvoice()
   const downloadPdf = useDownloadInvoicePdf()
   const [publicUrl, setPublicUrl] = useState<string | null>(null)
+  const [pdfTheme, setPdfTheme] = useState<'dark' | 'light'>('dark')
 
   const payload = useMemo(() => (data?.data ? toPayload(data.data) : null), [data])
   const inv = data?.data
@@ -117,7 +118,7 @@ export default function InvoicePreviewPage() {
   const onDownloadPdf = async () => {
     if (!inv) return
     try {
-      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number })
+      await downloadPdf.mutateAsync({ id: inv.id, invoiceNumber: inv.invoice_number, theme: pdfTheme })
     } catch (err) {
       toast({
         title: 'Could not download PDF',
@@ -156,11 +157,46 @@ export default function InvoicePreviewPage() {
           <InvoBtn kind="secondary" height={40} onClick={onCopyLink}>
             Copy link
           </InvoBtn>
+          {/* PDF theme picker — dark (app look) vs light (white document) */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              padding: 3,
+              borderRadius: 10,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+            title="Choose the PDF style"
+          >
+            {(['dark', 'light'] as const).map((th) => (
+              <button
+                key={th}
+                type="button"
+                onClick={() => setPdfTheme(th)}
+                style={{
+                  height: 32,
+                  padding: '0 12px',
+                  borderRadius: 8,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  textTransform: 'capitalize',
+                  background: pdfTheme === th ? INVO.blue : 'transparent',
+                  color: pdfTheme === th ? '#fff' : INVO.muted50,
+                }}
+              >
+                {th}
+              </button>
+            ))}
+          </div>
           <InvoBtn
             kind="secondary"
             height={40}
             disabled={!inv || downloadPdf.isPending}
-            title="Download a PDF of this invoice"
+            title={`Download a ${pdfTheme} PDF of this invoice`}
             onClick={onDownloadPdf}
           >
             {downloadPdf.isPending ? 'Preparing…' : 'Download PDF'}

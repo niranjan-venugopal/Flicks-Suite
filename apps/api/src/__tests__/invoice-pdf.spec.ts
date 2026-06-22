@@ -57,6 +57,16 @@ describe('Invoice PDF generation — Puppeteer (Sprint 13 §B)', () => {
     expect(service.invoiceUrl('tok123')).toBe('https://pay.example.com/inv/tok123/print');
   });
 
+  it('adds ?theme=light only for the light variant (dark is the default)', () => {
+    expect(service.invoiceUrl('tok123', 'light')).toBe(
+      'https://pay.example.com/inv/tok123/print?theme=light',
+    );
+    expect(service.invoiceUrl('tok123', 'dark')).toBe('https://pay.example.com/inv/tok123/print');
+    expect(service.invoiceUrl('tok123', undefined)).toBe(
+      'https://pay.example.com/inv/tok123/print',
+    );
+  });
+
   it('navigates the hosted invoice page and returns a printed PDF', async () => {
     const buf = await service.renderInvoiceByToken('tok123');
     expect(isPdf(buf)).toBe(true);
