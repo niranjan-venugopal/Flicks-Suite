@@ -16,6 +16,7 @@ import {
   type Item,
   type ItemInput,
 } from '@/lib/api/queries/use-invoicing'
+import { isGstCurrency } from '@/lib/invoicing/constants'
 
 const FIELD: React.CSSProperties = {
   width: '100%',
@@ -73,6 +74,8 @@ export function ItemModal({
     }
   }, [open, item])
 
+  const isGst = isGstCurrency(form.currency)
+
   const set =
     (k: keyof ItemInput) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
@@ -116,8 +119,8 @@ export function ItemModal({
             <input style={FIELD} value={form.unit ?? ''} onChange={set('unit')} placeholder="units" />
           </div>
           <div>
-            <label style={LABEL}>GST rate %</label>
-            <input style={FIELD} value={form.default_gst_rate ?? ''} onChange={set('default_gst_rate')} placeholder="18" inputMode="decimal" />
+            <label style={LABEL}>{isGst ? 'GST rate %' : 'VAT / Tax rate %'}</label>
+            <input style={FIELD} value={form.default_gst_rate ?? ''} onChange={set('default_gst_rate')} placeholder={isGst ? '18' : '20'} inputMode="decimal" />
           </div>
           <div>
             <label style={LABEL}>Currency</label>
@@ -129,6 +132,7 @@ export function ItemModal({
               ))}
             </select>
           </div>
+          {isGst && (
           <div style={{ gridColumn: '1 / -1', position: 'relative' }}>
             <label style={LABEL}>HSN / SAC code</label>
             <input
@@ -187,6 +191,7 @@ export function ItemModal({
               </div>
             )}
           </div>
+          )}
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={LABEL}>Description</label>
             <textarea style={{ ...FIELD, height: 'auto', minHeight: 60, padding: '12px 14px', resize: 'vertical' }} value={form.description ?? ''} onChange={set('description')} />

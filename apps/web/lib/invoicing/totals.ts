@@ -63,8 +63,10 @@ export function computeTotals(opts: {
     }
   }
 
+  // INR: GST (intra split / inter IGST / export zero-rated) + cess + TDS.
+  // Non-INR: a single VAT line at the line's rate (IGST slot), no cess/TDS.
   const isDomestic = (opts.currency ?? 'INR') === 'INR'
-  const isExport = opts.taxTreatment === 'EXPORT' || !isDomestic
+  const zeroRated = isDomestic && opts.taxTreatment === 'EXPORT'
   const isIntra = opts.taxTreatment === 'INTRA_STATE' && isDomestic
   let cgst = 0,
     sgst = 0,
@@ -74,8 +76,8 @@ export function computeTotals(opts: {
   opts.lines.forEach((l, i) => {
     const t = lineAmounts[i]! - discounts[i]!
     taxable += t
-    const g = isExport ? 0 : parseFloat(l.gst_rate || '0') || 0
-    const c = isExport ? 0 : parseFloat(l.cess_rate || '0') || 0
+    const g = zeroRated ? 0 : parseFloat(l.gst_rate || '0') || 0
+    const c = isDomestic && !zeroRated ? parseFloat(l.cess_rate || '0') || 0 : 0
     if (isIntra) {
       cgst += pct(t, g / 2)
       sgst += pct(t, g / 2)

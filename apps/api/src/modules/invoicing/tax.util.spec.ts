@@ -163,21 +163,31 @@ describe('GST/TDS engine (PRD §6.1 / §6.2)', () => {
     });
   });
 
-  describe('currency gate — GST/TDS are India-only (Sprint 11 §1)', () => {
-    it('zeroes GST and TDS for a non-INR invoice even with rates + INTRA treatment', () => {
+  describe('currency gate — INR=GST/TDS, non-INR=VAT (Sprint 11 §1 / Sprint 14)', () => {
+    it('charges a single VAT line for a non-INR invoice (no CGST/SGST split, no cess, no TDS)', () => {
       const r = computeInvoice({
-        lines: [{ quantity: '1', rate: '1000', gst_rate: '18', cess_rate: '2' }],
-        taxTreatment: 'INTRA_STATE',
+        lines: [{ quantity: '1', rate: '1000', gst_rate: '20', cess_rate: '2' }],
+        taxTreatment: 'INTRA_STATE', // ignored for non-INR — no domestic split
         tdsRate: '10',
         currency: 'USD',
       });
       expect(r.totals.cgst_amount).toBe('0.00');
       expect(r.totals.sgst_amount).toBe('0.00');
+      expect(r.totals.igst_amount).toBe('200.00'); // VAT 20% booked in the igst slot
+      expect(r.totals.cess_amount).toBe('0.00'); // cess is India-only
+      expect(r.totals.tds_amount).toBe('0.00'); // TDS is India-only
+      expect(r.totals.total_amount).toBe('1200.00');
+      expect(r.totals.net_receivable).toBe('1200.00');
+    });
+
+    it('keeps an INR EXPORT invoice zero-rated (LUT)', () => {
+      const r = computeInvoice({
+        lines: [{ quantity: '1', rate: '1000', gst_rate: '18' }],
+        taxTreatment: 'EXPORT',
+        currency: 'INR',
+      });
       expect(r.totals.igst_amount).toBe('0.00');
-      expect(r.totals.cess_amount).toBe('0.00');
-      expect(r.totals.tds_amount).toBe('0.00');
       expect(r.totals.total_amount).toBe('1000.00');
-      expect(r.totals.net_receivable).toBe('1000.00');
     });
 
     it('still charges GST + TDS for an INR invoice', () => {

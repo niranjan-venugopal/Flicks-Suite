@@ -24,7 +24,7 @@ import {
   invoField,
   invoLabel,
 } from '@/components/invoicing/invo'
-import { TDS_CODES, isGstCurrency } from '@/lib/invoicing/constants'
+import { TDS_CODES, isGstCurrency, taxLabel } from '@/lib/invoicing/constants'
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 const emptyLine = (): InvoiceLineInput => ({ item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
@@ -38,9 +38,9 @@ const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === '
 
 // Line-items grid (INR): Description | HSN/SAC | Qty | Rate | GST% | Amount | ✕
 const LINE_GRID = '1fr 110px 64px 110px 64px 110px 32px'
-// Foreign-currency invoices are international — no GST and no HSN/SAC (both are
-// India GST concepts): Description | Qty | Rate | Amount | ✕
-const LINE_GRID_INTL = '1fr 64px 110px 110px 32px'
+// Foreign-currency: no HSN/SAC (India concept), but a single VAT % column:
+// Description | Qty | Rate | VAT% | Amount | ✕
+const LINE_GRID_INTL = '1fr 64px 110px 64px 110px 32px'
 
 const sumRowLabel: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: INVO.muted50, letterSpacing: '-0.02em' }
 const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }
@@ -119,8 +119,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     return 'INTER_STATE'
   }, [invoice?.tax_treatment, customer])
 
-  // GST + TDS are India-only — non-INR invoices show/charge neither.
+  // INR → GST (+ TDS); non-INR → a single VAT line. The tax-rate column shows
+  // for both (GST %/VAT %); HSN/SAC + TDS stay INR-only.
   const isDomestic = isGstCurrency(currency)
+  const taxLbl = taxLabel(currency)
   const lineGrid = isDomestic ? LINE_GRID : LINE_GRID_INTL
 
   const totals = useMemo(
@@ -299,7 +301,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 ...(isDomestic ? [{ h: 'HSN/SAC', a: 'left' as const }] : []),
                 { h: 'Qty', a: 'right' as const },
                 { h: `Rate (${symbol(currency).trim()})`, a: 'right' as const },
-                ...(isDomestic ? [{ h: 'GST %', a: 'right' as const }] : []),
+                { h: `${taxLbl} %`, a: 'right' as const },
                 { h: 'Amount', a: 'right' as const },
                 { h: '', a: 'left' as const },
               ].map((c, i) => (
@@ -341,15 +343,13 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   onChange={(e) => setLine(i, { rate: e.target.value })}
                   onKeyDown={onLineKeyDown}
                 />
-                {isDomestic && (
-                  <input
-                    style={{ ...invoField(true), textAlign: 'right' }}
-                    inputMode="decimal"
-                    value={l.gst_rate ?? ''}
-                    onChange={(e) => setLine(i, { gst_rate: e.target.value })}
-                    onKeyDown={onLineKeyDown}
-                  />
-                )}
+                <input
+                  style={{ ...invoField(true), textAlign: 'right' }}
+                  inputMode="decimal"
+                  value={l.gst_rate ?? ''}
+                  onChange={(e) => setLine(i, { gst_rate: e.target.value })}
+                  onKeyDown={onLineKeyDown}
+                />
                 <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                   {symbol(currency)}
                   {lineAmount(l).toLocaleString('en-IN')}
@@ -503,8 +503,8 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <span style={{ ...sumRowValue, color: INVO.coral }}>− {money(totals.discount_amount)}</span>
                 </div>
               )}
-              {/* GST rows — India (INR) only. */}
-              {isDomestic && (taxTreatment === 'INTRA_STATE' ? (
+              {/* INR → GST rows; non-INR → a single VAT row. */}
+              {isDomestic ? (taxTreatment === 'INTRA_STATE' ? (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={sumRowLabel}>CGST</span>
@@ -520,7 +520,12 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <span style={sumRowLabel}>{taxTreatment === 'EXPORT' ? 'IGST (export — zero-rated)' : 'IGST'}</span>
                   <span style={sumRowValue}>{money(totals.igst_amount)}</span>
                 </div>
-              ))}
+              )) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={sumRowLabel}>VAT</span>
+                  <span style={sumRowValue}>{money(totals.igst_amount)}</span>
+                </div>
+              )}
               {isDomestic && parseFloat(totals.cess_amount) > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={sumRowLabel}>Cess</span>

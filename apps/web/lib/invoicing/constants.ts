@@ -37,6 +37,11 @@ export function isGstCurrency(code: string | null | undefined): boolean {
   return (code ?? 'INR') === 'INR'
 }
 
+/** Line/total tax label by currency: GST for INR, VAT for everything else. */
+export function taxLabel(code: string | null | undefined): 'GST' | 'VAT' {
+  return isGstCurrency(code) ? 'GST' : 'VAT'
+}
+
 /**
  * TDS payment codes (Income-Tax Act 2025, Section 393). Illustrative / seed
  * per PRD §13.3 Q8 — pending CFO sign-off. Each carries its standard rate;

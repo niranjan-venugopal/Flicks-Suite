@@ -136,26 +136,32 @@ export function computeInvoice(input: ComputeInput): ComputeResult {
   }
 
   // 3. Per-line taxes on the post-discount taxable amount.
-  // GST/TDS are India-only: non-INR invoices are international (no GST, no TDS).
+  //    INR (domestic): GST — intra → CGST+SGST, inter → IGST, EXPORT → zero-rated
+  //      (LUT); cess + TDS apply.
+  //    Non-INR (international): a single VAT/sales tax at the line's rate, booked
+  //      in the IGST slot (no intra split, no cess, no TDS). The rate field
+  //      (`gst_rate`) doubles as the generic per-currency tax rate.
   const isDomestic = (input.currency ?? 'INR') === 'INR';
-  const isExport = input.taxTreatment === 'EXPORT' || !isDomestic;
+  const zeroRated = isDomestic && input.taxTreatment === 'EXPORT';
   const isIntra = input.taxTreatment === 'INTRA_STATE' && isDomestic;
 
   const lines: ComputedLine[] = input.lines.map((l, i) => {
     const lineAmount = lineAmounts[i]!;
     const discount = discounts[i]!;
     const taxable = lineAmount - discount;
-    const gstRate = isExport ? 0 : parseFloat(l.gst_rate ?? '0') || 0;
-    const cessRate = isExport ? 0 : parseFloat(l.cess_rate ?? '0') || 0;
+    // GST rate (INR) or VAT rate (non-INR); zero-rated INR exports charge nothing.
+    const taxRate = zeroRated ? 0 : parseFloat(l.gst_rate ?? '0') || 0;
+    const cessRate = isDomestic && !zeroRated ? parseFloat(l.cess_rate ?? '0') || 0 : 0;
 
     let cgst = 0;
     let sgst = 0;
     let igst = 0;
     if (isIntra) {
-      cgst = pct(taxable, gstRate / 2);
-      sgst = pct(taxable, gstRate / 2);
+      cgst = pct(taxable, taxRate / 2);
+      sgst = pct(taxable, taxRate / 2);
     } else {
-      igst = pct(taxable, gstRate);
+      // Inter-state IGST, or the single VAT line for non-INR invoices.
+      igst = pct(taxable, taxRate);
     }
     const cess = pct(taxable, cessRate);
     const lineTotal = taxable + cgst + sgst + igst + cess;

@@ -70,7 +70,7 @@ export default function ItemsPage() {
             <th style={invoTh}>Item</th>
             <th style={invoTh}>HSN/SAC</th>
             <th style={invoTh}>Rate</th>
-            <th style={invoTh}>GST %</th>
+            <th style={invoTh}>Tax %</th>
             <th style={invoTh}>Status</th>
             <th style={invoTh}>Action</th>
           </>
