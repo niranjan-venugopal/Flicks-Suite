@@ -20,10 +20,21 @@ const browser = {
   close: jest.fn(async () => undefined),
 };
 const launch = jest.fn(async () => browser);
-jest.mock('puppeteer', () => ({ __esModule: true, default: { launch }, launch }));
 
 import { ConfigService } from '@nestjs/config';
 import { InvoicePdfService } from '../modules/invoicing/invoice-pdf.service';
+
+// puppeteer is ESM-only and loaded via a native dynamic import that jest.mock()
+// can't intercept, so we stub the service's loadPuppeteer() seam instead — no
+// real Chromium, host-independent.
+jest
+  .spyOn(
+    InvoicePdfService.prototype as unknown as {
+      loadPuppeteer: () => Promise<unknown>;
+    },
+    'loadPuppeteer',
+  )
+  .mockResolvedValue({ default: { launch }, launch } as unknown as typeof import('puppeteer'));
 
 const config = {
   get: (_k: string, _fallback?: unknown) => 'https://pay.example.com',

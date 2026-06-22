@@ -1,6 +1,17 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import puppeteer, { type Browser } from 'puppeteer';
+import type { Browser } from 'puppeteer';
+
+// puppeteer v23+ ships ESM-only. This API compiles to CommonJS (ts-node in dev,
+// Nest's CJS build in prod), where a static `import puppeteer from 'puppeteer'`
+// — or even a dynamic import(), which TypeScript down-levels to require() under
+// `module: commonjs` — throws ERR_REQUIRE_ESM. The Function wrapper hides the
+// import from the compiler so it stays a *native* dynamic import that Node
+// resolves as ESM at runtime. Types are imported type-only above (erased).
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const importPuppeteer = new Function(
+  'return import("puppeteer")',
+) as () => Promise<typeof import('puppeteer')>;
 
 /**
  * Sprint 13 §B — invoice PDF generation.
@@ -23,12 +34,24 @@ export class InvoicePdfService implements OnModuleDestroy {
     return ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'];
   }
 
+  /**
+   * Load the (ESM-only) puppeteer module. Isolated behind a method so unit
+   * tests can stub Chromium without a real browser — `jest.mock('puppeteer')`
+   * can't intercept the native dynamic import above, so tests spy on this seam
+   * instead.
+   */
+  protected loadPuppeteer(): Promise<typeof import('puppeteer')> {
+    return importPuppeteer();
+  }
+
   private async browser(): Promise<Browser> {
     if (!this.browserPromise) {
-      this.browserPromise = puppeteer.launch({
-        headless: true,
-        args: this.launchArgs(),
-      });
+      this.browserPromise = this.loadPuppeteer().then(({ default: puppeteer }) =>
+        puppeteer.launch({
+          headless: true,
+          args: this.launchArgs(),
+        }),
+      );
     }
     const b = await this.browserPromise;
     if (!b.connected) {
