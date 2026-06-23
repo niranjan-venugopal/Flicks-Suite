@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Param, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Param, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiProduces } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { PublicInvoiceService } from './public-invoice.service';
 import { InvoicePdfService } from './invoice-pdf.service';
+import { CreateRazorpayOrderDto } from './dto/invoicing.dto';
 
 /**
  * Public hosted-invoice endpoints (PRD §9.3) — no auth; the signed token
@@ -55,5 +56,16 @@ export class PublicInvoiceController {
   @ApiOperation({ summary: 'View-tracking pixel (SENT → VIEWED)' })
   track(@Param('token') token: string) {
     return this.publicInvoices.trackView(token);
+  }
+
+  @Post(':token/pay/razorpay')
+  @Public()
+  @Throttle({ medium: { ttl: 10000, limit: 20 } })
+  @ApiOperation({ summary: 'Create a Razorpay order for "Pay with Razorpay"' })
+  payRazorpay(
+    @Param('token') token: string,
+    @Body() dto: CreateRazorpayOrderDto,
+  ) {
+    return this.publicInvoices.createRazorpayOrder(token, dto.amount);
   }
 }

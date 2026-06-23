@@ -13,7 +13,10 @@ import helmet from 'helmet';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true preserves the unparsed request buffer on req.rawBody (while
+  // still JSON-parsing for normal routes) so the Razorpay webhook can verify the
+  // HMAC over the exact bytes Razorpay signed — re-serialized JSON would not match.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 4000);

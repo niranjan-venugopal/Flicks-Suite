@@ -724,6 +724,7 @@ export class InvoicesService {
           payment_method: dto.payment_method,
           reference_number: dto.reference_number,
           razorpay_payment_id: dto.razorpay_payment_id,
+          razorpay_order_id: dto.razorpay_order_id,
           notes: dto.notes,
           source,
           created_by: userId,

@@ -108,9 +108,21 @@ export const invoicingSettings = pgTable(
     additional_cc_emails: text('additional_cc_emails').array(),
     upi_id: text('upi_id'),
     upi_display_name: text('upi_display_name'),
-    razorpay_account_id: text('razorpay_account_id'),
+    razorpay_account_id: text('razorpay_account_id'), // acc_… of the connected sub-merchant (OAuth)
     razorpay_key_id: text('razorpay_key_id'),
     razorpay_webhook_secret: text('razorpay_webhook_secret'), // encrypted at app layer
+    // Razorpay OAuth (Sprint 15). Tokens are AES-256-GCM-encrypted at the app
+    // layer (InvoicingCryptoService); never returned by the settings API.
+    razorpay_access_token: text('razorpay_access_token'), // encrypted; Bearer for sub-merchant API calls (90-day)
+    razorpay_refresh_token: text('razorpay_refresh_token'), // encrypted; renews the access token (180-day)
+    razorpay_public_token: text('razorpay_public_token'), // client-side Checkout key
+    razorpay_token_expires_at: timestamp('razorpay_token_expires_at', {
+      withTimezone: true,
+    }),
+    razorpay_connected_at: timestamp('razorpay_connected_at', {
+      withTimezone: true,
+    }),
+    razorpay_oauth_state: text('razorpay_oauth_state'), // transient CSRF/tenant binding for the OAuth callback
     allow_partial_payments: boolean('allow_partial_payments').default(true),
     fx_rate_source: text('fx_rate_source').default('openexchangerates'),
     fx_rate_last_refresh: timestamp('fx_rate_last_refresh', {
@@ -1121,6 +1133,34 @@ export const razorpayWebhookEvents = pgTable(
       .defaultNow(),
   },
   (t) => [index('razorpay_webhook_events_type_idx').on(t.event_type)],
+);
+
+// ─── razorpay_orders (Sprint 15) ────────────────────────────────────────────────
+// Maps a Razorpay order (created when a customer clicks "Pay with Razorpay" on
+// the hosted page) back to its invoice + tenant. The webhook matches by
+// entity.order_id — order notes are NOT echoed onto the payment entity, so this
+// mapping (not notes) is the reliable link, and it also supports repeated
+// partial-payment orders against one invoice.
+
+export const razorpayOrders = pgTable(
+  'razorpay_orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    invoice_id: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    order_id: text('order_id').notNull().unique(), // Razorpay order_… id
+    amount_paise: integer('amount_paise').notNull(),
+    currency: text('currency').notNull().default('INR'),
+    status: text('status').notNull().default('created'), // created | paid | failed
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('razorpay_orders_tenant_invoice_idx').on(t.tenant_id, t.invoice_id)],
 );
 
 // ─── gstr1_exports ──────────────────────────────────────────────────────────────

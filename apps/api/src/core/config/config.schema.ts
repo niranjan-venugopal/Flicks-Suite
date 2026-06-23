@@ -68,6 +68,18 @@ export const configValidationSchema = Joi.object({
   RAZORPAY_KEY_ID: Joi.string().allow('').optional(),
   RAZORPAY_KEY_SECRET: Joi.string().allow('').optional(),
   RAZORPAY_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+  // Razorpay OAuth Connect (Sprint 15). Partner app credentials — sellers
+  // connect their own Razorpay account; orders are created on the sub-merchant
+  // with a Bearer access token. Optional → connect/order endpoints return a
+  // clear 400 until the partner app is provisioned. The redirect URI must match
+  // the one registered in the Razorpay partner dashboard.
+  RAZORPAY_OAUTH_CLIENT_ID: Joi.string().allow('').optional(),
+  RAZORPAY_OAUTH_CLIENT_SECRET: Joi.string().allow('').optional(),
+  RAZORPAY_OAUTH_REDIRECT_URI: Joi.string().uri().optional(),
+  // App-level key (AES-256-GCM) for encrypting per-tenant Razorpay OAuth tokens
+  // at rest. Optional in dev — InvoicingCryptoService passes through plaintext
+  // when unset (mirrors TOTP_SECRET), so local/CI run without it.
+  INVOICING_SECRET_ENC_KEY: Joi.string().allow('').optional(),
   // FX rates (openexchangerates.org) for multi-currency snapshots.
   FX_RATE_SOURCE: Joi.string().default('openexchangerates'),
   OPENEXCHANGERATES_APP_ID: Joi.string().allow('').optional(),

@@ -76,6 +76,23 @@ export class InvSettingsController {
     return this.settings.completeWizard(user.tenantId, user.sub);
   }
 
+  // ─── Razorpay OAuth Connect (PRD §6.6/§9.3) ─────────────────────────────────
+
+  @Get('razorpay/connect')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({ summary: 'Start Razorpay OAuth — returns the authorize URL' })
+  razorpayConnect(@CurrentUser() user: JwtPayload) {
+    return this.settings.razorpayConnectUrl(user.tenantId, user.sub);
+  }
+
+  @Post('razorpay/disconnect')
+  @Roles('owner')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Disconnect Razorpay (Owner only) — revokes tokens' })
+  razorpayDisconnect(@CurrentUser() user: JwtPayload) {
+    return this.settings.razorpayDisconnect(user.tenantId, user.sub);
+  }
+
   // ─── FAM debug consent (PRD §10.5) — owner-only ─────────────────────────────
 
   @Get('fam-consent')

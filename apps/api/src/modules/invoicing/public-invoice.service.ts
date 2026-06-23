@@ -3,6 +3,7 @@ import {
   Inject,
   NotFoundException,
   GoneException,
+  BadRequestException,
 } from '@nestjs/common';
 import { and, eq, asc, isNull } from 'drizzle-orm';
 import {
@@ -12,9 +13,12 @@ import {
   tenants,
   invoicingSettings,
   tenantBankAccounts,
+  razorpayOrders,
 } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
+import { RazorpayService } from './razorpay.service';
+import { InvSettingsService } from './inv-settings.service';
 
 /**
  * Hosted public invoice page backend (PRD §9.3).
@@ -26,7 +30,11 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
  */
 @Injectable()
 export class PublicInvoiceService {
-  constructor(@Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin) {}
+  constructor(
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+    private readonly razorpay: RazorpayService,
+    private readonly invSettings: InvSettingsService,
+  ) {}
 
   private async fetchByToken(token: string) {
     const [inv] = await this.dbAdmin
@@ -102,7 +110,7 @@ export class PublicInvoiceService {
         .select({
           upi_id: invoicingSettings.upi_id,
           upi_display_name: invoicingSettings.upi_display_name,
-          razorpay_key_id: invoicingSettings.razorpay_key_id,
+          razorpay_access_token: invoicingSettings.razorpay_access_token,
           allow_partial_payments: invoicingSettings.allow_partial_payments,
           show_powered_by_footer: invoicingSettings.show_powered_by_footer,
         })
@@ -175,9 +183,10 @@ export class PublicInvoiceService {
         inv.currency === 'INR' && settings?.upi_id
           ? { upi_id: settings.upi_id, display_name: settings.upi_display_name }
           : null,
-      // Razorpay button is shown when the tenant connected an account (stub
-      // until live keys; the public page renders it disabled otherwise).
-      razorpay: settings?.razorpay_key_id ? { key_id: settings.razorpay_key_id } : null,
+      // Razorpay button is enabled once the tenant has connected an account via
+      // OAuth. The real order_id + checkout key come from the on-demand
+      // POST /public/inv/:token/pay/razorpay endpoint (no secrets leak here).
+      razorpay: settings?.razorpay_access_token ? { enabled: true } : null,
       bank_transfer: bankTransfer,
       allow_partial: settings?.allow_partial_payments ?? true,
     };
@@ -208,5 +217,67 @@ export class PublicInvoiceService {
       })
       .where(eq(invoices.id, inv.id));
     return { data: { ok: true } };
+  }
+
+  /**
+   * Create a Razorpay order for the hosted "Pay with Razorpay" button (PRD §9.3).
+   * Runs on the service-role connection (no tenant JWT); resolves the seller's
+   * OAuth access token, creates the order on their sub-merchant account, and
+   * records the order→invoice mapping the webhook will match on capture.
+   */
+  async createRazorpayOrder(token: string, requestedAmount?: string) {
+    const inv = await this.fetchByToken(token);
+    if (
+      !['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID', 'DISPUTED'].includes(
+        inv.status,
+      )
+    ) {
+      throw new BadRequestException(`This invoice is not payable (${inv.status})`);
+    }
+
+    const creds = await this.invSettings.resolveRazorpayForOrder(inv.tenant_id);
+    if (!creds) {
+      throw new BadRequestException(
+        'The seller has not connected Razorpay for online payments.',
+      );
+    }
+
+    const outstanding = Math.round(
+      parseFloat(inv.amount_outstanding ?? inv.total_amount) * 100,
+    );
+    let amountPaise = outstanding;
+    if (requestedAmount !== undefined) {
+      const req = Math.round(parseFloat(requestedAmount) * 100);
+      if (req > 0 && req <= outstanding) amountPaise = req;
+    }
+    if (amountPaise <= 0) {
+      throw new BadRequestException('This invoice has nothing outstanding.');
+    }
+
+    const order = await this.razorpay.createOrder({
+      accessToken: creds.accessToken,
+      amountPaise,
+      currency: inv.currency,
+      receipt: inv.invoice_number,
+      notes: { invoice_id: inv.id, tenant_id: inv.tenant_id },
+    });
+
+    await this.dbAdmin.insert(razorpayOrders).values({
+      tenant_id: inv.tenant_id,
+      invoice_id: inv.id,
+      order_id: order.id,
+      amount_paise: amountPaise,
+      currency: inv.currency,
+      status: 'created',
+    });
+
+    return {
+      data: {
+        order_id: order.id,
+        key: creds.publicToken,
+        amount: amountPaise,
+        currency: inv.currency,
+      },
+    };
   }
 }

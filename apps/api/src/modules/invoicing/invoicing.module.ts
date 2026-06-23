@@ -28,6 +28,9 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SubscriptionsController } from './subscriptions.controller';
 import { InvSettingsService } from './inv-settings.service';
 import { InvSettingsController } from './inv-settings.controller';
+import { RazorpayOAuthController } from './razorpay-oauth.controller';
+import { RazorpayService } from './razorpay.service';
+import { InvoicingCryptoService } from './invoicing-crypto.service';
 import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guard';
 
 /**
@@ -51,6 +54,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     InvReportsController,
     SubscriptionsController,
     InvSettingsController,
+    RazorpayOAuthController,
   ],
   providers: [
     CustomersService,
@@ -64,6 +68,8 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     InvReportsService,
     SubscriptionsService,
     InvSettingsService,
+    RazorpayService,
+    InvoicingCryptoService,
     InvoicingGrantGuard,
   ],
   exports: [

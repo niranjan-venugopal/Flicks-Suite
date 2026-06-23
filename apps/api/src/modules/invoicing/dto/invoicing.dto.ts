@@ -261,7 +261,13 @@ export class RecordPaymentDto {
   payment_method!: string;
   @IsOptional() @IsString() reference_number?: string;
   @IsOptional() @IsString() razorpay_payment_id?: string;
+  @IsOptional() @IsString() razorpay_order_id?: string;
   @IsOptional() @IsString() @MaxLength(500) notes?: string;
+}
+
+export class CreateRazorpayOrderDto {
+  // Optional partial amount; defaults to the full outstanding when omitted.
+  @IsOptional() @IsNumberString() amount?: string;
 }
 
 export class CancelInvoiceDto {

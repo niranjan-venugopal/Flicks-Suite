@@ -396,14 +396,32 @@ describe('Invoicing services (Sprint 3 — invoices)', () => {
 // ─── Sprint 4: send, public page, payments, webhook ──────────────────────────
 import { PublicInvoiceService } from '../modules/invoicing/public-invoice.service';
 import { RazorpayWebhookController } from '../modules/invoicing/razorpay-webhook.controller';
+import { RazorpayService } from '../modules/invoicing/razorpay.service';
+import { InvoicingCryptoService } from '../modules/invoicing/invoicing-crypto.service';
+import { InvSettingsService } from '../modules/invoicing/inv-settings.service';
 import {
   customerCreditBalance as cbTable,
   razorpayWebhookEvents as rweTable,
 } from '@flicks/db/schema';
 
+// Razorpay deps: unconfigured by default (configStub has no OAuth keys), so the
+// service degrades safely; InvoicingCryptoService passes plaintext through.
+const razorpaySvc = new RazorpayService(configStub as never);
+const invCrypto = new InvoicingCryptoService(configStub as never);
+const invSettingsSvc4 = new InvSettingsService(
+  dbSvc,
+  dbAdmin as never,
+  audit,
+  razorpaySvc,
+  invCrypto,
+);
+// A fake raw-body request for webhook tests (HMAC verifies over req.rawBody).
+const rawReq = (raw?: string) =>
+  ({ rawBody: raw ? Buffer.from(raw) : undefined }) as never;
+
 describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
-  const publicSvc = new PublicInvoiceService(dbAdmin as any);
+  const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -569,10 +587,10 @@ describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
         },
       },
     };
-    const r1 = await webhook.razorpay(evt as any, undefined, undefined);
+    const r1 = await webhook.razorpay(rawReq(JSON.stringify(evt)), evt as any, undefined, undefined, undefined);
     expect(r1.data.received).toBe(true);
     expect(r1.data.verified).toBe(false); // no secret configured → not applied
-    const r2 = await webhook.razorpay(evt as any, undefined, undefined);
+    const r2 = await webhook.razorpay(rawReq(JSON.stringify(evt)), evt as any, undefined, undefined, undefined);
     expect((r2.data as any).duplicate).toBe(true);
 
     // Stored exactly once; invoice untouched (unverified).
@@ -589,7 +607,7 @@ import { PublicInvoiceService as PubSvc5 } from '../modules/invoicing/public-inv
 
 describe('Org financial + bank accounts (Sprint 5)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
-  const publicSvc = new PubSvc5(dbAdmin as any);
+  const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1525,11 +1543,11 @@ describe('Members & auditor role (Sprint 8)', () => {
 });
 
 // ─── Sprint 9: FAM toggles + guard, settings/setup, registry, seats, metrics ──
-import { InvSettingsService } from '../modules/invoicing/inv-settings.service';
+// (InvSettingsService imported in the Sprint 4 section above.)
 import { FamService } from '../modules/fam/fam.service';
 
 describe('Invoicing settings + setup wizard (Sprint 9)', () => {
-  const settings = new InvSettingsService(dbSvc, dbAdmin as never, audit);
+  const settings = new InvSettingsService(dbSvc, dbAdmin as never, audit, razorpaySvc, invCrypto);
   let tenantId: string;
   let userId: string;
 
@@ -1826,7 +1844,7 @@ describe('FAM consented-debug (Sprint 10 §E)', () => {
     log: async () => {},
     logPlatform: async () => {},
   } as never;
-  const settings = new InvSettingsService(dbSvc, dbAdmin as never, auditWithPlatform);
+  const settings = new InvSettingsService(dbSvc, dbAdmin as never, auditWithPlatform, razorpaySvc, invCrypto);
   const fam = new FamService(
     dbAdmin as never,
     auditWithPlatform,
@@ -1942,6 +1960,144 @@ describe('Reports — per-currency totals + India gate (Sprint 11 §3)', () => {
     expect(ctx.data.baseCurrency).toBe('USD');
     const ag = await reports.aging(tenantId);
     expect(ag.data.currency).toBe('USD');
+  });
+});
+
+// ─── Sprint 15: Razorpay live payments (OAuth Connect) ───────────────────────
+import { razorpayOrders as roTable, invoicingSettings as isTable } from '@flicks/db/schema';
+import * as nodeCrypto from 'crypto';
+
+describe('Razorpay live payments (Sprint 15)', () => {
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const WEBHOOK_SECRET = 'whsec_test_sprint15';
+  const configWithSecret = {
+    get: (key: string, fallback?: unknown) =>
+      key === 'RAZORPAY_WEBHOOK_SECRET' ? WEBHOOK_SECRET
+      : key === 'PUBLIC_INVOICE_BASE_URL' ? 'http://localhost:3000'
+      : fallback,
+  } as unknown as import('@nestjs/config').ConfigService;
+
+  let tenantId: string;
+  let userId: string;
+  let customerId: string;
+
+  const sign = (raw: string) =>
+    nodeCrypto.createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('hex');
+
+  const mkSentInvoice = async () => {
+    const created = await invoicesSvc.create(
+      {
+        customer_id: customerId,
+        currency: 'INR',
+        invoice_date: '2026-06-12',
+        due_date: '2026-07-12',
+        line_items: [{ item_name: 'Service', quantity: '1', rate: '1000.00', gst_rate: '18' }],
+      } as any,
+      userId,
+      tenantId,
+    );
+    await invoicesSvc.send(created.data.id, userId, tenantId);
+    return created.data;
+  };
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenants)
+      .values({ name: `RzpCo${rid()}`, slug: `rzp-${rid()}-${Date.now()}`, status: 'trialing', state_code: 'KA' })
+      .returning();
+    tenantId = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `rzp-${rid()}@test.test`, full_name: 'Rzp User', status: 'active' })
+      .returning();
+    userId = u!.id;
+    const cust = await customers.create(
+      { display_name: 'Pay Co', email: 'payco@test.test', state_code: 'MH' },
+      userId,
+      tenantId,
+    );
+    customerId = cust.data.id;
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(tenants).where(eq(tenants.id, tenantId));
+    await dbAdmin.delete(users).where(eq(users.id, userId));
+  });
+
+  it('InvoicingCryptoService: round-trips with a key, passes through without', () => {
+    const keyed = new InvoicingCryptoService({
+      get: (k: string) => (k === 'INVOICING_SECRET_ENC_KEY' ? 'unit-test-enc-key' : undefined),
+    } as never);
+    const ct = keyed.encrypt('acc_secret_token');
+    expect(ct).not.toBe('acc_secret_token');
+    expect(ct.split(':')).toHaveLength(3); // iv:tag:ciphertext
+    expect(keyed.decrypt(ct)).toBe('acc_secret_token');
+    // Unkeyed → passthrough, and tolerates ciphertext-or-plaintext on read.
+    const bare = new InvoicingCryptoService({ get: () => undefined } as never);
+    expect(bare.encrypt('x')).toBe('x');
+    expect(bare.decrypt('x')).toBe('x');
+  });
+
+  it('webhook: verified raw-body HMAC records the payment via order mapping', async () => {
+    const inv = await mkSentInvoice();
+    // Seller is connected (account id) and an order maps to this invoice.
+    const accountId = `acc_${rid()}`;
+    await dbAdmin
+      .update(isTable)
+      .set({ razorpay_account_id: accountId })
+      .where(eq(isTable.tenant_id, tenantId));
+    const orderId = `order_${rid()}`;
+    await dbAdmin.insert(roTable).values({
+      tenant_id: tenantId,
+      invoice_id: inv.id,
+      order_id: orderId,
+      amount_paise: 118000,
+      currency: 'INR',
+      status: 'created',
+    });
+
+    const webhook = new RazorpayWebhookController(dbAdmin as any, configWithSecret as any, invoicesSvc);
+    const evt = {
+      id: `evt_${rid()}`,
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: `pay_${rid()}`, amount: 118000, method: 'card', order_id: orderId } } },
+    };
+    const raw = JSON.stringify(evt);
+    const res = await webhook.razorpay(rawReq(raw), evt as any, sign(raw), evt.id, accountId);
+    expect(res.data.verified).toBe(true);
+
+    const after = await invoicesSvc.get(tenantId, inv.id);
+    expect(after.data.status).toBe('PAID');
+    expect(after.data.amount_paid).toBe('1180.00');
+    const [ord] = await dbAdmin.select().from(roTable).where(eq(roTable.order_id, orderId));
+    expect(ord!.status).toBe('paid');
+  });
+
+  it('webhook: a tampered body fails verification and applies nothing', async () => {
+    const inv = await mkSentInvoice();
+    const orderId = `order_${rid()}`;
+    await dbAdmin.insert(roTable).values({
+      tenant_id: tenantId,
+      invoice_id: inv.id,
+      order_id: orderId,
+      amount_paise: 118000,
+      currency: 'INR',
+      status: 'created',
+    });
+    const webhook = new RazorpayWebhookController(dbAdmin as any, configWithSecret as any, invoicesSvc);
+    const evt = {
+      id: `evt_${rid()}`,
+      event: 'payment.captured',
+      payload: { payment: { entity: { id: `pay_${rid()}`, amount: 118000, method: 'upi', order_id: orderId } } },
+    };
+    const raw = JSON.stringify(evt);
+    // Sign a DIFFERENT body → signature mismatch.
+    const badSig = sign(raw + 'tampered');
+    const res = await webhook.razorpay(rawReq(raw), evt as any, badSig, evt.id, undefined);
+    expect(res.data.verified).toBe(false);
+    const after = await invoicesSvc.get(tenantId, inv.id);
+    expect(after.data.status).toBe('SENT');
+    expect(after.data.amount_paid).toBe('0.00');
   });
 });
 

@@ -630,6 +630,14 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     await idbAdmin.delete(schema.tenantBankAccounts).where(eq(schema.tenantBankAccounts.id, bank!.id));
   });
 
+  it('isolation: razorpay_orders is tenant-scoped', async () => {
+    const [inv] = await idbAdmin.insert(schema.invoices).values({ tenant_id: tenantA.id, customer_id: customerA.id, invoice_number: `INV-${rid()}`, invoice_date: '2026-06-01', due_date: '2026-07-01', fy_label: '26-27', currency: 'INR' }).returning();
+    const [ord] = await idbAdmin.insert(schema.razorpayOrders).values({ tenant_id: tenantA.id, invoice_id: inv!.id, order_id: `order_${rid()}`, amount_paise: 1000, currency: 'INR' }).returning();
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.razorpayOrders).where(eq(schema.razorpayOrders.id, ord!.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.razorpayOrders).where(eq(schema.razorpayOrders.id, ord!.id)))).length).toBe(0);
+    await idbAdmin.delete(schema.invoices).where(eq(schema.invoices.id, inv!.id));
+  });
+
   it('isolation: razorpay_webhook_events denies the tenant connection', async () => {
     const [evt] = await idbAdmin.insert(schema.razorpayWebhookEvents).values({ event_id: `evt-${rid()}`, event_type: 'payment.captured' }).returning();
     expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.razorpayWebhookEvents).where(eq(schema.razorpayWebhookEvents.id, evt!.id)))).length).toBe(0);
