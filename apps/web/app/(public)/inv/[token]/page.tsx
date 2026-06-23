@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { InvoiceRenderer } from '@/components/invoicing/InvoiceRenderer'
 import {
   INVO,
@@ -15,9 +16,31 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   usePublicInvoice,
   useDownloadPublicInvoicePdf,
+  useCreateRazorpayOrder,
   trackPublicView,
   type PublicInvoicePayload,
 } from '@/lib/api/queries/use-invoicing'
+
+const RAZORPAY_CHECKOUT_SRC = 'https://checkout.razorpay.com/v1/checkout.js'
+
+/** Loads the Razorpay Checkout script once; resolves when window.Razorpay exists. */
+function loadRazorpayCheckout(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return resolve(false)
+    if ((window as unknown as { Razorpay?: unknown }).Razorpay) return resolve(true)
+    const existing = document.querySelector(`script[src="${RAZORPAY_CHECKOUT_SRC}"]`)
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true))
+      existing.addEventListener('error', () => resolve(false))
+      return
+    }
+    const s = document.createElement('script')
+    s.src = RAZORPAY_CHECKOUT_SRC
+    s.onload = () => resolve(true)
+    s.onerror = () => resolve(false)
+    document.body.appendChild(s)
+  })
+}
 
 /**
  * Hosted public invoice page (PRD §9.3) — the customer's view. A slim top bar
@@ -26,9 +49,56 @@ import {
  * the page fires the view-tracking ping (SENT → VIEWED).
  */
 
-function PaymentBlock({ payload, theme }: { payload: PublicInvoicePayload; theme: InvoiceThemeName }) {
+function PaymentBlock({
+  payload,
+  theme,
+  token,
+}: {
+  payload: PublicInvoicePayload
+  theme: InvoiceThemeName
+  token: string
+}) {
   const { invoice, payment_options: opts } = payload
   const t = invoiceTheme(theme)
+  const { toast } = useToast()
+  const qc = useQueryClient()
+  const createOrder = useCreateRazorpayOrder()
+
+  const payWithRazorpay = async () => {
+    try {
+      const { data: order } = await createOrder.mutateAsync({ token })
+      const ready = await loadRazorpayCheckout()
+      const Razorpay = (window as unknown as { Razorpay?: new (o: unknown) => { open: () => void; on: (e: string, cb: () => void) => void } }).Razorpay
+      if (!ready || !Razorpay || !order.key) {
+        toast({ title: 'Could not open Razorpay checkout', variant: 'destructive' })
+        return
+      }
+      const rzp = new Razorpay({
+        key: order.key,
+        order_id: order.order_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: payload.seller?.name ?? 'Payment',
+        description: `Invoice ${invoice.invoice_number}`,
+        theme: { color: INVO.blue },
+        handler: () => {
+          toast({ title: 'Payment received', description: 'Confirming with the seller…' })
+          // The webhook is the source of truth; refresh shortly after.
+          setTimeout(() => qc.invalidateQueries({ queryKey: ['public-invoice', token] }), 3000)
+        },
+      })
+      rzp.on('payment.failed', () =>
+        toast({ title: 'Payment failed', description: 'Please try again.', variant: 'destructive' }),
+      )
+      rzp.open()
+    } catch (err) {
+      toast({
+        title: 'Could not start the payment',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
   const panelBg = theme === 'light' ? '#f9fafb' : 'rgba(255,255,255,0.04)'
   const panelBorder = theme === 'light' ? '1px solid #eef0f4' : '1px solid rgba(255,255,255,0.08)'
   const card: React.CSSProperties = {
@@ -104,10 +174,11 @@ function PaymentBlock({ payload, theme }: { payload: PublicInvoicePayload; theme
             kind="primary"
             full
             height={44}
-            disabled={!opts.razorpay}
+            disabled={!opts.razorpay || createOrder.isPending}
             title={opts.razorpay ? undefined : 'The seller has not connected Razorpay'}
+            onClick={opts.razorpay ? payWithRazorpay : undefined}
           >
-            Pay with Razorpay
+            {createOrder.isPending ? 'Opening…' : 'Pay with Razorpay'}
           </InvoBtn>
         </div>
 
@@ -243,7 +314,7 @@ export default function PublicInvoicePage() {
         {data?.data && (
           <>
             <InvoiceRenderer payload={data.data} theme={theme} />
-            <PaymentBlock payload={data.data} theme={theme} />
+            <PaymentBlock payload={data.data} theme={theme} token={token!} />
             {data.data.show_powered_by && (
               <div style={{ textAlign: 'center', marginTop: 32, fontWeight: 600, fontSize: 12, color: t.muted30 }}>
                 Powered by Flicks Suite

@@ -8,6 +8,8 @@ import { useOrgFinancial } from '@/lib/api/queries/use-invoicing'
 import {
   useInvSettings,
   useUpdateInvSettings,
+  useRazorpayConnectUrl,
+  useDisconnectRazorpay,
   type InvSettings,
   type InvSettingsPatch,
 } from '@/lib/api/queries/use-inv-settings'
@@ -61,6 +63,52 @@ export default function InvoicingSettingsPage() {
 
   const settings = settingsRes?.data
   const [draft, setDraft] = useState<InvSettingsPatch>({})
+  const connectRzp = useRazorpayConnectUrl()
+  const disconnectRzp = useDisconnectRazorpay()
+
+  // Surface the OAuth round-trip result (callback redirects back here with
+  // ?tab=Payments&razorpay=connected|error) and land the user on the Payments tab.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const status = params.get('razorpay')
+    if (params.get('tab') === 'Payments') setTab('Payments')
+    if (status === 'connected') toast({ title: 'Razorpay connected' })
+    else if (status === 'error')
+      toast({ title: 'Razorpay connection failed', variant: 'destructive' })
+    if (status) {
+      params.delete('razorpay')
+      const qs = params.toString()
+      window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const startRazorpayConnect = async () => {
+    try {
+      const res = await connectRzp.mutateAsync()
+      window.location.href = res.data.url
+    } catch (err) {
+      toast({
+        title: 'Could not start Razorpay connect',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const disconnectRazorpay = async () => {
+    if (!window.confirm('Disconnect Razorpay? Customers will no longer be able to pay online.')) return
+    try {
+      await disconnectRzp.mutateAsync()
+      toast({ title: 'Razorpay disconnected' })
+    } catch (err) {
+      toast({
+        title: 'Could not disconnect Razorpay',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
 
   // Seed the draft once settings land, and whenever they change underneath us.
   useEffect(() => {
@@ -273,10 +321,18 @@ export default function InvoicingSettingsPage() {
           </div>
           <ToggleRow label="Razorpay" sub="Cards · UPI · Netbanking · international">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Pill tone={settings?.razorpay_webhook_configured ? 'green' : ''} dot={settings?.razorpay_webhook_configured}>
-                {settings?.razorpay_webhook_configured ? 'Connected' : 'Not connected'}
+              <Pill tone={settings?.razorpay_connected ? 'green' : ''} dot={settings?.razorpay_connected}>
+                {settings?.razorpay_connected ? 'Connected' : 'Not connected'}
               </Pill>
-              <Btn kind="secondary" size="sm" disabled title="Connect flow arrives with live keys">Connect</Btn>
+              {settings?.razorpay_connected ? (
+                <Btn kind="secondary" size="sm" onClick={disconnectRazorpay} disabled={disconnectRzp.isPending}>
+                  Disconnect
+                </Btn>
+              ) : (
+                <Btn kind="primary" size="sm" onClick={startRazorpayConnect} disabled={connectRzp.isPending}>
+                  {connectRzp.isPending ? 'Redirecting…' : 'Connect with Razorpay'}
+                </Btn>
+              )}
             </div>
           </ToggleRow>
           <ToggleRow label="Partial payments" sub="Allow customers to pay in parts">

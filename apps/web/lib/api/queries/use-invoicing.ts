@@ -485,7 +485,7 @@ export interface PublicInvoicePayload {
   } | null
   payment_options: {
     upi: { upi_id: string; display_name: string | null } | null
-    razorpay: { key_id: string } | null
+    razorpay: { enabled: true } | null
     bank_transfer: {
       beneficiary_name: string
       account_number: string
@@ -513,6 +513,24 @@ export function usePublicInvoice(token: string | undefined) {
 export function trackPublicView(token: string) {
   // Fire-and-forget view pixel; failures must never break the page.
   api.post(`/api/v1/public/inv/${token}/track`).catch(() => {})
+}
+
+export interface RazorpayOrderResponse {
+  order_id: string
+  key: string | null // Razorpay Checkout key (public token)
+  amount: number // paise
+  currency: string
+}
+
+/** Creates a Razorpay order for the hosted "Pay with Razorpay" button (§9.3). */
+export function useCreateRazorpayOrder() {
+  return useMutation({
+    mutationFn: ({ token, amount }: { token: string; amount?: string }) =>
+      api.post<{ data: RazorpayOrderResponse }>(
+        `/api/v1/public/inv/${token}/pay/razorpay`,
+        amount ? { amount } : {},
+      ),
+  })
 }
 
 // ─── Organization → Financial + bank accounts (Sprint 5) ───────────────────

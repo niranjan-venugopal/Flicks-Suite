@@ -39,10 +39,12 @@ export interface InvSettings {
   default_tds_rate: string | null
   auto_suggest_tds: boolean
   razorpay_webhook_configured: boolean
+  razorpay_connected: boolean
+  razorpay_connected_at: string | null
 }
 
 export type InvSettingsPatch = Partial<
-  Omit<InvSettings, 'id' | 'razorpay_webhook_configured'>
+  Omit<InvSettings, 'id' | 'razorpay_webhook_configured' | 'razorpay_connected' | 'razorpay_connected_at'>
 >
 
 export function useInvSettings() {
@@ -58,6 +60,29 @@ export function useUpdateInvSettings() {
   return useMutation({
     mutationFn: (patch: InvSettingsPatch) =>
       api.patch<{ data: InvSettings }>('/api/v1/invoicing/settings', patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'settings'] }),
+  })
+}
+
+// ─── Razorpay OAuth Connect (PRD §6.6/§9.3) ────────────────────────────────────
+
+/** Starts OAuth: returns the Razorpay authorize URL to redirect the seller to. */
+export function useRazorpayConnectUrl() {
+  return useMutation({
+    mutationFn: () =>
+      api.get<{ data: { url: string } }>('/api/v1/invoicing/razorpay/connect'),
+  })
+}
+
+/** Disconnects Razorpay (Owner only) and refreshes settings. */
+export function useDisconnectRazorpay() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: { razorpay_connected: boolean } }>(
+        '/api/v1/invoicing/razorpay/disconnect',
+        {},
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'settings'] }),
   })
 }
