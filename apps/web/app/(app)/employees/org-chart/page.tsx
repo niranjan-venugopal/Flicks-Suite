@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { useOrgChart, type OrgNode } from '@/lib/api/queries/use-employees'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 
 function nodeName(n: OrgNode): string {
   return (n.fullName ?? '').trim() || n.email || n.employeeCode || 'Employee'
@@ -62,7 +64,7 @@ function NodeCard({
           Pending
         </Pill>
       )}
-      <Avatar name={nodeName(node)} size={big ? 'lg' : 'sm'} src={node.avatarUrl ?? undefined} />
+      <RowPresenceAvatar name={nodeName(node)} size={big ? 38 : 28} src={node.avatarUrl ?? undefined} userId={node.userId} ring={big ? '#0b1428' : 'var(--surf-2)'} />
       <div style={{ minWidth: 0, maxWidth: big ? 200 : 150 }}>
         <div style={{ fontSize: big ? 13 : 11.5, fontWeight: 800, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {nodeName(node)}
@@ -127,6 +129,11 @@ function BranchNode({ node, depth, branchIndex }: { node: OrgNode; depth: number
 export default function OrgChartPage() {
   const { data, isLoading, error } = useOrgChart()
   const tree = data?.tree ?? []
+  // D9 (PRD v4 §5) — seed batched presence for every node in the tree.
+  const flat: string[] = []
+  const walk = (nodes: OrgNode[]) => nodes.forEach((n) => { if (n.userId) flat.push(n.userId); walk(n.children) })
+  walk(tree)
+  usePresence(flat)
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>

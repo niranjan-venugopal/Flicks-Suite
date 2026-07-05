@@ -13,6 +13,8 @@ import {
   type PillTone,
 } from '@/components/proto'
 import { useMyTeam, type TeamMember } from '@/lib/api/queries/use-employees'
+import { RowPresenceAvatar, PresenceText } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 import { useTeamToday } from '@/lib/api/queries/use-attendance'
 import { usePendingLeaveRequests } from '@/lib/api/queries/use-leave'
 
@@ -50,6 +52,8 @@ export default function MyTeamPage() {
   const { data: pendingLeave } = usePendingLeaveRequests()
 
   const members: TeamMember[] = team?.data ?? []
+  // D9 (PRD v4 §5) — seed batched presence for the team.
+  usePresence(members.map((m) => m.userId).filter((id): id is string => !!id))
 
   // ─── KPIs ──────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -183,14 +187,16 @@ export default function MyTeamPage() {
                   >
                     <td style={{ padding: '12px 14px' }}>
                       <div className="flex items-center gap-3">
-                        <Avatar
+                        <RowPresenceAvatar
                           name={m.fullName}
-                          size="sm"
+                          size={30}
                           src={m.avatarUrl ?? undefined}
+                          userId={m.userId}
                         />
                         <div>
-                          <div style={{ fontSize: 13, fontWeight: 800 }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
                             {m.fullName}
+                            <PresenceText userId={m.userId} />
                           </div>
                           {m.employeeCode && (
                             <div

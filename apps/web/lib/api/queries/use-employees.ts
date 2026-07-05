@@ -14,6 +14,7 @@ export interface Employee {
   location?: string
   status: 'active' | 'inactive' | 'on_leave' | 'invited' | 'on_notice'
   avatarUrl?: string
+  userId?: string | null
   employeeCode?: string
   joinDate?: string
   reportingManager?: {
@@ -50,6 +51,7 @@ function adaptEmployee(row: ApiEmployeeRow): Employee {
     email: row.email ?? '',
     status: (row.status as Employee['status']) ?? 'active',
     avatarUrl: row.avatarUrl ?? undefined,
+    userId: row.userId,
     employeeCode: row.employeeCode ?? undefined,
     joinDate: row.dateOfJoining ?? undefined,
     department: row.departmentName ?? undefined,
@@ -286,6 +288,7 @@ export interface OrgNode {
   fullName: string | null
   email: string | null
   avatarUrl: string | null
+  userId: string | null
   designationTitle: string | null
   departmentName: string | null
   managerId: string | null
@@ -374,6 +377,7 @@ export interface TeamMember {
   locationId: string | null
   locationName: string | null
   avatarUrl: string | null
+  userId: string | null
   onboardingComplete: boolean | null
 }
 

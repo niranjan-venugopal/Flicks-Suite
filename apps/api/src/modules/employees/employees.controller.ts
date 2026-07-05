@@ -21,6 +21,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { EmployeesService } from './employees.service';
+import { MediaService } from '../media/media.service';
 import {
   InviteEmployeeDto,
   UpdateEmployeeDto,
@@ -41,7 +42,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiBearerAuth('access-token')
 @Controller('employees')
 export class EmployeesController {
-  constructor(private readonly employeesService: EmployeesService) {}
+  constructor(
+    private readonly employeesService: EmployeesService,
+    private readonly mediaService: MediaService,
+  ) {}
 
   @Get()
   @Roles('manager')
@@ -54,7 +58,19 @@ export class EmployeesController {
     @Query() query: EmployeeListQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.employeesService.listEmployees(user.tenantId, query);
+    const res = await this.employeesService.listEmployees(user.tenantId, query);
+    // §4 — serialization-level avatar swap (signed 64px key URL, legacy fallback).
+    const data = await Promise.all(
+      res.data.map(async ({ avatarKey, ...row }) => ({
+        ...row,
+        avatarUrl: await this.mediaService.servedUrl(
+          avatarKey ?? null,
+          row.avatarUrl,
+          64,
+        ),
+      })),
+    );
+    return { ...res, data };
   }
 
   @Post('invite')

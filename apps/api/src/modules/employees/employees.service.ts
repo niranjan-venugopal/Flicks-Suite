@@ -127,6 +127,7 @@ export class EmployeesService {
           fullName: users.full_name,
           email: users.email,
           avatarUrl: users.avatar_url,
+          avatarKey: users.avatar_key, // §4 — controller swaps for a signed URL
           createdAt: employees.created_at,
         })
         .from(employees)
@@ -655,6 +656,7 @@ export class EmployeesService {
           locationId: employees.location_id,
           locationName: locations.name,
           avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+          userId: employees.user_id, // D9 presence keying
           // Submitted-for-review flag — managers should see which of their
           // reports have finished self-onboarding.
           onboardingComplete: sql<boolean>`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean`,
@@ -1361,6 +1363,7 @@ export class EmployeesService {
           fullName: users.full_name,
           email: users.email,
           avatarUrl: users.avatar_url,
+          userId: employees.user_id, // D9 presence keying
           designationTitle: designations.title,
           departmentName: departments.name,
           managerId: employees.reporting_manager_id,

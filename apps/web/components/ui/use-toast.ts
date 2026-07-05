@@ -134,6 +134,23 @@ type Toast = Omit<ToasterToast, 'id'>
 function toast({ ...props }: Toast) {
   const id = genId()
 
+  // PRD v4 §5 — Do Not Disturb suppresses NON-CRITICAL toasts. Destructive
+  // (errors/security) always surface; the bell/inbox continue to accrue
+  // regardless. Lazy require avoids a hook/store import cycle at module load.
+  if (props.variant !== 'destructive') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { isSelfDnd } = require('@/lib/presence/presence-store') as {
+        isSelfDnd: () => boolean
+      }
+      if (isSelfDnd()) {
+        return { id, dismiss: () => {}, update: () => {} }
+      }
+    } catch {
+      /* presence store not available (public pages) — show normally */
+    }
+  }
+
   const update = (props: ToasterToast) =>
     dispatch({
       type: 'UPDATE_TOAST',

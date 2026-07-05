@@ -252,6 +252,34 @@ export const consentRecords = pgTable(
   ],
 );
 
+// ─── member_status (PRD v4 §5 — presence & status) ──────────────────────────────
+// Manual status only (auto states resolve at read time). Per (tenant, user) —
+// auditors hold independent statuses per client company. Tenant-read /
+// write-own RLS.
+
+export const memberStatus = pgTable(
+  'member_status',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    manual_status: text('manual_status'), // available|busy|dnd|brb|away|offline
+    status_message: text('status_message'), // ≤80 chars (app-enforced)
+    expires_at: timestamp('expires_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('member_status_tenant_user_unique').on(t.tenant_id, t.user_id),
+    index('idx_member_status_tenant').on(t.tenant_id),
+  ],
+);
+
 // ─── membership_grants (Invoicing v3 — per-membership module scopes) ────────────
 // Drives the Auditor sidebar + grant guards. One row per (membership, module).
 

@@ -4,6 +4,8 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 import {
   useEmployees,
   useImportEmployees,
@@ -148,6 +150,8 @@ export default function EmployeesPage() {
 
   // Client-side filter on top of the API list — search is local for now.
   const all = list.data?.employees ?? []
+  // D9 (PRD v4 §5) — seed batched presence for the visible people.
+  usePresence(all.map((e) => e.userId).filter((id): id is string => !!id))
   const filtered = all.filter((e) => {
     if (filterStatus !== 'all' && e.status !== filterStatus) return false
     if (filterDept !== 'all' && (e.department ?? '') !== filterDept) return false
@@ -315,7 +319,7 @@ export default function EmployeesPage() {
                           color: 'inherit',
                         }}
                       >
-                        <Avatar name={e.name} size="sm" src={e.avatarUrl} />
+                        <RowPresenceAvatar name={e.name} size={30} src={e.avatarUrl} userId={e.userId} />
                         <div>
                           <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '-0.01em' }}>
                             {e.name}

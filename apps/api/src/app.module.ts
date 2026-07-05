@@ -40,6 +40,7 @@ import { OrgFinancialModule } from './modules/org-financial/org-financial.module
 import { MembersModule } from './modules/members/members.module';
 import { ConsentModule } from './modules/consent/consent.module';
 import { MediaModule } from './modules/media/media.module';
+import { PresenceModule } from './modules/presence/presence.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -147,6 +148,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     MembersModule,
     ConsentModule,
     MediaModule,
+    PresenceModule,
   ],
   controllers: [HealthController],
   providers: [

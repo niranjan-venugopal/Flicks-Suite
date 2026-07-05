@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AttendanceService } from './attendance.service';
 import {
   PunchDto,
@@ -38,7 +39,10 @@ function clientIp(req: Request): string | undefined {
 @ApiBearerAuth('access-token')
 @Controller('attendance')
 export class AttendanceController {
-  constructor(private readonly attendanceService: AttendanceService) {}
+  constructor(
+    private readonly attendanceService: AttendanceService,
+    private readonly events: EventEmitter2,
+  ) {}
 
   @Post('punch-in')
   @HttpCode(HttpStatus.OK)
@@ -50,12 +54,15 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
     @Req() req: Request,
   ) {
-    return this.attendanceService.punchIn(
+    const res = await this.attendanceService.punchIn(
       user.sub,
       user.tenantId,
       dto,
       clientIp(req),
     );
+    // PRD v4 §5 — a punch flips presence (In office / Remote) org-wide ≤5s.
+    this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
+    return res;
   }
 
   @Post('punch-out')
@@ -68,12 +75,14 @@ export class AttendanceController {
     @CurrentUser() user: JwtPayload,
     @Req() req: Request,
   ) {
-    return this.attendanceService.punchOut(
+    const res = await this.attendanceService.punchOut(
       user.sub,
       user.tenantId,
       dto,
       clientIp(req),
     );
+    this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
+    return res;
   }
 
   @Post('break-start')

@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { LeaveService } from './leave.service';
 import {
   ApplyLeaveDto,
@@ -32,7 +33,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiBearerAuth('access-token')
 @Controller('leave')
 export class LeaveController {
-  constructor(private readonly leaveService: LeaveService) {}
+  constructor(
+    private readonly leaveService: LeaveService,
+    private readonly events: EventEmitter2,
+  ) {}
 
   @Get('types')
   @ApiOperation({ summary: 'List configured leave types' })
@@ -113,7 +117,14 @@ export class LeaveController {
     @Body() dto: ReviewLeaveDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.leaveService.reviewLeave(id, user.sub, user.tenantId, dto);
+    const res = await this.leaveService.reviewLeave(id, user.sub, user.tenantId, dto);
+    // PRD v4 §5 — approving today's leave flips the REQUESTER to Out of office
+    // org-wide ≤5s. The gateway resolves employee→user itself.
+    const employeeId = (res as { data?: { employee_id?: string } })?.data?.employee_id;
+    if (dto.action === 'approve' && employeeId) {
+      this.events.emit('presence.changed', { tenantId: user.tenantId, employeeId });
+    }
+    return res;
   }
 
   @Get('holidays')

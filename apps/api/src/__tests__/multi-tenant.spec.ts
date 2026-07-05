@@ -645,6 +645,35 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     await idbAdmin.delete(schema.razorpayWebhookEvents).where(eq(schema.razorpayWebhookEvents.id, evt!.id));
   });
 
+  it('member_status: tenant-wide read, write-own only (0024)', async () => {
+    const alice = await mkUser(`status-a-${rid()}@test.test`);
+    const bob = await mkUser(`status-b-${rid()}@test.test`);
+    const [row] = await idbAdmin.insert(schema.memberStatus).values({
+      tenant_id: tenantA.id, user_id: alice.id, manual_status: 'busy', status_message: 'heads down',
+    }).returning();
+
+    // Org-wide read within the tenant (Bob sees Alice); cross-tenant blind.
+    expect((await withTenantUser(tenantA.id, bob.id, (tx) => tx.select().from(schema.memberStatus).where(eq(schema.memberStatus.id, row!.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.memberStatus).where(eq(schema.memberStatus.id, row!.id)))).length).toBe(0);
+    // Bob cannot write Alice's status (UPDATE matches 0 rows under write-own).
+    const hijack = await withTenantUser(tenantA.id, bob.id, (tx) =>
+      tx.update(schema.memberStatus).set({ manual_status: 'offline' }).where(eq(schema.memberStatus.id, row!.id)).returning(),
+    );
+    expect(hijack.length).toBe(0);
+    // Bob cannot INSERT a row for Alice either.
+    await expect(withTenantUser(tenantA.id, bob.id, (tx) => tx.insert(schema.memberStatus).values({
+      tenant_id: tenantA.id, user_id: alice.id, manual_status: 'offline',
+    }))).rejects.toThrow();
+    // Alice CAN write her own.
+    const own = await withTenantUser(tenantA.id, alice.id, (tx) =>
+      tx.update(schema.memberStatus).set({ manual_status: 'available' }).where(eq(schema.memberStatus.id, row!.id)).returning(),
+    );
+    expect(own.length).toBe(1);
+
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, alice.id));
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, bob.id));
+  });
+
   it('consent_records self-visibility: own rows only, append-only under the app role (0022)', async () => {
     const alice = await mkUser(`consent-a-${rid()}@test.test`);
     const bob = await mkUser(`consent-b-${rid()}@test.test`);
