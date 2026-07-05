@@ -31,6 +31,11 @@ The storage client speaks plain S3, and `R2_ENDPOINT` points it at any
 S3-compatible backend. Your existing Supabase project ships one:
 
 1. **Supabase Dashboard → Storage → New bucket** → name `flicks-suite-uploads`, **Private**.
+   Size/MIME restrictions are OPTIONAL — only the API server writes here and it
+   already enforces the real limits (images ≤8 MB are re-encoded to ~15–50 KB
+   WebP; export ZIPs are small). If you want a backstop, set the bucket limit
+   to **50 MB** (never lower — org-export ZIPs grow with data) and, if
+   restricting MIME types, allow exactly `image/webp` + `application/zip`.
 2. **Storage → Settings (S3 Connection)** → note the **Endpoint** + **Region**, then **New access key** → copy the key id + secret.
 3. In `apps/api/.env`:
 ```bash
