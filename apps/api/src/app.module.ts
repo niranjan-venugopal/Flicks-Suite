@@ -13,6 +13,7 @@ import { PassportModule } from '@nestjs/passport';
 import { configValidationSchema } from './core/config/config.schema';
 import { DatabaseModule } from './core/database/database.module';
 import { AnalyticsModule } from './core/analytics/analytics.module';
+import { StorageModule } from './core/storage/storage.module';
 import { HealthController } from './health.controller';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
@@ -37,6 +38,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { InvoicingModule } from './modules/invoicing/invoicing.module';
 import { OrgFinancialModule } from './modules/org-financial/org-financial.module';
 import { MembersModule } from './modules/members/members.module';
+import { ConsentModule } from './modules/consent/consent.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -46,6 +48,7 @@ import { DailySnapshotsJob } from './jobs/daily-snapshots.job';
 import { LeaveAccrualJob } from './jobs/leave-accrual.job';
 import { TrialExpiryJob } from './jobs/trial-expiry.job';
 import { InvoicingJobs } from './jobs/invoicing.jobs';
+import { TrustJobs } from './jobs/trust.jobs';
 
 @Module({
   imports: [
@@ -122,6 +125,7 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
 
     DatabaseModule,
     AnalyticsModule,
+    StorageModule,
 
     // Feature modules
     AuthModule,
@@ -140,6 +144,7 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
     InvoicingModule,
     OrgFinancialModule,
     MembersModule,
+    ConsentModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -162,6 +167,7 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
     LeaveAccrualJob,
     TrialExpiryJob,
     InvoicingJobs,
+    TrustJobs,
   ],
 })
 export class AppModule {

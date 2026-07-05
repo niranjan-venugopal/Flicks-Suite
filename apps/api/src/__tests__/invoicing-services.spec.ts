@@ -1011,15 +1011,20 @@ describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () 
   });
 
   it('GSTR-1: buckets B2B (registered) + CDNR, logs the export with a hash', async () => {
-    const inv = await mkInvoice({ invoice_date: '2026-06-05' });
+    // Date-relative: the CRN above is stamped with TODAY (notes.service uses
+    // `today`), so export the CURRENT month — a hardcoded June went stale the
+    // moment the calendar rolled over.
+    const now = new Date();
+    const iso = now.toISOString().slice(0, 10);
+    const inv = await mkInvoice({ invoice_date: iso, due_date: iso });
     await invoicesSvc.send(inv.id, userId, tenantId);
     const res = await reportsSvc.generateGstr1(
-      { period_month: 6, period_year: 2026 } as any,
+      { period_month: now.getMonth() + 1, period_year: now.getFullYear() } as any,
       userId,
       tenantId,
     );
     expect(res.data.summary.b2b.count).toBeGreaterThanOrEqual(1); // customer has a GSTIN
-    expect(res.data.summary.cdnr.count).toBeGreaterThanOrEqual(1); // CRN issued in June
+    expect(res.data.summary.cdnr.count).toBeGreaterThanOrEqual(1); // CRN issued this month
     expect(res.data.export.file_hash).toHaveLength(64);
     const history = await reportsSvc.gstr1History(tenantId);
     expect(history.data.some((h) => h.id === res.data.export.id)).toBe(true);

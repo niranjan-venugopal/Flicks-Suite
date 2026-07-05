@@ -17,6 +17,12 @@ interface RequestOtpPayload {
 interface VerifyOtpPayload {
   email: string
   code: string
+  /** Signup clickwrap (PRD v4 §3.4) — required when this creates a NEW account. */
+  consents?: Array<{
+    type: 'terms_privacy' | 'analytics' | 'marketing_email'
+    granted: boolean
+  }>
+  regionCode?: string
 }
 
 interface VerifyMagicLinkPayload {

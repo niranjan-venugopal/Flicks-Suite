@@ -6,6 +6,8 @@ import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
+import { ConsentLedgerSync } from '@/components/consent/ConsentLedgerSync'
+import { ReacceptanceGate } from '@/components/consent/ReacceptanceGate'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
@@ -147,6 +149,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <main className="flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
+      {/* PRD v4 §3: ledger the pre-login banner choice once; re-acceptance on policy bumps */}
+      <ConsentLedgerSync />
+      <ReacceptanceGate />
     </div>
   )
 }

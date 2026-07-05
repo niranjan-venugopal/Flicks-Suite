@@ -90,6 +90,8 @@ export class AuthController {
       deviceId,
       ip,
       userAgent,
+      dto.consents,
+      dto.regionCode,
     );
 
     if (

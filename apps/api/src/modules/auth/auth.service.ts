@@ -34,6 +34,7 @@ import type { DbAdmin } from '@flicks/db';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
+import { ConsentService, type ConsentInput } from '../consent/consent.service';
 import { TotpService } from './totp.service';
 import { resolveSwitchMembership } from './switch-membership.util';
 
@@ -89,6 +90,7 @@ export class AuthService {
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
     private readonly totpService: TotpService,
+    private readonly consentService: ConsentService,
   ) {}
 
   async requestOtp(
@@ -193,6 +195,8 @@ export class AuthService {
     deviceId?: string,
     ip?: string,
     userAgent?: string,
+    consents?: ConsentInput[],
+    regionCode?: string,
   ) {
     const normalizedEmail = email.toLowerCase().trim();
     const codeHash = sha256(code);
@@ -251,7 +255,10 @@ export class AuthService {
       .set({ consumed_at: new Date() })
       .where(eq(authOtps.id, otp.id));
 
-    return this.handleSuccessfulAuth(normalizedEmail, deviceId, ip, userAgent);
+    return this.handleSuccessfulAuth(normalizedEmail, deviceId, ip, userAgent, {
+      consents,
+      regionCode,
+    });
   }
 
   async verifyMagicLink(token: string, deviceId?: string, ip?: string, userAgent?: string) {
@@ -321,6 +328,7 @@ export class AuthService {
     deviceId?: string,
     ip?: string,
     userAgent?: string,
+    signup?: { consents?: ConsentInput[]; regionCode?: string },
   ) {
     // Find or create user
     let user = await this.db
@@ -330,6 +338,19 @@ export class AuthService {
       .limit(1);
 
     if (!user[0]) {
+      // NEW account → the §3.4 clickwrap is mandatory. Signup is rejected
+      // without an affirmative terms_privacy consent; the accepted set is
+      // ledgered right after creation (source='signup', tenant not yet known).
+      // Existing users and invited/magic-link users are covered by the
+      // re-acceptance interstitial instead (no ledger row → prompted once).
+      const acceptedTerms = signup?.consents?.some(
+        (c) => c.type === 'terms_privacy' && c.granted === true,
+      );
+      if (!acceptedTerms) {
+        throw new BadRequestException(
+          'Please accept the Terms of Service and Privacy Policy to create your account.',
+        );
+      }
       const inserted = await this.db
         .insert(users)
         .values({
@@ -339,6 +360,12 @@ export class AuthService {
         })
         .returning();
       user = inserted;
+      await this.consentService.record(inserted[0].id, signup!.consents!, {
+        source: 'signup',
+        regionCode: signup?.regionCode,
+        ip,
+        userAgent,
+      });
     } else {
       // Update last login and verify email
       await this.db
@@ -1038,6 +1065,10 @@ export class AuthService {
       ? userMemberships.find((m) => m.tenantId === tenantId)
       : userMemberships[0];
 
+    // §3.2 — policy-bump re-acceptance flag (also true for pre-ledger users).
+    const requiresReacceptance =
+      await this.consentService.requiresReacceptance(userId);
+
     return {
       id: user[0].id,
       email: user[0].email,
@@ -1048,6 +1079,7 @@ export class AuthService {
       status: user[0].status,
       locale: user[0].locale,
       timezone: user[0].timezone,
+      requiresReacceptance,
       currentMembership: currentMembership
         ? {
             id: currentMembership.id,

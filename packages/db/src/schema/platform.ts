@@ -210,6 +210,39 @@ export const accountDeletionRequests = pgTable(
   ],
 );
 
+// ─── consent_records (PRD v4 §3.2 — append-only consent ledger) ─────────────────
+// One row per consent decision; withdrawal = a new row with granted=false.
+// Current state = latest row per (user_id, consent_type). Self-visibility RLS
+// (user reads/writes own rows); FAM/audit read via service role. No UPDATE or
+// DELETE policies — the ledger is append-only under the app role.
+
+export const consentRecords = pgTable(
+  'consent_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Nullable: signup consents predate tenant creation.
+    tenant_id: uuid('tenant_id').references(() => tenants.id, {
+      onDelete: 'set null',
+    }),
+    consent_type: text('consent_type').notNull(), // terms_privacy | analytics | marketing_email
+    granted: boolean('granted').notNull(),
+    policy_version: text('policy_version').notNull(), // 'tos-2026-07-01' | 'privacy-2026-07-01' | 'consent-v1'
+    source: text('source').notNull(), // signup | banner | settings | unsubscribe | import
+    region_code: text('region_code'), // ISO 3166-1 alpha-2
+    ip_hash: text('ip_hash'), // SHA-256(ip + server salt); never the raw IP
+    user_agent: text('user_agent'),
+    occurred_at: timestamp('occurred_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('idx_consents_user_type').on(t.user_id, t.consent_type, t.occurred_at),
+  ],
+);
+
 // ─── membership_grants (Invoicing v3 — per-membership module scopes) ────────────
 // Drives the Auditor sidebar + grant guards. One row per (membership, module).
 
@@ -326,3 +359,5 @@ export type MembershipGrant = typeof membershipGrants.$inferSelect;
 export type NewMembershipGrant = typeof membershipGrants.$inferInsert;
 export type TenantModuleToggle = typeof tenantModuleToggles.$inferSelect;
 export type NewTenantModuleToggle = typeof tenantModuleToggles.$inferInsert;
+export type ConsentRecord = typeof consentRecords.$inferSelect;
+export type NewConsentRecord = typeof consentRecords.$inferInsert;

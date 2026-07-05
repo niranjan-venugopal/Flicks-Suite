@@ -11,6 +11,7 @@ import { eq } from 'drizzle-orm';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../core/database/database.service';
 import { AuthService } from '../modules/auth/auth.service';
+import { ConsentService } from '../modules/consent/consent.service';
 import { MembersService } from '../modules/members/members.service';
 import type { AuditService } from '../modules/audit/audit.service';
 import type { NotificationsService } from '../modules/notifications/notifications.service';
@@ -44,6 +45,7 @@ const jwt = new JwtService({ secret: 'test-secret' });
 const eventEmitter = { emit: () => true } as never;
 const totp = { isEnforced: () => false } as never;
 
+const consentSvc = new ConsentService(dbAdmin as never, config);
 const authService = new AuthService(
   dbAdmin as never,
   dbAdmin as never,
@@ -53,6 +55,8 @@ const authService = new AuthService(
   notifications,
   audit,
   totp,
+
+  consentSvc,
 );
 
 const dbSvc = new DatabaseService();

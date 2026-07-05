@@ -645,6 +645,40 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     await idbAdmin.delete(schema.razorpayWebhookEvents).where(eq(schema.razorpayWebhookEvents.id, evt!.id));
   });
 
+  it('consent_records self-visibility: own rows only, append-only under the app role (0022)', async () => {
+    const alice = await mkUser(`consent-a-${rid()}@test.test`);
+    const bob = await mkUser(`consent-b-${rid()}@test.test`);
+    const [row] = await idbAdmin.insert(schema.consentRecords).values({
+      user_id: alice.id, consent_type: 'analytics', granted: true,
+      policy_version: 'consent-v1', source: 'settings',
+    }).returning();
+
+    // Alice sees her row (app.user_id = alice); Bob sees nothing.
+    expect((await withTenantUser(tenantA.id, alice.id, (tx) => tx.select().from(schema.consentRecords).where(eq(schema.consentRecords.id, row!.id)))).length).toBe(1);
+    expect((await withTenantUser(tenantA.id, bob.id, (tx) => tx.select().from(schema.consentRecords).where(eq(schema.consentRecords.id, row!.id)))).length).toBe(0);
+    // No user context at all → nothing.
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.consentRecords).where(eq(schema.consentRecords.id, row!.id)))).length).toBe(0);
+    // Alice can append her own row but NOT one for Bob.
+    await withTenantUser(tenantA.id, alice.id, (tx) => tx.insert(schema.consentRecords).values({
+      user_id: alice.id, consent_type: 'marketing_email', granted: false,
+      policy_version: 'consent-v1', source: 'settings',
+    }));
+    await expect(withTenantUser(tenantA.id, alice.id, (tx) => tx.insert(schema.consentRecords).values({
+      user_id: bob.id, consent_type: 'marketing_email', granted: true,
+      policy_version: 'consent-v1', source: 'settings',
+    }))).rejects.toThrow();
+    // Append-only: UPDATE/DELETE are denied under the app role (no policy, no grant).
+    await expect(withTenantUser(tenantA.id, alice.id, (tx) =>
+      tx.update(schema.consentRecords).set({ granted: false }).where(eq(schema.consentRecords.id, row!.id)),
+    )).rejects.toThrow();
+    await expect(withTenantUser(tenantA.id, alice.id, (tx) =>
+      tx.delete(schema.consentRecords).where(eq(schema.consentRecords.id, row!.id)),
+    )).rejects.toThrow();
+
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, alice.id));
+    await idbAdmin.delete(schema.users).where(eq(schema.users.id, bob.id));
+  });
+
   it('isolation: membership_grants is tenant-scoped', async () => {
     const user = await mkUser(`grant-${rid()}@test.test`);
     const [m] = await idbAdmin.insert(schema.memberships).values({ tenant_id: tenantA.id, user_id: user.id, role: 'auditor', status: 'active' }).returning();

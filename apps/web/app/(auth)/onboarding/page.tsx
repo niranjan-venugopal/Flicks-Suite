@@ -53,7 +53,10 @@ export default function OnboardingWizardPage() {
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
-  const [acceptedTerms, setAcceptedTerms] = useState(true)
+  // D16 clickwrap (§3.4): required box starts UNTICKED; marketing is optional
+  // and unticked everywhere.
+  const [acceptedTerms, setAcceptedTerms] = useState(false)
+  const [marketingOptIn, setMarketingOptIn] = useState(false)
 
   // Step 2 state
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
@@ -139,6 +142,12 @@ export default function OnboardingWizardPage() {
       await verifyOtp.mutateAsync({
         email: email.trim().toLowerCase(),
         code,
+        // §3.4 — the clickwrap rides the user-creation moment; the ledger rows
+        // are written server-side with version/source/region/ip-hash.
+        consents: [
+          { type: 'terms_privacy', granted: acceptedTerms },
+          { type: 'marketing_email', granted: marketingOptIn },
+        ],
       })
       setStep(3)
     } catch (e: any) {
@@ -217,6 +226,8 @@ export default function OnboardingWizardPage() {
           setLastName={setLastName}
           acceptedTerms={acceptedTerms}
           setAcceptedTerms={setAcceptedTerms}
+          marketingOptIn={marketingOptIn}
+          setMarketingOptIn={setMarketingOptIn}
           onSubmit={handleSendOtp}
           submitting={requestOtp.isPending}
         />
@@ -274,6 +285,8 @@ function SignupStep(props: {
   setLastName: (v: string) => void
   acceptedTerms: boolean
   setAcceptedTerms: (v: boolean) => void
+  marketingOptIn: boolean
+  setMarketingOptIn: (v: boolean) => void
   onSubmit: (e: React.FormEvent) => void
   submitting: boolean
 }) {
@@ -291,7 +304,7 @@ function SignupStep(props: {
             lineHeight: 1.5,
           }}
         >
-          HR for India&apos;s modern startups. Free for 14 days, no card needed.
+          HR for India&apos;s modern startups. Free for 7 days, no card needed.
         </div>
       </div>
 
@@ -331,46 +344,103 @@ function SignupStep(props: {
           </div>
         </div>
 
-        <label
+        {/* D16 — consent block (§3.4 clickwrap): required-unticked ToS/Privacy +
+            optional marketing. Submit stays disabled until the required box. */}
+        <div
           style={{
             display: 'flex',
+            flexDirection: 'column',
             gap: 10,
-            alignItems: 'flex-start',
-            marginTop: 4,
-            fontSize: 12,
-            color: 'var(--text-2)',
-            lineHeight: 1.5,
-            cursor: 'pointer',
+            padding: '12px 13px',
+            borderRadius: 10,
+            border: '1px dashed rgba(155,123,250,.35)',
+            margin: '2px 0',
           }}
         >
-          <input
-            type="checkbox"
-            checked={props.acceptedTerms}
-            onChange={(e) => props.setAcceptedTerms(e.target.checked)}
-            style={{ marginTop: 2, accentColor: 'var(--blue)' }}
-          />
-          <span>
-            I agree to the{' '}
-            <a href="#" style={{ color: 'var(--blue)', fontWeight: 700 }}>
-              Terms of Service
-            </a>{' '}
-            and{' '}
-            <a href="#" style={{ color: 'var(--blue)', fontWeight: 700 }}>
-              DPDP-aligned Privacy Policy
-            </a>
-            .
-          </span>
-        </label>
+          <label
+            style={{
+              display: 'flex',
+              gap: 10,
+              alignItems: 'flex-start',
+              fontSize: 12,
+              color: 'var(--text-2)',
+              lineHeight: 1.5,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={props.acceptedTerms}
+              onChange={(e) => props.setAcceptedTerms(e.target.checked)}
+              style={{ marginTop: 2, accentColor: 'var(--blue)' }}
+            />
+            <span>
+              I agree to the{' '}
+              <a href="/terms" target="_blank" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+                Terms of Service
+              </a>{' '}
+              and{' '}
+              <a href="/privacy" target="_blank" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+                Privacy Policy
+              </a>
+              . <span style={{ color: 'var(--coral)' }}>*</span>
+            </span>
+          </label>
+          <label
+            style={{
+              display: 'flex',
+              gap: 10,
+              alignItems: 'flex-start',
+              fontSize: 12,
+              color: 'var(--text-2)',
+              lineHeight: 1.5,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={props.marketingOptIn}
+              onChange={(e) => props.setMarketingOptIn(e.target.checked)}
+              style={{ marginTop: 2, accentColor: 'var(--blue)' }}
+            />
+            <span>
+              Send me product updates and offers{' '}
+              <span style={{ color: 'var(--text-mute)' }}>(optional)</span>
+            </span>
+          </label>
+        </div>
 
-        <Btn
-          kind="primary"
-          type="submit"
-          disabled={props.submitting}
-          style={{ height: 48, fontSize: 14, marginTop: 6, width: '100%', justifyContent: 'center' }}
-          iconRight={<Icon.arrow size={16} />}
-        >
-          {props.submitting ? 'Sending OTP…' : 'Send OTP & continue'}
-        </Btn>
+        <div>
+          <Btn
+            kind="primary"
+            type="submit"
+            disabled={props.submitting}
+            style={{
+              height: 48,
+              fontSize: 14,
+              marginTop: 6,
+              width: '100%',
+              justifyContent: 'center',
+              ...(props.acceptedTerms ? {} : { opacity: 0.45, pointerEvents: 'none' }),
+            }}
+            iconRight={<Icon.arrow size={16} />}
+          >
+            {props.submitting ? 'Sending OTP…' : 'Send OTP & continue'}
+          </Btn>
+          {!props.acceptedTerms && (
+            <div
+              style={{
+                fontSize: 10.5,
+                fontWeight: 700,
+                color: 'var(--text-faint)',
+                textAlign: 'center',
+                marginTop: 7,
+              }}
+            >
+              Accept the Terms &amp; Privacy Policy to continue
+            </div>
+          )}
+        </div>
       </form>
 
       <div

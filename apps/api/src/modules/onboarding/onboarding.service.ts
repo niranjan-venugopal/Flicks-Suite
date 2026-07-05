@@ -20,6 +20,7 @@ import {
   shiftTemplates,
 } from '@flicks/db/schema';
 import { ConfigService } from '@nestjs/config';
+import { TRIAL_DAYS } from '@flicks/shared/constants';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -233,9 +234,10 @@ export class OnboardingService {
     const firstName = nameParts[0]!;
     const lastName = nameParts.slice(1).join(' ') || firstName;
 
-    // Create tenant with Indian defaults
+    // Create tenant with Indian defaults. Trial length is the single shared
+    // constant (PRD v4 — locked at 7 days).
     const trialEndsAt = new Date();
-    trialEndsAt.setDate(trialEndsAt.getDate() + 14); // 14-day trial
+    trialEndsAt.setDate(trialEndsAt.getDate() + TRIAL_DAYS);
 
     const [tenant] = await this.db
       .insert(tenants)

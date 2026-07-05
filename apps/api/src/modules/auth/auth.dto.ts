@@ -1,12 +1,28 @@
 import {
+  IsArray,
+  IsBoolean,
   IsEmail,
+  IsIn,
   IsString,
   IsNotEmpty,
   IsOptional,
   Length,
   Matches,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+/** Signup clickwrap (PRD v4 §3.4). Rides verify-otp — the user-creation moment. */
+export class SignupConsentDto {
+  @ApiProperty({ enum: ['terms_privacy', 'analytics', 'marketing_email'] })
+  @IsIn(['terms_privacy', 'analytics', 'marketing_email'])
+  type: 'terms_privacy' | 'analytics' | 'marketing_email';
+
+  @ApiProperty()
+  @IsBoolean()
+  granted: boolean;
+}
 
 export class RequestOtpDto {
   @ApiProperty({ example: 'user@example.com', description: 'User email address' })
@@ -31,6 +47,23 @@ export class VerifyOtpDto {
   @IsString()
   @IsOptional()
   deviceId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Signup clickwrap consents (§3.4). Required (with terms_privacy granted) when this verification creates a NEW account.',
+    type: [SignupConsentDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SignupConsentDto)
+  consents?: SignupConsentDto[];
+
+  @ApiPropertyOptional({ description: 'Detected region (ISO alpha-2), advisory' })
+  @IsOptional()
+  @IsString()
+  @Length(2, 2)
+  regionCode?: string;
 }
 
 export class MagicLinkVerifyDto {

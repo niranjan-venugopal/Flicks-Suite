@@ -5,9 +5,10 @@ import { TotpController } from './totp.controller';
 import { TotpService } from './totp.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditModule } from '../audit/audit.module';
+import { ConsentModule } from '../consent/consent.module';
 
 @Module({
-  imports: [NotificationsModule, AuditModule],
+  imports: [NotificationsModule, AuditModule, ConsentModule],
   controllers: [AuthController, TotpController],
   providers: [AuthService, TotpService],
   exports: [AuthService],

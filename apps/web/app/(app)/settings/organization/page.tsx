@@ -5,6 +5,7 @@ import { Loader2, Plus, Landmark, Star } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { BankAccountModal } from '@/components/invoicing/BankAccountModal'
+import { OrgDataLegal } from '@/components/consent/OrgDataLegal'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useOrgFinancial,
@@ -279,6 +280,9 @@ export default function OrgFinancialPage() {
           </div>
         </>
       )}
+
+      {/* D17 (PRD v4 §3.5) — appended; everything above is unchanged */}
+      <OrgDataLegal />
 
       <BankAccountModal open={modalOpen} onOpenChange={setModalOpen} account={editing} />
     </SettingsLayout>

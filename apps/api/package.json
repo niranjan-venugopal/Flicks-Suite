@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1079.0",
+    "@aws-sdk/s3-request-presigner": "^3.1079.0",
     "@flicks/db": "workspace:*",
     "@flicks/shared": "workspace:*",
     "@nestjs/bullmq": "^11.0.2",
@@ -36,6 +38,7 @@
     "helmet": "^8.0.0",
     "ioredis": "^5.6.0",
     "joi": "^17.13.3",
+    "jszip": "^3.10.1",
     "nestjs-cls": "^4.4.1",
     "otplib": "^12.0.1",
     "passport": "^0.7.0",

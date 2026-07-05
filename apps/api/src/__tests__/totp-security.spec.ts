@@ -11,6 +11,7 @@ import { authenticator } from 'otplib';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../modules/auth/auth.service';
+import { ConsentService } from '../modules/consent/consent.service';
 import { TotpService } from '../modules/auth/totp.service';
 import type { AuditService } from '../modules/audit/audit.service';
 import type { NotificationsService } from '../modules/notifications/notifications.service';
@@ -34,6 +35,7 @@ const config = {
 
 const jwt = new JwtService({ secret: 'test-secret' });
 const totp = new TotpService(config);
+const consentSvc = new ConsentService(dbAdmin as never, config);
 const authService = new AuthService(
   dbAdmin as never,
   dbAdmin as never,
@@ -43,6 +45,8 @@ const authService = new AuthService(
   notifications,
   audit,
   totp,
+
+  consentSvc,
 );
 
 /** Enrol a fresh platform-admin user and return its 10 backup codes. */

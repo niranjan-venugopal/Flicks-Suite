@@ -3,6 +3,7 @@ import './globals.css'
 import { QueryProvider } from '@/components/providers/QueryProvider'
 import { PostHogProvider } from '@/components/providers/PostHogProvider'
 import { Toaster } from '@/components/ui/toaster'
+import { ConsentBanner } from '@/components/consent/ConsentBanner'
 
 export const metadata: Metadata = {
   title: 'Flicks Suite HRMS',
@@ -24,6 +25,8 @@ export default function RootLayout({
           <PostHogProvider>
             {children}
             <Toaster />
+            {/* D1 — geo-aware consent banner; self-hides on print/public pages */}
+            <ConsentBanner />
           </PostHogProvider>
         </QueryProvider>
       </body>

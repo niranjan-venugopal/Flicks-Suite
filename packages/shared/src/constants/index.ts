@@ -323,3 +323,22 @@ export const INDIAN_LEAVE_TYPES: DefaultLeaveType[] = [
     sortOrder: 11,
   },
 ];
+
+// ─── Consent & policy versions (PRD v4 §3) ───────────────────────────────────
+// Bumping TERMS_VERSION / PRIVACY_VERSION triggers the re-acceptance
+// interstitial exactly once per user (latest terms_privacy ledger row is
+// compared against these).
+
+export const TERMS_VERSION = 'tos-2026-07-01';
+export const PRIVACY_VERSION = 'privacy-2026-07-01';
+export const CONSENT_VERSION = 'consent-v1';
+
+export type ConsentType = 'terms_privacy' | 'analytics' | 'marketing_email';
+export const CONSENT_TYPES: ConsentType[] = [
+  'terms_privacy',
+  'analytics',
+  'marketing_email',
+];
+
+/** Platform trial length in days (PRD v4 — user-locked at 7). */
+export const TRIAL_DAYS = 7;
