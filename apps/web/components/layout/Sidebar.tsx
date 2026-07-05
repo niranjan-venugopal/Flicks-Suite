@@ -181,6 +181,7 @@ const FAM_NAV: NavSection[] = [
           { href: '/fam/revenue',         label: 'MRR & ARR' },
           { href: '/fam/funnel',          label: 'Signup funnel' },
           { href: '/fam/features-usage',  label: 'Feature usage' },
+          { href: '/fam/feedback',        label: 'Feedback & NPS' },
         ],
       },
       {

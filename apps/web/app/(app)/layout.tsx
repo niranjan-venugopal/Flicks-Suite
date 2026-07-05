@@ -10,6 +10,8 @@ import { ConsentLedgerSync } from '@/components/consent/ConsentLedgerSync'
 import { ReacceptanceGate } from '@/components/consent/ReacceptanceGate'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
+import { FeedbackPanel } from '@/components/feedback/FeedbackPanel'
+import { NpsCard } from '@/components/feedback/NpsCard'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
@@ -158,6 +160,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <PresenceProvider />
       {/* PRD v4 §6: consent-gated module_opened capture */}
       <ModuleOpenedTracker />
+      {/* PRD v4 §7: menu-triggered feedback panel + NPS micro-card (no pill) */}
+      <FeedbackPanel />
+      <NpsCard />
     </div>
   )
 }

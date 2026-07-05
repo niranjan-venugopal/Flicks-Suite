@@ -114,6 +114,9 @@ export const Icon = {
   // v4 media (design bundle icon additions — camera + image)
   camera: makeIcon(<><path d="M3 8h3.2L8 5.4h8L17.8 8H21a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V9a1 1 0 011-1z" /><circle cx="12" cy="13.4" r="3.4" /></>),
   image: makeIcon(<><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.6" /><path d="M21 15.5l-5-5L6 21" /></>),
+  // v4 feedback (design bundle icon additions — chat + star/smiley)
+  chat: makeIcon(<><path d="M21 12a8 8 0 01-8 8H4l2.2-2.6A8 8 0 1121 12z" /></>),
+  star: makeIcon(<><path d="M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z" /></>),
 } as const
 
 export type IconKey = keyof typeof Icon

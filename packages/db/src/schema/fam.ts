@@ -400,3 +400,58 @@ export const productEvents = pgTable(
 
 export type ProductEvent = typeof productEvents.$inferSelect;
 export type NewProductEvent = typeof productEvents.$inferInsert;
+
+// ─── feedback_submissions + nps_responses (PRD v4 §7) ──────────────────────────
+// Self-visibility RLS; FAM inbox reads/updates via service role.
+
+export const feedbackSubmissions = pgTable(
+  'feedback_submissions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    category: text('category').notNull(), // bug | idea | question | other
+    message: text('message').notNull(), // ≤4000 (DB CHECK)
+    contact_ok: boolean('contact_ok').notNull().default(false),
+    page_path: text('page_path'),
+    status: text('status').notNull().default('new'), // new|triaged|resolved|closed
+    internal_note: text('internal_note'),
+    resolved_by: uuid('resolved_by').references(() => users.id),
+    resolved_at: timestamp('resolved_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('idx_feedback_tenant_created').on(t.tenant_id, t.created_at),
+    index('idx_feedback_status').on(t.status),
+  ],
+);
+
+export const npsResponses = pgTable(
+  'nps_responses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').references(() => tenants.id, {
+      onDelete: 'cascade',
+    }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    survey_key: text('survey_key').notNull().default('beta_nps_v1'),
+    score: integer('score'), // 0–10 (DB CHECK)
+    comment: text('comment'),
+    status: text('status').notNull(), // answered | dismissed | snoozed
+    prompted_at: timestamp('prompted_at', { withTimezone: true }),
+    responded_at: timestamp('responded_at', { withTimezone: true }),
+    snoozed_until: timestamp('snoozed_until', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('nps_user_survey_unique').on(t.user_id, t.survey_key)],
+);
+
+export type FeedbackSubmission = typeof feedbackSubmissions.$inferSelect;
+export type NpsResponse = typeof npsResponses.$inferSelect;
