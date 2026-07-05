@@ -17,11 +17,37 @@ pnpm sync:supabase       # applies 0001→0025 idempotently to Supabase
 ### 0.2 Environment variables (API)
 | Variable | Needed for | Without it |
 |---|---|---|
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` | **Avatar/logo uploads + data exports** (Sprints 16/17) | Uploads & exports return a clear 503 "storage not configured"; everything else works |
+| Object storage (see 0.2.1 — **Supabase Storage works, no Cloudflare needed**) | **Avatar/logo uploads + data exports** (Sprints 16/17) | Uploads & exports return a clear 503 "storage not configured"; everything else works |
 | `RESEND_API_KEY` | Export-ready emails | Export builds but the link email is skipped (logged) |
 | `JWT_SECRET` (existing) | Signs unsubscribe tokens + consent ip-hash salt | — |
 
-> R2 setup: Cloudflare dashboard → R2 → create bucket (private) → API token with Object Read/Write. No public access needed — everything is served via signed URLs.
+> ⚠ If your `apps/api/.env` still carries the OLD placeholder values
+> (`R2_ACCOUNT_ID=placeholder-account` …), **blank them** — a non-empty
+> account id makes the app think storage is live and uploads fail with
+> confusing network errors instead of the clean 503.
+
+### 0.2.1 Storage without Cloudflare — use your Supabase project (recommended)
+The storage client speaks plain S3, and `R2_ENDPOINT` points it at any
+S3-compatible backend. Your existing Supabase project ships one:
+
+1. **Supabase Dashboard → Storage → New bucket** → name `flicks-suite-uploads`, **Private**.
+2. **Storage → Settings (S3 Connection)** → note the **Endpoint** + **Region**, then **New access key** → copy the key id + secret.
+3. In `apps/api/.env`:
+```bash
+R2_ENDPOINT=https://<project-ref>.storage.supabase.co/storage/v1/s3
+R2_REGION=<region shown, e.g. ap-south-1>
+R2_ACCESS_KEY_ID=<S3 access key id>
+R2_SECRET_ACCESS_KEY=<S3 secret access key>
+R2_BUCKET_NAME=flicks-suite-uploads
+# R2_ACCOUNT_ID stays blank — not needed with a custom endpoint
+```
+4. Restart the API. Avatar/logo uploads, data exports and signed download
+   links now run against Supabase Storage — behavior identical to R2.
+
+Alternatives: **Cloudflare R2** free tier (needs a card on file; set
+`R2_ACCOUNT_ID` + keys, leave `R2_ENDPOINT` blank) or **local MinIO**
+(`docker run -p 9000:9000 minio/minio server /data`, then
+`R2_ENDPOINT=http://127.0.0.1:9000`, keys `minioadmin`/`minioadmin`).
 
 ### 0.3 Restart both apps
 ```bash

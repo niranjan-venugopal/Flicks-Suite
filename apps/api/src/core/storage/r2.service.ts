@@ -31,12 +31,21 @@ export class R2Service {
     const accessKeyId = this.config.get<string>('R2_ACCESS_KEY_ID');
     const secretAccessKey = this.config.get<string>('R2_SECRET_ACCESS_KEY');
     this.bucket = this.config.get<string>('R2_BUCKET_NAME', 'flicks-suite-uploads');
+    // PRD v4 §10 exit ramp: keys are provider-relative, so any S3-compatible
+    // backend works via a base-URL swap. R2_ENDPOINT overrides the Cloudflare
+    // URL (e.g. Supabase Storage's /storage/v1/s3, or a local MinIO); custom
+    // endpoints use path-style addressing (bucket in the path), which both
+    // Supabase and MinIO require.
+    const endpoint =
+      this.config.get<string>('R2_ENDPOINT') ||
+      (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
     this.client =
-      accountId && accessKeyId && secretAccessKey
+      endpoint && accessKeyId && secretAccessKey
         ? new S3Client({
-            region: 'auto',
-            endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+            region: this.config.get<string>('R2_REGION', 'auto'),
+            endpoint,
             credentials: { accessKeyId, secretAccessKey },
+            forcePathStyle: !!this.config.get<string>('R2_ENDPOINT'),
           })
         : null;
     if (!this.client) {

@@ -36,12 +36,16 @@ export const configValidationSchema = Joi.object({
     .uri()
     .default('http://localhost:3000/auth/magic'),
 
-  // R2
+  // R2 (or any S3-compatible storage — PRD v4 §10 exit ramp)
   R2_ACCOUNT_ID: Joi.string().optional(),
   R2_ACCESS_KEY_ID: Joi.string().optional(),
   R2_SECRET_ACCESS_KEY: Joi.string().optional(),
   R2_BUCKET_NAME: Joi.string().default('flicks-suite-uploads'),
   R2_PUBLIC_URL: Joi.string().uri().optional(),
+  // Endpoint override for S3-compatible backends (Supabase Storage, MinIO).
+  // When set, path-style addressing is used and R2_ACCOUNT_ID is not needed.
+  R2_ENDPOINT: Joi.string().uri().optional(),
+  R2_REGION: Joi.string().default('auto'),
 
   // FAM second factor (TOTP). Application-level key used to encrypt per-user
   // TOTP secrets at rest. Optional in dev — FAM TOTP enforcement no-ops when
