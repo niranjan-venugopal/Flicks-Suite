@@ -1056,6 +1056,8 @@ export class AuthService {
         tenantName: tenants.name,
         tenantSlug: tenants.slug,
         tenantStatus: tenants.status,
+        tenantLogoKey: tenants.logo_key,
+        tenantLogoUrl: tenants.logo_url,
       })
       .from(memberships)
       .innerJoin(tenants, eq(memberships.tenant_id, tenants.id))
@@ -1074,6 +1076,9 @@ export class AuthService {
       email: user[0].email,
       fullName: user[0].full_name,
       avatarUrl: user[0].avatar_url,
+      // §4 media pipeline: the controller swaps these keys for short-lived
+      // signed URLs (serialization-level; never exposed raw to the client).
+      avatarKey: user[0].avatar_key,
       phone: user[0].phone,
       isPlatformAdmin: user[0].is_platform_admin,
       status: user[0].status,
@@ -1090,6 +1095,8 @@ export class AuthService {
             role: currentMembership.role,
             status: currentMembership.status,
             employeeId: currentMembership.employeeId,
+            tenantLogoKey: currentMembership.tenantLogoKey,
+            tenantLogoUrl: currentMembership.tenantLogoUrl,
           }
         : null,
       memberships: userMemberships.map((m) => ({

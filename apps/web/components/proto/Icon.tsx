@@ -111,6 +111,9 @@ export const Icon = {
   wallet: makeIcon(<><path d="M21 12V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h14a2 2 0 002-2v-2" /><circle cx="17" cy="14" r="1.5" fill="currentColor" /></>),
   grid: makeIcon(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
   send: makeIcon(<><path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4z" /></>),
+  // v4 media (design bundle icon additions — camera + image)
+  camera: makeIcon(<><path d="M3 8h3.2L8 5.4h8L17.8 8H21a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V9a1 1 0 011-1z" /><circle cx="12" cy="13.4" r="3.4" /></>),
+  image: makeIcon(<><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9.5" r="1.6" /><path d="M21 15.5l-5-5L6 21" /></>),
 } as const
 
 export type IconKey = keyof typeof Icon

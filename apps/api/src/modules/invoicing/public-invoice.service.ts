@@ -19,6 +19,7 @@ import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { RazorpayService } from './razorpay.service';
 import { InvSettingsService } from './inv-settings.service';
+import { R2Service } from '../../core/storage/r2.service';
 
 /**
  * Hosted public invoice page backend (PRD §9.3).
@@ -34,7 +35,27 @@ export class PublicInvoiceService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly razorpay: RazorpayService,
     private readonly invSettings: InvSettingsService,
+    private readonly r2: R2Service,
   ) {}
+
+  /**
+   * §4 "one upload feeds both": serialization-level preference — a fresh
+   * signed URL from tenants.logo_key when present, else the legacy logo_url.
+   * The render markup (InvoiceRenderer/PDF) is untouched.
+   */
+  private async servedLogoUrl(
+    logoKey: string | null,
+    logoUrl: string | null,
+  ): Promise<string | null> {
+    if (logoKey && this.r2.isConfigured()) {
+      try {
+        return await this.r2.signedGetUrl(logoKey);
+      } catch {
+        /* fall through to legacy URL */
+      }
+    }
+    return logoUrl;
+  }
 
   private async fetchByToken(token: string) {
     const [inv] = await this.dbAdmin
@@ -101,6 +122,7 @@ export class PublicInvoiceService {
           state_code: tenants.state_code,
           postal_code: tenants.postal_code,
           logo_url: tenants.logo_url,
+          logo_key: tenants.logo_key,
           brand_color: tenants.brand_color,
         })
         .from(tenants)
@@ -191,12 +213,22 @@ export class PublicInvoiceService {
       allow_partial: settings?.allow_partial_payments ?? true,
     };
 
+    // §4: prefer the uploaded logo (signed key URL) at serialization; the
+    // seller payload shape and render markup stay identical.
+    const seller = tenant
+      ? {
+          ...tenant,
+          logo_url: await this.servedLogoUrl(tenant.logo_key, tenant.logo_url),
+          logo_key: undefined,
+        }
+      : null;
+
     return {
       data: {
         invoice: pub,
         line_items: lines,
         customer: customer ?? null,
-        seller: tenant ?? null,
+        seller,
         payment_options: paymentOptions,
         show_powered_by: settings?.show_powered_by_footer ?? true,
       },

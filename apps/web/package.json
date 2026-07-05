@@ -40,6 +40,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-easy-crop": "^6.1.0",
     "react-hook-form": "^7.54.2",
     "recharts": "^2.15.1",
     "socket.io-client": "^4.8.1",

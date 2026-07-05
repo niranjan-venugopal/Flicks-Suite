@@ -34,6 +34,30 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
     (linked.length === 1 && linked[0]!.tenantId !== currentUser?.tenantId)
   const landingPath = isAuditor ? '/invoicing' : '/dashboard'
   const tenantName = currentTenant?.name ?? 'Workspace'
+  const tenantLogo = currentTenant?.logoUrl
+  // D7 (PRD v4 §4): uploaded logo renders in a circular mask; initials fallback.
+  const logoChip = (
+    <div
+      className="avatar sm"
+      style={
+        tenantLogo
+          ? { background: 'var(--surf-2)', overflow: 'hidden', padding: 0 }
+          : { background: avBg(tenantName) }
+      }
+      title={tenantName}
+    >
+      {tenantLogo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={tenantLogo}
+          alt={tenantName}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+        />
+      ) : (
+        initials(tenantName)
+      )}
+    </div>
+  )
   const subtitle = isAuditor
     ? `Auditor · ${linked.length || 1} ${linked.length === 1 ? 'company' : 'companies'}`
     : (currentTenant?.plan ?? 'free')
@@ -51,9 +75,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
   if (collapsed) {
     return (
       <div style={{ padding: '10px 0 0', display: 'flex', justifyContent: 'center' }}>
-        <div className="avatar sm" style={{ background: avBg(tenantName) }} title={tenantName}>
-          {initials(tenantName)}
-        </div>
+        {logoChip}
       </div>
     )
   }
@@ -75,9 +97,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
           cursor: canSwitch ? 'pointer' : 'default',
         }}
       >
-        <div className="avatar sm" style={{ background: avBg(tenantName) }}>
-          {initials(tenantName)}
-        </div>
+        {logoChip}
         <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
           <div
             style={{

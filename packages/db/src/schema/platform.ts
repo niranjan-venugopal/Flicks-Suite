@@ -83,6 +83,11 @@ export const tenants = pgTable(
     default_work_start: text('default_work_start').notNull().default('09:00'),
     default_work_end: text('default_work_end').notNull().default('18:00'),
     logo_url: text('logo_url'),
+    // PRD v4 §4: private R2 key (tenants/<id>/logo/<uuid>_{256|64}.webp). One
+    // upload feeds both the in-app circular logo and the invoice render path
+    // (which swaps to a signed URL at serialization only).
+    logo_key: text('logo_key'),
+    logo_updated_at: timestamp('logo_updated_at', { withTimezone: true }),
     brand_color: text('brand_color'),
     status: tenantStatusEnum('status').notNull().default('trialing'),
     trial_ends_at: timestamp('trial_ends_at', { withTimezone: true }),
@@ -114,6 +119,10 @@ export const users = pgTable(
     email_verified_at: timestamp('email_verified_at', { withTimezone: true }),
     full_name: text('full_name').notNull(),
     avatar_url: text('avatar_url'),
+    // PRD v4 §4 media pipeline: private R2 key (users/<id>/avatar/<uuid>_{256|64}.webp).
+    // Serialization prefers a signed URL from this key, falls back to avatar_url.
+    avatar_key: text('avatar_key'),
+    avatar_updated_at: timestamp('avatar_updated_at', { withTimezone: true }),
     phone: text('phone'),
     phone_verified_at: timestamp('phone_verified_at', { withTimezone: true }),
     locale: text('locale').notNull().default('en-IN'),

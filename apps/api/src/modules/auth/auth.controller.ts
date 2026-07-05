@@ -23,6 +23,7 @@ import {
 import { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { MediaService } from '../media/media.service';
 import {
   RequestOtpDto,
   VerifyOtpDto,
@@ -38,7 +39,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly mediaService: MediaService,
+  ) {}
 
   @Public()
   @Post('request-otp')
@@ -215,7 +219,24 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user', description: 'Returns current user info and memberships.' })
   @ApiResponse({ status: 200, description: 'Current user data' })
   async getMe(@CurrentUser() user: JwtPayload) {
-    const me = await this.authService.getMe(user.sub, user.tenantId);
+    const raw = await this.authService.getMe(user.sub, user.tenantId);
+    // §4 media pipeline — serialization-level swap: signed URL from *_key,
+    // legacy *_url fallback; the raw keys never reach the client.
+    const { avatarKey, ...rest } = raw as typeof raw & { avatarKey?: string | null };
+    const me = {
+      ...rest,
+      avatarUrl: await this.mediaService.servedUrl(avatarKey ?? null, raw.avatarUrl),
+      currentMembership: raw.currentMembership
+        ? {
+            ...raw.currentMembership,
+            tenantLogoUrl: await this.mediaService.servedUrl(
+              (raw.currentMembership as { tenantLogoKey?: string | null }).tenantLogoKey ?? null,
+              (raw.currentMembership as { tenantLogoUrl?: string | null }).tenantLogoUrl ?? null,
+            ),
+            tenantLogoKey: undefined,
+          }
+        : raw.currentMembership,
+    };
     if (!user.impersonatorUserId) return me;
 
     // Surface impersonation session details so the banner can render a

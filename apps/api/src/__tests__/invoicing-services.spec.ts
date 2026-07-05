@@ -407,6 +407,9 @@ import {
 // Razorpay deps: unconfigured by default (configStub has no OAuth keys), so the
 // service degrades safely; InvoicingCryptoService passes plaintext through.
 const razorpaySvc = new RazorpayService(configStub as never);
+// Unconfigured R2 → servedLogoUrl falls back to the legacy logo_url.
+import { R2Service } from '../core/storage/r2.service';
+const r2Stub = new R2Service(configStub as never);
 const invCrypto = new InvoicingCryptoService(configStub as never);
 const invSettingsSvc4 = new InvSettingsService(
   dbSvc,
@@ -421,7 +424,7 @@ const rawReq = (raw?: string) =>
 
 describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
-  const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4);
+  const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -607,7 +610,7 @@ import { PublicInvoiceService as PubSvc5 } from '../modules/invoicing/public-inv
 
 describe('Org financial + bank accounts (Sprint 5)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
-  const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4);
+  const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
   let tenantId: string;
   let userId: string;
   let customerId: string;

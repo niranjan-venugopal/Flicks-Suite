@@ -127,7 +127,9 @@ function adaptTenant(
     id: membership.tenantId,
     name: membership.tenantName,
     slug: membership.tenantSlug,
-    logoUrl: undefined,
+    // §4 media pipeline: /me serves a signed URL from tenants.logo_key with a
+    // legacy logo_url fallback.
+    logoUrl: (membership as { tenantLogoUrl?: string | null }).tenantLogoUrl ?? undefined,
     plan: 'free',
   }
 }

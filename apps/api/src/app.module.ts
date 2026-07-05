@@ -39,6 +39,7 @@ import { InvoicingModule } from './modules/invoicing/invoicing.module';
 import { OrgFinancialModule } from './modules/org-financial/org-financial.module';
 import { MembersModule } from './modules/members/members.module';
 import { ConsentModule } from './modules/consent/consent.module';
+import { MediaModule } from './modules/media/media.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -145,6 +146,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     OrgFinancialModule,
     MembersModule,
     ConsentModule,
+    MediaModule,
   ],
   controllers: [HealthController],
   providers: [

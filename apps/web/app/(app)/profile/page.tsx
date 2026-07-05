@@ -4,6 +4,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { AvatarV4 } from '@/components/media/AvatarV4'
+import { MediaCropModal } from '@/components/media/MediaCropModal'
+import { useUploadAvatar, useRemoveAvatar } from '@/lib/api/queries/use-media'
 import {
   Dialog,
   DialogContent,
@@ -104,9 +107,76 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {/* Profile photo (PRD v4 §4, D5+) */}
+        <ProfilePhotoCard />
+
         {/* Data & privacy (DPDP) */}
         <DataPrivacyCard />
       </div>
+    </div>
+  )
+}
+
+/** D5+ — avatar section on the profile page (PRD v4 §4.1). */
+function ProfilePhotoCard() {
+  const { toast } = useToast()
+  const { currentUser } = useAuthStore()
+  const upload = useUploadAvatar()
+  const remove = useRemoveAvatar()
+  const [modalOpen, setModalOpen] = useState(false)
+  const hasPhoto = !!currentUser?.avatarUrl
+
+  return (
+    <div className="card" style={{ marginBottom: 18, borderColor: 'rgba(155,123,250,.3)' }}>
+      <div className="t-h3" style={{ marginBottom: 14 }}>Profile photo</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+        <AvatarV4 name={currentUser?.name ?? ''} size={64} src={currentUser?.avatarUrl} />
+        <div style={{ flex: 1 }}>
+          <div className="t-mute" style={{ fontSize: 11.5, lineHeight: 1.55 }}>
+            Shown across your workspace
+            {hasPhoto ? '' : ' — currently your initials on your personal color'}. JPG, PNG or
+            WebP · max 8 MB.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn kind="secondary" size="sm" icon={<Icon.image size={13} />} onClick={() => setModalOpen(true)}>
+            Change photo
+          </Btn>
+          {hasPhoto && (
+            <Btn
+              kind="ghost"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await remove.mutateAsync()
+                  toast({ title: 'Photo removed' })
+                } catch (err) {
+                  toast({
+                    title: 'Could not remove photo',
+                    description: err instanceof Error ? err.message : undefined,
+                    variant: 'destructive',
+                  })
+                }
+              }}
+            >
+              Remove
+            </Btn>
+          )}
+        </div>
+      </div>
+      {modalOpen && (
+        <MediaCropModal
+          kind="avatar"
+          hasCurrent={hasPhoto}
+          onUpload={async (blob) => {
+            await upload.mutateAsync(blob)
+          }}
+          onRemove={async () => {
+            await remove.mutateAsync()
+          }}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
     </div>
   )
 }
