@@ -25,9 +25,11 @@
 #   • Holidays copied from the seed tenant for the Calendar
 #
 # Schema deltas applied inline (idempotent — IF NOT EXISTS everywhere):
-#   • ALTER TYPE membership_role ADD VALUE 'owner'
-#   • ALTER TYPE membership_role ADD VALUE 'fam'
-#   • CREATE TABLE notifications (matches drizzle/0003_notifications.sql)
+#   • ALTER TYPE membership_role ADD VALUE 'owner' / 'fam'
+#   • notifications · impersonation_sessions · account_deletion_requests ·
+#     notification_preferences · TOTP/account-security columns (0003–0008, 0020)
+#   • PRD v4 (0022–0025): consent_records · avatar/logo key columns ·
+#     member_status · product_events — with their RLS policies + grants
 #
 # Idempotent — safe to re-run; uses fixed UUIDs, ON CONFLICT, and an
 # explicit role-reset block at the end so testing artefacts (promoting
@@ -185,6 +187,95 @@ CREATE UNIQUE INDEX IF NOT EXISTS "notification_preferences_user_event_channel_u
   ON "notification_preferences" ("user_id", "event_type", "channel");
 CREATE INDEX IF NOT EXISTS "notification_preferences_user_idx"
   ON "notification_preferences" ("user_id");
+
+-- ══ PRD v4 deltas (Sprints 16–19) ═══════════════════════════════════════════
+-- Inlined WITH their RLS policies + grants, matching the migration files
+-- (0022–0025) exactly, so a fresh setup-supabase + setup-demo is whole
+-- without a separate sync.
+
+-- consent_records — matches packages/db/drizzle/0022_trust_consent.sql.
+CREATE TABLE IF NOT EXISTS consent_records (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id      uuid REFERENCES tenants(id) ON DELETE SET NULL,
+  consent_type   text NOT NULL CHECK (consent_type IN ('terms_privacy','analytics','marketing_email')),
+  granted        boolean NOT NULL,
+  policy_version text NOT NULL,
+  source         text NOT NULL CHECK (source IN ('signup','banner','settings','unsubscribe','import')),
+  region_code    text,
+  ip_hash        text,
+  user_agent     text,
+  occurred_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_consents_user_type
+  ON consent_records (user_id, consent_type, occurred_at DESC);
+ALTER TABLE consent_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE consent_records FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS consent_self_select ON consent_records;
+CREATE POLICY consent_self_select ON consent_records FOR SELECT
+  USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+DROP POLICY IF EXISTS consent_self_insert ON consent_records;
+CREATE POLICY consent_self_insert ON consent_records FOR INSERT
+  WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+GRANT SELECT, INSERT ON consent_records TO flicks_app;
+REVOKE UPDATE, DELETE ON consent_records FROM flicks_app;
+
+-- media keys — matches packages/db/drizzle/0023_profile_media.sql.
+ALTER TABLE users   ADD COLUMN IF NOT EXISTS avatar_key text;
+ALTER TABLE users   ADD COLUMN IF NOT EXISTS avatar_updated_at timestamptz;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_key text;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS logo_updated_at timestamptz;
+
+-- member_status — matches packages/db/drizzle/0024_presence_status.sql.
+CREATE TABLE IF NOT EXISTS member_status (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  manual_status  text CHECK (manual_status IN ('available','busy','dnd','brb','away','offline')),
+  status_message varchar(80),
+  expires_at     timestamptz,
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_member_status_tenant ON member_status (tenant_id);
+ALTER TABLE member_status ENABLE ROW LEVEL SECURITY;
+ALTER TABLE member_status FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS member_status_tenant_read ON member_status;
+CREATE POLICY member_status_tenant_read ON member_status FOR SELECT
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+DROP POLICY IF EXISTS member_status_write_own ON member_status;
+CREATE POLICY member_status_write_own ON member_status FOR ALL
+  USING (
+    tenant_id = current_setting('app.tenant_id', true)::uuid
+    AND user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+  )
+  WITH CHECK (
+    tenant_id = current_setting('app.tenant_id', true)::uuid
+    AND user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+  );
+GRANT SELECT, INSERT, UPDATE, DELETE ON member_status TO flicks_app;
+
+-- product_events — matches packages/db/drizzle/0025_product_events.sql.
+CREATE TABLE IF NOT EXISTS product_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   uuid REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
+  event_name  text NOT NULL,
+  properties  jsonb NOT NULL DEFAULT '{}',
+  source      text NOT NULL DEFAULT 'api' CHECK (source IN ('web','api','job')),
+  occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pe_tenant_event_time
+  ON product_events (tenant_id, event_name, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pe_event_time
+  ON product_events (event_name, occurred_at DESC);
+ALTER TABLE product_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_events FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_product_events ON product_events;
+CREATE POLICY tenant_isolation_product_events ON product_events
+  FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT SELECT, INSERT ON product_events TO flicks_app;
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"
@@ -864,6 +955,70 @@ ON CONFLICT (id) DO NOTHING;
 UPDATE invoices SET bank_account_id = 'de4ba00c-0000-4000-8000-000000000001'
   WHERE id = 'de100000-0000-4000-8000-000000000001';
 
+-- ═══ PRD v4 seeds (Sprints 16–19) ════════════════════════════════════════════
+
+-- Consent ledger: every demo persona accepted ToS/Privacy "at signup" so the
+-- re-acceptance interstitial doesn't block demo logins; niranjan also granted
+-- analytics (so module_opened capture works out of the box). The ledger is
+-- append-only with no natural unique key → WHERE NOT EXISTS keeps re-runs
+-- from stacking duplicate rows.
+INSERT INTO consent_records (user_id, tenant_id, consent_type, granted, policy_version, source, region_code)
+SELECT u.id, '11111111-1111-1111-1111-111111111111', c.type, c.granted, c.version, 'import', 'IN'
+FROM users u
+CROSS JOIN (VALUES
+  ('terms_privacy',   true,  'tos-2026-07-01'),
+  ('marketing_email', false, 'consent-v1')
+) AS c(type, granted, version)
+WHERE u.email IN ('fam@flickssuite.com','niranjan@demo.co','manager@demo.co','sarah@demo.co',
+                  'alice@demo.co','rohan@demo.co','diya@demo.co','kabir@demo.co',
+                  'vikram@demo.co','ananya@demo.co','priya@demo.co','tanvi@demo.co')
+  AND NOT EXISTS (
+    SELECT 1 FROM consent_records cr
+    WHERE cr.user_id = u.id AND cr.consent_type = c.type
+  );
+
+INSERT INTO consent_records (user_id, tenant_id, consent_type, granted, policy_version, source, region_code)
+SELECT u.id, '11111111-1111-1111-1111-111111111111', 'analytics', true, 'consent-v1', 'import', 'IN'
+FROM users u
+WHERE u.email = 'niranjan@demo.co'
+  AND NOT EXISTS (
+    SELECT 1 FROM consent_records cr
+    WHERE cr.user_id = u.id AND cr.consent_type = 'analytics'
+  );
+
+-- Presence: two manual statuses so team surfaces show live dots immediately
+-- (Mira busy with a message, Sarah DND). Everyone else resolves automatically.
+INSERT INTO member_status (tenant_id, user_id, manual_status, status_message)
+SELECT '11111111-1111-1111-1111-111111111111', u.id, s.status, s.msg
+FROM (VALUES
+  ('manager@demo.co', 'busy', 'Sprint planning till 3'),
+  ('sarah@demo.co',   'dnd',  'Heads-down · quarter close')
+) AS s(email, status, msg)
+JOIN users u ON u.email = s.email
+ON CONFLICT (tenant_id, user_id) DO NOTHING;
+
+-- Product events: a small funnel history for Demo Co so the FAM "Invoicing
+-- activation" block + feature usage have data on day one. Fixed UUIDs keep
+-- re-runs idempotent.
+INSERT INTO product_events (id, tenant_id, user_id, event_name, properties, source, occurred_at)
+SELECT v.id::uuid, '11111111-1111-1111-1111-111111111111',
+       (SELECT id FROM users WHERE email = 'niranjan@demo.co'),
+       v.event, v.props::jsonb, v.src, now() - (v.days_ago || ' days')::interval
+FROM (VALUES
+  ('4e000000-0000-4000-8000-000000000001', 'signed_up',        '{}',                                  'api', '14'),
+  ('4e000000-0000-4000-8000-000000000002', 'org_configured',   '{}',                                  'api', '13'),
+  ('4e000000-0000-4000-8000-000000000003', 'member_invited',   '{}',                                  'api', '12'),
+  ('4e000000-0000-4000-8000-000000000004', 'first_login_day',  '{}',                                  'api', '12'),
+  ('4e000000-0000-4000-8000-000000000005', 'first_login_day',  '{}',                                  'api', '8'),
+  ('4e000000-0000-4000-8000-000000000006', 'first_login_day',  '{}',                                  'api', '3'),
+  ('4e000000-0000-4000-8000-000000000007', 'invoice_created',  '{"first": true}',                     'api', '6'),
+  ('4e000000-0000-4000-8000-000000000008', 'invoice_sent',     '{"first": true}',                     'api', '6'),
+  ('4e000000-0000-4000-8000-000000000009', 'payment_received', '{"first": true, "method": "CASH"}',   'api', '4'),
+  ('4e000000-0000-4000-8000-00000000000a', 'module_opened',    '{"module": "invoicing"}',             'web', '2'),
+  ('4e000000-0000-4000-8000-00000000000b', 'module_opened',    '{"module": "attendance"}',            'web', '1')
+) AS v(id, event, props, src, days_ago)
+ON CONFLICT (id) DO NOTHING;
+
 SQL
 
 echo "✅ Demo data ready (rich seed)."
@@ -886,3 +1041,6 @@ echo "  • 2 attendance regularizations (pending)"
 echo "  • 8 leave types (CL, SL, EL, ML, PL, CO, WFH, LOP) + 25 holidays"
 echo "  • 1 invoice INV-DEMO-0001 (SENT, ₹17,700) for customer 'Acme Test Pvt Ltd'"
 echo "      → Invoicing → Invoices → click 'PDF' to test the download"
+echo "  • PRD v4: ToS consent ledgered for all personas (no interstitial on demo logins),"
+echo "    analytics consent for niranjan, 2 live presence statuses (Mira busy, Sarah DND),"
+echo "    and a seeded product_events funnel → FAM 'Invoicing activation' has data"

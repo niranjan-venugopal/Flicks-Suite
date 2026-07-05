@@ -4,7 +4,8 @@
 #
 #   pnpm sync:supabase
 #
-# Applies every migration (V1 + Invoicing 0012–0017) to your Supabase database,
+# Applies EVERY migration in packages/db/drizzle (V1 + Invoicing + PRD v4 —
+# the loop globs [0-9]*.sql, so new migrations are picked up automatically),
 # (re)asserts the flicks_app role's table grants, and verifies the RLS posture.
 #
 # It is IDEMPOTENT and NON-DESTRUCTIVE:
