@@ -1,5 +1,6 @@
 import {
   Controller,
+  Optional,
   Post,
   Body,
   Headers,
@@ -11,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
@@ -65,6 +67,8 @@ export class RazorpayWebhookController {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly config: ConfigService,
     private readonly invoices: InvoicesService,
+    // Optional: spec fixtures construct with 3 args; runtime DI provides it.
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   @Post('razorpay')
@@ -226,5 +230,14 @@ export class RazorpayWebhookController {
         .set({ status: 'paid' })
         .where(eq(razorpayOrders.order_id, orderId));
     }
+
+    // PRD v4 §6 F5 — webhook-recorded payments count toward the funnel too.
+    this.events?.emit('analytics.track', {
+      event: 'payment_received',
+      tenantId,
+      markFirst: true,
+      source: 'api',
+      properties: { method: entity.method ?? 'razorpay' },
+    });
   }
 }

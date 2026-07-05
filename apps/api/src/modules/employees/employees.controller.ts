@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { EmployeesService } from './employees.service';
 import { MediaService } from '../media/media.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   InviteEmployeeDto,
   UpdateEmployeeDto,
@@ -45,6 +46,7 @@ export class EmployeesController {
   constructor(
     private readonly employeesService: EmployeesService,
     private readonly mediaService: MediaService,
+    private readonly events: EventEmitter2,
   ) {}
 
   @Get()
@@ -82,7 +84,11 @@ export class EmployeesController {
     @Body() dto: InviteEmployeeDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.employeesService.inviteEmployee(dto, user.sub, user.tenantId);
+    const res = await this.employeesService.inviteEmployee(dto, user.sub, user.tenantId);
+    this.events.emit('analytics.track', {
+      event: 'member_invited', tenantId: user.tenantId, userId: user.sub, // §6
+    });
+    return res;
   }
 
   @Post('import')

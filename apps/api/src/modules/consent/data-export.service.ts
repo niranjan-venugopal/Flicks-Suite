@@ -34,6 +34,7 @@ import { DatabaseService } from '../../core/database/database.service';
 import { R2Service } from '../../core/storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
+import { AnalyticsService } from '../../core/analytics/analytics.service';
 
 const LINK_TTL_SECONDS = 7 * 24 * 60 * 60; // 7-day signed links (§3.5)
 
@@ -71,6 +72,7 @@ export class DataExportService {
     private readonly r2: R2Service,
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /** 1/day guard via the audit-marker pattern (no extra table). */
@@ -112,6 +114,7 @@ export class DataExportService {
       resourceType: 'user',
       resourceId: userId,
     });
+    this.analytics.track({ event: 'data_export_requested', tenantId, userId }); // §6
 
     // Fire-and-forget: the request returns immediately; the link arrives by email.
     void this.buildMyExport(userId, tenantId).catch((err) => {

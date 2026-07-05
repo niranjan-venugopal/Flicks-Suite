@@ -9,6 +9,7 @@ import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ConsentLedgerSync } from '@/components/consent/ConsentLedgerSync'
 import { ReacceptanceGate } from '@/components/consent/ReacceptanceGate'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
+import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
@@ -155,6 +156,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <ReacceptanceGate />
       {/* PRD v4 §5: live presence socket (heartbeats + status_changed) */}
       <PresenceProvider />
+      {/* PRD v4 §6: consent-gated module_opened capture */}
+      <ModuleOpenedTracker />
     </div>
   )
 }

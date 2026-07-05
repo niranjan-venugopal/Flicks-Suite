@@ -346,6 +346,15 @@ export function useFamFunnel() {
   })
 }
 
+/** PRD v4 §6 / D13 — second funnel block: Invoicing activation F1–F5. */
+export function useFamInvoicingFunnel() {
+  return useQuery({
+    queryKey: ['fam', 'funnel', 'invoicing'],
+    queryFn: () => api.get<FamFunnel>('/api/v1/fam/funnel/invoicing'),
+    staleTime: 60_000,
+  })
+}
+
 // ─── C5: Feature usage ────────────────────────────────────────────────────
 
 export interface FamFeatureUsage {

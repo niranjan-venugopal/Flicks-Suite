@@ -1351,6 +1351,61 @@ export class FamService {
   }
 
   /**
+   * PRD v4 §6 / D13 — the SECOND funnel block: Invoicing activation F1–F5.
+   * Computed from business tables (authoritative even before product_events
+   * accumulates history): signed_up → org_configured → first invoice created
+   * → first invoice sent → first payment received. The existing signup funnel
+   * block above is untouched.
+   */
+  async getInvoicingFunnel() {
+    const totals = await this.dbAdmin.execute<{ stage: string; n: number }>(sql`
+      WITH t AS (
+        SELECT id FROM tenants
+        WHERE deleted_at IS NULL AND id <> ${SPECFLICKS_TENANT_ID}::uuid
+      )
+      SELECT 'signed_up'::text AS stage, COUNT(*)::int AS n FROM t
+      UNION ALL
+      SELECT 'org_configured', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM locations   l WHERE l.tenant_id = t.id)
+          AND EXISTS (SELECT 1 FROM departments d WHERE d.tenant_id = t.id)
+      UNION ALL
+      SELECT 'first_invoice_created', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM invoices i WHERE i.tenant_id = t.id)
+      UNION ALL
+      SELECT 'first_invoice_sent', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM invoices i
+                       WHERE i.tenant_id = t.id AND i.status <> 'DRAFT')
+      UNION ALL
+      SELECT 'first_payment_received', COUNT(*)::int FROM t
+        WHERE EXISTS (SELECT 1 FROM invoice_payments p WHERE p.tenant_id = t.id)
+    `);
+    const map = new Map<string, number>();
+    for (const r of (totals as unknown as Array<{ stage: string; n: number }>) ?? []) {
+      map.set(r.stage, Number(r.n));
+    }
+    const total = map.get('signed_up') ?? 0;
+    const stages = [
+      { id: 'signed_up', label: 'signed_up' },
+      { id: 'org_configured', label: 'org_configured' },
+      { id: 'first_invoice_created', label: 'first_invoice_created' },
+      { id: 'first_invoice_sent', label: 'first_invoice_sent' },
+      { id: 'first_payment_received', label: 'first_payment_received' },
+    ];
+    return {
+      total,
+      stages: stages.map((s2) => {
+        const count = map.get(s2.id) ?? 0;
+        return {
+          id: s2.id,
+          label: s2.label,
+          count,
+          rate: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        };
+      }),
+    };
+  }
+
+  /**
    * Per-tenant module adoption matrix. "Using" means at least one row in
    * the last 30 days for the relevant table.
    */

@@ -385,7 +385,7 @@ export class AuthService {
     // hitting either /verify-otp or /magic-link proves they own the email
     // address — flip those memberships to 'active' so the subsequent
     // membership lookup actually returns them.
-    await this.dbAdmin
+    const activated = await this.dbAdmin
       .update(memberships)
       .set({ status: 'active', accepted_at: new Date() })
       .where(
@@ -393,7 +393,23 @@ export class AuthService {
           eq(memberships.user_id, currentUser.id),
           eq(memberships.status, 'invited'),
         ),
-      );
+      )
+      .returning({ tenant_id: memberships.tenant_id });
+
+    // PRD v4 §6 — funnel/engagement events via the analytics.track sink
+    // (fire-and-forget; the listener dedupes first_login_day per day).
+    for (const m of activated) {
+      this.eventEmitter.emit('analytics.track', {
+        event: 'member_accepted',
+        tenantId: m.tenant_id,
+        userId: currentUser.id,
+      });
+    }
+    this.eventEmitter.emit('analytics.track', {
+      event: 'first_login_day',
+      userId: currentUser.id,
+      dedupePerDay: true,
+    });
 
     // Get memberships across all tenants (uses admin client — RLS would
     // hide them all since no tenant context is set yet at login time).

@@ -16,6 +16,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { SettingsService } from './settings.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   CreateDepartmentDto,
   UpdateDepartmentDto,
@@ -38,7 +39,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @ApiBearerAuth('access-token')
 @Controller('settings')
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly events: EventEmitter2,
+  ) {}
 
   // ─── Organization (tenant profile) ─────────────────────────────────────────
 
@@ -89,7 +93,13 @@ export class SettingsController {
     @Body() dto: CreateDepartmentDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.settingsService.createDepartment(user.tenantId, user.sub, dto);
+    const res = await this.settingsService.createDepartment(user.tenantId, user.sub, dto);
+    // PRD v4 §6 F2 — first department (locations seed at signup) marks the org
+    // as configured; the listener's oncePerTenant makes this fire exactly once.
+    this.events.emit('analytics.track', {
+      event: 'org_configured', tenantId: user.tenantId, userId: user.sub, oncePerTenant: true,
+    });
+    return res;
   }
 
   @Put('departments/:id')

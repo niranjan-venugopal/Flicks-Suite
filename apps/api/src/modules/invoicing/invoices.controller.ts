@@ -12,6 +12,7 @@ import {
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiProduces } from '@nestjs/swagger';
 import { InvoicesService } from './invoices.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InvoicePdfService } from './invoice-pdf.service';
 import {
   InvoiceListQueryDto,
@@ -34,6 +35,7 @@ export class InvoicesController {
   constructor(
     private readonly invoices: InvoicesService,
     private readonly pdf: InvoicePdfService,
+    private readonly events: EventEmitter2,
   ) {}
 
   @Get()
@@ -78,8 +80,14 @@ export class InvoicesController {
   @ApiOperation({
     summary: 'Create a draft invoice (server computes GST/TDS totals; number reserved atomically)',
   })
-  create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
-    return this.invoices.create(dto, user.sub, user.tenantId);
+  async create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: JwtPayload) {
+    const res = await this.invoices.create(dto, user.sub, user.tenantId);
+    // PRD v4 §6 F3 — first:true stamped by the analytics listener.
+    this.events.emit('analytics.track', {
+      event: 'invoice_created', tenantId: user.tenantId, userId: user.sub, markFirst: true,
+      properties: { document_type: (dto as { document_type?: string }).document_type ?? 'INVOICE' },
+    });
+    return res;
   }
 
   @Patch(':id')
@@ -139,18 +147,27 @@ export class InvoicesController {
   @Post(':id/send')
   @RequireGrant('invoicing', 'edit', 'send')
   @ApiOperation({ summary: 'Send: DRAFT→SENT, email the hosted View & Pay link' })
-  send(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.invoices.send(id, user.sub, user.tenantId);
+  async send(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    const res = await this.invoices.send(id, user.sub, user.tenantId);
+    this.events.emit('analytics.track', {
+      event: 'invoice_sent', tenantId: user.tenantId, userId: user.sub, markFirst: true, // §6 F4
+    });
+    return res;
   }
 
   @Post(':id/record-payment')
   @RequireGrant('invoicing', 'edit', 'record_payment')
   @ApiOperation({ summary: 'Record a manual payment (partial/over handled)' })
-  recordPayment(
+  async recordPayment(
     @Param('id') id: string,
     @Body() dto: RecordPaymentDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.invoices.recordPayment(id, dto, user.sub, user.tenantId);
+    const res = await this.invoices.recordPayment(id, dto, user.sub, user.tenantId);
+    this.events.emit('analytics.track', {
+      event: 'payment_received', tenantId: user.tenantId, userId: user.sub,
+      markFirst: true, properties: { method: dto.payment_method }, // §6 F5
+    });
+    return res;
   }
 }

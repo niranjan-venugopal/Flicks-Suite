@@ -370,3 +370,33 @@ export type FeatureFlag = typeof featureFlags.$inferSelect;
 export type NewFeatureFlag = typeof featureFlags.$inferInsert;
 export type TenantCohort = typeof tenantCohorts.$inferSelect;
 export type NewTenantCohort = typeof tenantCohorts.$inferInsert;
+
+// ─── product_events (PRD v4 §6 — first-party internal analytics) ───────────────
+// Append-only; properties = ids/enums/numbers only (no PII). tenant_id nullable
+// for pre-org events (service-role-only by RLS construction).
+
+export const productEvents = pgTable(
+  'product_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').references(() => tenants.id, {
+      onDelete: 'cascade',
+    }),
+    user_id: uuid('user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    event_name: text('event_name').notNull(),
+    properties: jsonb('properties').notNull().default({}),
+    source: text('source').notNull().default('api'), // web | api | job
+    occurred_at: timestamp('occurred_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('idx_pe_tenant_event_time').on(t.tenant_id, t.event_name, t.occurred_at),
+    index('idx_pe_event_time').on(t.event_name, t.occurred_at),
+  ],
+);
+
+export type ProductEvent = typeof productEvents.$inferSelect;
+export type NewProductEvent = typeof productEvents.$inferInsert;

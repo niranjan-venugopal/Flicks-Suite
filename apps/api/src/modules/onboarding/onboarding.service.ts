@@ -376,6 +376,14 @@ export class OnboardingService {
       { tenantId: tenant.id, slug: tenant.slug },
       { tenant: tenant.id },
     );
+    // PRD v4 §6 F1 — first-party funnel event ('signed_up' aliases the
+    // existing tenant_signup_completed).
+    this.analytics.track({
+      event: 'signed_up',
+      tenantId: tenant.id,
+      userId,
+      source: 'api',
+    });
 
     const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
     await this.notificationsService

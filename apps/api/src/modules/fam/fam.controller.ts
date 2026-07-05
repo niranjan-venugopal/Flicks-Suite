@@ -265,6 +265,12 @@ export class FamController {
     return this.famService.getFunnel();
   }
 
+  @Get('funnel/invoicing')
+  @ApiOperation({ summary: 'Invoicing activation funnel F1–F5 (PRD v4 §6/D13)' })
+  getInvoicingFunnel() {
+    return this.famService.getInvoicingFunnel();
+  }
+
   @Get('feature-usage')
   @Roles('fam')
   @ApiOperation({ summary: 'Per-tenant module adoption (last 30d)' })
