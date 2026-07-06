@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Loader2, Plus, Landmark, Star } from 'lucide-react'
+import { useState } from 'react'
+import Link from 'next/link'
+import { Loader2, Plus, Landmark, Star, Info } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { BankAccountModal } from '@/components/invoicing/BankAccountModal'
@@ -9,7 +10,6 @@ import { OrgDataLegal } from '@/components/consent/OrgDataLegal'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useOrgFinancial,
-  useUpdateOrgFinancial,
   useBankAccounts,
   useBankAccountAction,
   useSetCurrencyDefault,
@@ -20,52 +20,23 @@ const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 
 /**
  * Organization → Financial details (PRD §7.2/§8) — an org Settings page, so it
- * follows the HRMS settings pattern (SettingsLayout + cards), NOT the Invo
- * module style. Single source of truth for legal name / GSTIN / PAN (columns
- * on the tenant) + the company bank accounts that render on invoices.
+ * follows the HRMS settings pattern (SettingsLayout + cards). Legal identity
+ * (legal name / GSTIN / PAN) is edited ONLY in Settings → General (user
+ * decision, 2026-07-06); this page owns the company bank accounts that render
+ * on invoices.
  */
 export default function OrgFinancialPage() {
   const { toast } = useToast()
-  const { data: fin, isLoading: finLoading } = useOrgFinancial()
-  const updateFin = useUpdateOrgFinancial()
+  const { data: fin } = useOrgFinancial()
   const { data: banks, isLoading: banksLoading } = useBankAccounts()
   const bankAction = useBankAccountAction()
   const setCurrencyDefault = useSetCurrencyDefault()
 
-  const [legalName, setLegalName] = useState('')
-  const [gstin, setGstin] = useState('')
-  const [pan, setPan] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<BankAccount | null>(null)
 
-  useEffect(() => {
-    if (fin?.data) {
-      setLegalName(fin.data.legal_name ?? '')
-      setGstin(fin.data.gstin ?? '')
-      setPan(fin.data.pan ?? '')
-    }
-  }, [fin])
-
   const accounts = banks?.data ?? []
   const currencyDefaults = banks?.meta?.currency_defaults ?? {}
-
-  const onSaveFinancial = async (e: React.FormEvent) => {
-    e.preventDefault()
-    try {
-      await updateFin.mutateAsync({
-        legal_name: legalName || undefined,
-        gstin: gstin || undefined,
-        pan: pan || undefined,
-      })
-      toast({ title: 'Financial details saved' })
-    } catch (err: any) {
-      toast({
-        title: 'Could not save',
-        description: err?.message ?? 'Please try again.',
-        variant: 'destructive',
-      })
-    }
-  }
 
   const onAction = async (id: string, action: 'set-default' | 'delete') => {
     try {
@@ -98,7 +69,7 @@ export default function OrgFinancialPage() {
     <SettingsLayout>
       <SectionHead
         title="Organization · Financial details"
-        sub="Legal identity and bank accounts — read by Invoicing today, Payroll later. Single source of truth."
+        sub="Company bank accounts — read by Invoicing today, Payroll later."
         right={
           <Btn
             kind="primary"
@@ -113,52 +84,19 @@ export default function OrgFinancialPage() {
         }
       />
 
-      {/* Company financials (columns on the tenant) */}
-      <form className="card p-5 mb-6" onSubmit={onSaveFinancial}>
-        <div className="t-h3 mb-4">Company financials</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-2">
-            <label className="t-caption block mb-1.5">Legal name</label>
-            <input
-              className="input w-full"
-              value={legalName}
-              onChange={(e) => setLegalName(e.target.value)}
-              placeholder="Acme Private Limited"
-            />
-          </div>
-          <div>
-            <label className="t-caption block mb-1.5">GSTIN</label>
-            <input
-              className="input w-full"
-              value={gstin}
-              onChange={(e) => setGstin(e.target.value.toUpperCase())}
-              placeholder="29ABCDE1234F1Z5"
-            />
-          </div>
-          <div>
-            <label className="t-caption block mb-1.5">PAN</label>
-            <input
-              className="input w-full"
-              value={pan}
-              onChange={(e) => setPan(e.target.value.toUpperCase())}
-              placeholder="ABCDE1234F"
-            />
-          </div>
-          <div>
-            <label className="t-caption block mb-1.5">Fiscal year</label>
-            <input
-              className="input w-full opacity-60"
-              value={`April – March (month ${fin?.data?.fiscal_year_start_month ?? 4})`}
-              disabled
-            />
-          </div>
-        </div>
-        <div className="flex justify-end mt-4">
-          <Btn kind="primary" type="submit" disabled={updateFin.isPending || finLoading}>
-            {updateFin.isPending ? 'Saving…' : 'Save details'}
-          </Btn>
-        </div>
-      </form>
+      {/* Legal identity lives in Settings → General (single edit surface).
+          Invoices keep reading the same tenant columns — nothing moved in the DB. */}
+      <div className="card p-4 mb-6 flex items-start gap-3">
+        <Info className="w-4 h-4 text-brand-blue shrink-0 mt-0.5" />
+        <p className="t-mute text-sm leading-relaxed">
+          Legal name, GSTIN and PAN are managed in{' '}
+          <Link href="/settings" className="text-brand-blue font-semibold hover:underline">
+            Settings → General
+          </Link>
+          . Invoices read those same details. Fiscal year: April – March (month{' '}
+          {fin?.data?.fiscal_year_start_month ?? 4}).
+        </p>
+      </div>
 
       {/* Bank accounts */}
       {banksLoading ? (
