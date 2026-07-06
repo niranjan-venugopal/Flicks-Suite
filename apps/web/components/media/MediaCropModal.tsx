@@ -170,7 +170,7 @@ export function MediaCropModal({
           </div>
           <button
             onClick={onClose}
-            style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer' }}
+            style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >
             <Icon.x size={14} />
           </button>

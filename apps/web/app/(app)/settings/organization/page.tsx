@@ -2,8 +2,8 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Loader2, Plus, Landmark, Star, Info } from 'lucide-react'
-import { Btn, Pill, SectionHead } from '@/components/proto'
+import { Plus, Landmark, Star, Info } from 'lucide-react'
+import { Btn, Pill, SectionHead, SkeletonCard } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { BankAccountModal } from '@/components/invoicing/BankAccountModal'
 import { OrgDataLegal } from '@/components/consent/OrgDataLegal'
@@ -100,9 +100,7 @@ export default function OrgFinancialPage() {
 
       {/* Bank accounts */}
       {banksLoading ? (
-        <div className="card p-12 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
-        </div>
+        <SkeletonCard lines={4} />
       ) : accounts.length === 0 ? (
         <div className="card p-12 text-center">
           <div className="w-12 h-12 rounded-xl bg-brand-blue/10 flex items-center justify-center mx-auto mb-4">

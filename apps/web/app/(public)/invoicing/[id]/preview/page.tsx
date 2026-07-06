@@ -8,6 +8,7 @@ import { INVO, InvoBtn, InvoIcons } from '@/components/invoicing/invo'
 import { Toggle } from '@/components/proto/Toggle'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
+import { useOrganization } from '@/lib/api/queries/use-settings'
 import {
   useInvoice,
   useSendInvoice,
@@ -22,7 +23,9 @@ import {
  * ← Close · Edit (drafts) · Send · Copy link · Download PDF (Sprint 6).
  */
 
-function toPayload(inv: InvoiceDetail): PublicInvoicePayload {
+type OrgProfile = ReturnType<typeof useOrganization>['data']
+
+function toPayload(inv: InvoiceDetail, org: OrgProfile): PublicInvoicePayload {
   return {
     invoice: {
       invoice_number: inv.invoice_number,
@@ -75,9 +78,22 @@ function toPayload(inv: InvoiceDetail): PublicInvoicePayload {
           billing_country: null,
         }
       : null,
-    // The preview runs before/without a public payload, so seller branding is
-    // minimal here; the hosted page enriches it from the tenant row.
-    seller: null,
+    // Seller branding from the tenant profile — the preview must show exactly
+    // what the hosted page shows (same name/address/GSTIN + uploaded logo).
+    seller: org
+      ? {
+          name: org.name,
+          legal_name: org.legalName ?? null,
+          gstin: org.gstin ?? null,
+          address_line1: org.addressLine1 ?? null,
+          address_line2: org.addressLine2 ?? null,
+          city: org.city ?? null,
+          state_code: org.stateCode ?? null,
+          postal_code: org.postalCode ?? null,
+          logo_url: org.logoUrl ?? null,
+          brand_color: org.brandColor ?? null,
+        }
+      : null,
     payment_options: { upi: null, razorpay: null, bank_transfer: null, allow_partial: true },
     show_powered_by: false,
   }
@@ -95,7 +111,8 @@ export default function InvoicePreviewPage() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark')
   const [payingOpen, setPayingOpen] = useState(false)
 
-  const payload = useMemo(() => (data?.data ? toPayload(data.data) : null), [data])
+  const { data: org } = useOrganization()
+  const payload = useMemo(() => (data?.data ? toPayload(data.data, org) : null), [data, org])
   const inv = data?.data
 
   const onSend = async () => {

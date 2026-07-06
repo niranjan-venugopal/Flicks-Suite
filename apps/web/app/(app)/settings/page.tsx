@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Camera } from 'lucide-react'
-import { Btn, Pill, SectionHead, avBg, initials, type PillTone } from '@/components/proto'
+import { Btn, Pill, SectionHead, Skeleton, SkeletonCard, avBg, initials, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { MediaCropModal } from '@/components/media/MediaCropModal'
 import { useUploadLogo, useRemoveLogo } from '@/lib/api/queries/use-media'
@@ -205,8 +205,16 @@ export default function OrganizationSettingsPage() {
   if (isLoading || !org) {
     return (
       <SettingsLayout>
-        <div className="card p-12 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
+        <div className="flex flex-col gap-6">
+          <div className="card p-6 flex items-center gap-6">
+            <Skeleton w={64} h={64} r="50%" />
+            <div className="flex-1 flex flex-col gap-2">
+              <Skeleton w={220} h={18} />
+              <Skeleton w={320} h={12} />
+            </div>
+          </div>
+          <SkeletonCard lines={4} />
+          <SkeletonCard lines={3} />
         </div>
       </SettingsLayout>
     )
@@ -336,16 +344,8 @@ export default function OrganizationSettingsPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Logo" hint="PNG or WebP · max 8 MB · transparency kept · renders circular in-app.">
-                <button
-                  type="button"
-                  onClick={() => setLogoModalOpen(true)}
-                  className="input text-left cursor-pointer flex items-center gap-2"
-                >
-                  <Camera className="w-3.5 h-3.5 text-brand-muted" />
-                  {org.logoUrl ? 'Change logo' : 'Upload logo'}
-                </button>
-              </Field>
+              {/* Logo is changed via the camera badge on the overview card above —
+                  one control only (user decision, 2026-07-06) */}
             </div>
           </section>
 

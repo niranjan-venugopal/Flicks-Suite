@@ -8,6 +8,8 @@ export interface ResolvedPresence {
   status: PresenceStatus
   message: string | null
   manual: boolean
+  /** ISO expiry of a manual status ("clear after") — null for Never/auto. */
+  expires_at?: string | null
 }
 
 interface PresenceState {

@@ -51,11 +51,16 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
   const presence = useUserPresence(currentUser?.id)
   const [msg, setMsg] = useState('')
   const [clearAfter, setClearAfter] = useState<ClearAfter>('Never')
+  // Whether the user changed "Clear after" THIS session. Until they do, every
+  // save keeps the expiry already on the server — reopening the picker must
+  // not silently turn a "1 hour" status into "Never" (Teams behavior).
+  const [clearTouched, setClearTouched] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
   const resolved: PresenceStatus = presence.status ?? 'offline'
   const meta = STATUS_META[resolved]
-  const manualActive = MANUAL.includes(resolved as ManualStatus) ? (resolved as ManualStatus) : null
+  const manualActive = presence.manual && MANUAL.includes(resolved as ManualStatus) ? (resolved as ManualStatus) : null
+  const activeExpiry = presence.manual ? presence.expiresAt : null
 
   useEffect(() => {
     setMsg(presence.message ?? '')
@@ -70,12 +75,19 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('mousedown', onClick)
   }, [onClose])
 
-  const apply = async (status: ManualStatus, message = msg, clear = clearAfter) => {
+  const apply = async (
+    status: ManualStatus,
+    message = msg,
+    clear = clearAfter,
+    touched = clearTouched,
+  ) => {
     try {
       await setStatus.mutateAsync({
         status,
         message: message || undefined,
-        expires_at: expiryFor(clear),
+        // Untouched "Clear after" → carry the server's existing expiry forward
+        // instead of wiping it; touched → compute from the chosen option.
+        expires_at: touched || !activeExpiry ? expiryFor(clear) : activeExpiry,
       })
     } catch (err) {
       toast({
@@ -90,10 +102,17 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
     try {
       await clearStatus.mutateAsync()
       setMsg('')
+      setClearAfter('Never')
+      setClearTouched(false)
     } catch {
       /* surface-level only */
     }
   }
+
+  // "Until 5:15 pm" label for an expiry the user set earlier this session or
+  // before reopening the picker.
+  const untilLabel = (iso: string) =>
+    `Until ${new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
 
   return (
     <div
@@ -128,7 +147,7 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
         </div>
         <button
           onClick={onClose}
-          style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer' }}
+          style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
         >
           <Icon.x size={12} />
         </button>
@@ -204,13 +223,19 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
             <select
               className="input"
               style={{ height: 36, fontSize: 12, width: '100%' }}
-              value={clearAfter}
+              value={!clearTouched && activeExpiry ? '__active' : clearAfter}
               onChange={(e) => {
+                if (e.target.value === '__active') return
                 const v = e.target.value as ClearAfter
                 setClearAfter(v)
-                if (manualActive) void apply(manualActive, msg, v)
+                setClearTouched(true)
+                if (manualActive) void apply(manualActive, msg, v, true)
               }}
             >
+              {/* A live expiry shows as "Until 5:15 pm" until the user picks anew */}
+              {!clearTouched && activeExpiry && (
+                <option value="__active">{untilLabel(activeExpiry)}</option>
+              )}
               {CLEAR_OPTIONS.map((o) => (
                 <option key={o}>{o}</option>
               ))}

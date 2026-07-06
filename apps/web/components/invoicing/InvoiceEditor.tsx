@@ -169,7 +169,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       toast({ title: 'Pick a client first', variant: 'destructive' })
       return null
     }
-    const valid = lines.filter((l) => l.item_name.trim() && l.rate)
+    const valid = lines
+      .filter((l) => l.item_name.trim() && l.rate)
+      // A blank GST/VAT % means 0% — the API's number-string validation
+      // rejects '' (bit non-INR invoices where the VAT field was cleared).
+      .map((l) => ({
+        ...l,
+        gst_rate: l.gst_rate?.trim() ? l.gst_rate : '0',
+        cess_rate: l.cess_rate?.trim() ? l.cess_rate : '0',
+      }))
     if (!valid.length) {
       toast({ title: 'Add at least one line item', variant: 'destructive' })
       return null
