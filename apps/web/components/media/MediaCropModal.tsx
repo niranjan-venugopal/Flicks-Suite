@@ -207,7 +207,7 @@ export function MediaCropModal({
               }}
             >
               <div style={{ width: 46, height: 46, borderRadius: 12, background: 'rgba(62,123,250,.12)', color: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon.image size={22} />
+                <Icon.camera size={22} />
               </div>
               <div style={{ fontSize: 13, fontWeight: 800 }}>
                 Drag &amp; drop a photo, or <span style={{ color: 'var(--blue)' }}>browse</span>

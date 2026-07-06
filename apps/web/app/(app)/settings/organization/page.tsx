@@ -6,7 +6,6 @@ import { Btn, Pill, SectionHead } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { BankAccountModal } from '@/components/invoicing/BankAccountModal'
 import { OrgDataLegal } from '@/components/consent/OrgDataLegal'
-import { OrgLogoCard } from '@/components/media/OrgLogoCard'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useOrgFinancial,
@@ -97,9 +96,6 @@ export default function OrgFinancialPage() {
 
   return (
     <SettingsLayout>
-      {/* D7 (PRD v4 §4) — company logo uploader; everything below is unchanged */}
-      <OrgLogoCard />
-
       <SectionHead
         title="Organization · Financial details"
         sub="Legal identity and bank accounts — read by Invoicing today, Payroll later. Single source of truth."

@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Image as ImageIcon } from 'lucide-react'
-import { Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { Loader2, Camera } from 'lucide-react'
+import { Btn, Pill, SectionHead, avBg, initials, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
+import { MediaCropModal } from '@/components/media/MediaCropModal'
+import { useUploadLogo, useRemoveLogo } from '@/lib/api/queries/use-media'
 import {
   useOrganization,
   useUpdateOrganization,
@@ -132,6 +134,9 @@ const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/
 export default function OrganizationSettingsPage() {
   const { data: org, isLoading } = useOrganization()
   const update = useUpdateOrganization()
+  const uploadLogo = useUploadLogo()
+  const removeLogo = useRemoveLogo()
+  const [logoModalOpen, setLogoModalOpen] = useState(false)
   const { toast } = useToast()
 
   const [form, setForm] = useState<FormState>(toForm(undefined))
@@ -224,13 +229,28 @@ export default function OrganizationSettingsPage() {
 
         {/* ─── Overview card ──────────────────────────────────────────────── */}
         <div className="card mb-6 p-6 flex flex-wrap items-center gap-6">
-          <div className="w-16 h-16 rounded-xl bg-white/5 border border-dashed border-white/15 flex items-center justify-center shrink-0">
-            {org.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={org.logoUrl} alt="Logo" className="w-full h-full object-cover rounded-xl" />
-            ) : (
-              <ImageIcon className="w-5 h-5 text-white/30" />
-            )}
+          {/* D7 (PRD v4 §4.1) — org logo, circular in-app; camera badge opens the crop modal */}
+          <div className="relative shrink-0">
+            <div
+              className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-xl"
+              style={{ background: org.logoUrl ? 'var(--surf-2)' : avBg(org.name) }}
+            >
+              {org.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={org.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+              ) : (
+                initials(org.name)
+              )}
+            </div>
+            <button
+              type="button"
+              title="Change logo"
+              onClick={() => setLogoModalOpen(true)}
+              className="absolute -bottom-0.5 -right-0.5 w-[26px] h-[26px] rounded-full flex items-center justify-center text-white cursor-pointer"
+              style={{ background: 'var(--blue)', border: '2.5px solid var(--surf-1)' }}
+            >
+              <Camera className="w-[13px] h-[13px]" />
+            </button>
           </div>
           <div className="flex-1 min-w-[240px]">
             <div className="t-h2">{org.name}</div>
@@ -316,13 +336,14 @@ export default function OrganizationSettingsPage() {
                   ))}
                 </select>
               </Field>
-              <Field label="Logo" hint="Upload coming soon — square PNG or SVG.">
+              <Field label="Logo" hint="PNG or WebP · max 8 MB · transparency kept · renders circular in-app.">
                 <button
                   type="button"
-                  disabled
-                  className="input opacity-50 cursor-not-allowed text-left"
+                  onClick={() => setLogoModalOpen(true)}
+                  className="input text-left cursor-pointer flex items-center gap-2"
                 >
-                  Upload logo
+                  <Camera className="w-3.5 h-3.5 text-brand-muted" />
+                  {org.logoUrl ? 'Change logo' : 'Upload logo'}
                 </button>
               </Field>
             </div>
@@ -425,8 +446,9 @@ export default function OrganizationSettingsPage() {
             </div>
           </section>
 
-          {/* ─── Footer actions ─────────────────────────────────────────── */}
-          <div className="flex items-center justify-between sticky bottom-4 z-20">
+          {/* ─── Footer actions (in normal flow — a transparent sticky bar
+               floated over the address fields while scrolling) ───────────── */}
+          <div className="flex items-center justify-between">
             <p className="t-mute text-sm">
               {dirty
                 ? <span className="text-brand-yellow">You have unsaved changes.</span>
@@ -452,6 +474,20 @@ export default function OrganizationSettingsPage() {
             </div>
           </div>
         </form>
+
+        {logoModalOpen && (
+          <MediaCropModal
+            kind="logo"
+            hasCurrent={!!org.logoUrl}
+            onUpload={async (blob) => {
+              await uploadLogo.mutateAsync(blob)
+            }}
+            onRemove={async () => {
+              await removeLogo.mutateAsync()
+            }}
+            onClose={() => setLogoModalOpen(false)}
+          />
+        )}
     </SettingsLayout>
   )
 }
