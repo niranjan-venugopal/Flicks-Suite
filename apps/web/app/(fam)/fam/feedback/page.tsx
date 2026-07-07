@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { Avatar, Btn, Icon, Pill, SectionHead, Skeleton } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useFamFeedback,
@@ -21,12 +21,23 @@ const ST_TONE: Record<string, string> = { new: 'blue', triaged: 'yellow', resolv
 const STATUSES = ['new', 'triaged', 'resolved', 'closed'] as const
 
 function NpsTile() {
-  const { data } = useFamNpsSummary()
+  const { data, isLoading } = useFamNpsSummary()
   const d = data?.data
   const total = d?.total ?? 0
   const pct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
+  if (isLoading) {
+    // "+0" is a legitimate NPS value — never fake it while loading.
+    return (
+      <div className="card" style={{ maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Skeleton w={120} h={12} />
+        <Skeleton w={80} h={34} />
+        <Skeleton h={12} r={99} />
+        <Skeleton w="70%" h={11} />
+      </div>
+    )
+  }
   return (
-    <div className="card" style={{ maxWidth: 360, borderColor: 'rgba(155,123,250,.3)' }}>
+    <div className="card" style={{ maxWidth: 360 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
         <div>
           <div className="t-caption" style={{ marginBottom: 6 }}>NPS · {d?.survey_key ?? 'beta_nps_v1'}</div>
@@ -233,12 +244,14 @@ export default function FamFeedbackPage() {
                     <button
                       key={s}
                       onClick={() => save(s)}
+                      disabled={update.isPending}
                       style={{
                         flex: 1,
                         padding: '7px 0',
                         borderRadius: 6,
                         border: 'none',
-                        cursor: 'pointer',
+                        cursor: update.isPending ? 'default' : 'pointer',
+                        opacity: update.isPending ? 0.55 : 1,
                         background: selected.status === s ? 'var(--surf-3)' : 'transparent',
                         color: selected.status === s ? '#fff' : 'var(--text-2)',
                         fontSize: 11,
@@ -252,8 +265,8 @@ export default function FamFeedbackPage() {
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <Btn kind="ghost" size="sm" onClick={() => setSelected(null)}>Close</Btn>
-                <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={() => save()}>
-                  Save
+                <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={() => save()} disabled={update.isPending}>
+                  {update.isPending ? 'Saving…' : 'Save'}
                 </Btn>
               </div>
             </div>

@@ -162,12 +162,16 @@ export function Topbar() {
             <DropdownMenuItem asChild>
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
-            {/* D10-R — primary feedback trigger (below Profile/Settings, above Sign out) */}
-            <DropdownMenuItem onClick={() => openFeedback(true)}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <Icon.chat size={13} /> Send feedback
-              </span>
-            </DropdownMenuItem>
+            {/* D10-R — primary feedback trigger (below Profile/Settings, above
+                Sign out). Tenant users only: the FAM console doesn't mount the
+                panel and platform staff aren't the survey audience. */}
+            {!isFam && (
+              <DropdownMenuItem onClick={() => openFeedback(true)}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <Icon.chat size={13} /> Send feedback
+                </span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}

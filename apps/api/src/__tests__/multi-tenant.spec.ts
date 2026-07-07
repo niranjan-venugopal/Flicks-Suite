@@ -691,6 +691,24 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     await expect(withTenantUser(tenantA.id, bob.id, (tx) => tx.insert(schema.feedbackSubmissions).values({
       tenant_id: tenantA.id, user_id: alice.id, category: 'bug', message: 'forged',
     }))).rejects.toThrow();
+    // Bob cannot UPDATE Alice's NPS row (0 rows matched under RLS)…
+    const hijack = await withTenantUser(tenantA.id, bob.id, (tx) =>
+      tx.update(schema.npsResponses).set({ score: 0 }).where(eq(schema.npsResponses.id, nps!.id)).returning(),
+    );
+    expect(hijack.length).toBe(0);
+    // …nor INSERT an NPS row for Alice (forged user_id fails WITH CHECK).
+    await expect(withTenantUser(tenantA.id, bob.id, (tx) => tx.insert(schema.npsResponses).values({
+      tenant_id: tenantA.id, user_id: alice.id, status: 'dismissed', survey_key: `forged-${rid()}`,
+    }))).rejects.toThrow();
+    // …nor insert his own row attributed to ANOTHER tenant (tenant pinning).
+    await expect(withTenantUser(tenantA.id, bob.id, (tx) => tx.insert(schema.npsResponses).values({
+      tenant_id: tenantB.id, user_id: bob.id, status: 'dismissed', survey_key: `xten-${rid()}`,
+    }))).rejects.toThrow();
+    // DELETE is revoked outright: answered/dismissed are permanent (§7) —
+    // even one's OWN row cannot be erased to force a re-prompt.
+    await expect(withTenantUser(tenantA.id, alice.id, (tx) =>
+      tx.delete(schema.npsResponses).where(eq(schema.npsResponses.id, nps!.id)),
+    )).rejects.toThrow();
     await idbAdmin.delete(schema.users).where(eq(schema.users.id, alice.id));
     await idbAdmin.delete(schema.users).where(eq(schema.users.id, bob.id));
   });

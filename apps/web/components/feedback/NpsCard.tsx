@@ -1,7 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
+import { useToast } from '@/components/ui/use-toast'
 import { useNpsEligibility, useNpsRespond } from '@/lib/api/queries/use-feedback'
 import { useAuthStore } from '@/lib/stores/auth.store'
 
@@ -13,13 +15,26 @@ import { useAuthStore } from '@/lib/stores/auth.store'
  */
 export function NpsCard() {
   const { currentUser } = useAuthStore()
+  const { toast } = useToast()
+  const pathname = usePathname()
   const eligibility = useNpsEligibility(!!currentUser?.id)
   const respond = useNpsRespond()
   const [step, setStep] = useState<'prompt' | 'comment' | 'thanks' | 'hidden'>('prompt')
   const [score, setScore] = useState<number | null>(null)
   const [comment, setComment] = useState('')
 
-  if (!eligibility.data?.data?.eligible || step === 'hidden') return null
+  // The answer invalidates eligibility (now false) — the thanks step must
+  // survive that refetch, then auto-hide.
+  useEffect(() => {
+    if (step !== 'thanks') return
+    const t = setTimeout(() => setStep('hidden'), 4000)
+    return () => clearTimeout(t)
+  }, [step])
+
+  const dismissed = step === 'hidden'
+  const showThanks = step === 'thanks'
+  if (dismissed || pathname?.includes('/print')) return null
+  if (!showThanks && !eligibility.data?.data?.eligible) return null
 
   const finish = async (action: 'answer' | 'snooze' | 'dismiss') => {
     try {
@@ -28,9 +43,22 @@ export function NpsCard() {
         score: action === 'answer' ? (score ?? undefined) : undefined,
         comment: action === 'answer' && comment.trim() ? comment : undefined,
       })
-    } finally {
+      // Only claim success when the server actually recorded it.
       if (action === 'answer') setStep('thanks')
       else setStep('hidden')
+    } catch (err) {
+      if (action === 'answer') {
+        // Keep the card so the response isn't silently lost.
+        toast({
+          title: 'Could not record your response',
+          description: err instanceof Error ? err.message : 'Please try again.',
+          variant: 'destructive',
+        })
+      } else {
+        // Snooze/dismiss failures still hide for this session — never trap
+        // the user with a card they tried to close.
+        setStep('hidden')
+      }
     }
   }
 
@@ -56,7 +84,7 @@ export function NpsCard() {
           <button
             onClick={() => finish('dismiss')}
             title="Dismiss — never asks again"
-            style={{ width: 22, height: 22, borderRadius: 6, background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+            style={{ width: 22, height: 22, borderRadius: 6, background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >
             <Icon.x size={13} />
           </button>
@@ -119,14 +147,15 @@ export function NpsCard() {
               style={{ height: 70, padding: 10, resize: 'none', fontSize: 12, marginBottom: 10, width: '100%' }}
               placeholder="What's the main reason for your score?"
               value={comment}
+              maxLength={2000}
               onChange={(e) => setComment(e.target.value)}
             />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Btn kind="ghost" size="sm" onClick={() => finish('answer')}>
+              <Btn kind="ghost" size="sm" onClick={() => finish('answer')} disabled={respond.isPending}>
                 Skip
               </Btn>
-              <Btn kind="primary" size="sm" onClick={() => finish('answer')}>
-                Send
+              <Btn kind="primary" size="sm" onClick={() => finish('answer')} disabled={respond.isPending}>
+                {respond.isPending ? 'Sending…' : 'Send'}
               </Btn>
             </div>
           </>

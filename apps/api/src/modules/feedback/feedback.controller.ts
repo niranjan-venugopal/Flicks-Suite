@@ -5,6 +5,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -107,7 +108,7 @@ export class FeedbackController {
   famList(
     @Query('category') category?: string,
     @Query('status') status?: string,
-    @Query('tenantId') tenantId?: string,
+    @Query('tenantId', new ParseUUIDPipe({ optional: true })) tenantId?: string,
   ) {
     return this.feedback.famList({ category, status, tenantId });
   }
@@ -116,7 +117,7 @@ export class FeedbackController {
   @Roles('fam')
   @ApiOperation({ summary: 'Update feedback status / internal note (audited)' })
   famUpdate(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: FamFeedbackUpdateDto,
     @CurrentUser() user: JwtPayload,
   ) {

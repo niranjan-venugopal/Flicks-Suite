@@ -31,7 +31,7 @@ export function OrgDataLegal() {
   }
 
   return (
-    <div className="card" style={{ borderColor: 'rgba(155,123,250,.3)' }}>
+    <div className="card">
       <div className="t-h3" style={{ marginBottom: 14 }}>Data &amp; legal</div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {/* Export */}

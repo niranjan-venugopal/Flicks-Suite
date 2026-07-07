@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS feedback_submissions (
 CREATE INDEX IF NOT EXISTS idx_feedback_tenant_created
   ON feedback_submissions (tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_submissions (status);
+-- Hot paths: the per-submit 10/day throttle count and the unfiltered FAM inbox.
+CREATE INDEX IF NOT EXISTS idx_feedback_user_created
+  ON feedback_submissions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback_submissions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_category ON feedback_submissions (category);
 
 ALTER TABLE feedback_submissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback_submissions FORCE ROW LEVEL SECURITY;
@@ -55,10 +60,21 @@ CREATE TABLE IF NOT EXISTS nps_responses (
   UNIQUE (user_id, survey_key)
 );
 
+CREATE INDEX IF NOT EXISTS idx_nps_survey_status ON nps_responses (survey_key, status);
+
 ALTER TABLE nps_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nps_responses FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS nps_self_all ON nps_responses;
+-- Self-visibility + tenant pinning: a user acts only on their own row, and
+-- writes must carry the session's tenant (no cross-tenant mis-attribution).
 CREATE POLICY nps_self_all ON nps_responses FOR ALL
   USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid)
-  WITH CHECK (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+  WITH CHECK (
+    user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+    AND tenant_id = current_setting('app.tenant_id', true)::uuid
+  );
 GRANT SELECT, INSERT, UPDATE ON nps_responses TO flicks_app;
+-- No DELETE: answered/dismissed are permanent (§7 once-only) — without this
+-- revoke the 0017 default privileges leave DELETE granted and the FOR ALL
+-- policy would let a user erase their own row and get re-prompted.
+REVOKE DELETE ON nps_responses FROM flicks_app;

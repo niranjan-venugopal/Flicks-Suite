@@ -49,27 +49,28 @@ export class FeedbackService {
     dto: { category: string; message: string; contact_ok?: boolean; page_path?: string },
   ) {
     if (!dto.message?.trim()) throw new BadRequestException('Say something first');
-    // 10/user/day (§7) — count today's rows.
+    // 10/user/day (§7, rolling 24h window). Counted INSIDE the insert
+    // transaction (self-visibility RLS shows the user their own rows) so
+    // concurrent submits can't all read a stale pre-insert count.
     const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [{ n }] = await this.dbAdmin
-      .select({ n: count() })
-      .from(feedbackSubmissions)
-      .where(
-        and(
-          eq(feedbackSubmissions.user_id, userId),
-          gt(feedbackSubmissions.created_at, dayAgo),
-        ),
-      );
-    if (Number(n) >= 10) {
-      throw new HttpException(
-        'Feedback limit reached for today — thank you for all of it!',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
     const row = await this.db.withTenant(
       tenantId,
       async (tx) => {
+        const [{ n }] = await tx
+          .select({ n: count() })
+          .from(feedbackSubmissions)
+          .where(
+            and(
+              eq(feedbackSubmissions.user_id, userId),
+              gt(feedbackSubmissions.created_at, dayAgo),
+            ),
+          );
+        if (Number(n) >= 10) {
+          throw new HttpException(
+            'Feedback limit reached for today — thank you for all of it!',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
+        }
         const [created] = await tx
           .insert(feedbackSubmissions)
           .values({
@@ -121,21 +122,26 @@ export class FeedbackService {
       return { data: { eligible: true, survey_key: SURVEY_KEY } };
     }
 
-    const [user] = await this.dbAdmin
-      .select({ created_at: users.created_at })
-      .from(users)
-      .where(eq(users.id, userId))
+    // §7.2 gate 1 — TENANT age ≥ 21d (the workspace must be past its first
+    // impressions; the user-familiarity gate is the active-days check below).
+    const [tenant] = await this.dbAdmin
+      .select({ created_at: tenants.created_at })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
       .limit(1);
-    const ageDays = user
-      ? (Date.now() - new Date(user.created_at).getTime()) / (24 * 60 * 60 * 1000)
+    const ageDays = tenant
+      ? (Date.now() - new Date(tenant.created_at).getTime()) / (24 * 60 * 60 * 1000)
       : 0;
     if (ageDays < NPS_MIN_ACCOUNT_AGE_DAYS) {
       return { data: { eligible: false, survey_key: SURVEY_KEY } };
     }
 
-    // Distinct active days from first_login_day product events (§6 feeds §7).
+    // Distinct active days: first_login_day is already deduped to one event
+    // per user per day by the analytics listener, so the row count IS the
+    // distinct-day count — recomputing ::date here would re-introduce a
+    // day-boundary mismatch with the emitter.
     const [{ days }] = await this.dbAdmin
-      .select({ days: sql<number>`COUNT(DISTINCT occurred_at::date)::int` })
+      .select({ days: count() })
       .from(productEvents)
       .where(
         and(
@@ -147,12 +153,19 @@ export class FeedbackService {
       return { data: { eligible: false, survey_key: SURVEY_KEY } };
     }
 
-    // Tenant activity: ≥1 sent invoice OR completed HRMS onboarding (any
-    // employee past self-onboarding review).
+    // Tenant activity: ≥1 SENT invoice OR completed HRMS onboarding (any
+    // employee past self-onboarding review). Quotes and drafted-then-
+    // cancelled invoices don't count as "sent an invoice".
     const [sentInvoice] = await this.dbAdmin
       .select({ one: sql<number>`1` })
       .from(invoices)
-      .where(and(eq(invoices.tenant_id, tenantId), sql`${invoices.status} <> 'DRAFT'`))
+      .where(
+        and(
+          eq(invoices.tenant_id, tenantId),
+          eq(invoices.document_type, 'INVOICE'),
+          sql`${invoices.status} IN ('SENT','VIEWED','PARTIALLY_PAID','PAID','OVERDUE')`,
+        ),
+      )
       .limit(1);
     let tenantActive = !!sentInvoice;
     if (!tenantActive) {
@@ -180,28 +193,42 @@ export class FeedbackService {
       throw new BadRequestException('Score must be 0–10');
     }
     const now = new Date();
-    const values = {
-      tenant_id: tenantId,
-      user_id: userId,
-      survey_key: SURVEY_KEY,
-      score: dto.action === 'answer' ? dto.score : null,
-      comment: dto.action === 'answer' ? dto.comment?.slice(0, 2000) : null,
-      status:
-        dto.action === 'answer'
-          ? ('answered' as const)
-          : dto.action === 'snooze'
-            ? ('snoozed' as const)
-            : ('dismissed' as const),
-      prompted_at: now,
-      responded_at: dto.action === 'answer' ? now : null,
-      snoozed_until:
-        dto.action === 'snooze'
-          ? new Date(now.getTime() + NPS_SNOOZE_DAYS * 24 * 60 * 60 * 1000)
-          : null,
-    };
     const row = await this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Answered and dismissed are TERMINAL (§7: one response per survey key;
+        // × = permanent). Only a snoozed row may be acted on again — without
+        // this, a stray 'dismiss' after answering would wipe the score via the
+        // upsert, or a second 'answer' would rewrite it.
+        const [existing] = await tx
+          .select({ status: npsResponses.status })
+          .from(npsResponses)
+          .where(
+            and(eq(npsResponses.user_id, userId), eq(npsResponses.survey_key, SURVEY_KEY)),
+          )
+          .limit(1);
+        if (existing && existing.status !== 'snoozed') {
+          return { status: existing.status, unchanged: true as const };
+        }
+        const values = {
+          tenant_id: tenantId,
+          user_id: userId,
+          survey_key: SURVEY_KEY,
+          score: dto.action === 'answer' ? dto.score : null,
+          comment: dto.action === 'answer' ? dto.comment?.slice(0, 2000) : null,
+          status:
+            dto.action === 'answer'
+              ? ('answered' as const)
+              : dto.action === 'snooze'
+                ? ('snoozed' as const)
+                : ('dismissed' as const),
+          prompted_at: now,
+          responded_at: dto.action === 'answer' ? now : null,
+          snoozed_until:
+            dto.action === 'snooze'
+              ? new Date(now.getTime() + NPS_SNOOZE_DAYS * 24 * 60 * 60 * 1000)
+              : null,
+        };
         const [upserted] = await tx
           .insert(npsResponses)
           .values(values)
@@ -210,11 +237,11 @@ export class FeedbackService {
             set: values,
           })
           .returning();
-        return upserted!;
+        return { status: upserted!.status, unchanged: false as const };
       },
       userId,
     );
-    if (dto.action === 'answer') {
+    if (dto.action === 'answer' && !row.unchanged) {
       void this.analytics.track({
         event: 'nps_submitted',
         tenantId,
@@ -265,6 +292,10 @@ export class FeedbackService {
     actorUserId: string,
     dto: { status?: string; internal_note?: string },
   ) {
+    if (dto.status === undefined && dto.internal_note === undefined) {
+      // Drizzle's update().set({}) throws at query-build time → 500 without this.
+      throw new BadRequestException('Nothing to update');
+    }
     const [existing] = await this.dbAdmin
       .select()
       .from(feedbackSubmissions)
@@ -276,9 +307,13 @@ export class FeedbackService {
       .set({
         ...(dto.status ? { status: dto.status } : {}),
         ...(dto.internal_note !== undefined ? { internal_note: dto.internal_note } : {}),
+        // Resolution stamp follows the status: set on resolve/close, CLEARED
+        // when reopened — a 'triaged' row must not claim it was resolved.
         ...(dto.status === 'resolved' || dto.status === 'closed'
           ? { resolved_by: actorUserId, resolved_at: new Date() }
-          : {}),
+          : dto.status === 'new' || dto.status === 'triaged'
+            ? { resolved_by: null, resolved_at: null }
+            : {}),
       })
       .where(eq(feedbackSubmissions.id, id))
       .returning();

@@ -37,10 +37,14 @@ export function FeedbackPanel() {
   const [msg, setMsg] = useState('')
   const [contact, setContact] = useState(true)
   const [state, setState] = useState<'open' | 'submitting' | 'success' | 'error'>('open')
+  const [errorText, setErrorText] = useState<string | null>(null)
 
-  if (!open) return null
+  // Mounted only inside (app), but the panel state survives navigation — keep
+  // it off print/PDF surfaces even if it was left open.
+  if (!open || pathname?.includes('/print')) return null
 
   const doSubmit = async () => {
+    setErrorText(null)
     setState('submitting')
     try {
       await submit.mutateAsync({
@@ -51,7 +55,10 @@ export function FeedbackPanel() {
       })
       setState('success')
       setMsg('')
-    } catch {
+    } catch (err) {
+      // Surface the server's message (e.g. the 10/day limit) instead of
+      // blaming the connection for every failure.
+      setErrorText(err instanceof Error && err.message ? err.message : null)
       setState('error')
     }
   }
@@ -81,7 +88,7 @@ export function FeedbackPanel() {
           <span style={{ flex: 1, fontSize: 13, fontWeight: 800 }}>Share feedback</span>
           <button
             onClick={close}
-            style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer' }}
+            style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >
             <Icon.x size={12} />
           </button>
@@ -102,7 +109,7 @@ export function FeedbackPanel() {
               <div style={{ display: 'flex', gap: 9, padding: '9px 12px', borderRadius: 9, background: 'rgba(248,120,107,.08)', border: '1px solid rgba(248,120,107,.3)' }}>
                 <Icon.warn size={14} style={{ color: 'var(--coral)', flexShrink: 0, marginTop: 1 }} />
                 <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)' }}>
-                  Couldn&apos;t send — check your connection and try again.
+                  {errorText ?? 'Couldn’t send — check your connection and try again.'}
                 </span>
               </div>
             )}
@@ -157,10 +164,11 @@ export function FeedbackPanel() {
               style={{
                 width: '100%',
                 justifyContent: 'center',
-                ...(msg.trim() ? {} : { opacity: 0.45, pointerEvents: 'none' }),
+                ...(msg.trim() ? {} : { opacity: 0.45 }),
               }}
               icon={<Icon.send size={13} />}
               onClick={doSubmit}
+              disabled={!msg.trim() || state === 'submitting'}
             >
               {state === 'submitting' ? 'Sending…' : 'Submit feedback'}
             </Btn>
