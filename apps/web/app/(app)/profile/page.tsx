@@ -63,6 +63,9 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {/* Profile photo (PRD v4 §4, D5+) — inserted right under the identity card */}
+        <ProfilePhotoCard />
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
           {/* Account info */}
           <div className="card">
@@ -107,9 +110,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Profile photo (PRD v4 §4, D5+) */}
-        <ProfilePhotoCard />
-
         {/* Data & privacy (DPDP) */}
         <DataPrivacyCard />
       </div>
@@ -127,7 +127,7 @@ function ProfilePhotoCard() {
   const hasPhoto = !!currentUser?.avatarUrl
 
   return (
-    <div className="card" style={{ marginBottom: 18, borderColor: 'rgba(155,123,250,.3)' }}>
+    <div className="card" style={{ marginBottom: 18 }}>
       <div className="t-h3" style={{ marginBottom: 14 }}>Profile photo</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
         <AvatarV4 name={currentUser?.name ?? ''} size={64} src={currentUser?.avatarUrl} />
@@ -139,7 +139,7 @@ function ProfilePhotoCard() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Btn kind="secondary" size="sm" icon={<Icon.image size={13} />} onClick={() => setModalOpen(true)}>
+          <Btn kind="secondary" size="sm" icon={<Icon.camera size={13} />} onClick={() => setModalOpen(true)}>
             Change photo
           </Btn>
           {hasPhoto && (

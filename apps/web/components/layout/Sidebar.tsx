@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAuthStore, roleLabel, type UserRole } from '@/lib/stores/auth.store'
+import { useAuthStore, type UserRole } from '@/lib/stores/auth.store'
 import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
 import { useMyCompanies, type ModuleGrant } from '@/lib/api/queries/use-members'
 import { CompanySwitcher } from '@/components/invoicing/CompanySwitcher'
-import { Avatar, Icon, LogoMark } from '@/components/proto'
+import { Icon, LogoMark } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
 
 // ─── Nav model ─────────────────────────────────────────────────────────────
@@ -517,46 +517,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* User block */}
-      <div style={{ padding: collapsed ? '10px 0' : '10px 12px', borderTop: '1px solid var(--bord)' }}>
-        <Link
-          href="/profile"
-          title={collapsed ? `${currentUser?.name ?? 'Guest'} · ${roleLabel(role)}` : undefined}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '8px 8px',
-            borderRadius: 10,
-            background: 'transparent',
-            textDecoration: 'none',
-            color: 'inherit',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-          }}
-        >
-          <Avatar name={currentUser?.name ?? ''} size="sm" src={currentUser?.avatarUrl} />
-          {!collapsed && (
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 12,
-                fontWeight: 800,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {currentUser?.name ?? 'Guest'}
-            </div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-              {roleLabel(role)}
-            </div>
-          </div>
-          )}
-          {!collapsed && <Icon.cog size={14} style={{ color: 'var(--text-mute)' }} />}
-        </Link>
-      </div>
+      {/* No bottom user block — profile + settings live in the topbar avatar menu */}
     </aside>
   )
 }

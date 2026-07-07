@@ -36,12 +36,18 @@ export const configValidationSchema = Joi.object({
     .uri()
     .default('http://localhost:3000/auth/magic'),
 
-  // R2
-  R2_ACCOUNT_ID: Joi.string().optional(),
-  R2_ACCESS_KEY_ID: Joi.string().optional(),
-  R2_SECRET_ACCESS_KEY: Joi.string().optional(),
+  // R2 (or any S3-compatible storage — PRD v4 §10 exit ramp). All allow('')
+  // so a blank `R2_ACCOUNT_ID=` line (the documented "no storage" setup in
+  // .env.example) validates — Joi's optional() alone only covers ABSENT keys.
+  R2_ACCOUNT_ID: Joi.string().allow('').optional(),
+  R2_ACCESS_KEY_ID: Joi.string().allow('').optional(),
+  R2_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
   R2_BUCKET_NAME: Joi.string().default('flicks-suite-uploads'),
-  R2_PUBLIC_URL: Joi.string().uri().optional(),
+  R2_PUBLIC_URL: Joi.string().uri().allow('').optional(),
+  // Endpoint override for S3-compatible backends (Supabase Storage, MinIO).
+  // When set, path-style addressing is used and R2_ACCOUNT_ID is not needed.
+  R2_ENDPOINT: Joi.string().uri().allow('').optional(),
+  R2_REGION: Joi.string().default('auto'),
 
   // FAM second factor (TOTP). Application-level key used to encrypt per-user
   // TOTP secrets at rest. Optional in dev — FAM TOTP enforcement no-ops when
@@ -75,7 +81,7 @@ export const configValidationSchema = Joi.object({
   // the one registered in the Razorpay partner dashboard.
   RAZORPAY_OAUTH_CLIENT_ID: Joi.string().allow('').optional(),
   RAZORPAY_OAUTH_CLIENT_SECRET: Joi.string().allow('').optional(),
-  RAZORPAY_OAUTH_REDIRECT_URI: Joi.string().uri().optional(),
+  RAZORPAY_OAUTH_REDIRECT_URI: Joi.string().uri().allow('').optional(),
   // App-level key (AES-256-GCM) for encrypting per-tenant Razorpay OAuth tokens
   // at rest. Optional in dev — InvoicingCryptoService passes through plaintext
   // when unset (mirrors TOTP_SECRET), so local/CI run without it.

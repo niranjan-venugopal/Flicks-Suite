@@ -26,6 +26,7 @@ import {
 } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
+import { MediaService } from '../media/media.service';
 import type {
   CreateDepartmentDto,
   UpdateDepartmentDto,
@@ -50,6 +51,7 @@ export class SettingsService {
     @Inject(DB_TENANT) private readonly db: Db,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
+    private readonly mediaService: MediaService,
   ) {}
 
   // ─── Organization (tenant profile) ─────────────────────────────────────────
@@ -112,7 +114,11 @@ export class SettingsService {
       currency: tenant.currency,
       fiscalYearStartMonth: tenant.fiscal_year_start_month,
       dateFormat: tenant.date_format,
-      logoUrl: tenant.logo_url,
+      // Signed URL for the uploaded logo (logo_key), else the legacy URL (§4/D7)
+      logoUrl: await this.mediaService.servedUrl(
+        tenant.logo_key,
+        tenant.logo_url,
+      ),
       brandColor: tenant.brand_color,
       status: tenant.status,
       trialEndsAt: tenant.trial_ends_at,

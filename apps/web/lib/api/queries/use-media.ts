@@ -58,7 +58,11 @@ export function useUploadLogo() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (blob: Blob) => uploadFile('/api/v1/org/logo', blob),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+      // The org Settings pages read the logo off the organization payload
+      qc.invalidateQueries({ queryKey: ['settings', 'organization'] })
+    },
   })
 }
 
@@ -66,6 +70,9 @@ export function useRemoveLogo() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => del('/api/v1/org/logo'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+      qc.invalidateQueries({ queryKey: ['settings', 'organization'] })
+    },
   })
 }

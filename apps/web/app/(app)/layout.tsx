@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2 } from 'lucide-react'
+import { Skeleton } from '@/components/proto'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
@@ -16,6 +16,64 @@ import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
+
+/**
+ * Skeleton shell shown while /me resolves (perceived-performance pass,
+ * 2026-07-06). Paints the sidebar/topbar/content silhouette instantly instead
+ * of a blank screen with a spinner.
+ */
+function AppShellSkeleton() {
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-brand-bg">
+      {/* Sidebar silhouette */}
+      <div
+        style={{
+          width: 252,
+          flexShrink: 0,
+          borderRight: '1px solid var(--bord)',
+          padding: '18px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <Skeleton w={34} h={34} r="50%" />
+          <Skeleton w={120} h={14} />
+        </div>
+        {Array.from({ length: 8 }, (_, i) => (
+          <Skeleton key={i} h={13} w={`${92 - (i % 4) * 12}%`} />
+        ))}
+      </div>
+      {/* Topbar + content silhouette */}
+      <div className="flex flex-col flex-1 min-w-0">
+        <div
+          style={{
+            height: 58,
+            borderBottom: '1px solid var(--bord)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 12,
+            padding: '0 24px',
+          }}
+        >
+          <Skeleton w={200} h={14} />
+          <Skeleton w={32} h={32} r="50%" />
+        </div>
+        <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <Skeleton w={260} h={22} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18 }}>
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} h={110} r={14} />
+            ))}
+          </div>
+          <Skeleton h={280} r={14} />
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -130,11 +188,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // means a logout never flashes the dashboard with cleared data before the
   // redirect lands.
   if (!isAuthenticated || isLoading || !meData) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-brand-bg">
-        <Loader2 className="w-7 h-7 animate-spin text-brand-muted" />
-      </div>
-    )
+    return <AppShellSkeleton />
   }
 
   return (

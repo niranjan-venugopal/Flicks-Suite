@@ -54,7 +54,14 @@ export function usePresence(userIds: string[]) {
 export function useUserPresence(userId: string | undefined): {
   status: PresenceStatus | undefined
   message: string | null
+  manual: boolean
+  expiresAt: string | null
 } {
   const entry = usePresenceStore((s) => (userId ? s.byUser[userId] : undefined))
-  return { status: entry?.status, message: entry?.message ?? null }
+  return {
+    status: entry?.status,
+    message: entry?.message ?? null,
+    manual: entry?.manual ?? false,
+    expiresAt: entry?.expires_at ?? null,
+  }
 }

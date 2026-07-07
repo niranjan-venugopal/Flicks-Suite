@@ -38,6 +38,8 @@ export interface ResolvedPresence {
   status: PresenceStatus;
   message: string | null;
   manual: boolean;
+  /** When a manual status auto-clears (ISO) — null for Never/auto states. */
+  expires_at: string | null;
 }
 
 /** Live-activity snapshot the gateway feeds into resolution. */
@@ -245,6 +247,11 @@ export class PresenceService {
           status: manual.manual_status as PresenceStatus,
           message: manual.status_message,
           manual: true,
+          // The picker needs the live expiry so reopening it shows (and
+          // preserves) "clears at …" instead of silently resetting to Never.
+          expires_at: manual.expires_at
+            ? new Date(manual.expires_at).toISOString()
+            : null,
         };
       }
       const message = manual?.status_message ?? null;
@@ -256,6 +263,7 @@ export class PresenceService {
           status: online ? 'ooo_available' : 'out_of_office',
           message,
           manual: false,
+          expires_at: null,
         };
       }
 
@@ -266,15 +274,17 @@ export class PresenceService {
           status: wfhUsers.has(userId) ? 'remote_available' : 'in_office',
           message,
           manual: false,
+          expires_at: null,
         };
       }
 
       // 4/5/6 — connection + activity
-      if (online) return { userId, status: 'available', message, manual: false };
+      if (online)
+        return { userId, status: 'available', message, manual: false, expires_at: null };
       if (activity?.connected && activeMs <= GONE_MS) {
-        return { userId, status: 'away', message, manual: false };
+        return { userId, status: 'away', message, manual: false, expires_at: null };
       }
-      return { userId, status: 'offline', message, manual: false };
+      return { userId, status: 'offline', message, manual: false, expires_at: null };
     });
   }
 

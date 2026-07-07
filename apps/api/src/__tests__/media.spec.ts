@@ -62,4 +62,28 @@ describe('Media pipeline validation (PRD v4 §4)', () => {
     expect(url).toBe('https://legacy/a.png');
     expect(await media.servedUrl(null, null)).toBeNull();
   });
+
+  it('R2_ENDPOINT override configures any S3-compatible backend (no ACCOUNT_ID needed)', async () => {
+    // Supabase Storage / MinIO path (PRD v4 §10 exit ramp): endpoint + keys only.
+    const supa = new R2Service({
+      get: (k: string, fb?: unknown) =>
+        ((
+          {
+            R2_ENDPOINT: 'http://127.0.0.1:9000',
+            R2_ACCESS_KEY_ID: 'minioadmin',
+            R2_SECRET_ACCESS_KEY: 'minioadmin',
+            R2_BUCKET_NAME: 'flicks-suite-uploads',
+          } as Record<string, unknown>
+        )[k] ?? fb),
+    } as never);
+    expect(supa.isConfigured()).toBe(true);
+    // Signed URLs are path-style against the custom endpoint.
+    const url = await supa.signedGetUrl('users/u1/avatar/x_256.webp', 60);
+    expect(url).toContain('127.0.0.1:9000/flicks-suite-uploads/users/u1/avatar/x_256.webp');
+    expect(url).toContain('X-Amz-Signature=');
+
+    // Blank/placeholder-free env → cleanly unconfigured (503 paths).
+    const blank = new R2Service({ get: (_: string, fb?: unknown) => fb } as never);
+    expect(blank.isConfigured()).toBe(false);
+  });
 });

@@ -170,7 +170,7 @@ export function MediaCropModal({
           </div>
           <button
             onClick={onClose}
-            style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer' }}
+            style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >
             <Icon.x size={14} />
           </button>
@@ -207,7 +207,7 @@ export function MediaCropModal({
               }}
             >
               <div style={{ width: 46, height: 46, borderRadius: 12, background: 'rgba(62,123,250,.12)', color: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Icon.image size={22} />
+                <Icon.camera size={22} />
               </div>
               <div style={{ fontSize: 13, fontWeight: 800 }}>
                 Drag &amp; drop a photo, or <span style={{ color: 'var(--blue)' }}>browse</span>

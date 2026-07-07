@@ -1,3 +1,4 @@
+import 'dotenv/config'; // the guard's import chain reaches @flicks/db, which needs DATABASE_URL
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';

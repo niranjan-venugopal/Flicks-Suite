@@ -233,3 +233,13 @@ button { background: none; border: none; cursor: pointer; }
 /* ─── Progress ─── */
 .progress { height: 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
 .progress > div { height: 100%; background: var(--blue); border-radius: 99px; }
+
+/* ─── Skeleton shimmer (perceived-performance pass) ─────────────────────────── */
+.skel {
+  background: linear-gradient(100deg, var(--surf-1) 40%, var(--surf-3) 50%, var(--surf-1) 60%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s linear infinite;
+}
+@keyframes skel-shimmer {
+  to { background-position: -200% 0; }
+}
