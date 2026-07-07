@@ -128,12 +128,19 @@ export class NotificationsService {
     );
   }
 
+  /**
+   * Returns whether the email was accepted by Resend (or deliberately
+   * suppressed by preference — a user choice, not a failure). Never throws:
+   * email failures must not break flows. Callers that must not lose a notice
+   * (the billing crons' dedupe markers) check the boolean before marking a
+   * notice as sent.
+   */
   async sendEmail(
     template: EmailTemplate,
     to: string,
     props: Record<string, unknown>,
     opts?: { userId?: string; event?: NotificationEvent },
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Honour the recipient's per-event email preference when this send is
     // tied to a preference-managed event AND we know the recipient's user id.
     // Transactional emails (OTP, magic link, welcome, account deletion) pass
@@ -148,7 +155,7 @@ export class NotificationsService {
         this.logger.log(
           `Email [${template}] to ${to} suppressed by preference (${opts.event}/email)`,
         );
-        return;
+        return true;
       }
     }
 
@@ -157,17 +164,27 @@ export class NotificationsService {
     try {
       const { subject, html } = this.renderTemplate(template, props);
 
-      await this.resend.emails.send({
+      // Resend v4 resolves { data, error } and never rejects on API errors —
+      // ignoring `error` logged every outage as "Email sent".
+      const { error } = await this.resend.emails.send({
         from,
         to,
         subject,
         html,
       });
+      if (error) {
+        this.logger.error(
+          `Failed to send email [${template}] to ${to}: ${error.name ?? ''} ${error.message ?? ''}`,
+        );
+        return false;
+      }
 
       this.logger.log(`Email sent [${template}] to ${to}`);
+      return true;
     } catch (err) {
       this.logger.error(`Failed to send email [${template}] to ${to}:`, err);
       // Don't throw — email failures should not break the flow
+      return false;
     }
   }
 

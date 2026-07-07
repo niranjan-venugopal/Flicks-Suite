@@ -342,3 +342,19 @@ export const CONSENT_TYPES: ConsentType[] = [
 
 /** Platform trial length in days (PRD v4 — user-locked at 7). */
 export const TRIAL_DAYS = 7;
+
+/**
+ * The single platform plan (PRD v4 §8B — beta pricing). Stored per-seat price
+ * is in INR rupees on the subscriptions row; Razorpay item amounts are paise.
+ */
+export const PLATFORM_PLAN = {
+  code: 'beta',
+  pricePaise: 49_900, // ₹499 / seat / month
+  priceRupees: 499,
+  currency: 'INR' as const,
+  displayUsd: 5.99,
+  interval: 'monthly' as const,
+};
+
+/** Days of grace after a failed platform charge before the workspace locks. */
+export const BILLING_GRACE_DAYS = 7;

@@ -41,7 +41,7 @@ export function WelcomeTenantEmail({
 
       <Text style={styles.p}>
         Your workspace <strong>{workspaceName}</strong> is ready. You&apos;re now on a{' '}
-        <strong>14-day free trial</strong> with full access to all features — no credit card
+        <strong>7-day free trial</strong> with full access to all features — no credit card
         required.
       </Text>
 

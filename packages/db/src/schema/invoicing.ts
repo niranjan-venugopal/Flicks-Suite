@@ -1121,6 +1121,9 @@ export const razorpayWebhookEvents = pgTable(
     }),
     event_id: text('event_id').notNull().unique(),
     event_type: text('event_type').notNull(),
+    // Which webhook endpoint received it: tenant-track (invoicing) or the
+    // platform-billing endpoint (PRD v4 §8B / 0028).
+    source: text('source').notNull().default('tenant'), // tenant | platform
     payload: jsonb('payload'),
     signature: text('signature'),
     signature_verified: boolean('signature_verified').default(false),

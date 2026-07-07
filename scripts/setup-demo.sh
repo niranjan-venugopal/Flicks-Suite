@@ -28,7 +28,7 @@
 #   • ALTER TYPE membership_role ADD VALUE 'owner' / 'fam'
 #   • notifications · impersonation_sessions · account_deletion_requests ·
 #     notification_preferences · TOTP/account-security columns (0003–0008, 0020)
-#   • PRD v4 (0022–0025): consent_records · avatar/logo key columns ·
+#   • PRD v4 (0022–0028): consent_records · avatar/logo key columns ·
 #     member_status · product_events — with their RLS policies + grants
 #
 # Idempotent — safe to re-run; uses fixed UUIDs, ON CONFLICT, and an
@@ -276,6 +276,159 @@ CREATE POLICY tenant_isolation_product_events ON product_events
   FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
 GRANT SELECT, INSERT ON product_events TO flicks_app;
+
+-- feedback_submissions + nps_responses — matches packages/db/drizzle/0026_feedback_nps.sql.
+-- In-app feedback (menu-triggered, D10-R) and the beta NPS micro-survey.
+-- RLS: SELF-VISIBILITY on both — a user reads/writes only their own rows;
+-- the FAM inbox reads via the service role. Feedback status changes happen
+-- through the FAM service (service role), so the app role needs no UPDATE.
+--
+-- Additive + idempotent.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS feedback_submissions (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category      text NOT NULL CHECK (category IN ('bug','idea','question','other')),
+  message       text NOT NULL CHECK (char_length(message) <= 4000),
+  contact_ok    boolean NOT NULL DEFAULT false,
+  page_path     text,
+  status        text NOT NULL DEFAULT 'new' CHECK (status IN ('new','triaged','resolved','closed')),
+  internal_note text,
+  resolved_by   uuid REFERENCES users(id),
+  resolved_at   timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_tenant_created
+  ON feedback_submissions (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_submissions (status);
+-- Hot paths: the per-submit 10/day throttle count and the unfiltered FAM inbox.
+CREATE INDEX IF NOT EXISTS idx_feedback_user_created
+  ON feedback_submissions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback_submissions (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_category ON feedback_submissions (category);
+
+ALTER TABLE feedback_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feedback_submissions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS feedback_self_select ON feedback_submissions;
+CREATE POLICY feedback_self_select ON feedback_submissions FOR SELECT
+  USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+DROP POLICY IF EXISTS feedback_self_insert ON feedback_submissions;
+CREATE POLICY feedback_self_insert ON feedback_submissions FOR INSERT
+  WITH CHECK (
+    user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+    AND tenant_id = current_setting('app.tenant_id', true)::uuid
+  );
+GRANT SELECT, INSERT ON feedback_submissions TO flicks_app;
+REVOKE UPDATE, DELETE ON feedback_submissions FROM flicks_app;
+
+CREATE TABLE IF NOT EXISTS nps_responses (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     uuid REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  survey_key    text NOT NULL DEFAULT 'beta_nps_v1',
+  score         smallint CHECK (score BETWEEN 0 AND 10),
+  comment       text,
+  status        text NOT NULL CHECK (status IN ('answered','dismissed','snoozed')),
+  prompted_at   timestamptz,
+  responded_at  timestamptz,
+  snoozed_until timestamptz,
+  UNIQUE (user_id, survey_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nps_survey_status ON nps_responses (survey_key, status);
+
+ALTER TABLE nps_responses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nps_responses FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS nps_self_all ON nps_responses;
+-- Self-visibility + tenant pinning: a user acts only on their own row, and
+-- writes must carry the session's tenant (no cross-tenant mis-attribution).
+CREATE POLICY nps_self_all ON nps_responses FOR ALL
+  USING (user_id = NULLIF(current_setting('app.user_id', true), '')::uuid)
+  WITH CHECK (
+    user_id = NULLIF(current_setting('app.user_id', true), '')::uuid
+    AND tenant_id = current_setting('app.tenant_id', true)::uuid
+  );
+GRANT SELECT, INSERT, UPDATE ON nps_responses TO flicks_app;
+-- No DELETE: answered/dismissed are permanent (§7 once-only) — without this
+-- revoke the 0017 default privileges leave DELETE granted and the FOR ALL
+-- policy would let a user erase their own row and get re-prompted.
+REVOKE DELETE ON nps_responses FROM flicks_app;
+
+-- platform billing + coupons — matches packages/db/drizzle/0028_platform_billing_coupons.sql.
+-- ─── subscriptions: Razorpay linkage + coupon + grace ────────────────────────
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS razorpay_plan_id text;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS authorization_url text;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS applied_coupon_id uuid;
+ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS grace_ends_at timestamptz;
+
+-- ─── coupon_codes (FAM service-layer only — no tenant access at all) ─────────
+CREATE TABLE IF NOT EXISTS coupon_codes (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  code             text NOT NULL UNIQUE,
+  campaign         text NOT NULL DEFAULT 'general',
+  months           int  NOT NULL CHECK (months BETWEEN 1 AND 12),
+  max_redemptions  int  NOT NULL DEFAULT 1 CHECK (max_redemptions >= 1),
+  redemption_count int  NOT NULL DEFAULT 0 CHECK (redemption_count >= 0),
+  expires_at       timestamptz,
+  active           boolean NOT NULL DEFAULT true,
+  created_by       uuid REFERENCES users(id),
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_coupon_codes_campaign ON coupon_codes (campaign);
+-- Deny-all for the tenant connection: RLS on with no policies, no grants.
+ALTER TABLE coupon_codes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coupon_codes FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON coupon_codes FROM flicks_app;
+
+-- ─── coupon_redemptions (tenant-visible history; writes are service-role) ────
+CREATE TABLE IF NOT EXISTS coupon_redemptions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  coupon_id   uuid NOT NULL REFERENCES coupon_codes(id),
+  tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  redeemed_by uuid REFERENCES users(id),
+  months      int  NOT NULL,
+  redeemed_at timestamptz NOT NULL DEFAULT now(),
+  -- One coupon EVER per tenant (§8B.3) — enforced by the database, not code.
+  CONSTRAINT coupon_redemptions_tenant_once UNIQUE (tenant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon ON coupon_redemptions (coupon_id);
+ALTER TABLE coupon_redemptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coupon_redemptions FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_coupon_redemptions ON coupon_redemptions;
+CREATE POLICY tenant_isolation_coupon_redemptions ON coupon_redemptions
+  FOR SELECT USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT SELECT ON coupon_redemptions TO flicks_app;
+REVOKE INSERT, UPDATE, DELETE ON coupon_redemptions FROM flicks_app;
+
+-- ─── razorpay_webhook_events: platform vs tenant track ───────────────────────
+ALTER TABLE razorpay_webhook_events
+  ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'tenant'
+  CHECK (source IN ('tenant', 'platform'));
+
+-- ─── one-time backfill: a trialing subscription row for every tenant ─────────
+-- New tenants get their row at creation (onboarding.service). Existing tenants
+-- get at least 7 days of runway from migration time so the billing launch
+-- never hard-locks a workspace that predates it; the Specflicks internal
+-- tenant is exempt from billing entirely.
+INSERT INTO subscriptions (tenant_id, plan_code, status, per_user_price, user_count, billing_cycle, trial_ends_at)
+SELECT
+  t.id,
+  'beta',
+  'trialing',
+  499,
+  GREATEST(1, (
+    SELECT count(*) FROM memberships m
+    WHERE m.tenant_id = t.id AND m.status = 'active'
+      AND m.role NOT IN ('auditor', 'fam', 'super_admin')
+  )),
+  'monthly',
+  GREATEST(coalesce(t.trial_ends_at, now()), now() + interval '7 days')
+FROM tenants t
+WHERE t.id <> '00000000-0000-0000-0000-000000000001'
+  AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id)
+ON CONFLICT (tenant_id) DO NOTHING;
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"
@@ -1041,6 +1194,14 @@ echo "  • 2 attendance regularizations (pending)"
 echo "  • 8 leave types (CL, SL, EL, ML, PL, CO, WFH, LOP) + 25 holidays"
 echo "  • 1 invoice INV-DEMO-0001 (SENT, ₹17,700) for customer 'Acme Test Pvt Ltd'"
 echo "      → Invoicing → Invoices → click 'PDF' to test the download"
+
+psql "${CONN_TARGET[@]}" -v ON_ERROR_STOP=1 --no-psqlrc <<'SQL' >/dev/null
+-- Demo coupon so Billing & plan coupon redemption is testable end-to-end.
+INSERT INTO coupon_codes (code, campaign, months, max_redemptions, expires_at, active)
+VALUES ('FLICKS-DEMO-TEST1', 'demo', 2, 100, now() + interval '365 days', true)
+ON CONFLICT (code) DO NOTHING;
+SQL
+
 echo "  • PRD v4: ToS consent ledgered for all personas (no interstitial on demo logins),"
 echo "    analytics consent for niranjan, 2 live presence statuses (Mira busy, Sarah DND),"
 echo "    and a seeded product_events funnel → FAM 'Invoicing activation' has data"

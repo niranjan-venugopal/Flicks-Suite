@@ -33,10 +33,12 @@ import {
 } from './auth.dto';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
+import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import { JwtAuthGuard } from '../../core/auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '@flicks/shared/types';
 
 @ApiTags('Auth')
+@BillingExempt()
 @Controller('auth')
 export class AuthController {
   constructor(

@@ -12,6 +12,7 @@ import { PresenceProvider } from '@/lib/presence/PresenceProvider'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NpsCard } from '@/components/feedback/NpsCard'
+import { BillingBanners, BillingWall } from '@/components/billing/BillingGate'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
@@ -204,6 +205,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Sidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <Topbar />
+          {/* D19 (PRD v4 §8B.5): trial countdown / grace warning */}
+          <BillingBanners />
           <main className="flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
@@ -217,6 +220,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* PRD v4 §7: menu-triggered feedback panel + NPS micro-card (no pill) */}
       <FeedbackPanel />
       <NpsCard />
+      {/* D19: full lock wall when the workspace is read-only */}
+      <BillingWall />
     </div>
   )
 }

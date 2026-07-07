@@ -131,6 +131,11 @@ export const subscriptions = pgTable(
     }),
     razorpay_subscription_id: text('razorpay_subscription_id'),
     razorpay_customer_id: text('razorpay_customer_id'),
+    // Platform billing (PRD v4 §8B / 0028): own-merchant Razorpay wiring.
+    razorpay_plan_id: text('razorpay_plan_id'),
+    authorization_url: text('authorization_url'), // Razorpay-hosted subscribe page
+    applied_coupon_id: uuid('applied_coupon_id'),
+    grace_ends_at: timestamp('grace_ends_at', { withTimezone: true }), // past_due runway
     cancel_at_period_end: boolean('cancel_at_period_end')
       .notNull()
       .default(false),
@@ -177,6 +182,53 @@ export const subscriptionEvents = pgTable(
     index('subscription_events_created_at_idx').on(t.created_at),
   ],
 );
+
+// ─── coupon_codes + coupon_redemptions (PRD v4 §8B.3 / 0028) ─────────────────
+// FAM-issued beta coupons: N months of free platform usage. coupon_codes is
+// service-layer only (RLS deny-all for the tenant connection); redemptions
+// are tenant-SELECT-visible so the billing page can show what was applied.
+
+export const couponCodes = pgTable(
+  'coupon_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    code: text('code').notNull().unique(),
+    campaign: text('campaign').notNull().default('general'),
+    months: integer('months').notNull(), // 1–12 free months
+    max_redemptions: integer('max_redemptions').notNull().default(1),
+    redemption_count: integer('redemption_count').notNull().default(0),
+    expires_at: timestamp('expires_at', { withTimezone: true }),
+    active: boolean('active').notNull().default(true),
+    created_by: uuid('created_by').references(() => users.id),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('idx_coupon_codes_campaign').on(t.campaign)],
+);
+
+export const couponRedemptions = pgTable(
+  'coupon_redemptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    coupon_id: uuid('coupon_id')
+      .notNull()
+      .references(() => couponCodes.id),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .unique() // one coupon EVER per tenant (§8B.3)
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    redeemed_by: uuid('redeemed_by').references(() => users.id),
+    months: integer('months').notNull(),
+    redeemed_at: timestamp('redeemed_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('idx_coupon_redemptions_coupon').on(t.coupon_id)],
+);
+
+export type CouponCode = typeof couponCodes.$inferSelect;
+export type CouponRedemption = typeof couponRedemptions.$inferSelect;
 
 // ─── tenant_health_snapshots ──────────────────────────────────────────────────
 

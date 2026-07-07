@@ -23,6 +23,7 @@ import {
   Min,
 } from 'class-validator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
+import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { FeedbackService } from './feedback.service';
@@ -75,6 +76,7 @@ class FamFeedbackUpdateDto {
 /** Feedback + NPS endpoints (PRD v4 §7, D10-R–D13). */
 @ApiTags('Feedback & NPS')
 @ApiBearerAuth('access-token')
+@BillingExempt()
 @Controller()
 export class FeedbackController {
   constructor(private readonly feedback: FeedbackService) {}

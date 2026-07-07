@@ -15,6 +15,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
+import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { ConsentService } from './consent.service';
 import { DataExportService } from './data-export.service';
@@ -25,6 +26,7 @@ import { BannerSyncDto, RecordConsentsDto } from './consent.dto';
  * unsubscribe endpoint, and self-service data exports.
  */
 @ApiTags('Consent & privacy')
+@BillingExempt()
 @Controller()
 export class ConsentController {
   constructor(

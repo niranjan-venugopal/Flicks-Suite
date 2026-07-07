@@ -64,6 +64,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => null)
+    // 402 BILLING_REQUIRED: the workspace just locked (e.g. grace expired
+    // mid-session). Announce it so BillingGate refetches and raises the D19
+    // wall instead of every page showing a cryptic failure toast.
+    if (
+      response.status === 402 &&
+      errorData?.code === 'BILLING_REQUIRED' &&
+      typeof window !== 'undefined'
+    ) {
+      window.dispatchEvent(new CustomEvent('fs:billing-locked'))
+    }
     throw new APIError(
       response.status,
       errorData?.message ?? `HTTP ${response.status}`,

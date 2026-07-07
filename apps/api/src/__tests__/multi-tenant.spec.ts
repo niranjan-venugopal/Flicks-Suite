@@ -713,6 +713,28 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     await idbAdmin.delete(schema.users).where(eq(schema.users.id, bob.id));
   });
 
+  it('billing coupons (0028): coupon_codes fully denied to the app role; redemptions tenant-scoped read-only', async () => {
+    const [coupon] = await idbAdmin.insert(schema.couponCodes).values({
+      code: `RLS-${rid().toUpperCase()}`, campaign: 'rls-test', months: 1,
+    }).returning();
+    await idbAdmin.insert(schema.couponRedemptions).values({
+      coupon_id: coupon!.id, tenant_id: tenantA.id, months: 1,
+    });
+    // coupon_codes: REVOKE ALL — the tenant connection can't even SELECT.
+    await expect(withTenant(tenantA.id, (tx) => tx.select().from(schema.couponCodes))).rejects.toThrow();
+    // coupon_redemptions: A sees its row, B sees none, nobody INSERTs/UPDATEs.
+    expect((await withTenant(tenantA.id, (tx) => tx.select().from(schema.couponRedemptions).where(eq(schema.couponRedemptions.tenant_id, tenantA.id)))).length).toBe(1);
+    expect((await withTenant(tenantB.id, (tx) => tx.select().from(schema.couponRedemptions))).length).toBe(0);
+    await expect(withTenant(tenantA.id, (tx) => tx.insert(schema.couponRedemptions).values({
+      coupon_id: coupon!.id, tenant_id: tenantB.id, months: 1,
+    }))).rejects.toThrow();
+    await expect(withTenant(tenantA.id, (tx) =>
+      tx.delete(schema.couponRedemptions).where(eq(schema.couponRedemptions.tenant_id, tenantA.id)),
+    )).rejects.toThrow();
+    await idbAdmin.delete(schema.couponRedemptions).where(eq(schema.couponRedemptions.coupon_id, coupon!.id));
+    await idbAdmin.delete(schema.couponCodes).where(eq(schema.couponCodes.id, coupon!.id));
+  });
+
   it('consent_records self-visibility: own rows only, append-only under the app role (0022)', async () => {
     const alice = await mkUser(`consent-a-${rid()}@test.test`);
     const bob = await mkUser(`consent-b-${rid()}@test.test`);

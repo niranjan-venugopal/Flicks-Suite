@@ -66,6 +66,14 @@ export const configValidationSchema = Joi.object({
   MAX_OTP_PER_HOUR: Joi.number().default(5),
   TRUSTED_DEVICE_EXPIRY_DAYS: Joi.number().default(30),
 
+  // ─── Platform billing (PRD v4 §8B — Specflicks' OWN Razorpay merchant) ─────
+  // Distinct from the partner-OAuth keys below: these charge tenants for
+  // Flicks Suite seats. Blank in dev → billing endpoints 503 cleanly and the
+  // trial/paywall logic still runs (it's date-driven, not Razorpay-driven).
+  RAZORPAY_PLATFORM_KEY_ID: Joi.string().allow('').optional(),
+  RAZORPAY_PLATFORM_KEY_SECRET: Joi.string().allow('').optional(),
+  RAZORPAY_PLATFORM_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+
   // ─── Invoicing (v3) external integrations ──────────────────────────────────
   // All optional and stubbed: the corresponding service no-ops safely when the
   // key is absent (mirrors the R2 placeholder pattern), so local dev + CI run

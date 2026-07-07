@@ -43,6 +43,9 @@ import { MediaModule } from './modules/media/media.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { EventsModule } from './modules/events/events.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
+import { BillingModule } from './modules/billing/billing.module';
+import { BillingStateModule } from './core/billing/billing-state.module';
+import { BillingGuard } from './core/auth/guards/billing.guard';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -50,7 +53,6 @@ import { NotificationsGateway } from './gateways/notifications.gateway';
 // Jobs
 import { DailySnapshotsJob } from './jobs/daily-snapshots.job';
 import { LeaveAccrualJob } from './jobs/leave-accrual.job';
-import { TrialExpiryJob } from './jobs/trial-expiry.job';
 import { InvoicingJobs } from './jobs/invoicing.jobs';
 import { TrustJobs } from './jobs/trust.jobs';
 
@@ -153,6 +155,8 @@ import { TrustJobs } from './jobs/trust.jobs';
     PresenceModule,
     EventsModule,
     FeedbackModule,
+    BillingStateModule,
+    BillingModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -167,13 +171,15 @@ import { TrustJobs } from './jobs/trust.jobs';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Billing paywall LAST: needs req.user + role, blocks mutations on locked
+    // workspaces with 402 BILLING_REQUIRED (PRD v4 §8B.5, @BillingExempt opts out).
+    { provide: APP_GUARD, useClass: BillingGuard },
     // Echo the ClsModule request id back as X-Request-ID for log correlation.
     { provide: APP_INTERCEPTOR, useClass: RequestIdInterceptor },
     JwtStrategy,
     NotificationsGateway,
     DailySnapshotsJob,
     LeaveAccrualJob,
-    TrialExpiryJob,
     InvoicingJobs,
     TrustJobs,
   ],

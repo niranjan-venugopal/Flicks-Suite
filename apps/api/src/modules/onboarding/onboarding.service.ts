@@ -18,9 +18,10 @@ import {
   departments,
   locations,
   shiftTemplates,
+  subscriptions,
 } from '@flicks/db/schema';
 import { ConfigService } from '@nestjs/config';
-import { TRIAL_DAYS } from '@flicks/shared/constants';
+import { TRIAL_DAYS, PLATFORM_PLAN } from '@flicks/shared/constants';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -255,6 +256,18 @@ export class OnboardingService {
         trial_ends_at: trialEndsAt,
       })
       .returning();
+
+    // PRD v4 §8B.1 — every tenant gets its platform subscription row at
+    // creation (trialing, 1 seat; seats are recounted lazily by billing).
+    await this.db.insert(subscriptions).values({
+      tenant_id: tenant!.id,
+      plan_code: PLATFORM_PLAN.code,
+      status: 'trialing',
+      per_user_price: PLATFORM_PLAN.priceRupees,
+      user_count: 1,
+      billing_cycle: 'monthly',
+      trial_ends_at: trialEndsAt,
+    });
 
     // Update the founding user's display name. Only overwrite if the current
     // value looks like a placeholder (matches the email prefix); otherwise

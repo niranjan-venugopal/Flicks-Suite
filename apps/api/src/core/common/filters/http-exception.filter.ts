@@ -15,6 +15,8 @@ interface ErrorResponse {
   timestamp: string;
   path: string;
   requestId?: string;
+  /** Machine-readable code some errors carry (e.g. BILLING_REQUIRED). */
+  code?: string;
 }
 
 @Catch()
@@ -29,6 +31,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
     let error = 'InternalServerError';
+    let code: string | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -44,9 +47,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
         const resp = exceptionResponse as {
           message?: string | string[];
           error?: string;
+          code?: string;
         };
         message = resp.message ?? exception.message;
         error = resp.error ?? exception.name;
+        if (resp.code) code = resp.code;
       }
     } else if (exception instanceof Error) {
       message = exception.message;
@@ -65,6 +70,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message,
       timestamp: new Date().toISOString(),
       path: request.url,
+      ...(code ? { code } : {}),
     };
 
     // Log 5xx errors
