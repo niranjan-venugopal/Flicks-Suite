@@ -142,6 +142,117 @@ export class RazorpayService {
     return this.parse<RazorpayOrder>(res, 'create order');
   }
 
+  // ─── Auto-debit mandates (PRD v4 §8A, Sprint 23) — sub-merchant Bearer ─────
+
+  /** Razorpay customer on the SELLER's connected account. */
+  async createCustomer(input: {
+    accessToken: string;
+    name: string;
+    email?: string | null;
+    tenantId: string;
+    customerId: string;
+  }): Promise<{ id: string }> {
+    this.assertConfigured();
+    const res = await fetch(`${API_BASE}/v1/customers`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: input.name.slice(0, 100),
+        ...(input.email ? { email: input.email } : {}),
+        fail_existing: '0',
+        notes: { tenant_id: input.tenantId, customer_id: input.customerId },
+      }),
+    });
+    return this.parse<{ id: string }>(res, 'create customer');
+  }
+
+  /** Per-subscription plan (fixed cycle amount; INR only for e-mandates). */
+  async createPlan(input: {
+    accessToken: string;
+    name: string;
+    amountPaise: number;
+    period: 'monthly' | 'quarterly' | 'yearly';
+  }): Promise<{ id: string }> {
+    this.assertConfigured();
+    const res = await fetch(`${API_BASE}/v1/plans`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        period: input.period,
+        interval: 1,
+        item: {
+          name: input.name.slice(0, 120),
+          amount: input.amountPaise,
+          currency: 'INR',
+        },
+      }),
+    });
+    return this.parse<{ id: string }>(res, 'create plan');
+  }
+
+  /**
+   * The subscription whose hosted short_url the customer authorizes.
+   * customer_notify: 0 — OUR emails handle comms (D15), not Razorpay's.
+   */
+  async createSubscription(input: {
+    accessToken: string;
+    planId: string;
+    customerId: string;
+    totalCount: number;
+    startAt?: Date | null;
+    notes: Record<string, string>;
+  }): Promise<{ id: string; status: string; short_url?: string }> {
+    this.assertConfigured();
+    const res = await fetch(`${API_BASE}/v1/subscriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        plan_id: input.planId,
+        customer_id: input.customerId,
+        total_count: Math.max(1, Math.min(input.totalCount, 100)),
+        customer_notify: 0,
+        ...(input.startAt
+          ? { start_at: Math.floor(input.startAt.getTime() / 1000) }
+          : {}),
+        notes: input.notes,
+      }),
+    });
+    return this.parse<{ id: string; status: string; short_url?: string }>(
+      res,
+      'create subscription',
+    );
+  }
+
+  /** Cancel a mandate/subscription on the sub-merchant (best-effort callers). */
+  async cancelSubscription(
+    accessToken: string,
+    subscriptionId: string,
+    atCycleEnd = false,
+  ): Promise<{ id: string; status: string }> {
+    this.assertConfigured();
+    const res = await fetch(
+      `${API_BASE}/v1/subscriptions/${subscriptionId}/cancel`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ cancel_at_cycle_end: atCycleEnd ? 1 : 0 }),
+      },
+    );
+    return this.parse<{ id: string; status: string }>(res, 'cancel subscription');
+  }
+
   // ─── internals ──────────────────────────────────────────────────────────────
 
   private async tokenRequest(

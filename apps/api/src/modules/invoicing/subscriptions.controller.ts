@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { SubscriptionsService } from './subscriptions.service';
+import { SubscriptionMandatesService } from './subscription-mandates.service';
 import {
   CreateSubscriptionDto,
   UpdateSeatsDto,
@@ -24,7 +25,10 @@ import type { JwtPayload } from '@flicks/shared/types';
 @UseGuards(InvoicingGrantGuard)
 @Controller('subscriptions')
 export class SubscriptionsController {
-  constructor(private readonly subs: SubscriptionsService) {}
+  constructor(
+    private readonly subs: SubscriptionsService,
+    private readonly mandates: SubscriptionMandatesService,
+  ) {}
 
   @Get()
   @RequireGrant('invoicing', 'view')
@@ -59,6 +63,37 @@ export class SubscriptionsController {
   @ApiOperation({ summary: 'Simulate mandate authorization (dev stub) → ACTIVE/TRIALING' })
   activate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.subs.activate(id, user.sub, user.tenantId);
+  }
+
+  @Post(':id/enable-autodebit')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({
+    summary:
+      'Enable auto-debit: Razorpay customer→plan→subscription on the connected account, mints the public /sub page + emails the customer (PRD v4 §8A)',
+  })
+  enableAutodebit(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.mandates.enableAutodebit(id, user.sub, user.tenantId);
+  }
+
+  @Post(':id/disable-autodebit')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({ summary: 'Back to manual collection (cancels the Razorpay mandate)' })
+  disableAutodebit(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.mandates.disableAutodebit(id, user.sub, user.tenantId);
+  }
+
+  @Get(':id/mandate')
+  @RequireGrant('invoicing', 'view')
+  @ApiOperation({ summary: 'Mandate state + public link (D14b chip/copy-link)' })
+  mandate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.mandates.mandatePayload(user.tenantId, id);
+  }
+
+  @Get(':id/charge-attempts')
+  @RequireGrant('invoicing', 'view')
+  @ApiOperation({ summary: 'Auto-debit charge timeline (D14b)' })
+  chargeAttempts(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.mandates.chargeAttempts(id, user.tenantId);
   }
 
   @Post(':id/update-seats')

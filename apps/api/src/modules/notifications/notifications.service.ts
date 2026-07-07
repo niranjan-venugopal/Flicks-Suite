@@ -101,6 +101,9 @@ type EmailTemplate =
   | 'payment-received'
   | 'invoice-reminder'
   | 'subscription-pre-debit'
+  | 'mandate-authorization-request'
+  | 'charge-failed-retry'
+  | 'mandate-revoked'
   | 'auditor-invite'
   // Billing
   | 'trial-ending-soon'
@@ -255,10 +258,73 @@ export class NotificationsService {
         return {
           subject: `Upcoming charge: ${props.name}`,
           html: `
-            <p>Hi ${props.customerName ?? 'there'},</p>
-            <p>A scheduled charge of <strong>${props.amount}</strong> for
-            <strong>${props.name}</strong> will be made on <strong>${props.chargeDate}</strong>
-            via your authorized mandate. No action is needed.</p>
+            <p>Hi ${this.esc(props.customerName ?? 'there')},</p>
+            <p>As per your authorized e-mandate, <strong>${this.esc(props.amount)}</strong> for
+            <strong>${this.esc(props.name)}</strong> will be auto-debited on
+            <strong>${this.esc(props.chargeDate)}</strong>. No action is needed.</p>
+            <p style="color: #6b7280; font-size: 13px;">This notice is sent at least 24 hours
+            before every debit (RBI e-mandate guidelines). To stop future charges, revoke the
+            mandate from your UPI/banking app or contact the sender.</p>
+          `,
+        };
+      }
+
+      case 'mandate-authorization-request': {
+        const { customerName, subscriptionName, amount, cadence, authorizeUrl } = props as {
+          customerName: string;
+          subscriptionName: string;
+          amount: string;
+          cadence: string;
+          authorizeUrl: string;
+        };
+        return {
+          subject: `Set up auto-pay for ${this.esc(subscriptionName)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2>Authorize automatic payments</h2>
+              <p>Hi ${this.esc(customerName)}, you've been set up for automatic payments on <strong>${this.esc(subscriptionName)}</strong> — <strong>${this.esc(amount)}</strong> ${this.esc(cadence)}.</p>
+              <p>Authorize the e-mandate once and future cycles are collected automatically. You'll always receive a notice at least 24 hours before every charge, and you can revoke anytime from your bank/UPI app.</p>
+              <a href="${String(authorizeUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Review &amp; authorize</a>
+              <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Powered by Razorpay e-mandates (UPI AutoPay / card).</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'charge-failed-retry': {
+        const { customerName, subscriptionName, sellerName, exhausted } = props as {
+          customerName: string;
+          subscriptionName: string;
+          sellerName: string;
+          exhausted?: boolean;
+        };
+        return {
+          subject: `Payment failed for ${this.esc(subscriptionName)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #ef4444;">We couldn't collect your payment</h2>
+              <p>Hi ${this.esc(customerName)}, the automatic payment for <strong>${this.esc(subscriptionName)}</strong> (billed by ${this.esc(sellerName)}) didn't go through.</p>
+              ${exhausted
+                ? '<p><strong>After several attempts the subscription is now paused.</strong> Please contact the seller to settle the outstanding amount and resume.</p>'
+                : '<p>Razorpay will retry automatically over the next few days — often a top-up or unblocking the mandate in your UPI app is all it takes.</p>'}
+            </div>
+          `,
+        };
+      }
+
+      case 'mandate-revoked': {
+        const { subscriptionName, customerName } = props as {
+          subscriptionName: string;
+          customerName: string;
+        };
+        return {
+          subject: `Mandate revoked — ${this.esc(subscriptionName)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2>Auto-debit mandate revoked</h2>
+              <p><strong>${this.esc(customerName)}</strong> revoked the auto-debit mandate on <strong>${this.esc(subscriptionName)}</strong>.</p>
+              <p>The profile has switched back to <strong>manual collection</strong> — future cycles will generate invoices to send as usual, and you can re-request a mandate anytime from the Recurring page.</p>
+            </div>
           `,
         };
       }

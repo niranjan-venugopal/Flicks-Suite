@@ -25,6 +25,8 @@ import {
   InvReportsController,
 } from './notes.controller';
 import { SubscriptionsService } from './subscriptions.service';
+import { SubscriptionMandatesService } from './subscription-mandates.service';
+import { PublicMandateController } from './public-mandate.controller';
 import { SubscriptionsController } from './subscriptions.controller';
 import { InvSettingsService } from './inv-settings.service';
 import { InvSettingsController } from './inv-settings.controller';
@@ -53,6 +55,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     PaymentsController,
     InvReportsController,
     SubscriptionsController,
+    PublicMandateController,
     InvSettingsController,
     RazorpayOAuthController,
   ],
@@ -67,6 +70,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     NotesService,
     InvReportsService,
     SubscriptionsService,
+    SubscriptionMandatesService,
     InvSettingsService,
     RazorpayService,
     InvoicingCryptoService,

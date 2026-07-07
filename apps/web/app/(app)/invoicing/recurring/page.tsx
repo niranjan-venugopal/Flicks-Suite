@@ -12,6 +12,10 @@ import {
   useSubscriptionAction,
   useUpdateSeats,
   useCustomers,
+  useSubscriptionMandate,
+  useChargeAttempts,
+  useEnableAutodebit,
+  useDisableAutodebit,
   type SubscriptionRow,
   type SubscriptionInput,
 } from '@/lib/api/queries/use-invoicing'
@@ -50,6 +54,8 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [seatRate, setSeatRate] = useState('')
   const [seats, setSeats] = useState('5')
   const [start, setStart] = useState(today())
+  const [collection, setCollection] = useState<'manual' | 'auto_debit'>('manual')
+  const enableAutodebit = useEnableAutodebit()
 
   const cycle = model === 'per_seat' ? parseFloat(seatRate || '0') * parseInt(seats || '0', 10) : parseFloat(amount || '0')
   const mrr = cadence === 'monthly' ? cycle : cadence === 'quarterly' ? cycle / 3 : cycle / 12
@@ -68,9 +74,30 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
         : { seat_rate: parseFloat(seatRate).toFixed(2), seat_count: parseInt(seats, 10) }),
     }
     try {
-      await create.mutateAsync(payload)
-      toast({ title: `Subscription "${name.trim()}" created`, description: 'Authorize the mandate to activate it.' })
-      setName(''); setAmount(''); setSeatRate('')
+      const created = await create.mutateAsync(payload)
+      if (collection === 'auto_debit') {
+        // D14a: auto-debit selected → set up the Razorpay mandate right away.
+        // Failure (Razorpay not connected, non-INR) leaves a valid MANUAL
+        // profile — never a half-created one.
+        try {
+          const m = await enableAutodebit.mutateAsync(created.data.id)
+          toast({
+            title: `"${name.trim()}" created — mandate request sent`,
+            description: m.data.public_url
+              ? 'Your customer received the authorization link by email; you can copy it from the profile drawer too.'
+              : undefined,
+          })
+        } catch (err) {
+          toast({
+            title: 'Created as MANUAL — auto-debit setup failed',
+            description: err instanceof Error ? err.message : undefined,
+            variant: 'destructive',
+          })
+        }
+      } else {
+        toast({ title: `Subscription "${name.trim()}" created`, description: 'Invoices will be generated and emailed each cycle.' })
+      }
+      setName(''); setAmount(''); setSeatRate(''); setCollection('manual')
       onClose()
     } catch (err) {
       toast({ title: 'Could not create subscription', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
@@ -160,6 +187,36 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
+          {/* D14a — Collection (PRD v4 §8A) */}
+          <div className="label">Collection</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            {([
+              ['manual', 'Manual', 'Send invoices each cycle — customer pays via link/UPI'],
+              ['auto_debit', 'Auto-debit', 'Razorpay e-mandate — INR only, charges automatically'],
+            ] as const).map(([k, label, hint]) => {
+              const sel = collection === k
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setCollection(k)}
+                  style={{
+                    flex: 1,
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    background: sel ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
+                    border: `1px solid ${sel ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`,
+                  }}
+                >
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: sel ? '#fff' : 'var(--text-2)' }}>{label}</div>
+                  <div className="t-mute" style={{ fontSize: 10.5, marginTop: 2 }}>{hint}</div>
+                </button>
+              )
+            })}
+          </div>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)', marginBottom: 14 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 800 }}>Auto-send on generation</div>
@@ -191,8 +248,10 @@ export default function RecurringPage() {
   const action = useSubscriptionAction()
   const updateSeats = useUpdateSeats()
   const [modal, setModal] = useState(false)
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   const rows = data?.data ?? []
+  const detailRow = detailId ? (rows.find((r) => r.id === detailId) ?? null) : null
   const active = rows.filter((s) => ['ACTIVE', 'TRIALING'].includes(s.status))
 
   const onAction = async (s: SubscriptionRow, act: 'activate' | 'pause' | 'resume' | 'cancel') => {
@@ -222,7 +281,7 @@ export default function RecurringPage() {
     <InvoPage glow="green">
       <SectionHead
         title="Recurring"
-        sub={`${active.length} active profiles · MRR ${inr(data?.meta.mrr ?? '0')}`}
+        sub={isLoading ? 'Loading profiles…' : `${active.length} active profiles · MRR ${inr(data?.meta.mrr ?? '0')}`}
         right={
           <Btn kind="primary" icon={<Plus className="w-4 h-4" />} onClick={() => setModal(true)}>
             New subscription
@@ -259,10 +318,40 @@ export default function RecurringPage() {
             <td style={{ ...invoTd, textAlign: 'right', fontWeight: 800 }}>{inr(cycleAmount(s), s.currency)}</td>
             <td style={invoTd}>
               <Pill tone={STATUS_TONE[s.status] ?? ''} dot>{s.status.replace(/_/g, ' ').toLowerCase()}</Pill>
+              {/* D14b — mandate chip */}
+              {s.collection_mode === 'auto_debit' && (
+                <div style={{ marginTop: 4 }}>
+                  <span
+                    style={{
+                      padding: '2px 7px',
+                      borderRadius: 99,
+                      fontSize: 9.5,
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                      letterSpacing: '.04em',
+                      background:
+                        s.mandate_status === 'active' || s.mandate_status === 'authorized'
+                          ? 'rgba(39,210,128,.14)'
+                          : s.mandate_status === 'revoked'
+                            ? 'rgba(248,120,107,.14)'
+                            : 'rgba(254,216,0,.12)',
+                      color:
+                        s.mandate_status === 'active' || s.mandate_status === 'authorized'
+                          ? 'var(--green)'
+                          : s.mandate_status === 'revoked'
+                            ? 'var(--coral)'
+                            : 'var(--yellow)',
+                    }}
+                  >
+                    ⚡ {s.mandate_status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+              )}
             </td>
             <td style={{ ...invoTd, textAlign: 'right', whiteSpace: 'nowrap' }}>
               <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
-                {s.status === 'PENDING_MANDATE' && (
+                <Btn kind="ghost" size="sm" onClick={() => setDetailId(s.id)}>Details</Btn>
+                {s.status === 'PENDING_MANDATE' && s.collection_mode !== 'auto_debit' && (
                   <Btn kind="secondary" size="sm" onClick={() => onAction(s, 'activate')}>Authorize mandate</Btn>
                 )}
                 {['ACTIVE', 'TRIALING'].includes(s.status) && (
@@ -286,6 +375,155 @@ export default function RecurringPage() {
       </InvoTable>
 
       <SubscriptionModal open={modal} onClose={() => setModal(false)} />
+      {detailRow && <MandateDrawer sub={detailRow} onClose={() => setDetailId(null)} />}
     </InvoPage>
+  )
+}
+
+/**
+ * D14b — mandate detail drawer: status, copy public link, enable/disable
+ * auto-debit, and the charge-attempt timeline.
+ */
+function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => void }) {
+  const { toast } = useToast()
+  const mandate = useSubscriptionMandate(sub.id)
+  const attempts = useChargeAttempts(sub.id)
+  const enable = useEnableAutodebit()
+  const disable = useDisableAutodebit()
+  const m = mandate.data?.data
+
+  const copyLink = async () => {
+    if (!m?.public_url) return
+    await navigator.clipboard.writeText(m.public_url)
+    toast({ title: 'Authorization link copied' })
+  }
+
+  const act = async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      await fn()
+      await mandate.refetch()
+      toast({ title: ok })
+    } catch (err) {
+      toast({ title: 'Action failed', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'flex-end' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{ width: 380, height: '100%', overflowY: 'auto', background: 'rgba(18,18,30,.99)', borderLeft: '1px solid var(--bord-2)', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>{sub.name}</div>
+            <div className="t-mute" style={{ fontSize: 11.5 }}>{sub.customer_name ?? '—'} · {sub.billing_period}</div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Mandate block */}
+        <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Collection</span>
+            {mandate.isLoading ? (
+              <span className="t-mute" style={{ fontSize: 11 }}>Loading…</span>
+            ) : mandate.isError ? (
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--coral)' }}>Couldn’t load</span>
+            ) : (
+              <Pill tone={m?.collection_mode === 'auto_debit' ? 'green' : ''} dot>
+                {m?.collection_mode === 'auto_debit' ? `auto-debit · ${m.mandate_status.replace(/_/g, ' ')}` : 'manual'}
+              </Pill>
+            )}
+          </div>
+          {/* Actions only when the mandate state is KNOWN — never offer "Enable"
+              on an errored load (that could re-request an existing mandate). */}
+          {mandate.isError ? (
+            <Btn kind="secondary" size="sm" onClick={() => mandate.refetch()}>Retry</Btn>
+          ) : m ? (
+            <>
+              {m.collection_mode === 'auto_debit' && m.public_url && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Btn kind="secondary" size="sm" onClick={copyLink}>Copy authorization link</Btn>
+                  {m.mandate_short_url && m.mandate_status === 'pending_authorization' && (
+                    <a href={m.mandate_short_url} target="_blank" rel="noopener noreferrer">
+                      <Btn kind="ghost" size="sm">Open Razorpay page</Btn>
+                    </a>
+                  )}
+                </div>
+              )}
+              {!['CANCELLED', 'EXPIRED'].includes(sub.status) && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {m.collection_mode !== 'auto_debit' ? (
+                    <Btn
+                      kind="primary"
+                      size="sm"
+                      disabled={enable.isPending}
+                      onClick={() => act(() => enable.mutateAsync(sub.id), 'Auto-debit mandate requested — customer emailed')}
+                    >
+                      {enable.isPending ? 'Setting up…' : 'Enable auto-debit'}
+                    </Btn>
+                  ) : (
+                    <Btn
+                      kind="ghost"
+                      size="sm"
+                      disabled={disable.isPending}
+                      onClick={() => act(() => disable.mutateAsync(sub.id), 'Back to manual collection')}
+                    >
+                      {disable.isPending ? 'Disabling…' : 'Disable auto-debit'}
+                    </Btn>
+                  )}
+                </div>
+              )}
+            </>
+          ) : null}
+          <p className="t-caption" style={{ margin: 0 }}>
+            Auto-debit needs your Razorpay account connected (Invoicing → Settings) · INR profiles only.
+          </p>
+        </div>
+
+        {/* Charge timeline */}
+        <div>
+          <div className="label">Charge attempts</div>
+          {attempts.isLoading ? (
+            <p className="t-mute" style={{ fontSize: 12 }}>Loading…</p>
+          ) : attempts.isError ? (
+            <p style={{ fontSize: 12, fontWeight: 700, color: 'var(--coral)' }}>
+              Couldn’t load charge history.{' '}
+              <button onClick={() => attempts.refetch()} style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontWeight: 800, padding: 0 }}>Retry</button>
+            </p>
+          ) : (attempts.data?.data.length ?? 0) === 0 ? (
+            <p className="t-mute" style={{ fontSize: 12 }}>No auto-debit charges yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {attempts.data!.data.map((a) => (
+                <div key={a.id} style={{ display: 'flex', gap: 10, padding: '9px 11px', borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', alignItems: 'center' }}>
+                  <span
+                    style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: a.status === 'succeeded' ? 'var(--green)' : a.status === 'failed' ? 'var(--coral)' : 'var(--yellow)',
+                    }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800 }}>
+                      {inr(a.amount, a.currency)} · {a.status}
+                    </div>
+                    <div className="t-mute" style={{ fontSize: 10.5 }}>
+                      {new Date(a.attempted_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {a.failure_reason ? ` · ${a.failure_reason}` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }

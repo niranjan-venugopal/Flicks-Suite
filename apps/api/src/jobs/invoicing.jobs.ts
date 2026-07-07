@@ -12,7 +12,7 @@ import {
 } from '@flicks/db/schema';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { InvoicesService } from '../modules/invoicing/invoices.service';
-import { advanceDate, cycleAmountCents } from '../modules/invoicing/subscriptions.service';
+import { advanceDate, cycleAmountCents, SUBSCRIPTION_GST_RATE } from '../modules/invoicing/subscriptions.service';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../core/database/database.module';
 import { DatabaseService } from '../core/database/database.service';
@@ -193,19 +193,19 @@ export class InvoicingJobs {
                 item_name: `${sub.name} (${sub.seat_count} seats)`,
                 quantity: String(sub.seat_count ?? 1),
                 rate: sub.seat_rate ?? '0',
-                gst_rate: '18',
+                gst_rate: String(SUBSCRIPTION_GST_RATE),
               }
             : {
                 item_name: sub.name,
                 quantity: '1',
                 rate: sub.flat_amount ?? '0',
-                gst_rate: '18',
+                gst_rate: String(SUBSCRIPTION_GST_RATE),
               };
         const prorationLines = prorations.map((ev) => ({
           item_name: `Proration · ${ev.event_type.replace(/_/g, ' ')} (${ev.event_date})`,
           quantity: '1',
           rate: ev.amount,
-          gst_rate: '18',
+          gst_rate: String(SUBSCRIPTION_GST_RATE),
         }));
 
         const billDate = sub.next_billing_date ?? today;
@@ -346,10 +346,13 @@ export class InvoicingJobs {
   }
 
   /**
-   * Dunning sweep (§6.8): PAST_DUE subscriptions get a retry per run (the
-   * charge itself is stubbed until live Razorpay keys — each run counts a
-   * failed attempt); after 3 failures over the retry window the profile is
-   * PAUSED and the tenant sees it in the list.
+   * Dunning sweep (§6.8, reworked for real auto-debit in Sprint 23): the
+   * failure COUNTER is owned by the subscription webhooks now (each real
+   * failed charge writes a subscription_charge_attempts row and increments
+   * failed_charge_count; 3 strikes → PAUSED happens there, immediately).
+   * This sweep is the SAFETY NET for profiles stranded PAST_DUE with a dead
+   * mandate — no webhook activity for 7+ days → pause + audit, so the seller
+   * sees a decisive state instead of an eternal PAST_DUE.
    */
   async runDunningSweep(): Promise<number> {
     const pastDue = await this.dbAdmin
@@ -359,27 +362,22 @@ export class InvoicingJobs {
 
     let processed = 0;
     for (const sub of pastDue) {
-      const failures = (sub.failed_charge_count ?? 0) + 1;
-      const exhausted = failures >= 3;
+      const lastSignal = sub.last_failure_at ?? sub.updated_at;
+      const stranded =
+        !lastSignal ||
+        Date.now() - new Date(lastSignal).getTime() > 7 * 24 * 60 * 60 * 1000;
+      if (!stranded) continue;
       await this.dbAdmin
         .update(invoiceSubscriptions)
-        .set({
-          failed_charge_count: failures,
-          last_failure_at: new Date(),
-          status: exhausted ? 'PAUSED' : 'PAST_DUE',
-          paused_at: exhausted ? new Date() : sub.paused_at,
-          updated_at: new Date(),
-        })
+        .set({ status: 'PAUSED', paused_at: new Date(), updated_at: new Date() })
         .where(eq(invoiceSubscriptions.id, sub.id));
-      if (exhausted) {
-        await this.dbAdmin.insert(auditLog).values({
-          tenant_id: sub.tenant_id,
-          action: 'invoicing.subscription.dunning_paused',
-          resource_type: 'invoice_subscription',
-          resource_id: sub.id,
-          metadata: { failures },
-        });
-      }
+      await this.dbAdmin.insert(auditLog).values({
+        tenant_id: sub.tenant_id,
+        action: 'invoicing.subscription.dunning_paused',
+        resource_type: 'invoice_subscription',
+        resource_id: sub.id,
+        metadata: { reason: 'past_due_stranded_7d', failures: sub.failed_charge_count ?? 0 },
+      });
       processed++;
     }
     return processed;

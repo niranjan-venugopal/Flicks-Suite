@@ -602,7 +602,33 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     { label: 'tenant_module_toggles', table: schema.tenantModuleToggles, values: () => ({ tenant_id: tenantA.id, module: `mod-${rid()}`, enabled: true }) },
     { label: 'tenant_hsn_sac_codes', table: schema.tenantHsnSacCodes, values: () => ({ tenant_id: tenantA.id, code: `X-${rid()}`, type: 'SAC', description: 'Custom service' }) },
     { label: 'product_events', table: schema.productEvents, values: () => ({ tenant_id: tenantA.id, event_name: 'module_opened', properties: { module: 'invoicing' }, source: 'web' }) },
+    // 0027 — auto-debit charge ledger rides the standard tenant isolation.
+    { label: 'subscription_charge_attempts', table: schema.subscriptionChargeAttempts, values: () => ({
+      tenant_id: tenantA.id,
+      subscription_id: seedSubscriptionA(),
+      status: 'failed',
+      amount: '100.00',
+      currency: 'INR',
+    }) },
   ];
+
+  // Lazily-seeded invoice_subscription for the charge-attempts case (FK).
+  let subAId: string | null = null;
+  function seedSubscriptionA(): string {
+    if (!subAId) throw new Error('subscription fixture not seeded');
+    return subAId;
+  }
+  beforeAll(async () => {
+    const [cust] = await idbAdmin.insert(schema.customers).values({
+      tenant_id: tenantA.id, customer_code: `CA-${rid()}`, display_name: 'Iso Cust',
+    }).returning();
+    const [sub] = await idbAdmin.insert(schema.invoiceSubscriptions).values({
+      tenant_id: tenantA.id, customer_id: cust!.id, name: `Iso Sub ${rid()}`,
+      pricing_model: 'flat_rate', currency: 'INR', flat_amount: '100.00',
+      billing_period: 'monthly', start_date: new Date().toISOString().slice(0, 10),
+    }).returning();
+    subAId = sub!.id;
+  });
 
   cases.forEach(({ label, table, values }) => {
     it(`isolation: ${label} — A sees its row, B sees none`, async () => {

@@ -24,7 +24,7 @@ import {
   char,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
 
 // ─── hsn_sac_codes (GLOBAL, no tenant_id, no RLS) ───────────────────────────────
@@ -228,6 +228,8 @@ export const customers = pgTable(
     default_notes: text('default_notes'),
     internal_notes: text('internal_notes'),
     status: text('status').notNull().default('active'), // active | archived
+    // Sub-merchant Razorpay customer handle for auto-debit mandates (0027).
+    razorpay_customer_id: text('razorpay_customer_id'),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -480,6 +482,16 @@ export const invoiceSubscriptions = pgTable(
     }),
     razorpay_subscription_id: text('razorpay_subscription_id').unique(),
     razorpay_plan_id: text('razorpay_plan_id'),
+    // Auto-debit (PRD v4 §8A / 0027): how cycles are collected + the mandate
+    // lifecycle. manual = send invoices (default); auto_debit = e-mandate.
+    collection_mode: text('collection_mode').notNull().default('manual'),
+    // none | pending_authorization | authorized | active | revoked
+    mandate_status: text('mandate_status').notNull().default('none'),
+    mandate_short_url: text('mandate_short_url'), // Razorpay-hosted auth page
+    mandate_token: text('mandate_token'), // public /sub/<token> page
+    mandate_token_expires_at: timestamp('mandate_token_expires_at', {
+      withTimezone: true,
+    }),
     mandate_authorized_at: timestamp('mandate_authorized_at', {
       withTimezone: true,
     }),
@@ -506,8 +518,46 @@ export const invoiceSubscriptions = pgTable(
   (t) => [
     index('invoice_subscriptions_tenant_idx').on(t.tenant_id),
     index('idx_invoice_subscriptions_next_billing').on(t.next_billing_date),
+    // Partial unique on the public-page token (0027) — matches the migration.
+    uniqueIndex('idx_invoice_subscriptions_mandate_token')
+      .on(t.mandate_token)
+      .where(sql`${t.mandate_token} IS NOT NULL`),
   ],
 );
+
+// ─── subscription_charge_attempts (PRD v4 §8A / 0027 — D14b timeline) ─────────
+// One row per auto-debit charge outcome; tenant-isolated, append-only under
+// the app role (webhook writes via service role).
+
+export const subscriptionChargeAttempts = pgTable(
+  'subscription_charge_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    subscription_id: uuid('subscription_id')
+      .notNull()
+      .references(() => invoiceSubscriptions.id, { onDelete: 'cascade' }),
+    invoice_id: uuid('invoice_id').references(() => invoices.id, {
+      onDelete: 'set null',
+    }),
+    razorpay_payment_id: text('razorpay_payment_id'),
+    status: text('status').notNull(), // succeeded | failed | pending
+    amount: numeric('amount', { precision: 15, scale: 2 }).notNull(),
+    currency: text('currency').notNull(),
+    failure_reason: text('failure_reason'),
+    attempted_at: timestamp('attempted_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('idx_charge_attempts_subscription').on(t.subscription_id, t.attempted_at),
+    index('idx_charge_attempts_tenant').on(t.tenant_id, t.attempted_at),
+  ],
+);
+
+export type SubscriptionChargeAttempt = typeof subscriptionChargeAttempts.$inferSelect;
 
 // ─── invoices (main table; also stores quotes via document_type/status) ─────────
 

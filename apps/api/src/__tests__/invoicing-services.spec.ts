@@ -1244,7 +1244,7 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
     expect(sentEmails).toHaveLength(0);
   });
 
-  it('dunning: 3 strikes over the retry window → PAUSED; resume clears the counter', async () => {
+  it('dunning (Sprint 23 rework): webhooks own the strike counter; the sweep only pauses PAST_DUE profiles stranded 7+ days; resume clears the counter', async () => {
     const created = await subsSvc.create(
       {
         customer_id: customerId,
@@ -1258,15 +1258,25 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
       tenantId,
     );
     await subsSvc.activate(created.data.id, userId, tenantId);
-    await dbAdmin.update(subsTable).set({ status: 'PAST_DUE' }).where(eq(subsTable.id, created.data.id));
 
-    await jobs.runDunningSweep(); // 1
-    await jobs.runDunningSweep(); // 2
+    // Fresh PAST_DUE (webhook failure minutes ago) → the sweep must NOT touch
+    // it: Razorpay is still retrying and the webhook owns failed_charge_count.
+    await dbAdmin
+      .update(subsTable)
+      .set({ status: 'PAST_DUE', failed_charge_count: 1, last_failure_at: new Date() })
+      .where(eq(subsTable.id, created.data.id));
+    await jobs.runDunningSweep();
     let [sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, created.data.id));
     expect(sub!.status).toBe('PAST_DUE');
-    expect(sub!.failed_charge_count).toBe(2);
+    expect(sub!.failed_charge_count).toBe(1); // sweep never increments anymore
 
-    await jobs.runDunningSweep(); // 3 → pause
+    // Stranded PAST_DUE (no webhook signal for 8 days — dead mandate) → the
+    // safety net pauses it decisively.
+    await dbAdmin
+      .update(subsTable)
+      .set({ last_failure_at: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000) })
+      .where(eq(subsTable.id, created.data.id));
+    await jobs.runDunningSweep();
     ;[sub] = await dbAdmin.select().from(subsTable).where(eq(subsTable.id, created.data.id));
     expect(sub!.status).toBe('PAUSED');
 

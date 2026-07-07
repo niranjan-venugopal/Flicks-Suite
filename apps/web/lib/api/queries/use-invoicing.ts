@@ -772,8 +772,31 @@ export interface SubscriptionRow {
   total_cycles_billed: number | null
   failed_charge_count: number | null
   mandate_authorized_at: string | null
+  collection_mode: 'manual' | 'auto_debit'
+  mandate_status: 'none' | 'pending_authorization' | 'authorized' | 'active' | 'revoked'
   customer_name: string | null
   customer_id: string
+}
+
+export interface MandateInfo {
+  id: string
+  collection_mode: 'manual' | 'auto_debit'
+  mandate_status: string
+  mandate_short_url: string | null
+  mandate_token: string | null
+  mandate_authorized_at: string | null
+  mandate_revoked_at: string | null
+  public_url: string | null
+}
+
+export interface ChargeAttempt {
+  id: string
+  status: 'succeeded' | 'failed' | 'pending'
+  amount: string
+  currency: string
+  failure_reason: string | null
+  razorpay_payment_id: string | null
+  attempted_at: string
 }
 
 export interface SubscriptionInput {
@@ -810,6 +833,50 @@ export function useSubscriptionAction() {
     mutationFn: ({ id, action }: { id: string; action: 'activate' | 'pause' | 'resume' | 'cancel' }) =>
       api.post<{ data: SubscriptionRow }>(`/api/v1/subscriptions/${id}/${action}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing', 'subscriptions'] }),
+  })
+}
+
+// ─── Auto-debit mandates (PRD v4 §8A, Sprint 23) ─────────────────────────────
+
+export function useSubscriptionMandate(id: string | null) {
+  return useQuery({
+    queryKey: ['subscriptions', 'mandate', id],
+    queryFn: () => api.get<{ data: MandateInfo }>(`/api/v1/subscriptions/${id}/mandate`),
+    enabled: !!id,
+  })
+}
+
+export function useChargeAttempts(id: string | null) {
+  return useQuery({
+    queryKey: ['subscriptions', 'charge-attempts', id],
+    queryFn: () => api.get<{ data: ChargeAttempt[] }>(`/api/v1/subscriptions/${id}/charge-attempts`),
+    enabled: !!id,
+  })
+}
+
+// Refresh BOTH the list (['invoicing','subscriptions']) and the detail
+// (['subscriptions',…]) queries — mandate changes alter the table chip AND
+// the drawer. A bare ['subscriptions'] prefix would miss the list key.
+function invalidateSubscriptions(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['invoicing', 'subscriptions'] })
+  qc.invalidateQueries({ queryKey: ['subscriptions'] })
+}
+
+export function useEnableAutodebit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: MandateInfo }>(`/api/v1/subscriptions/${id}/enable-autodebit`, {}),
+    onSuccess: () => invalidateSubscriptions(qc),
+  })
+}
+
+export function useDisableAutodebit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: MandateInfo }>(`/api/v1/subscriptions/${id}/disable-autodebit`, {}),
+    onSuccess: () => invalidateSubscriptions(qc),
   })
 }
 

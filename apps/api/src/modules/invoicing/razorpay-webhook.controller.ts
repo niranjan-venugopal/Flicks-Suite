@@ -26,6 +26,7 @@ import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { InvoicesService } from './invoices.service';
+import { SubscriptionMandatesService } from './subscription-mandates.service';
 
 interface RazorpayEntity {
   id?: string;
@@ -69,6 +70,7 @@ export class RazorpayWebhookController {
     private readonly invoices: InvoicesService,
     // Optional: spec fixtures construct with 3 args; runtime DI provides it.
     @Optional() private readonly events?: EventEmitter2,
+    @Optional() private readonly mandates?: SubscriptionMandatesService,
   ) {}
 
   @Post('razorpay')
@@ -128,6 +130,24 @@ export class RazorpayWebhookController {
         processingError = err instanceof Error ? err.message : 'unknown error';
         this.logger.error(
           `Razorpay ${eventId} processing failed: ${processingError}`,
+        );
+      }
+    }
+    // Auto-debit mandate lifecycle (PRD v4 §8A): subscription.* events plus
+    // payment.failed carrying a subscription_id resolve against
+    // invoice_subscriptions by razorpay_subscription_id — a failed one-off
+    // invoice payment has no subscription_id and safely no-ops inside.
+    else if (
+      verified &&
+      this.mandates &&
+      (eventType.startsWith('subscription.') || eventType === 'payment.failed')
+    ) {
+      try {
+        await this.mandates.applyRazorpayEvent(eventType, body as Record<string, unknown>);
+      } catch (err) {
+        processingError = err instanceof Error ? err.message : 'unknown error';
+        this.logger.error(
+          `Razorpay ${eventId} subscription processing failed: ${processingError}`,
         );
       }
     }

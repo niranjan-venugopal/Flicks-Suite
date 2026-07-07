@@ -1,4 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -28,6 +29,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!payload.sub) {
       throw new UnauthorizedException('Invalid token payload');
     }
+    // §9: Sentry user context is the opaque id ONLY — no email/name/role.
+    Sentry.setUser({ id: payload.sub });
     return payload;
   }
 }

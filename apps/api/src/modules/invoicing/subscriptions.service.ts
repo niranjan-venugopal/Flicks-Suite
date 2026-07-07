@@ -38,7 +38,7 @@ export function advanceDate(iso: string, period: string, customDays?: number | n
   return d.toISOString().slice(0, 10);
 }
 
-/** Per-cycle charge: flat amount or seat_rate × seat_count (§6.3). */
+/** Per-cycle TAXABLE base: flat amount or seat_rate × seat_count (§6.3). */
 export function cycleAmountCents(sub: {
   pricing_model: string;
   flat_amount: string | null;
@@ -49,6 +49,26 @@ export function cycleAmountCents(sub: {
     return toCents(sub.seat_rate) * (sub.seat_count ?? 0);
   }
   return toCents(sub.flat_amount);
+}
+
+/**
+ * GST rate applied to every generated subscription base line. Generation
+ * (invoicing.jobs.ts) and the auto-debit mandate amount (§8A) MUST use the
+ * same rate — the mandate charges the GST-inclusive total so the generated
+ * invoice reaches PAID exactly (an under-charge strands the tax and the
+ * invoice goes OVERDUE forever).
+ */
+export const SUBSCRIPTION_GST_RATE = 18;
+
+/**
+ * GST-inclusive per-cycle amount the mandate charges — matches the single
+ * base line's invoice total: base + round(base × rate%). Prorations are
+ * mid-cycle one-offs a fixed Razorpay plan can't carry; they invoice
+ * separately and stay a manual-collection concern.
+ */
+export function mandateChargeCents(sub: Parameters<typeof cycleAmountCents>[0]): number {
+  const base = cycleAmountCents(sub);
+  return base + Math.round((base * SUBSCRIPTION_GST_RATE) / 100);
 }
 
 /**
@@ -82,6 +102,8 @@ export class SubscriptionsService {
           total_cycles_billed: invoiceSubscriptions.total_cycles_billed,
           failed_charge_count: invoiceSubscriptions.failed_charge_count,
           mandate_authorized_at: invoiceSubscriptions.mandate_authorized_at,
+          collection_mode: invoiceSubscriptions.collection_mode,
+          mandate_status: invoiceSubscriptions.mandate_status,
           customer_name: customers.display_name,
           customer_id: invoiceSubscriptions.customer_id,
         })

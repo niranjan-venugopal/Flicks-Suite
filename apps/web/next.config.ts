@@ -39,6 +39,15 @@ const securityHeaders = [
 
 const config: NextConfig = {
   images: { domains: ['files.flickssuite.com'] },
+  // Expose the build's commit SHA to the browser bundle so client-side Sentry
+  // events carry a release (§9) — Vercel's own SHA isn't NEXT_PUBLIC by default.
+  env: {
+    NEXT_PUBLIC_SENTRY_RELEASE:
+      process.env.NEXT_PUBLIC_SENTRY_RELEASE ??
+      process.env.SENTRY_RELEASE ??
+      process.env.VERCEL_GIT_COMMIT_SHA ??
+      '',
+  },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
