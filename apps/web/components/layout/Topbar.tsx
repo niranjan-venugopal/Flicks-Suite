@@ -10,6 +10,7 @@ import { PresenceDot } from '@/components/presence/PresenceDot'
 import { StatusPicker } from '@/components/presence/StatusPicker'
 import { STATUS_META } from '@/components/presence/PresenceDot'
 import { useUserPresence, usePresence } from '@/lib/api/queries/use-presence'
+import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NotificationsBell } from './NotificationsBell'
 import {
   DropdownMenu,
@@ -24,6 +25,7 @@ export function Topbar() {
   const logoutMutation = useLogout()
   const isFam = currentUser?.role === 'FAM'
   const [pickerOpen, setPickerOpen] = useState(false)
+  const openFeedback = useFeedbackPanel((s) => s.setOpen)
 
   // Seed my own presence (the socket keeps it live afterwards).
   usePresence(currentUser?.id ? [currentUser.id] : [])
@@ -160,7 +162,16 @@ export function Topbar() {
             <DropdownMenuItem asChild>
               <Link href="/settings">Settings</Link>
             </DropdownMenuItem>
-            {/* "Send feedback" lands here in Sprint 20 (D10-R) */}
+            {/* D10-R — primary feedback trigger (below Profile/Settings, above
+                Sign out). Tenant users only: the FAM console doesn't mount the
+                panel and platform staff aren't the survey audience. */}
+            {!isFam && (
+              <DropdownMenuItem onClick={() => openFeedback(true)}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <Icon.chat size={13} /> Send feedback
+                </span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}

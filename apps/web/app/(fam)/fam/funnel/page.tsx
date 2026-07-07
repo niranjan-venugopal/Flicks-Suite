@@ -126,7 +126,7 @@ export default function FamFunnelPage() {
             title="Invoicing activation"
             sub="F1–F5 · computed from product_events + business tables · last 30d cohortless"
           />
-          <div className="card" style={{ padding: 24, borderColor: 'rgba(155,123,250,.3)' }}>
+          <div className="card" style={{ padding: 24 }}>
             <FunnelBlock data={invFunnel.data} loading={invFunnel.isLoading} mono />
           </div>
           <div style={{ marginTop: 14, padding: '10px 12px', background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8, fontSize: 11.5, color: 'var(--text-mute)' }}>

@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { type ReactNode } from 'react'
 import { Icon } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
+import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
 
 interface NavItem {
   href: string
@@ -83,6 +84,7 @@ export function SettingsLayout({ children }: SettingsLayoutProps) {
                 </Link>
               )
             })}
+            <SendFeedbackNavItem />
           </nav>
 
           {/* Content panel */}
@@ -92,5 +94,35 @@ export function SettingsLayout({ children }: SettingsLayoutProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** D10-R secondary trigger — "Send feedback" entry in the settings rail. */
+function SendFeedbackNavItem() {
+  const setOpen = useFeedbackPanel((s) => s.setOpen)
+  return (
+    <button
+      onClick={() => setOpen(true)}
+      style={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'center',
+        padding: '10px 12px',
+        borderRadius: 8,
+        background: 'transparent',
+        border: '1px solid transparent',
+        color: 'var(--text-2)',
+        cursor: 'pointer',
+        fontSize: 12.5,
+        fontWeight: 600,
+        textAlign: 'left',
+        marginTop: 8,
+        borderTop: '1px solid var(--bord)',
+        paddingTop: 14,
+      }}
+    >
+      <Icon.chat size={14} />
+      Send feedback
+    </button>
   )
 }

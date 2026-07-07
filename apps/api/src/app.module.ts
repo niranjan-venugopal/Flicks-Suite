@@ -42,6 +42,7 @@ import { ConsentModule } from './modules/consent/consent.module';
 import { MediaModule } from './modules/media/media.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { EventsModule } from './modules/events/events.module';
+import { FeedbackModule } from './modules/feedback/feedback.module';
 
 // Gateways
 import { NotificationsGateway } from './gateways/notifications.gateway';
@@ -151,6 +152,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     MediaModule,
     PresenceModule,
     EventsModule,
+    FeedbackModule,
   ],
   controllers: [HealthController],
   providers: [
