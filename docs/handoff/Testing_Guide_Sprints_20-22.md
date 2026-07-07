@@ -1,7 +1,9 @@
-# Testing Guide — Sprints 20 & 21 (PRD v4)
+# Testing Guide — Sprints 20–22 (PRD v4)
 
 Sprint 20: in-app **Feedback + NPS** (§7, D10-R–D13) · Sprint 21: **Platform
-billing** — ₹499/seat/month, 7-day trial, coupons, paywall (§8B, D18–D20).
+billing** — ₹499/seat/month, 7-day trial, coupons, paywall (§8B, D18–D20) ·
+Sprint 22: **FAM coupons console + billing visibility + platform emails**
+(§8B.3, D21–D23, §14 seeding).
 
 ## 0. Environment prep
 
@@ -79,7 +81,27 @@ else below still works** (trial, banner, wall, coupons are date-driven).
    pre-debit notices ~24h before a charge; each sends once (audit-marker
    dedupe).
 
-## 3. Automated gate (already green at push time)
+## 3. Sprint 22 — FAM coupons console & billing visibility
+
+1. **Coupons console (D21)**: sign in as the FAM admin → Revenue → **Coupons**.
+   Tiles up top show Platform MRR / Active subs / Trial→paid / Coupons
+   redeemed. Mint a batch (e.g. prefix `PH`, random, 25 codes, 2 months) —
+   the table updates; download the CSV (whole list or one campaign).
+2. **Deactivate / drawer**: click a code → the drawer shows its redemptions
+   (tenant + who + when). Deactivate a code, then try redeeming it from a
+   tenant's Billing & plan → refused; reactivate → redeemable.
+3. **§14 launch sets**: `DATABASE_SERVICE_ROLE_URL=... bash scripts/seed-coupons.sh LAUNCH`
+   seeds FOUNDER-001..050 (3 mo), FLICKS-CA-001..015 (3 mo, 10 uses each) and
+   50 random FLICKS-LAUNCH-XXXXX codes (2 mo). Idempotent — re-running never
+   duplicates.
+4. **D22 visibility**: FAM → Tenants list now carries a billing chip
+   (active/trialing/past-due) next to the plan; FAM → Revenue has the
+   Trial→paid tile; tenant detail's Billing tab was already live.
+5. **D23 emails** (passive): trial-ended goes out with the expiry sweep;
+   subscription-activated / payment-failed-retry / cancellation-confirmed ride
+   the platform webhook. All to Owner+Admin, deduped by audit markers.
+
+## 4. Automated gate (already green at push time)
 
 ```bash
 cd apps/api && pnpm test        # 216/216, includes billing + RLS isolation
@@ -87,7 +109,7 @@ bash scripts/diagnose-rls.sh    # leak_with_bogus_context = 0
 pnpm -F web build && pnpm -F api build
 ```
 
-## 4. Existing tenants after upgrade
+## 5. Existing tenants after upgrade
 
 The 0028 backfill gives every pre-existing tenant a trialing subscription row
 with **at least 7 days of runway from migration time** — nobody gets locked

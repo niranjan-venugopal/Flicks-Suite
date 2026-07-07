@@ -193,8 +193,36 @@ export default function FamTenantsPage() {
                         </div>
                       </Link>
                     </td>
-                    <td style={{ textTransform: 'capitalize', fontSize: 12, fontWeight: 700 }}>
-                      {t.plan ?? '—'}
+                    <td style={{ fontSize: 12, fontWeight: 700 }}>
+                      <span style={{ textTransform: 'capitalize' }}>{t.plan ?? '—'}</span>
+                      {/* D22 — billing chip: live subscription state at a glance */}
+                      {t.subStatus && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            padding: '2px 7px',
+                            borderRadius: 99,
+                            fontSize: 9.5,
+                            fontWeight: 800,
+                            textTransform: 'uppercase',
+                            letterSpacing: '.04em',
+                            background:
+                              t.subStatus === 'active'
+                                ? 'rgba(39,210,128,.14)'
+                                : t.subStatus === 'trialing'
+                                  ? 'rgba(254,216,0,.12)'
+                                  : 'rgba(248,120,107,.14)',
+                            color:
+                              t.subStatus === 'active'
+                                ? 'var(--green)'
+                                : t.subStatus === 'trialing'
+                                  ? 'var(--yellow)'
+                                  : 'var(--coral)',
+                          }}
+                        >
+                          {t.subStatus.replace('_', ' ')}
+                        </span>
+                      )}
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 800 }}>
                       {t.mrr > 0 ? formatCurrency(t.mrr, 'INR') : '—'}

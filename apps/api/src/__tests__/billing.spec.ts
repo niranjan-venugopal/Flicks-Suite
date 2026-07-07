@@ -306,9 +306,9 @@ describe('Platform billing (PRD v4 §8B)', () => {
     expect(sub!.status).toBe('past_due');
     expect(sub!.grace_ends_at).not.toBeNull();
     expect(sendEmailSpy).toHaveBeenCalledWith(
-      'subscription-payment-failed',
+      'payment-failed-retry', // D23 dunning template (Sprint 22)
       expect.any(String),
-      expect.anything(),
+      expect.objectContaining({ graceEndsAt: expect.any(String) }),
     );
     // Grace keeps the workspace open.
     billingState.invalidate(tenantId);

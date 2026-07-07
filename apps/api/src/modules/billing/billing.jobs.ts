@@ -72,7 +72,10 @@ export class BillingJobs {
         const marker = `${row.tenant_id}:${band}:${new Date(row.trial_ends_at!).toISOString().slice(0, 10)}`;
         if (await this.markerExists('billing.trial_reminder', marker)) continue;
         const owners = await this.billing.ownerEmails(row.tenant_id);
-        let delivered = owners.length === 0; // nobody to mail = nothing to retry
+        // ALL sends must succeed before the marker is written — a partial
+        // outage retries the batch next run (one duplicate for the owner who
+        // did get it beats an owner who never does).
+        let delivered = true;
         for (const o of owners) {
           const ok = await this.notifications.sendEmail('trial-ending-soon', o.email, {
             tenantName: row.tenant_name,
@@ -84,7 +87,7 @@ export class BillingJobs {
             }),
             upgradeUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/settings/billing`,
           });
-          delivered = delivered || ok;
+          delivered = delivered && ok;
         }
         if (!delivered) continue; // Resend outage → retry next run
         await this.audit.logPlatform({
@@ -110,8 +113,9 @@ export class BillingJobs {
   @Cron(CronExpression.EVERY_DAY_AT_2AM, { name: 'trial-expiry-sweep', timeZone: 'UTC' })
   async trialExpirySweep(): Promise<void> {
     const lapsed = await this.dbAdmin
-      .select({ tenant_id: subscriptions.tenant_id })
+      .select({ tenant_id: subscriptions.tenant_id, tenant_name: tenants.name })
       .from(subscriptions)
+      .innerJoin(tenants, eq(tenants.id, subscriptions.tenant_id))
       .where(
         and(
           eq(subscriptions.status, 'trialing'),
@@ -127,6 +131,18 @@ export class BillingJobs {
         // Unbounded lookback: lapsed tenants stay in this query forever, so a
         // time-bounded marker would re-fire the event every N days.
         if (await this.markerExists('billing.trial_expired', row.tenant_id, null)) continue;
+        // D23 'trial-ended' email to owners — a failed send retries tomorrow
+        // (the marker is only written after a confirmed delivery).
+        const owners = await this.billing.ownerEmails(row.tenant_id);
+        let delivered = true; // all-or-retry (see trialReminders)
+        for (const o of owners) {
+          const ok = await this.notifications.sendEmail('trial-ended', o.email, {
+            tenantName: row.tenant_name,
+            upgradeUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/settings/billing`,
+          });
+          delivered = delivered && ok;
+        }
+        if (!delivered) continue;
         await this.audit.logPlatform({
           action: 'billing.trial_expired',
           targetTenantId: row.tenant_id,
@@ -205,7 +221,7 @@ export class BillingJobs {
         // fall back to the previously-committed count when the sync failed.
         const amount = `₹${(syncedSeats * PLATFORM_PLAN.priceRupees).toLocaleString('en-IN')}`;
         const owners = await this.billing.ownerEmails(row.tenant_id);
-        let delivered = owners.length === 0;
+        let delivered = true; // all-or-retry (see trialReminders)
         for (const o of owners) {
           const ok = await this.notifications.sendEmail('subscription-pre-debit', o.email, {
             customerName: row.tenant_name,
@@ -218,7 +234,7 @@ export class BillingJobs {
               year: 'numeric',
             }),
           });
-          delivered = delivered || ok;
+          delivered = delivered && ok;
         }
         if (!delivered) continue; // retry next tick
         await this.audit.logPlatform({

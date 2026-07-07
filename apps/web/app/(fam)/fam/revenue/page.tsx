@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { Avatar, Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
 import { useFamRevenue } from '@/lib/api/queries/use-fam'
+import { useFamBillingOverview } from '@/lib/api/queries/use-fam-billing'
 import { formatCurrency } from '@/lib/utils'
 
 const PLAN_COLOURS: Record<string, string> = {
@@ -38,6 +39,7 @@ function syntheticTrend(currentMrr: number): number[] {
 
 export default function FamRevenuePage() {
   const revenue = useFamRevenue()
+  const overview = useFamBillingOverview()
   const d = revenue.data
 
   const mrr = d?.mrr.amount ?? 0
@@ -73,7 +75,7 @@ export default function FamRevenuePage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 14 }}>
           <Kpi
             label="MRR"
             value={revenue.isLoading ? '…' : formatCurrency(mrr, currency)}
@@ -109,6 +111,19 @@ export default function FamRevenuePage() {
             delta="MRR ÷ paying"
             icon={<Icon.spark size={14} />}
             accent="yellow"
+          />
+          <Kpi
+            label="Trial → paid"
+            value={
+              overview.isLoading
+                ? '…'
+                : overview.data
+                  ? `${overview.data.data.trial_to_paid_pct}%`
+                  : '—'
+            }
+            delta={overview.data ? `${overview.data.data.active_subscriptions} active subs` : ''}
+            icon={<Icon.check size={14} />}
+            accent="green"
           />
         </div>
 

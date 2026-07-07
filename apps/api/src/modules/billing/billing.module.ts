@@ -3,8 +3,10 @@ import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BillingController } from './billing.controller';
 import { PlatformWebhookController } from './platform-webhook.controller';
+import { FamBillingController } from './fam-billing.controller';
 import { BillingService } from './billing.service';
 import { BillingJobs } from './billing.jobs';
+import { FamBillingService } from './fam-billing.service';
 import { RazorpayPlatformService } from './razorpay-platform.service';
 
 /**
@@ -15,8 +17,8 @@ import { RazorpayPlatformService } from './razorpay-platform.service';
  */
 @Module({
   imports: [AuditModule, NotificationsModule],
-  controllers: [BillingController, PlatformWebhookController],
-  providers: [BillingService, BillingJobs, RazorpayPlatformService],
+  controllers: [BillingController, PlatformWebhookController, FamBillingController],
+  providers: [BillingService, BillingJobs, FamBillingService, RazorpayPlatformService],
   exports: [BillingService],
 })
 export class BillingModule {}

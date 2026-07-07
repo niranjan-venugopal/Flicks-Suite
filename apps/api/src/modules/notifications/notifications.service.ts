@@ -104,8 +104,12 @@ type EmailTemplate =
   | 'auditor-invite'
   // Billing
   | 'trial-ending-soon'
+  | 'trial-ended'
+  | 'subscription-activated'
   | 'subscription-payment-success'
   | 'subscription-payment-failed'
+  | 'payment-failed-retry'
+  | 'cancellation-confirmed'
   // DPDP self-service
   | 'data-export-ready'
   | 'account-deletion-confirmation'
@@ -186,6 +190,19 @@ export class NotificationsService {
       // Don't throw — email failures should not break the flow
       return false;
     }
+  }
+
+  /**
+   * Escape user-controlled strings before HTML interpolation — a tenant can
+   * rename their workspace to markup and have it rendered inside official
+   * billing emails otherwise.
+   */
+  private esc(v: unknown): string {
+    return String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   private renderTemplate(
@@ -414,7 +431,7 @@ export class NotificationsService {
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #f59e0b;">Trial Ending Soon</h2>
-              <p>Hi ${String(tenantName)},</p>
+              <p>Hi ${this.esc(tenantName)},</p>
               <p>Your ${appName} trial ends on <strong>${String(trialEndsAt)}</strong>.</p>
               <p>Upgrade now to continue without interruption:</p>
               <a href="${String(upgradeUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Upgrade Now</a>
@@ -499,11 +516,11 @@ export class NotificationsService {
           dashboardUrl: string;
         };
         return {
-          subject: `Welcome to ${appName}, ${String(tenantName)}!`,
+          subject: `Welcome to ${appName}, ${this.esc(tenantName)}!`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #1a1a2e;">Welcome aboard, ${String(ownerName)} 👋</h2>
-              <p>Your workspace <strong>${String(tenantName)}</strong> is live on ${appName}.</p>
+              <p>Your workspace <strong>${this.esc(tenantName)}</strong> is live on ${appName}.</p>
               <p>You're set up as the Owner. Next, invite your team and configure your locations, departments and leave policies.</p>
               <p style="margin: 24px 0;">
                 <a href="${String(dashboardUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your dashboard</a>
@@ -640,7 +657,7 @@ export class NotificationsService {
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #22c55e;">Payment successful</h2>
-              <p>Thanks ${String(tenantName)} — we've received your payment of <strong>${String(amount)}</strong>.</p>
+              <p>Thanks ${this.esc(tenantName)} — we've received your payment of <strong>${String(amount)}</strong>.</p>
               ${periodEnd ? `<p>Your subscription is active until ${String(periodEnd)}.</p>` : ''}
               ${invoiceUrl ? `<p><a href="${String(invoiceUrl)}" style="color:#6366f1;">Download invoice</a></p>` : ''}
             </div>
@@ -659,9 +676,87 @@ export class NotificationsService {
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #ef4444;">Payment failed</h2>
-              <p>Hi ${String(tenantName)}, we couldn't process your payment of <strong>${String(amount)}</strong>.</p>
+              <p>Hi ${this.esc(tenantName)}, we couldn't process your payment of <strong>${String(amount)}</strong>.</p>
               <p>Please update your payment method to avoid any interruption.</p>
               <a href="${String(retryUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Update payment</a>
+            </div>
+          `,
+        };
+      }
+
+      case 'trial-ended': {
+        const { tenantName, upgradeUrl } = props as {
+          tenantName: string;
+          upgradeUrl: string;
+        };
+        return {
+          subject: `Your ${appName} trial has ended`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2>Your trial has ended</h2>
+              <p>Hi ${this.esc(tenantName)}, your 7-day free trial is over. Your workspace and all its data are safe — it's now read-only until you subscribe.</p>
+              <p>Plans are <strong>&#8377;499 per seat per month</strong>; auditors are never billed.</p>
+              <a href="${String(upgradeUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Subscribe now</a>
+              <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Have a founder or community coupon? Apply it on the same page for free months.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'subscription-activated': {
+        const { tenantName, seats, amount, nextChargeDate } = props as {
+          tenantName: string;
+          seats: number;
+          amount: string;
+          nextChargeDate?: string;
+        };
+        return {
+          subject: `Subscription active — welcome aboard, ${this.esc(tenantName)}!`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #22c55e;">You're all set</h2>
+              <p>Hi ${this.esc(tenantName)}, your ${appName} subscription is now active: <strong>${String(seats)} seat${Number(seats) === 1 ? '' : 's'} · ${String(amount)}/month</strong>.</p>
+              ${nextChargeDate ? `<p>Your next charge is on <strong>${String(nextChargeDate)}</strong>. We'll email a notice at least 24 hours before every debit.</p>` : ''}
+              <p style="color: #6b7280; font-size: 13px;">Manage seats, receipts, and cancellation anytime under Settings &rarr; Billing &amp; plan.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'payment-failed-retry': {
+        const { tenantName, amount, graceEndsAt, retryUrl } = props as {
+          tenantName: string;
+          amount: string;
+          graceEndsAt?: string;
+          retryUrl: string;
+        };
+        return {
+          subject: `Payment failed — we'll retry (${appName})`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #ef4444;">We couldn't collect ${String(amount)}</h2>
+              <p>Hi ${this.esc(tenantName)}, your latest ${appName} charge didn't go through. Razorpay will retry automatically over the next few days — often it just works on the second attempt.</p>
+              ${graceEndsAt ? `<p>Your workspace stays fully usable until <strong>${String(graceEndsAt)}</strong>. If no retry succeeds by then it becomes read-only (nothing is deleted).</p>` : ''}
+              <p>If your card or mandate needs updating, start from your billing page:</p>
+              <a href="${String(retryUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Open Billing &amp; plan</a>
+            </div>
+          `,
+        };
+      }
+
+      case 'cancellation-confirmed': {
+        const { tenantName, accessUntil } = props as {
+          tenantName: string;
+          accessUntil?: string;
+        };
+        return {
+          subject: `Subscription cancelled — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2>Your subscription is cancelled</h2>
+              <p>Hi ${this.esc(tenantName)}, your ${appName} subscription has ended${accessUntil ? ` — access continues until <strong>${String(accessUntil)}</strong>` : ''}. No further charges will be made.</p>
+              <p>Your data stays safe and read-only, and you can subscribe again anytime from Settings &rarr; Billing &amp; plan to pick up exactly where you left off.</p>
+              <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Changed your mind by accident? Just subscribe again — your workspace is untouched.</p>
             </div>
           `,
         };

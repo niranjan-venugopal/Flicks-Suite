@@ -547,6 +547,18 @@ export class BillingService {
           tenantId,
           properties: { seats, plan: PLATFORM_PLAN.code },
         });
+        await this.notifyOwners(tenantId, 'subscription-activated', {
+          seats,
+          amount: `₹${(seats * PLATFORM_PLAN.priceRupees).toLocaleString('en-IN')}`,
+          nextChargeDate: periodEnd
+            ? periodEnd.toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              })
+            : undefined,
+        });
         break;
       }
       case 'subscription.charged': {
@@ -564,6 +576,11 @@ export class BillingService {
         await this.event(tenantId, sub.id, 'charge.succeeded', {
           amount_paise: amountPaise,
           period_end: periodEnd,
+        });
+        void this.analytics.track({
+          event: 'platform_charge_succeeded',
+          tenantId,
+          properties: { amount_paise: amountPaise },
         });
         await this.notifyOwners(tenantId, 'subscription-payment-success', {
           amount: amountPaise ? `₹${(amountPaise / 100).toLocaleString('en-IN')}` : '—',
@@ -584,8 +601,15 @@ export class BillingService {
           })
           .where(eq(subscriptions.id, sub.id));
         await this.event(tenantId, sub.id, 'charge.failed', {});
-        await this.notifyOwners(tenantId, 'subscription-payment-failed', {
+        void this.analytics.track({ event: 'platform_charge_failed', tenantId });
+        await this.notifyOwners(tenantId, 'payment-failed-retry', {
           amount: `₹${(sub.user_count * PLATFORM_PLAN.priceRupees).toLocaleString('en-IN')}`,
+          graceEndsAt: grace.toLocaleDateString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }),
         });
         break;
       }
@@ -612,6 +636,16 @@ export class BillingService {
           })
           .where(eq(subscriptions.id, sub.id));
         await this.event(tenantId, sub.id, 'subscription.cancelled', {});
+        await this.notifyOwners(tenantId, 'cancellation-confirmed', {
+          accessUntil: sub.current_period_end
+            ? new Date(sub.current_period_end).toLocaleDateString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              })
+            : undefined,
+        });
         break;
       }
       default:
@@ -677,7 +711,11 @@ export class BillingService {
 
   private async notifyOwners(
     tenantId: string,
-    template: 'subscription-payment-success' | 'subscription-payment-failed',
+    template:
+      | 'subscription-payment-success'
+      | 'payment-failed-retry'
+      | 'subscription-activated'
+      | 'cancellation-confirmed',
     extra: Record<string, unknown>,
   ): Promise<void> {
     try {

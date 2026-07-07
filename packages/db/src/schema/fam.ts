@@ -199,7 +199,7 @@ export const couponCodes = pgTable(
     redemption_count: integer('redemption_count').notNull().default(0),
     expires_at: timestamp('expires_at', { withTimezone: true }),
     active: boolean('active').notNull().default(true),
-    created_by: uuid('created_by').references(() => users.id),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -218,7 +218,7 @@ export const couponRedemptions = pgTable(
       .notNull()
       .unique() // one coupon EVER per tenant (§8B.3)
       .references(() => tenants.id, { onDelete: 'cascade' }),
-    redeemed_by: uuid('redeemed_by').references(() => users.id),
+    redeemed_by: uuid('redeemed_by').references(() => users.id, { onDelete: 'set null' }),
     months: integer('months').notNull(),
     redeemed_at: timestamp('redeemed_at', { withTimezone: true })
       .notNull()

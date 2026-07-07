@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS coupon_codes (
   redemption_count int  NOT NULL DEFAULT 0 CHECK (redemption_count >= 0),
   expires_at       timestamptz,
   active           boolean NOT NULL DEFAULT true,
-  created_by       uuid REFERENCES users(id),
+  created_by       uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at       timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_coupon_codes_campaign ON coupon_codes (campaign);
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS coupon_redemptions (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   coupon_id   uuid NOT NULL REFERENCES coupon_codes(id),
   tenant_id   uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  redeemed_by uuid REFERENCES users(id),
+  redeemed_by uuid REFERENCES users(id) ON DELETE SET NULL,
   months      int  NOT NULL,
   redeemed_at timestamptz NOT NULL DEFAULT now(),
   -- One coupon EVER per tenant (§8B.3) — enforced by the database, not code.
@@ -54,6 +54,16 @@ CREATE POLICY tenant_isolation_coupon_redemptions ON coupon_redemptions
   FOR SELECT USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 GRANT SELECT ON coupon_redemptions TO flicks_app;
 REVOKE INSERT, UPDATE, DELETE ON coupon_redemptions FROM flicks_app;
+
+
+-- A user's DPDP account deletion must never be blocked by a coupon trail
+-- (idempotent re-run fix for databases that applied the earlier 0028).
+ALTER TABLE coupon_redemptions DROP CONSTRAINT IF EXISTS coupon_redemptions_redeemed_by_fkey;
+ALTER TABLE coupon_redemptions ADD CONSTRAINT coupon_redemptions_redeemed_by_fkey
+  FOREIGN KEY (redeemed_by) REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE coupon_codes DROP CONSTRAINT IF EXISTS coupon_codes_created_by_fkey;
+ALTER TABLE coupon_codes ADD CONSTRAINT coupon_codes_created_by_fkey
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
 
 -- ─── razorpay_webhook_events: platform vs tenant track ───────────────────────
 ALTER TABLE razorpay_webhook_events
