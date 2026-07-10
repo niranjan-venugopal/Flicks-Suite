@@ -28,7 +28,8 @@
 #   • ALTER TYPE membership_role ADD VALUE 'owner' / 'fam'
 #   • notifications · impersonation_sessions · account_deletion_requests ·
 #     notification_preferences · TOTP/account-security columns (0003–0008, 0020)
-#   • PRD v4 (0022–0028): consent_records · avatar/logo key columns ·
+#   • PRD v4 (0022–0028): consent_records · avatar/logo key columns · member_status ·
+#     product_events · feedback/nps · platform billing + coupons · auto-debit mandates ·
 #     member_status · product_events — with their RLS policies + grants
 #
 # Idempotent — safe to re-run; uses fixed UUIDs, ON CONFLICT, and an
@@ -439,6 +440,40 @@ FROM tenants t
 WHERE t.id <> '00000000-0000-0000-0000-000000000001'
   AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id)
 ON CONFLICT (tenant_id) DO NOTHING;
+
+-- auto-debit mandates + charge ledger — matches packages/db/drizzle/0027_razorpay_autodebit.sql.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS razorpay_customer_id text;
+ALTER TABLE invoice_subscriptions ADD COLUMN IF NOT EXISTS collection_mode text NOT NULL DEFAULT 'manual';
+ALTER TABLE invoice_subscriptions ADD COLUMN IF NOT EXISTS mandate_status text NOT NULL DEFAULT 'none';
+ALTER TABLE invoice_subscriptions ADD COLUMN IF NOT EXISTS mandate_short_url text;
+ALTER TABLE invoice_subscriptions ADD COLUMN IF NOT EXISTS mandate_token text;
+ALTER TABLE invoice_subscriptions ADD COLUMN IF NOT EXISTS mandate_token_expires_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_subscriptions_mandate_token
+  ON invoice_subscriptions (mandate_token) WHERE mandate_token IS NOT NULL;
+CREATE TABLE IF NOT EXISTS subscription_charge_attempts (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id       uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  subscription_id uuid NOT NULL REFERENCES invoice_subscriptions(id) ON DELETE CASCADE,
+  invoice_id      uuid REFERENCES invoices(id) ON DELETE SET NULL,
+  razorpay_payment_id text,
+  status          text NOT NULL CHECK (status IN ('succeeded','failed','pending')),
+  amount          numeric(15,2) NOT NULL,
+  currency        text NOT NULL,
+  failure_reason  text,
+  attempted_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_charge_attempts_subscription
+  ON subscription_charge_attempts (subscription_id, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_charge_attempts_tenant
+  ON subscription_charge_attempts (tenant_id, attempted_at DESC);
+ALTER TABLE subscription_charge_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscription_charge_attempts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_subscription_charge_attempts ON subscription_charge_attempts;
+CREATE POLICY tenant_isolation_subscription_charge_attempts ON subscription_charge_attempts
+  FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT SELECT, INSERT ON subscription_charge_attempts TO flicks_app;
+REVOKE UPDATE, DELETE ON subscription_charge_attempts FROM flicks_app;
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"
