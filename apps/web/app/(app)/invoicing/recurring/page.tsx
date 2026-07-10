@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { RefreshCw, Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead, Toggle } from '@/components/proto'
 import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
@@ -392,6 +393,20 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
   const disable = useDisableAutodebit()
   const m = mandate.data?.data
 
+  // Esc closes the drawer, and we freeze the background scroll while it's open.
+  // The page body is a scroll container (InvoPage), so without this the panel
+  // could get stranded off-screen and the close control scrolled out of reach.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+
   const copyLink = async () => {
     if (!m?.public_url) return
     await navigator.clipboard.writeText(m.public_url)
@@ -408,25 +423,35 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
     }
   }
 
-  return (
+  // Portal to <body> so the fixed overlay escapes InvoPage's scroll container
+  // and covers the true viewport — the same thing the Radix Dialog above does.
+  // Rendered in-tree it was trapped in the scrolled content region (backdrop
+  // missed the sidebar/topbar, and the header + close button scrolled off).
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'flex-end' }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div style={{ width: 380, height: '100%', overflowY: 'auto', background: 'rgba(18,18,30,.99)', borderLeft: '1px solid var(--bord-2)', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>{sub.name}</div>
+      <div style={{ width: 380, maxWidth: '100vw', height: '100%', background: 'rgba(18,18,30,.99)', borderLeft: '1px solid var(--bord-2)', display: 'flex', flexDirection: 'column' }}>
+        {/* Pinned header — stays put so the close control can never scroll out of reach */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 20, borderBottom: '1px solid var(--bord)', flexShrink: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.name}</div>
             <div className="t-mute" style={{ fontSize: 11.5 }}>{sub.customer_name ?? '—'} · {sub.billing_period}</div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             style={{ width: 26, height: 26, borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >
             ✕
           </button>
         </div>
 
+      {/* Scrollable body */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* Mandate block */}
         <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -524,6 +549,8 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
