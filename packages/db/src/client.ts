@@ -3,12 +3,21 @@ import { sql } from 'drizzle-orm'
 import postgres from 'postgres'
 import * as schema from './schema/index'
 
+// Under Jest each worker process builds its own pair of pools. At the normal
+// sizes (10 + 5) a single worker can hold 15 connections — exactly Supabase's
+// session-pooler cap — so parallel suites die with EMAXCONNSESSION when tests
+// run against a pooled remote DB. Test code is sequential-await; two
+// connections per pool per worker is plenty (withTenant reserves one for its
+// transaction, leaving one free).
+const IS_TEST =
+  !!process.env['JEST_WORKER_ID'] || process.env['NODE_ENV'] === 'test';
+
 // ─── Tenant DB (RLS-enforced, uses app.tenant_id) ────────────────────────────
 
 function createTenantClient() {
   const url = process.env['DATABASE_URL'];
   if (!url) throw new Error('DATABASE_URL environment variable is required');
-  const sql = postgres(url, { max: 10 });
+  const sql = postgres(url, { max: IS_TEST ? 2 : 10 });
   return drizzle(sql, { schema });
 }
 
@@ -20,7 +29,7 @@ function createAdminClient() {
     throw new Error(
       'DATABASE_SERVICE_ROLE_URL environment variable is required',
     );
-  const sql = postgres(url, { max: 5 });
+  const sql = postgres(url, { max: IS_TEST ? 2 : 5 });
   return drizzle(sql, { schema });
 }
 
