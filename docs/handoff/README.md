@@ -15,7 +15,7 @@ This folder collects the engineering handoff documentation for the Flicks Suite
 - **PRD v4 — ALL sprints (16–23) are shipped on `main`** (16 trust/consent · 17 media ·
   18 presence · 19 analytics · 20 feedback+NPS · 21 platform billing ·
   22 FAM coupons/emails · 23 tenant auto-debit + Sentry hardening). Gate at
-  push time: **238/238** tests, RLS `leak_with_bogus_context = 0`, migrations
+  push time: **239/239** tests, RLS `leak_with_bogus_context = 0`, migrations
   `0001 → 0029` idempotent, `api` + `web` typecheck/build clean.
 - **Conformance pass against the authoritative PRD v4 doc (2026-07-11):**
   migration `0029` aligns the auto-debit enums to §8.3 (CHECK-pinned;

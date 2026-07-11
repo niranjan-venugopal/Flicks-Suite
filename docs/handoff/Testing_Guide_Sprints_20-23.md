@@ -155,7 +155,7 @@ invoice almost always exists first; a reconciliation pass is a P1 follow-up.
 ## 4. Automated gate (already green at push time)
 
 ```bash
-cd apps/api && pnpm test        # 238/238 as of the 2026-07-11 conformance pass
+cd apps/api && pnpm test        # 239/239 as of the 2026-07-11 conformance pass
 bash scripts/diagnose-rls.sh    # leak_with_bogus_context = 0
 pnpm -F web build && pnpm -F api build
 ```
