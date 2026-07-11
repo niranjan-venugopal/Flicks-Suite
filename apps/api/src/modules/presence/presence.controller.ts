@@ -88,7 +88,7 @@ export class PresenceController {
     const resolved = await this.presence.resolve(
       user.tenantId,
       ids,
-      this.gateway.activityFor(user.tenantId),
+      await this.gateway.buildActivity(user.tenantId, ids),
     );
     return { data: resolved };
   }

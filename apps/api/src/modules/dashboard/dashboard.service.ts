@@ -9,6 +9,7 @@ import {
   holidays,
   auditLog,
   users,
+  memberships,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import type { AdminOverviewDto, ActivityItemDto } from './dashboard.dto';
@@ -95,6 +96,7 @@ export class DashboardService {
           .select({
             id: leaveRequests.id,
             employeeId: leaveRequests.employee_id,
+            userId: memberships.user_id,
             employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
             employeeCode: employees.employee_code,
             startDate: leaveRequests.start_date,
@@ -107,6 +109,13 @@ export class DashboardService {
           })
           .from(leaveRequests)
           .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          .leftJoin(
+            memberships,
+            and(
+              eq(memberships.employee_id, leaveRequests.employee_id),
+              eq(memberships.tenant_id, tenantId),
+            ),
+          )
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
           .where(
             and(
@@ -122,6 +131,7 @@ export class DashboardService {
           .select({
             id: attendanceRegularizations.id,
             employeeId: attendanceRegularizations.employee_id,
+            userId: memberships.user_id,
             employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
             employeeCode: employees.employee_code,
             attendanceDate: attendanceRegularizations.attendance_date,
@@ -133,6 +143,13 @@ export class DashboardService {
           .leftJoin(
             employees,
             eq(attendanceRegularizations.employee_id, employees.id),
+          )
+          .leftJoin(
+            memberships,
+            and(
+              eq(memberships.employee_id, attendanceRegularizations.employee_id),
+              eq(memberships.tenant_id, tenantId),
+            ),
           )
           .where(
             and(

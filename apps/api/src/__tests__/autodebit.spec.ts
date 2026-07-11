@@ -6,6 +6,7 @@ import {
   customers,
   invoices,
   invoiceSubscriptions,
+  memberships,
   subscriptionChargeAttempts,
   tenants,
   users,
@@ -31,7 +32,11 @@ const config = { get: (_: string, fb?: unknown) => fb } as never;
 const analytics = new AnalyticsService(config, dbAdmin as never);
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const sendEmailSpy = jest.fn(async () => true);
-const notifications = { sendEmail: sendEmailSpy } as never;
+const inAppSpy = jest.fn(async () => undefined);
+const notifications = {
+  sendEmail: sendEmailSpy,
+  createInAppNotification: inAppSpy,
+} as never;
 const razorpay = new RazorpayService(config);
 const r2 = new R2Service(config);
 // resolveRazorpayForOrder → null (not connected) for the 503 guard test.
@@ -138,7 +143,7 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
     });
   });
 
-  it('webhook lifecycle: authenticated → authorized; activated → ACTIVE; charged writes the ledger and settles the generated invoice', async () => {
+  it('webhook lifecycle: authenticated → authenticated; activated → ACTIVE; charged writes the ledger and settles the generated invoice', async () => {
     const rzpId = `sub_${rid()}`;
     const sub = await mkSubscription({
       razorpay_subscription_id: rzpId,
@@ -151,7 +156,7 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
       .select()
       .from(invoiceSubscriptions)
       .where(eq(invoiceSubscriptions.id, sub.id));
-    expect(row!.mandate_status).toBe('authorized');
+    expect(row!.mandate_status).toBe('authenticated'); // PRD §8.3 enum
     expect(row!.mandate_authorized_at).not.toBeNull();
 
     await mandates.applyRazorpayEvent('subscription.activated', envelope(rzpId));
@@ -191,7 +196,8 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
       .from(subscriptionChargeAttempts)
       .where(eq(subscriptionChargeAttempts.subscription_id, sub.id));
     expect(attempts.length).toBe(1);
-    expect(attempts[0]!.status).toBe('succeeded');
+    expect(attempts[0]!.status).toBe('captured'); // PRD §8.3 enum
+    expect(attempts[0]!.attempt_no).toBe(1);
     expect(attempts[0]!.amount).toBe('5000.00');
 
     const [paidInv] = await dbAdmin.select().from(invoices).where(eq(invoices.id, inv!.id));
@@ -239,7 +245,9 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
       .select()
       .from(subscriptionChargeAttempts)
       .where(eq(subscriptionChargeAttempts.subscription_id, sub.id));
-    expect(attempts.filter((a) => a.status === 'failed').length).toBe(3); // not 4
+    const failed = attempts.filter((a) => a.status === 'failed');
+    expect(failed.length).toBe(3); // not 4
+    expect(failed.map((a) => a.attempt_no).sort()).toEqual([1, 2, 3]);
     expect(attempts[0]!.failure_reason).toContain('UPI mandate');
     expect(sendEmailSpy).toHaveBeenCalledWith(
       'charge-failed-retry',
@@ -251,6 +259,66 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
       expect.stringContaining('@'),
       expect.objectContaining({ exhausted: true }),
     );
+  });
+
+  it('subscription.halted sets mandate_status=halted, pauses, and notifies the tenant (§8.5.3)', async () => {
+    // An owner to receive the in-app notice.
+    const [owner] = await dbAdmin
+      .insert(users)
+      .values({ email: `owner-${rid()}@test.test`, full_name: 'Owner', status: 'active' })
+      .returning();
+    await dbAdmin.insert(memberships).values({
+      tenant_id: tenantId,
+      user_id: owner!.id,
+      role: 'owner',
+      status: 'active',
+    });
+
+    const rzpId = `sub_${rid()}`;
+    const sub = await mkSubscription({
+      razorpay_subscription_id: rzpId,
+      collection_mode: 'auto_debit',
+      mandate_status: 'active',
+      status: 'ACTIVE',
+    });
+    inAppSpy.mockClear();
+    sendEmailSpy.mockClear();
+
+    await mandates.applyRazorpayEvent('subscription.halted', envelope(rzpId));
+
+    const [row] = await dbAdmin
+      .select()
+      .from(invoiceSubscriptions)
+      .where(eq(invoiceSubscriptions.id, sub.id));
+    expect(row!.status).toBe('PAUSED');
+    expect(row!.mandate_status).toBe('halted'); // D14b "Halted" chip
+    expect(row!.paused_at).not.toBeNull();
+    // Tenant notified: in-app to the owner.
+    expect(inAppSpy).toHaveBeenCalledWith(
+      owner!.id,
+      'invoicing.mandate_halted',
+      expect.stringContaining('halted'),
+      '/invoicing/recurring',
+      tenantId,
+    );
+
+    // A plain pause keeps the mandate intact (status only).
+    const rzpId2 = `sub_${rid()}`;
+    const sub2 = await mkSubscription({
+      razorpay_subscription_id: rzpId2,
+      collection_mode: 'auto_debit',
+      mandate_status: 'active',
+      status: 'ACTIVE',
+    });
+    await mandates.applyRazorpayEvent('subscription.paused', envelope(rzpId2));
+    const [row2] = await dbAdmin
+      .select()
+      .from(invoiceSubscriptions)
+      .where(eq(invoiceSubscriptions.id, sub2.id));
+    expect(row2!.status).toBe('PAUSED');
+    expect(row2!.mandate_status).toBe('active'); // pause ≠ mandate death
+
+    await dbAdmin.delete(users).where(eq(users.id, owner!.id));
   });
 
   it('mandateChargeCents is GST-inclusive so the charge settles the generated invoice exactly', async () => {

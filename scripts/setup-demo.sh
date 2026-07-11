@@ -456,10 +456,12 @@ CREATE TABLE IF NOT EXISTS subscription_charge_attempts (
   subscription_id uuid NOT NULL REFERENCES invoice_subscriptions(id) ON DELETE CASCADE,
   invoice_id      uuid REFERENCES invoices(id) ON DELETE SET NULL,
   razorpay_payment_id text,
-  status          text NOT NULL CHECK (status IN ('succeeded','failed','pending')),
+  status          text NOT NULL CHECK (status IN ('created','captured','failed')),
+  attempt_no      smallint,
   amount          numeric(15,2) NOT NULL,
   currency        text NOT NULL,
   failure_reason  text,
+  failure_code    text,
   attempted_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_charge_attempts_subscription
@@ -474,6 +476,24 @@ CREATE POLICY tenant_isolation_subscription_charge_attempts ON subscription_char
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
 GRANT SELECT, INSERT ON subscription_charge_attempts TO flicks_app;
 REVOKE UPDATE, DELETE ON subscription_charge_attempts FROM flicks_app;
+
+-- auto-debit enum alignment — matches packages/db/drizzle/0029_autodebit_enum_alignment.sql.
+-- Reconciles pre-existing demo DBs (created with the older value set) and pins
+-- both enums; no-ops on a fresh DB created by the CREATE TABLE above.
+UPDATE invoice_subscriptions SET mandate_status = 'authenticated' WHERE mandate_status = 'authorized';
+ALTER TABLE invoice_subscriptions DROP CONSTRAINT IF EXISTS invoice_subscriptions_mandate_status_check;
+ALTER TABLE invoice_subscriptions ADD  CONSTRAINT invoice_subscriptions_mandate_status_check
+  CHECK (mandate_status IN ('none','pending_authorization','authenticated','active','paused','halted','revoked','failed'));
+ALTER TABLE invoice_subscriptions DROP CONSTRAINT IF EXISTS invoice_subscriptions_collection_mode_check;
+ALTER TABLE invoice_subscriptions ADD  CONSTRAINT invoice_subscriptions_collection_mode_check
+  CHECK (collection_mode IN ('manual','auto_debit'));
+ALTER TABLE subscription_charge_attempts ADD COLUMN IF NOT EXISTS attempt_no   smallint;
+ALTER TABLE subscription_charge_attempts ADD COLUMN IF NOT EXISTS failure_code text;
+UPDATE subscription_charge_attempts SET status = 'captured' WHERE status = 'succeeded';
+UPDATE subscription_charge_attempts SET status = 'created'  WHERE status = 'pending';
+ALTER TABLE subscription_charge_attempts DROP CONSTRAINT IF EXISTS subscription_charge_attempts_status_check;
+ALTER TABLE subscription_charge_attempts ADD  CONSTRAINT subscription_charge_attempts_status_check
+  CHECK (status IN ('created','captured','failed'));
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"

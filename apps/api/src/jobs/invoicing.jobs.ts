@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import {
   invoices,
   customers,
@@ -33,6 +34,7 @@ export class InvoicingJobs {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
+    private readonly config: ConfigService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'mark-overdue-invoices' })
@@ -320,11 +322,30 @@ export class InvoicingJobs {
       if (already) continue;
 
       if (customer_email) {
+        // D15/Appendix E: include the upcoming cycle's invoice ref + a
+        // manage/cancel link (the public /sub/<token> mandate page).
+        const [latestInv] = await this.dbAdmin
+          .select({ invoice_number: invoices.invoice_number })
+          .from(invoices)
+          .where(
+            and(
+              eq(invoices.subscription_id, sub.id),
+              inArray(invoices.status, ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID']),
+            ),
+          )
+          .orderBy(desc(invoices.created_at))
+          .limit(1);
+        const base = this.config.get<string>(
+          'PUBLIC_INVOICE_BASE_URL',
+          'http://localhost:3000',
+        );
         await this.notifications.sendEmail('subscription-pre-debit', customer_email, {
           customerName: customer_name,
           name: sub.name,
           amount: `${sub.currency} ${sub.next_billing_amount ?? '0.00'}`,
           chargeDate: tomorrow,
+          invoiceRef: latestInv?.invoice_number,
+          manageUrl: sub.mandate_token ? `${base}/sub/${sub.mandate_token}` : undefined,
         });
       }
       await this.dbAdmin.insert(auditLog).values({

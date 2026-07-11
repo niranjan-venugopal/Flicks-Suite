@@ -7,13 +7,14 @@ import { useAdminOverview, type AdminOverview } from '@/lib/api/queries/use-dash
 import { useReviewLeave } from '@/lib/api/queries/use-leave'
 import { useReviewRegularization } from '@/lib/api/queries/use-attendance'
 import {
-  Avatar,
   Btn,
   Icon,
   Pill,
   type PillTone,
   SectionHead,
 } from '@/components/proto'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 
 type FilterKey = 'all' | 'leave' | 'regularization'
 
@@ -21,6 +22,7 @@ interface InboxItem {
   kind: 'leave' | 'regularization'
   id: string
   who: string
+  userId: string | null
   what: string
   when: string
   reason: string | null
@@ -57,6 +59,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       kind: 'leave',
       id: l.id,
       who: l.employeeName,
+      userId: l.userId,
       what: `${l.leaveTypeCode ?? l.leaveTypeName ?? 'Leave'} · ${l.totalDays}d (${fmtRange(l.startDate, l.endDate)})`,
       when: relativeTime(l.appliedAt),
       reason: l.reason,
@@ -69,6 +72,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       kind: 'regularization',
       id: r.id,
       who: r.employeeName,
+      userId: r.userId,
       what: `${r.requestType} · ${r.attendanceDate}`,
       when: relativeTime(r.requestedAt),
       reason: r.reason,
@@ -89,6 +93,8 @@ export default function InboxPage() {
   const reviewReg = useReviewRegularization()
 
   const items = useMemo(() => buildItems(overview.data), [overview.data])
+  // D9 — seed the presence batch once so inbox rows show the status dot.
+  usePresence(items.map((i) => i.userId).filter((id): id is string => !!id))
   const filtered = useMemo(
     () => (filter === 'all' ? items : items.filter((i) => i.kind === filter)),
     [items, filter],
@@ -247,7 +253,7 @@ export default function InboxPage() {
                         }}
                       />
                     )}
-                    <Avatar name={a.who} size="sm" />
+                    <RowPresenceAvatar name={a.who} userId={a.userId} size={26} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                         <span style={{ fontSize: 12.5, fontWeight: 800 }}>{a.who}</span>
@@ -318,7 +324,7 @@ function ApprovalDetail({
           alignItems: 'flex-start',
         }}
       >
-        <Avatar name={item.who} size="lg" />
+        <RowPresenceAvatar name={item.who} userId={item.userId} size={48} />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <Pill tone={item.tone}>{item.kind.toUpperCase()}</Pill>

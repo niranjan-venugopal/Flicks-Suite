@@ -3,6 +3,7 @@
 // DSN is read from SENTRY_DSN; when unset (local dev) Sentry is a no-op.
 // Hardened per PRD v4 §9: no PII, scrubbed requests, id-only user context.
 import * as Sentry from '@sentry/nestjs';
+import { redactPii } from './sentry-scrub';
 
 const dsn = process.env.SENTRY_DSN;
 
@@ -58,7 +59,8 @@ if (dsn) {
       if (event.user) {
         event.user = event.user.id ? { id: event.user.id } : undefined;
       }
-      return event;
+      // Redact any email-shaped strings from message/exception/breadcrumbs.
+      return redactPii(event);
     },
   });
 }

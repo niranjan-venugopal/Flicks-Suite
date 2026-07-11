@@ -1,5 +1,6 @@
 // Edge-runtime Sentry (middleware, edge routes).
 import * as Sentry from '@sentry/nextjs'
+import { redactPii } from './lib/sentry-scrub'
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
 
@@ -18,11 +19,14 @@ if (dsn) {
         delete event.request.cookies
         delete event.request.headers
         if (event.request.data) delete event.request.data
+        // Query strings can carry tokens (magic links, unsubscribe HMACs).
+        if (event.request.url) event.request.url = event.request.url.split('?')[0]
+        if (event.request.query_string) delete event.request.query_string
       }
       if (event.user) {
         event.user = event.user.id ? { id: event.user.id } : undefined
       }
-      return event
+      return redactPii(event)
     },
   })
 }

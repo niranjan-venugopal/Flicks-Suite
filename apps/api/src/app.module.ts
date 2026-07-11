@@ -14,6 +14,7 @@ import { configValidationSchema } from './core/config/config.schema';
 import { DatabaseModule } from './core/database/database.module';
 import { AnalyticsModule } from './core/analytics/analytics.module';
 import { StorageModule } from './core/storage/storage.module';
+import { RedisModule } from './core/redis/redis.module';
 import { HealthController } from './health.controller';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
@@ -132,6 +133,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     DatabaseModule,
     AnalyticsModule,
     StorageModule,
+    RedisModule,
 
     // Feature modules
     AuthModule,

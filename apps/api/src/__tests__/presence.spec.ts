@@ -164,3 +164,54 @@ describe('Presence resolution (PRD v4 §5)', () => {
     expect(await presence.userIdForEmployee(tenantId, employeeId)).toBe(userId);
   });
 });
+
+describe('Presence liveness store — Redis (PRD v4 §5.2)', () => {
+  // Minimal in-memory Redis stub covering exactly what the gateway uses
+  // (set EX / get / mget / del) — hermetic, no live Redis in CI.
+  function redisStub() {
+    const store = new Map<string, string>();
+    return {
+      store,
+      set: async (k: string, v: string) => {
+        store.set(k, v);
+        return 'OK';
+      },
+      get: async (k: string) => store.get(k) ?? null,
+      mget: async (...keys: Array<string | string[]>) => {
+        const flat = keys.flat();
+        return flat.map((k) => store.get(k) ?? null);
+      },
+      del: async (k: string) => (store.delete(k) ? 1 : 0),
+    };
+  }
+
+  it('buildActivity MGETs per-user keys → connected + lastActivityAt; missing key → absent', async () => {
+    const { PresenceGateway } = await import('../gateways/presence.gateway');
+    const redis = redisStub();
+    const gateway = new PresenceGateway(
+      {} as never, // jwtService — not used by buildActivity
+      {} as never, // configService — not used by buildActivity
+      presence,
+      redis as never,
+    );
+    const ts = Date.now() - 5_000;
+    redis.store.set('presence:last:t1:alice', String(ts));
+
+    const map = await gateway.buildActivity('t1', ['alice', 'bob']);
+    expect(map.get('alice')).toEqual({ connected: true, lastActivityAt: ts });
+    expect(map.has('bob')).toBe(false); // no key → not connected
+    expect((await gateway.buildActivity('t1', [])).size).toBe(0);
+  });
+
+  it('degrades to empty activity (everyone offline) when Redis is unreachable', async () => {
+    const { PresenceGateway } = await import('../gateways/presence.gateway');
+    const broken = {
+      mget: async () => {
+        throw new Error('ECONNREFUSED');
+      },
+    };
+    const gateway = new PresenceGateway({} as never, {} as never, presence, broken as never);
+    const map = await gateway.buildActivity('t1', ['alice']);
+    expect(map.size).toBe(0);
+  });
+});

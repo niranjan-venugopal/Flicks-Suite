@@ -871,7 +871,7 @@ describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () 
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const notesSvc = new NotesService(dbSvc, audit, numbering);
   const reportsSvc = new InvReportsService(dbSvc, audit);
-  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1085,7 +1085,7 @@ import {
 describe('Invoicing services (Sprint 7 — subscriptions)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const subsSvc = new SubscriptionsService(dbSvc, audit, configStub as any);
-  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1232,11 +1232,19 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
       tenantId,
     );
     await subsSvc.activate(created.data.id, userId, tenantId);
+    // D15/Appendix E: with a public mandate token, the notice carries the
+    // "Manage or cancel this mandate" link.
+    await dbAdmin
+      .update(subsTable)
+      .set({ mandate_token: `tok-${Date.now()}` })
+      .where(eq(subsTable.id, created.data.id));
 
     sentEmails.length = 0;
     const first = await jobs.runPreDebitSweep();
     expect(first).toBeGreaterThanOrEqual(1);
-    expect(sentEmails.some((e) => e.template === 'subscription-pre-debit')).toBe(true);
+    const preDebit = sentEmails.find((e) => e.template === 'subscription-pre-debit');
+    expect(preDebit).toBeDefined();
+    expect(String(preDebit!.props.manageUrl)).toContain('/sub/tok-');
 
     sentEmails.length = 0;
     const second = await jobs.runPreDebitSweep();

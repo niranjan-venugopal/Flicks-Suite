@@ -2,6 +2,7 @@
 // No-op when NEXT_PUBLIC_SENTRY_DSN is unset (local dev).
 // Hardened per PRD v4 §9: no PII, no replays, scrubbed payloads.
 import * as Sentry from '@sentry/nextjs'
+import { redactPii } from './lib/sentry-scrub'
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
 
@@ -44,7 +45,7 @@ if (dsn) {
       if (event.user) {
         event.user = event.user.id ? { id: event.user.id } : undefined
       }
-      return event
+      return redactPii(event)
     },
   })
 }

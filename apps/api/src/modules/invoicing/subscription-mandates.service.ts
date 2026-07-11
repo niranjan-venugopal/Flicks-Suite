@@ -14,6 +14,7 @@ import {
   customers,
   invoiceSubscriptions,
   invoices,
+  memberships,
   subscriptionChargeAttempts,
   tenants,
 } from '@flicks/db/schema';
@@ -375,7 +376,7 @@ export class SubscriptionMandatesService {
         await this.dbAdmin
           .update(invoiceSubscriptions)
           .set({
-            mandate_status: 'authorized',
+            mandate_status: 'authenticated',
             mandate_authorized_at: sub.mandate_authorized_at ?? new Date(),
             payment_method: sub.payment_method ?? 'upi_autopay',
             updated_at: new Date(),
@@ -407,7 +408,8 @@ export class SubscriptionMandatesService {
           tenant_id: tenantId,
           subscription_id: sub.id,
           razorpay_payment_id: payment?.id ?? null,
-          status: 'succeeded',
+          status: 'captured',
+          attempt_no: (sub.total_cycles_billed ?? 0) + 1,
           amount: (amountPaise / 100).toFixed(2),
           currency: sub.currency,
         });
@@ -435,9 +437,11 @@ export class SubscriptionMandatesService {
           subscription_id: sub.id,
           razorpay_payment_id: this.paymentEntity(payload)?.id ?? null,
           status: 'failed',
+          attempt_no: failures,
           amount: (mandateChargeCents(sub) / 100).toFixed(2),
           currency: sub.currency,
           failure_reason: this.failureReason(payload),
+          failure_code: this.failureCode(payload),
         });
         await this.dbAdmin
           .update(invoiceSubscriptions)
@@ -452,8 +456,25 @@ export class SubscriptionMandatesService {
         await this.sendChargeFailedEmail(tenantId, sub.id, exhausted);
         break;
       }
-      case 'subscription.halted':
+      case 'subscription.halted': {
+        // Razorpay gave up on the mandate (dunning exhausted at their end).
+        // Distinct from a plain pause: the mandate itself is dead, so reflect
+        // it in mandate_status (drives the D14b "Halted" chip) AND tell the
+        // TENANT — a halt means their auto-collection has stopped.
+        await this.dbAdmin
+          .update(invoiceSubscriptions)
+          .set({
+            status: 'PAUSED',
+            mandate_status: 'halted',
+            paused_at: new Date(),
+            updated_at: new Date(),
+          })
+          .where(eq(invoiceSubscriptions.id, sub.id));
+        await this.notifyTenantMandateHalted(tenantId, sub.id);
+        break;
+      }
       case 'subscription.paused': {
+        // A pause is reversible and the mandate stays valid — status only.
         await this.dbAdmin
           .update(invoiceSubscriptions)
           .set({ status: 'PAUSED', paused_at: new Date(), updated_at: new Date() })
@@ -617,5 +638,61 @@ export class SubscriptionMandatesService {
     };
     const e = p.payload?.payment?.entity;
     return e?.error_description ?? e?.error_code ?? null;
+  }
+
+  private failureCode(payload: Record<string, unknown>): string | null {
+    const p = payload as {
+      payload?: { payment?: { entity?: { error_code?: string } } };
+    };
+    return p.payload?.payment?.entity?.error_code ?? null;
+  }
+
+  /**
+   * §8.5.3 — a halt kills auto-collection, so the TENANT must hear about it
+   * (the revoke path only emails the seller). In-app to every owner/admin plus
+   * the profile creator, and reuse the D15 revoked/halted email for the creator.
+   */
+  private async notifyTenantMandateHalted(tenantId: string, subscriptionId: string): Promise<void> {
+    try {
+      const info = await this.subscriptionEmailInfo(subscriptionId);
+      const name = info?.name ?? 'a recurring profile';
+      const admins = await this.dbAdmin
+        .select({ user_id: memberships.user_id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            inArray(memberships.role, ['owner', 'admin']),
+          ),
+        );
+      const creatorId = await this.dbAdmin
+        .select({ created_by: invoiceSubscriptions.created_by })
+        .from(invoiceSubscriptions)
+        .where(eq(invoiceSubscriptions.id, subscriptionId))
+        .limit(1)
+        .then((r) => r[0]?.created_by ?? null);
+      const recipients = new Set<string>(admins.map((a) => a.user_id));
+      if (creatorId) recipients.add(creatorId);
+      const message = `Auto-debit was halted on "${name}" after repeated failed charges — it's back to manual collection.`;
+      for (const userId of recipients) {
+        await this.notifications.createInAppNotification(
+          userId,
+          'invoicing.mandate_halted',
+          message,
+          '/invoicing/recurring',
+          tenantId,
+        );
+      }
+      if (info?.creator_email) {
+        await this.notifications.sendEmail('mandate-revoked', info.creator_email, {
+          subscriptionName: info.name,
+          customerName: info.customer_name,
+          reason: 'halted',
+        });
+      }
+    } catch (err) {
+      this.logger.warn(`mandate-halted notify skipped: ${err instanceof Error ? err.message : err}`);
+    }
   }
 }

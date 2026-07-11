@@ -16,6 +16,7 @@ import {
   boolean,
   timestamp,
   integer,
+  smallint,
   numeric,
   jsonb,
   uniqueIndex,
@@ -485,7 +486,8 @@ export const invoiceSubscriptions = pgTable(
     // Auto-debit (PRD v4 §8A / 0027): how cycles are collected + the mandate
     // lifecycle. manual = send invoices (default); auto_debit = e-mandate.
     collection_mode: text('collection_mode').notNull().default('manual'),
-    // none | pending_authorization | authorized | active | revoked
+    // none | pending_authorization | authenticated | active | paused | halted
+    // | revoked | failed  (CHECK-constrained in 0029)
     mandate_status: text('mandate_status').notNull().default('none'),
     mandate_short_url: text('mandate_short_url'), // Razorpay-hosted auth page
     mandate_token: text('mandate_token'), // public /sub/<token> page
@@ -543,10 +545,12 @@ export const subscriptionChargeAttempts = pgTable(
       onDelete: 'set null',
     }),
     razorpay_payment_id: text('razorpay_payment_id'),
-    status: text('status').notNull(), // succeeded | failed | pending
+    status: text('status').notNull(), // created | captured | failed (0029)
+    attempt_no: smallint('attempt_no'),
     amount: numeric('amount', { precision: 15, scale: 2 }).notNull(),
     currency: text('currency').notNull(),
     failure_reason: text('failure_reason'),
+    failure_code: text('failure_code'),
     attempted_at: timestamp('attempted_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

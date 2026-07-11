@@ -30,6 +30,7 @@ export interface AdminOverview {
     leaves: Array<{
       id: string
       employeeId: string
+      userId: string | null
       employeeName: string
       employeeCode: string | null
       leaveTypeName: string | null
@@ -43,6 +44,7 @@ export interface AdminOverview {
     regularizations: Array<{
       id: string
       employeeId: string
+      userId: string | null
       employeeName: string
       employeeCode: string | null
       attendanceDate: string

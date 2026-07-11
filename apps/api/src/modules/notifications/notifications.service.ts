@@ -146,7 +146,13 @@ export class NotificationsService {
     template: EmailTemplate,
     to: string,
     props: Record<string, unknown>,
-    opts?: { userId?: string; event?: NotificationEvent },
+    opts?: {
+      userId?: string;
+      event?: NotificationEvent;
+      // Extra SMTP headers — used for marketing sends' List-Unsubscribe
+      // (§3.1). Build via ConsentService.marketingEmailHeaders(userId).
+      headers?: Record<string, string>;
+    },
   ): Promise<boolean> {
     // Honour the recipient's per-event email preference when this send is
     // tied to a preference-managed event AND we know the recipient's user id.
@@ -178,6 +184,7 @@ export class NotificationsService {
         to,
         subject,
         html,
+        ...(opts?.headers ? { headers: opts.headers } : {}),
       });
       if (error) {
         this.logger.error(
@@ -255,16 +262,26 @@ export class NotificationsService {
       }
 
       case 'subscription-pre-debit': {
+        // D15 / Appendix E: amount, date, invoice reference, and a
+        // "Manage or cancel this mandate" link are all required.
+        const invoiceRef = props.invoiceRef as string | undefined;
+        const manageUrl = props.manageUrl as string | undefined;
         return {
-          subject: `Upcoming charge: ${props.name}`,
+          subject: `Upcoming auto-debit: ${this.esc(props.amount)} on ${this.esc(props.chargeDate)} — ${this.esc(props.name)}`,
           html: `
             <p>Hi ${this.esc(props.customerName ?? 'there')},</p>
             <p>As per your authorized e-mandate, <strong>${this.esc(props.amount)}</strong> for
             <strong>${this.esc(props.name)}</strong> will be auto-debited on
             <strong>${this.esc(props.chargeDate)}</strong>. No action is needed.</p>
+            ${invoiceRef ? `<p style="font-size: 14px;">Invoice reference: <strong>${this.esc(invoiceRef)}</strong></p>` : ''}
+            ${
+              manageUrl
+                ? `<p style="margin: 20px 0;"><a href="${String(manageUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none;">Manage or cancel this mandate</a></p>`
+                : ''
+            }
             <p style="color: #6b7280; font-size: 13px;">This notice is sent at least 24 hours
             before every debit (RBI e-mandate guidelines). To stop future charges, revoke the
-            mandate from your UPI/banking app or contact the sender.</p>
+            mandate from your UPI/banking app${manageUrl ? ', use the link above,' : ''} or contact the sender.</p>
           `,
         };
       }
@@ -313,16 +330,24 @@ export class NotificationsService {
       }
 
       case 'mandate-revoked': {
-        const { subscriptionName, customerName } = props as {
+        // D15 "mandate revoked / halted" — one template, two triggers.
+        const { subscriptionName, customerName, reason } = props as {
           subscriptionName: string;
           customerName: string;
+          reason?: 'revoked' | 'halted';
         };
+        const halted = reason === 'halted';
+        const lead = halted
+          ? `The auto-debit mandate on <strong>${this.esc(subscriptionName)}</strong> was <strong>halted</strong> after repeated failed charges${customerName ? ` for <strong>${this.esc(customerName)}</strong>` : ''}.`
+          : `<strong>${this.esc(customerName)}</strong> revoked the auto-debit mandate on <strong>${this.esc(subscriptionName)}</strong>.`;
         return {
-          subject: `Mandate revoked — ${this.esc(subscriptionName)}`,
+          subject: halted
+            ? `Mandate halted — ${this.esc(subscriptionName)}`
+            : `Mandate revoked — ${this.esc(subscriptionName)}`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-              <h2>Auto-debit mandate revoked</h2>
-              <p><strong>${this.esc(customerName)}</strong> revoked the auto-debit mandate on <strong>${this.esc(subscriptionName)}</strong>.</p>
+              <h2>Auto-debit mandate ${halted ? 'halted' : 'revoked'}</h2>
+              <p>${lead}</p>
               <p>The profile has switched back to <strong>manual collection</strong> — future cycles will generate invoices to send as usual, and you can re-request a mandate anytime from the Recurring page.</p>
             </div>
           `,

@@ -174,6 +174,22 @@ export class ConsentService {
     return Buffer.from(`${payload}.${sig}`).toString('base64url');
   }
 
+  /**
+   * §3.1 — RFC 8058 one-click unsubscribe headers for MARKETING sends. Any
+   * future marketing-category send must gate on marketingAllowed(userId) and
+   * pass these to NotificationsService.sendEmail(..., { headers }). Reuses the
+   * signed unsubscribe token so the link works signed-out and writes a
+   * withdrawal row via the existing /unsubscribe route.
+   */
+  marketingEmailHeaders(userId: string): Record<string, string> {
+    const base = this.config.get<string>('APP_URL', 'http://localhost:3000');
+    const url = `${base}/unsubscribe?token=${this.mintUnsubscribeToken(userId)}`;
+    return {
+      'List-Unsubscribe': `<${url}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    };
+  }
+
   verifyUnsubscribeToken(token: string): string {
     let decoded: string;
     try {

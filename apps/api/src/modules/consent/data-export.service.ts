@@ -27,6 +27,8 @@ import {
   invoiceSubscriptions,
   invoicingSettings,
   auditLog,
+  feedbackSubmissions,
+  productEvents,
 } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -150,6 +152,38 @@ export class DataExportService {
       .where(eq(consentRecords.user_id, userId))
       .orderBy(desc(consentRecords.occurred_at));
 
+    // §3.5: the personal bundle must include the user's submitted feedback.
+    const feedback = await this.dbAdmin
+      .select({
+        category: feedbackSubmissions.category,
+        message: feedbackSubmissions.message,
+        status: feedbackSubmissions.status,
+        page_path: feedbackSubmissions.page_path,
+        created_at: feedbackSubmissions.created_at,
+      })
+      .from(feedbackSubmissions)
+      .where(eq(feedbackSubmissions.user_id, userId))
+      .orderBy(desc(feedbackSubmissions.created_at));
+
+    // §3.5 + §6.2: an activity summary — counts/timestamps only, no free text.
+    const eventCounts = await this.dbAdmin
+      .select({
+        event_name: productEvents.event_name,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(productEvents)
+      .where(eq(productEvents.user_id, userId))
+      .groupBy(productEvents.event_name);
+    const [activityBounds] = await this.dbAdmin
+      .select({
+        total: sql<number>`count(*)::int`,
+        active_days: sql<number>`count(distinct date_trunc('day', ${productEvents.occurred_at}))::int`,
+        first_at: sql<string | null>`min(${productEvents.occurred_at})`,
+        last_at: sql<string | null>`max(${productEvents.occurred_at})`,
+      })
+      .from(productEvents)
+      .where(eq(productEvents.user_id, userId));
+
     const bundle = {
       exported_at: new Date().toISOString(),
       profile: {
@@ -171,13 +205,23 @@ export class DataExportService {
         region: c.region_code,
         occurred_at: c.occurred_at,
       })),
+      feedback_submissions: feedback,
+      activity_summary: {
+        total_events: activityBounds?.total ?? 0,
+        active_days: activityBounds?.active_days ?? 0,
+        first_event_at: activityBounds?.first_at ?? null,
+        last_event_at: activityBounds?.last_at ?? null,
+        events_by_name: Object.fromEntries(
+          eventCounts.map((e) => [e.event_name, e.count]),
+        ),
+      },
     };
 
     const zip = new JSZip();
     zip.file('my-data.json', JSON.stringify(bundle, null, 2));
     zip.file(
       'README.txt',
-      'Flicks Suite personal data export.\nContents: profile, memberships, consent history.\nQuestions: privacy@specflicks.com',
+      'Flicks Suite personal data export.\nContents: profile, memberships, consent history, submitted feedback, activity summary.\nQuestions: privacy@specflicks.com',
     );
     const buf = await zip.generateAsync({ type: 'nodebuffer' });
 

@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -10,7 +10,9 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
+import type Redis from 'ioredis';
 import type { JwtPayload } from '@flicks/shared/types';
+import { REDIS_CLIENT } from '../core/redis/redis.module';
 import {
   PresenceService,
   type LiveActivity,
@@ -21,15 +23,19 @@ import {
  *
  * The web is cookie-authenticated, so unlike the notifications gateway this
  * one ALSO accepts the httpOnly access_token cookie on the handshake (socket
- * handshakes carry cookies with withCredentials). Live activity is an
- * in-memory map (single-instance beta; a Redis exit-ramp is documented in the
- * tracker) — connected sockets + heartbeat pings ARE the liveness signal.
+ * handshakes carry cookies with withCredentials). Live activity lives in
+ * Redis (§5.2: SETEX presence:last:<tenant>:<user> 1800) so any API instance
+ * sees the same liveness and a restart doesn't zero everyone — connected
+ * sockets + heartbeat pings ARE the liveness signal. On a clean last-socket
+ * disconnect the key is DELETED (immediate offline); on an unclean drop it
+ * lingers, so the §5.1 away(10m)→offline(30m TTL) gradient still applies.
  *
  * Broadcasts `status_changed` to the tenant room on: connect/disconnect,
  * manual status change (via the `presence.changed` app event), and a timer
  * scheduled at each manual status' expires_at so auto-revert lands without a
  * reload (§5 acceptance).
  */
+const LIVE_TTL_SECONDS = 1800; // §5.2 — matches the 30-min offline threshold
 @WebSocketGateway({
   namespace: '/presence',
   cors: { origin: true, credentials: true },
@@ -42,8 +48,6 @@ export class PresenceGateway
   @WebSocketServer()
   server!: Server;
 
-  /** tenantId → userId → activity. */
-  private readonly live = new Map<string, Map<string, LiveActivity>>();
   /** Scheduled expiry re-broadcasts: `${tenantId}:${userId}` → timer. */
   private readonly expiryTimers = new Map<string, NodeJS.Timeout>();
 
@@ -51,11 +55,41 @@ export class PresenceGateway
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly presence: PresenceService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  /** The live-activity map for one tenant (resolution input). */
-  activityFor(tenantId: string): Map<string, LiveActivity> {
-    return this.live.get(tenantId) ?? new Map();
+  private liveKey(tenantId: string, userId: string): string {
+    return `presence:last:${tenantId}:${userId}`;
+  }
+
+  /**
+   * Live-activity snapshot for the requested users (resolution input). MGETs
+   * the per-user liveness keys — O(ids), no SCAN. A missing key means no
+   * connection/heartbeat within the TTL → not connected. Degrades to an empty
+   * map (everyone offline) if Redis is unreachable rather than failing reads.
+   */
+  async buildActivity(
+    tenantId: string,
+    userIds: string[],
+  ): Promise<Map<string, LiveActivity>> {
+    const map = new Map<string, LiveActivity>();
+    if (userIds.length === 0) return map;
+    try {
+      const values = await this.redis.mget(
+        userIds.map((id) => this.liveKey(tenantId, id)),
+      );
+      userIds.forEach((id, i) => {
+        const v = values[i];
+        if (v != null) {
+          map.set(id, { connected: true, lastActivityAt: Number(v) || null });
+        }
+      });
+    } catch (err) {
+      this.logger.warn(
+        `presence liveness read failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return map;
   }
 
   async handleConnection(client: Socket): Promise<void> {
@@ -76,7 +110,7 @@ export class PresenceGateway
       }
       (client.data as { user?: JwtPayload }).user = payload;
       await client.join(`tenant:${payload.tenantId}`);
-      this.touch(payload.tenantId, payload.sub, true);
+      await this.touch(payload.tenantId, payload.sub);
       await this.broadcast(payload.tenantId, payload.sub);
     } catch {
       client.disconnect(true);
@@ -90,20 +124,26 @@ export class PresenceGateway
     const stillConnected = [...(await this.server.in(`tenant:${user.tenantId}`).fetchSockets())]
       .some((s) => (s.data as { user?: JwtPayload }).user?.sub === user.sub);
     if (!stillConnected) {
-      const tenant = this.live.get(user.tenantId);
-      const entry = tenant?.get(user.sub);
-      if (entry) entry.connected = false;
+      // Clean last-socket disconnect → drop the liveness key (immediate
+      // offline). Unclean drops skip this path and age out via the TTL.
+      try {
+        await this.redis.del(this.liveKey(user.tenantId, user.sub));
+      } catch (err) {
+        this.logger.warn(
+          `presence liveness del failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
       await this.broadcast(user.tenantId, user.sub);
     }
   }
 
   /** Client activity ping (60s cadence + on interaction bursts). */
   @SubscribeMessage('heartbeat')
-  onHeartbeat(client: Socket): void {
+  async onHeartbeat(client: Socket): Promise<void> {
     const user = (client.data as { user?: JwtPayload }).user;
     if (!user?.tenantId) return;
-    const wasIdle = this.isIdle(user.tenantId, user.sub);
-    this.touch(user.tenantId, user.sub, true);
+    const wasIdle = await this.isIdle(user.tenantId, user.sub);
+    await this.touch(user.tenantId, user.sub);
     // Coming back from idle flips away → available org-wide.
     if (wasIdle) void this.broadcast(user.tenantId, user.sub);
   }
@@ -147,19 +187,30 @@ export class PresenceGateway
 
   // ─── internals ──────────────────────────────────────────────────────────────
 
-  private touch(tenantId: string, userId: string, connected: boolean): void {
-    let tenant = this.live.get(tenantId);
-    if (!tenant) {
-      tenant = new Map();
-      this.live.set(tenantId, tenant);
+  /** §5.2 — SETEX presence:last:<tenant>:<user> 1800 with the activity time. */
+  private async touch(tenantId: string, userId: string): Promise<void> {
+    try {
+      await this.redis.set(
+        this.liveKey(tenantId, userId),
+        String(Date.now()),
+        'EX',
+        LIVE_TTL_SECONDS,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `presence liveness write failed: ${err instanceof Error ? err.message : err}`,
+      );
     }
-    tenant.set(userId, { connected, lastActivityAt: Date.now() });
   }
 
-  private isIdle(tenantId: string, userId: string): boolean {
-    const entry = this.live.get(tenantId)?.get(userId);
-    if (!entry?.lastActivityAt) return true;
-    return Date.now() - entry.lastActivityAt > 10 * 60 * 1000;
+  private async isIdle(tenantId: string, userId: string): Promise<boolean> {
+    try {
+      const v = await this.redis.get(this.liveKey(tenantId, userId));
+      if (v == null) return true;
+      return Date.now() - Number(v) > 10 * 60 * 1000;
+    } catch {
+      return true;
+    }
   }
 
   /** Resolve one user and push `status_changed` to the tenant room. */
@@ -168,7 +219,7 @@ export class PresenceGateway
       const [resolved] = await this.presence.resolve(
         tenantId,
         [userId],
-        this.activityFor(tenantId),
+        await this.buildActivity(tenantId, [userId]),
       );
       if (resolved) {
         this.server.to(`tenant:${tenantId}`).emit('status_changed', resolved);

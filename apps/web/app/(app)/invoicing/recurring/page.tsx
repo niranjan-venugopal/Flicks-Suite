@@ -42,6 +42,37 @@ function cycleAmount(s: SubscriptionRow): number {
     : parseFloat(s.flat_amount ?? '0')
 }
 
+// D14b mandate chip — explicit label + tone per PRD §8.3 enum. 'green' active,
+// 'coral' terminal-bad (halted/revoked/failed), 'yellow' in-progress.
+type MandateTone = 'green' | 'coral' | 'yellow' | 'gray'
+const MANDATE_CHIP: Record<string, { label: string; tone: MandateTone }> = {
+  none: { label: 'None', tone: 'gray' },
+  pending_authorization: { label: 'Awaiting authorization', tone: 'yellow' },
+  authenticated: { label: 'Active', tone: 'green' },
+  active: { label: 'Active', tone: 'green' },
+  paused: { label: 'Paused', tone: 'yellow' },
+  halted: { label: 'Halted', tone: 'coral' },
+  revoked: { label: 'Revoked', tone: 'coral' },
+  failed: { label: 'Failed', tone: 'coral' },
+}
+function mandateChip(status: string): { label: string; bg: string; color: string } {
+  const { label, tone } = MANDATE_CHIP[status] ?? {
+    label: status.replace(/_/g, ' '),
+    tone: 'yellow' as MandateTone,
+  }
+  const bg =
+    tone === 'green' ? 'rgba(39,210,128,.14)'
+      : tone === 'coral' ? 'rgba(248,120,107,.14)'
+        : tone === 'gray' ? 'rgba(140,140,160,.14)'
+          : 'rgba(254,216,0,.12)'
+  const color =
+    tone === 'green' ? 'var(--green)'
+      : tone === 'coral' ? 'var(--coral)'
+        : tone === 'gray' ? 'var(--text-2)'
+          : 'var(--yellow)'
+  return { label, bg, color }
+}
+
 /** New subscription — prototype SubscriptionModal (cadence buttons, MRR footer). */
 function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { toast } = useToast()
@@ -320,7 +351,9 @@ export default function RecurringPage() {
             <td style={invoTd}>
               <Pill tone={STATUS_TONE[s.status] ?? ''} dot>{s.status.replace(/_/g, ' ').toLowerCase()}</Pill>
               {/* D14b — mandate chip */}
-              {s.collection_mode === 'auto_debit' && (
+              {s.collection_mode === 'auto_debit' && (() => {
+                const chip = mandateChip(s.mandate_status)
+                return (
                 <div style={{ marginTop: 4 }}>
                   <span
                     style={{
@@ -330,24 +363,15 @@ export default function RecurringPage() {
                       fontWeight: 800,
                       textTransform: 'uppercase',
                       letterSpacing: '.04em',
-                      background:
-                        s.mandate_status === 'active' || s.mandate_status === 'authorized'
-                          ? 'rgba(39,210,128,.14)'
-                          : s.mandate_status === 'revoked'
-                            ? 'rgba(248,120,107,.14)'
-                            : 'rgba(254,216,0,.12)',
-                      color:
-                        s.mandate_status === 'active' || s.mandate_status === 'authorized'
-                          ? 'var(--green)'
-                          : s.mandate_status === 'revoked'
-                            ? 'var(--coral)'
-                            : 'var(--yellow)',
+                      background: chip.bg,
+                      color: chip.color,
                     }}
                   >
-                    ⚡ {s.mandate_status.replace(/_/g, ' ')}
+                    ⚡ {chip.label}
                   </span>
                 </div>
-              )}
+                )
+              })()}
             </td>
             <td style={{ ...invoTd, textAlign: 'right', whiteSpace: 'nowrap' }}>
               <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -461,8 +485,23 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
             ) : mandate.isError ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--coral)' }}>Couldn’t load</span>
             ) : (
-              <Pill tone={m?.collection_mode === 'auto_debit' ? 'green' : ''} dot>
-                {m?.collection_mode === 'auto_debit' ? `auto-debit · ${m.mandate_status.replace(/_/g, ' ')}` : 'manual'}
+              <Pill
+                tone={
+                  m?.collection_mode === 'auto_debit'
+                    ? (MANDATE_CHIP[m.mandate_status]?.tone === 'coral'
+                        ? 'coral'
+                        : MANDATE_CHIP[m.mandate_status]?.tone === 'yellow'
+                          ? 'yellow'
+                          : MANDATE_CHIP[m.mandate_status]?.tone === 'gray'
+                            ? ''
+                            : 'green')
+                    : ''
+                }
+                dot
+              >
+                {m?.collection_mode === 'auto_debit'
+                  ? `auto-debit · ${mandateChip(m.mandate_status).label.toLowerCase()}`
+                  : 'manual'}
               </Pill>
             )}
           </div>

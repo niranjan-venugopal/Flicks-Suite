@@ -2,7 +2,14 @@ import 'dotenv/config';
 import * as crypto from 'crypto';
 import { eq } from 'drizzle-orm';
 import { dbAdmin } from '@flicks/db';
-import { users, authOtps, consentRecords } from '@flicks/db/schema';
+import {
+  users,
+  authOtps,
+  consentRecords,
+  tenants,
+  feedbackSubmissions,
+  productEvents,
+} from '@flicks/db/schema';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from '../modules/auth/auth.service';
 import { ConsentService } from '../modules/consent/consent.service';
@@ -144,6 +151,80 @@ describe('Consent ledger (PRD v4 §3)', () => {
 
     // Tampered token rejected
     await expect(consentSvc.unsubscribe(token.slice(0, -4) + 'AAAA')).rejects.toThrow();
+  });
+
+  it('marketingEmailHeaders: List-Unsubscribe token round-trips; one-click header present (§3.1)', async () => {
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `hdr-${rid()}@test.test`, full_name: 'Header T' })
+      .returning();
+    cleanupUsers.push(u!.id);
+
+    const headers = consentSvc.marketingEmailHeaders(u!.id);
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    const m = headers['List-Unsubscribe']!.match(/^<(.+)>$/);
+    expect(m).not.toBeNull();
+    const token = new URL(m![1]!).searchParams.get('token')!;
+    expect(consentSvc.verifyUnsubscribeToken(token)).toBe(u!.id);
+  });
+
+  it('personal data export bundle includes submitted feedback + activity summary (§3.5)', async () => {
+    const [t] = await dbAdmin
+      .insert(tenants)
+      .values({ name: `ExpCo${rid()}`, slug: `exp-${rid()}-${Date.now()}`, status: 'active' })
+      .returning();
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `export-${rid()}@test.test`, full_name: 'Export T' })
+      .returning();
+    cleanupUsers.push(u!.id);
+    await dbAdmin.insert(feedbackSubmissions).values({
+      tenant_id: t!.id,
+      user_id: u!.id,
+      category: 'idea',
+      message: 'Dark mode for invoices please',
+      page_path: '/invoicing',
+    });
+    await dbAdmin.insert(productEvents).values([
+      { tenant_id: t!.id, user_id: u!.id, event_name: 'module_opened', source: 'web' },
+      { tenant_id: t!.id, user_id: u!.id, event_name: 'module_opened', source: 'web' },
+      { tenant_id: t!.id, user_id: u!.id, event_name: 'invoice_created', source: 'api' },
+    ]);
+
+    // R2 mocked to capture the ZIP; notifications mocked out.
+    let captured: Buffer | null = null;
+    const r2Mock = {
+      isConfigured: () => true,
+      putObject: async (_k: string, buf: Buffer) => {
+        captured = buf;
+      },
+      signedGetUrl: async () => 'https://signed.example/x.zip',
+    } as never;
+    const { DataExportService } = await import('../modules/consent/data-export.service');
+    const exporter = new DataExportService(
+      dbAdmin as never,
+      { withTenant: async () => [] } as never,
+      r2Mock,
+      { sendEmail: async () => true } as never,
+      { log: async () => {} } as never,
+      { track: () => {} } as never,
+    );
+    await (exporter as unknown as {
+      buildMyExport: (u: string, t: string) => Promise<void>;
+    }).buildMyExport(u!.id, t!.id);
+
+    expect(captured).not.toBeNull();
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(captured!);
+    const bundle = JSON.parse(await zip.file('my-data.json')!.async('string'));
+    expect(bundle.feedback_submissions).toHaveLength(1);
+    expect(bundle.feedback_submissions[0].message).toContain('Dark mode');
+    expect(bundle.activity_summary.total_events).toBe(3);
+    expect(bundle.activity_summary.active_days).toBe(1);
+    expect(bundle.activity_summary.events_by_name.module_opened).toBe(2);
+    expect(bundle.activity_summary.events_by_name.invoice_created).toBe(1);
+
+    await dbAdmin.delete(tenants).where(eq(tenants.id, t!.id));
   });
 
   it('signup clickwrap: verify-otp REJECTS a new account without terms_privacy, creates + ledgers with it', async () => {
