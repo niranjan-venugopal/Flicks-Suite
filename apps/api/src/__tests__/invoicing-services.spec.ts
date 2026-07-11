@@ -160,6 +160,9 @@ const notificationsStub = {
     sentEmails.push({ template, to, props });
   },
 } as unknown as import('../modules/notifications/notifications.service').NotificationsService;
+// Generation-job reconciliation hook — only fires for auto_debit profiles;
+// these suites drive manual ones (the real path is covered in autodebit.spec).
+const mandatesStub = { settleUnreconciledCharge: async () => false };
 
 import { OrgFinancialService } from '../modules/org-financial/org-financial.service';
 const orgFinancial = new OrgFinancialService(dbSvc, audit);
@@ -871,7 +874,7 @@ describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () 
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const notesSvc = new NotesService(dbSvc, audit, numbering);
   const reportsSvc = new InvReportsService(dbSvc, audit);
-  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any, mandatesStub as any);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1085,7 +1088,7 @@ import {
 describe('Invoicing services (Sprint 7 — subscriptions)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
   const subsSvc = new SubscriptionsService(dbSvc, audit, configStub as any);
-  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any);
+  const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any, mandatesStub as any);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -1139,7 +1142,32 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
 
     const active = await subsSvc.activate(created.data.id, userId, tenantId);
     expect(active.data.status).toBe('ACTIVE');
-    expect(active.data.mandate_authorized_at).toBeTruthy();
+    // Manual start must NOT fabricate a mandate — that's Razorpay's to stamp.
+    expect(active.data.mandate_authorized_at).toBeNull();
+
+    // Auto-debit profiles can't be force-activated here: real authorization
+    // only ever arrives via the Razorpay webhook (enable-autodebit flow).
+    const auto = await subsSvc.create(
+      {
+        customer_id: customerId,
+        name: 'Autodebit guard',
+        pricing_model: 'flat_rate',
+        flat_amount: '1000.00',
+        billing_period: 'monthly',
+        start_date: yesterday,
+      } as any,
+      userId,
+      tenantId,
+    );
+    await dbAdmin
+      .update(subsTable)
+      .set({ collection_mode: 'auto_debit' })
+      .where(eq(subsTable.id, auto.data.id));
+    await expect(subsSvc.activate(auto.data.id, userId, tenantId)).rejects.toThrow(
+      /enable-autodebit/,
+    );
+    // Clean up so later tenant-wide selects in this suite see one profile.
+    await dbAdmin.delete(subsTable).where(eq(subsTable.id, auto.data.id));
   });
 
   it('generation sweep: due profile → real invoice (GST applied), auto-sent, cycle advanced', async () => {
@@ -1232,11 +1260,18 @@ describe('Invoicing services (Sprint 7 — subscriptions)', () => {
       tenantId,
     );
     await subsSvc.activate(created.data.id, userId, tenantId);
-    // D15/Appendix E: with a public mandate token, the notice carries the
+    // Pre-debit notices are auto-debit-only: simulate an authorized mandate
+    // (collection_mode + authorized_at are set by the real Razorpay webhook
+    // flow). D15/Appendix E: the token makes the notice carry the
     // "Manage or cancel this mandate" link.
     await dbAdmin
       .update(subsTable)
-      .set({ mandate_token: `tok-${Date.now()}` })
+      .set({
+        collection_mode: 'auto_debit',
+        mandate_status: 'active',
+        mandate_authorized_at: new Date(),
+        mandate_token: `tok-${Date.now()}`,
+      })
       .where(eq(subsTable.id, created.data.id));
 
     sentEmails.length = 0;

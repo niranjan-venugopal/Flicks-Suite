@@ -404,20 +404,29 @@ export class SubscriptionMandatesService {
       case 'subscription.charged': {
         const payment = this.paymentEntity(payload);
         const amountPaise = payment?.amount ?? cycleAmountCents(sub);
-        await this.dbAdmin.insert(subscriptionChargeAttempts).values({
-          tenant_id: tenantId,
-          subscription_id: sub.id,
-          razorpay_payment_id: payment?.id ?? null,
-          status: 'captured',
-          attempt_no: (sub.total_cycles_billed ?? 0) + 1,
-          amount: (amountPaise / 100).toFixed(2),
-          currency: sub.currency,
-        });
+        const [attempt] = await this.dbAdmin
+          .insert(subscriptionChargeAttempts)
+          .values({
+            tenant_id: tenantId,
+            subscription_id: sub.id,
+            razorpay_payment_id: payment?.id ?? null,
+            status: 'captured',
+            attempt_no: (sub.total_cycles_billed ?? 0) + 1,
+            amount: (amountPaise / 100).toFixed(2),
+            currency: sub.currency,
+          })
+          .returning({ id: subscriptionChargeAttempts.id });
         await this.dbAdmin
           .update(invoiceSubscriptions)
           .set({ status: 'ACTIVE', failed_charge_count: 0, mandate_status: 'active', updated_at: new Date() })
           .where(eq(invoiceSubscriptions.id, sub.id));
-        await this.settleGeneratedInvoice(tenantId, sub.id, amountPaise, payment?.id ?? null);
+        await this.settleGeneratedInvoice(
+          tenantId,
+          sub.id,
+          amountPaise,
+          payment?.id ?? null,
+          attempt?.id ?? null,
+        );
         void this.analytics.track({
           event: 'subscription_charged',
           tenantId,
@@ -516,12 +525,19 @@ export class SubscriptionMandatesService {
 
   // ─── internals ──────────────────────────────────────────────────────────────
 
-  /** Mark the newest open generated invoice PAID via the charge (§8A.4). */
+  /**
+   * Mark the newest open generated invoice PAID via the charge (§8A.4) and
+   * stamp the charge-attempt row with the settled invoice. An attempt whose
+   * invoice_id stays NULL is UNRECONCILED — the charge landed before the
+   * cycle's invoice was generated; the generation job settles it then
+   * (settleUnreconciledCharge below).
+   */
   private async settleGeneratedInvoice(
     tenantId: string,
     subscriptionId: string,
     amountPaise: number,
     paymentId: string | null,
+    attemptId: string | null,
   ): Promise<void> {
     const [inv] = await this.dbAdmin
       .select({ id: invoices.id })
@@ -537,7 +553,7 @@ export class SubscriptionMandatesService {
       .limit(1);
     if (!inv) {
       this.logger.warn(
-        `subscription.charged for ${subscriptionId}: no open generated invoice to settle`,
+        `subscription.charged for ${subscriptionId}: no open generated invoice yet — charge recorded, will reconcile at generation`,
       );
       return;
     }
@@ -554,10 +570,72 @@ export class SubscriptionMandatesService {
         tenantId,
         'subscription_charge',
       );
+      if (attemptId) {
+        await this.dbAdmin
+          .update(subscriptionChargeAttempts)
+          .set({ invoice_id: inv.id })
+          .where(eq(subscriptionChargeAttempts.id, attemptId));
+      }
     } catch (err) {
       this.logger.error(
         `recordPayment(subscription_charge) failed for invoice ${inv.id}: ${err instanceof Error ? err.message : err}`,
       );
+    }
+  }
+
+  /**
+   * Reconciliation for the charged-before-generation race: called by the
+   * generation job right after it creates a cycle's invoice. If a captured
+   * charge attempt is still unreconciled (invoice_id NULL), settle the fresh
+   * invoice from it and stamp the attempt. Idempotent: the stamp prevents a
+   * second settle, and duplicate webhook deliveries are already deduped by
+   * event_id upstream.
+   */
+  async settleUnreconciledCharge(tenantId: string, subscriptionId: string, invoiceId: string): Promise<boolean> {
+    const [attempt] = await this.dbAdmin
+      .select({
+        id: subscriptionChargeAttempts.id,
+        amount: subscriptionChargeAttempts.amount,
+        razorpay_payment_id: subscriptionChargeAttempts.razorpay_payment_id,
+      })
+      .from(subscriptionChargeAttempts)
+      .where(
+        and(
+          eq(subscriptionChargeAttempts.subscription_id, subscriptionId),
+          eq(subscriptionChargeAttempts.tenant_id, tenantId),
+          eq(subscriptionChargeAttempts.status, 'captured'),
+          sql`${subscriptionChargeAttempts.invoice_id} is null`,
+        ),
+      )
+      .orderBy(desc(subscriptionChargeAttempts.attempted_at))
+      .limit(1);
+    if (!attempt) return false;
+    try {
+      await this.invoices.recordPayment(
+        invoiceId,
+        {
+          amount: attempt.amount,
+          payment_method: 'RAZORPAY_UPI',
+          reference_number: attempt.razorpay_payment_id ?? undefined,
+          notes: 'Auto-debit mandate charge (reconciled at generation)',
+        } as never,
+        null,
+        tenantId,
+        'subscription_charge',
+      );
+      await this.dbAdmin
+        .update(subscriptionChargeAttempts)
+        .set({ invoice_id: invoiceId })
+        .where(eq(subscriptionChargeAttempts.id, attempt.id));
+      this.logger.log(
+        `reconciled pre-generation charge ${attempt.id} against invoice ${invoiceId}`,
+      );
+      return true;
+    } catch (err) {
+      this.logger.error(
+        `reconciliation settle failed for invoice ${invoiceId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return false;
     }
   }
 

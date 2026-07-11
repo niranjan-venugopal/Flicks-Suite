@@ -81,6 +81,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     ItemsService,
     InvoicesService,
     NumberingService,
+    SubscriptionMandatesService,
   ],
 })
 export class InvoicingModule {}

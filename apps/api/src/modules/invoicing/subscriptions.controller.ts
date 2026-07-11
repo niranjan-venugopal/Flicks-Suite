@@ -60,7 +60,7 @@ export class SubscriptionsController {
 
   @Post(':id/activate')
   @RequireGrant('invoicing', 'edit')
-  @ApiOperation({ summary: 'Simulate mandate authorization (dev stub) → ACTIVE/TRIALING' })
+  @ApiOperation({ summary: 'Start a manual-collection subscription → ACTIVE/TRIALING (auto-debit profiles use enable-autodebit)' })
   activate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.subs.activate(id, user.sub, user.tenantId);
   }

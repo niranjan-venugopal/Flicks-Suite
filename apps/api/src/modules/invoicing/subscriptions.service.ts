@@ -219,8 +219,9 @@ export class SubscriptionsService {
   }
 
   /**
-   * Mandate authorization — STUB until live Razorpay keys: marks the mandate
-   * authorized and activates (TRIALING while inside the trial window).
+   * Start a MANUAL-collection subscription (TRIALING while inside the trial
+   * window). Auto-debit profiles must go through enable-autodebit → the real
+   * Razorpay mandate flow — activating them here would fake an authorization.
    */
   async activate(id: string, userId: string, tenantId: string) {
     const updated = await this.db.withTenant(tenantId, async (tx) => {
@@ -228,13 +229,16 @@ export class SubscriptionsService {
       if (sub.status !== 'PENDING_MANDATE' && sub.status !== 'PAUSED') {
         throw new BadRequestException(`Cannot activate from ${sub.status}`);
       }
+      if (sub.collection_mode === 'auto_debit') {
+        throw new BadRequestException(
+          'Auto-debit profiles activate through mandate authorization — use enable-autodebit.',
+        );
+      }
       const inTrial = sub.trial_ends_at && sub.trial_ends_at >= new Date().toISOString().slice(0, 10);
       const [row] = await tx
         .update(invoiceSubscriptions)
         .set({
           status: inTrial ? 'TRIALING' : 'ACTIVE',
-          mandate_authorized_at: sub.mandate_authorized_at ?? new Date(),
-          payment_method: sub.payment_method ?? 'upi_autopay',
           failed_charge_count: 0,
           paused_at: null,
           updated_at: new Date(),

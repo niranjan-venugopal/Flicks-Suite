@@ -199,10 +199,68 @@ describe('Tenant auto-debit (PRD v4 §8A)', () => {
     expect(attempts[0]!.status).toBe('captured'); // PRD §8.3 enum
     expect(attempts[0]!.attempt_no).toBe(1);
     expect(attempts[0]!.amount).toBe('5000.00');
+    expect(attempts[0]!.invoice_id).toBe(inv!.id); // reconciled = stamped
 
     const [paidInv] = await dbAdmin.select().from(invoices).where(eq(invoices.id, inv!.id));
     expect(paidInv!.status).toBe('PAID');
     expect(paidInv!.amount_outstanding).toBe('0.00');
+  });
+
+  it('charged-before-generation race: charge ledgered unreconciled, settled once at generation, never twice', async () => {
+    const rzpId = `sub_${rid()}`;
+    const sub = await mkSubscription({
+      razorpay_subscription_id: rzpId,
+      collection_mode: 'auto_debit',
+      mandate_status: 'active',
+      status: 'ACTIVE',
+    });
+
+    // Charge arrives BEFORE the cycle's invoice exists → attempt recorded,
+    // nothing to settle, invoice_id stays NULL (unreconciled).
+    await mandates.applyRazorpayEvent(
+      'subscription.charged',
+      envelope(rzpId, { payment: { entity: { id: `pay_${rid()}`, amount: 590000 } } }),
+    );
+    let attempts = await dbAdmin
+      .select()
+      .from(subscriptionChargeAttempts)
+      .where(eq(subscriptionChargeAttempts.subscription_id, sub.id));
+    expect(attempts.length).toBe(1);
+    expect(attempts[0]!.status).toBe('captured');
+    expect(attempts[0]!.invoice_id).toBeNull(); // unreconciled
+
+    // The generation job then creates the invoice and reconciles.
+    const [inv] = await dbAdmin
+      .insert(invoices)
+      .values({
+        tenant_id: tenantId,
+        customer_id: customerId,
+        subscription_id: sub.id,
+        invoice_number: `SUB-${rid()}`,
+        invoice_date: new Date().toISOString().slice(0, 10),
+        due_date: new Date(Date.now() + 15 * DAY).toISOString().slice(0, 10),
+        fy_label: '26-27',
+        currency: 'INR',
+        status: 'SENT',
+        subtotal: '5000.00',
+        taxable_amount: '5000.00',
+        total_amount: '5900.00',
+        amount_outstanding: '5900.00',
+      })
+      .returning();
+
+    expect(await mandates.settleUnreconciledCharge(tenantId, sub.id, inv!.id)).toBe(true);
+    const [paidInv] = await dbAdmin.select().from(invoices).where(eq(invoices.id, inv!.id));
+    expect(paidInv!.status).toBe('PAID');
+    expect(paidInv!.amount_outstanding).toBe('0.00');
+    attempts = await dbAdmin
+      .select()
+      .from(subscriptionChargeAttempts)
+      .where(eq(subscriptionChargeAttempts.subscription_id, sub.id));
+    expect(attempts[0]!.invoice_id).toBe(inv!.id); // stamped
+
+    // Idempotent: nothing left to reconcile → no double-pay.
+    expect(await mandates.settleUnreconciledCharge(tenantId, sub.id, inv!.id)).toBe(false);
   });
 
   it('failed charges: subscription.pending strikes (NOT payment.failed), PAST_DUE then 3rd-strike PAUSE, retry emails', async () => {

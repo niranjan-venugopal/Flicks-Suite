@@ -289,7 +289,7 @@ export default function RecurringPage() {
   const onAction = async (s: SubscriptionRow, act: 'activate' | 'pause' | 'resume' | 'cancel') => {
     try {
       await action.mutateAsync({ id: s.id, action: act })
-      toast({ title: `Subscription ${act === 'activate' ? 'activated (mandate authorized)' : `${act}d`}` })
+      toast({ title: `Subscription ${act === 'activate' ? 'started' : `${act}d`}` })
     } catch (err) {
       toast({ title: 'Action failed', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
@@ -377,7 +377,7 @@ export default function RecurringPage() {
               <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
                 <Btn kind="ghost" size="sm" onClick={() => setDetailId(s.id)}>Details</Btn>
                 {s.status === 'PENDING_MANDATE' && s.collection_mode !== 'auto_debit' && (
-                  <Btn kind="secondary" size="sm" onClick={() => onAction(s, 'activate')}>Authorize mandate</Btn>
+                  <Btn kind="secondary" size="sm" onClick={() => onAction(s, 'activate')}>Start subscription</Btn>
                 )}
                 {['ACTIVE', 'TRIALING'].includes(s.status) && (
                   <>

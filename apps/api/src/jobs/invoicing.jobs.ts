@@ -13,6 +13,7 @@ import {
 } from '@flicks/db/schema';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { InvoicesService } from '../modules/invoicing/invoices.service';
+import { SubscriptionMandatesService } from '../modules/invoicing/subscription-mandates.service';
 import { advanceDate, cycleAmountCents, SUBSCRIPTION_GST_RATE } from '../modules/invoicing/subscriptions.service';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../core/database/database.module';
@@ -35,6 +36,7 @@ export class InvoicingJobs {
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
     private readonly config: ConfigService,
+    private readonly mandates: SubscriptionMandatesService,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'mark-overdue-invoices' })
@@ -244,6 +246,13 @@ export class InvoicingJobs {
           );
         }
 
+        // Charged-before-generation race: if Razorpay's subscription.charged
+        // landed before this invoice existed, the captured attempt is still
+        // unreconciled — settle this invoice from it now (idempotent stamp).
+        if (sub.collection_mode === 'auto_debit') {
+          await this.mandates.settleUnreconciledCharge(sub.tenant_id, sub.id, created.data.id);
+        }
+
         // Advance the cycle + counters; apply end conditions.
         const nextDate = advanceDate(billDate, sub.billing_period, sub.custom_period_days);
         const cycles = (sub.total_cycles_billed ?? 0) + 1;
@@ -299,6 +308,9 @@ export class InvoicingJobs {
       .where(
         and(
           inArray(invoiceSubscriptions.status, ['ACTIVE', 'TRIALING']),
+          // RBI pre-debit notices are an AUTO-DEBIT obligation — manual
+          // profiles get normal invoices, never "you will be charged" emails.
+          eq(invoiceSubscriptions.collection_mode, 'auto_debit'),
           sql`${invoiceSubscriptions.mandate_authorized_at} is not null`,
           eq(invoiceSubscriptions.next_billing_date, tomorrow),
         ),

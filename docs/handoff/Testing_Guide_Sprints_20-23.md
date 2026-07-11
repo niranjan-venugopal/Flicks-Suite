@@ -11,8 +11,8 @@ Sentry hardening** (§8A, §9, D14–D15).
 ```bash
 git pull && pnpm install
 # Apply the new migrations to your Supabase project (idempotent):
-pnpm sync:supabase            # applies every file in packages/db/drizzle (0026 + 0028 are new)
-# OR re-run the demo bootstrap (also idempotent; now carries the 0026+0028
+pnpm sync:supabase            # applies every file in packages/db/drizzle (0026–0029)
+# OR re-run the demo bootstrap (also idempotent; now carries the 0026–0029
 # deltas inline and seeds coupon FLICKS-DEMO-TEST1):
 bash scripts/setup-demo.sh
 pnpm dev
@@ -155,7 +155,7 @@ invoice almost always exists first; a reconciliation pass is a P1 follow-up.
 ## 4. Automated gate (already green at push time)
 
 ```bash
-cd apps/api && pnpm test        # 216/216, includes billing + RLS isolation
+cd apps/api && pnpm test        # 238/238 as of the 2026-07-11 conformance pass
 bash scripts/diagnose-rls.sh    # leak_with_bogus_context = 0
 pnpm -F web build && pnpm -F api build
 ```
