@@ -5,7 +5,13 @@ import Link from 'next/link'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { AvatarV4 } from '@/components/media/AvatarV4'
-import { MediaCropModal } from '@/components/media/MediaCropModal'
+import dynamic from 'next/dynamic'
+// react-easy-crop is modal-only weight — load it when the modal first opens,
+// not in the route chunk.
+const MediaCropModal = dynamic(
+  () => import('@/components/media/MediaCropModal').then((m) => m.MediaCropModal),
+  { ssr: false },
+)
 import { useUploadAvatar, useRemoveAvatar } from '@/lib/api/queries/use-media'
 import {
   Dialog,

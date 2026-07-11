@@ -97,7 +97,7 @@ export class SubscriptionMandatesService {
     const auth = await this.settings.resolveRazorpayForOrder(tenantId);
     if (!auth) {
       throw new ServiceUnavailableException(
-        'Connect your Razorpay account first (Invoicing → Settings → Payments) — auto-debit charges run on YOUR Razorpay.',
+        'Auto-debit is coming soon — it isn’t available in this version yet.',
       );
     }
 

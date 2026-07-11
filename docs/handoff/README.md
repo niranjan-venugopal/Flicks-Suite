@@ -33,6 +33,11 @@ This folder collects the engineering handoff documentation for the Flicks Suite
 - **Config-gated, not unfinished:** platform checkout needs
   `RAZORPAY_PLATFORM_*` sandbox keys (trial/paywall/coupons run without them);
   tenant-track live payments still await Razorpay Technology-Partner approval.
+- **v1 scope decision (2026-07-11):** the invoicing-module Razorpay features
+  (seller connect, auto-debit mandates, hosted-invoice online checkout) are
+  **deferred to the next version** — the UI shows them disabled with "Coming
+  soon" badges; the code stays in place behind those gates. Platform-billing
+  Razorpay (₹499/seat subscription) remains live and unaffected.
 
 ## Related top-level docs
 

@@ -43,7 +43,9 @@ export const Icon = {
   clock: makeIcon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),
   cal: makeIcon(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>),
   sheet: makeIcon(<><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 9h8M8 13h8M8 17h5" /></>),
-  cog: makeIcon(<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a7.5 7.5 0 000-6l1.6-1-1.5-2.6-1.9.7a7.5 7.5 0 00-5.2-3l-.4-2h-3l-.4 2a7.5 7.5 0 00-5.2 3l-1.9-.7L1 9l1.6 1a7.5 7.5 0 000 6L1 17l1.5 2.6 1.9-.7a7.5 7.5 0 005.2 3l.4 2h3l.4-2a7.5 7.5 0 005.2-3l1.9.7L23 17z" /></>),
+  // Lucide "Settings" gear — the old glyph overshot the 24×24 viewBox and
+  // rendered cramped; this one stays inside the box and matches the set.
+  cog: makeIcon(<><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" /><circle cx="12" cy="12" r="3" /></>),
   bell: makeIcon(<><path d="M6 8a6 6 0 0112 0v4l1.5 3h-15L6 12V8z" /><path d="M9 18a3 3 0 006 0" /></>),
   search: makeIcon(<><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></>),
   inbox: makeIcon(<><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5 4h14l3 8v6a2 2 0 01-2 2H4a2 2 0 01-2-2v-6z" /></>),

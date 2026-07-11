@@ -4,7 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Camera } from 'lucide-react'
 import { Btn, Pill, SectionHead, Skeleton, SkeletonCard, avBg, initials, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
-import { MediaCropModal } from '@/components/media/MediaCropModal'
+import dynamic from 'next/dynamic'
+// react-easy-crop is modal-only weight — load it when the modal first opens,
+// not in the route chunk.
+const MediaCropModal = dynamic(
+  () => import('@/components/media/MediaCropModal').then((m) => m.MediaCropModal),
+  { ssr: false },
+)
 import { useUploadLogo, useRemoveLogo } from '@/lib/api/queries/use-media'
 import {
   useOrganization,

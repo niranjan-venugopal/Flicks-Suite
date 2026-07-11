@@ -168,14 +168,14 @@ function PaymentBlock({
           <div style={{ fontWeight: 600, fontSize: 13, color: t.muted50, marginBottom: 12 }}>
             {opts.razorpay
               ? 'Secure checkout powered by Razorpay.'
-              : 'Online checkout is not enabled for this seller yet.'}
+              : 'Online card/UPI checkout is coming soon.'}
           </div>
           <InvoBtn
             kind="primary"
             full
             height={44}
             disabled={!opts.razorpay || createOrder.isPending}
-            title={opts.razorpay ? undefined : 'The seller has not connected Razorpay'}
+            title={opts.razorpay ? undefined : 'Online checkout is coming soon'}
             onClick={opts.razorpay ? payWithRazorpay : undefined}
           >
             {createOrder.isPending ? 'Opening…' : 'Pay with Razorpay'}

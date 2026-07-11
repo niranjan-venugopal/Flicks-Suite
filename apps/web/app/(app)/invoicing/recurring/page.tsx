@@ -219,30 +219,37 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           </div>
 
-          {/* D14a — Collection (PRD v4 §8A) */}
+          {/* D14a — Collection (PRD v4 §8A). Auto-debit ships next version:
+              the option stays visible but disabled, so `collection` can never
+              leave 'manual' and the enable-autodebit save path never fires. */}
           <div className="label">Collection</div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             {([
-              ['manual', 'Manual', 'Send invoices each cycle — customer pays via link/UPI'],
-              ['auto_debit', 'Auto-debit', 'Razorpay e-mandate — INR only, charges automatically'],
-            ] as const).map(([k, label, hint]) => {
+              ['manual', 'Manual', 'Send invoices each cycle — customer pays via link/UPI', false],
+              ['auto_debit', 'Auto-debit', 'Razorpay e-mandate — coming in the next version', true],
+            ] as const).map(([k, label, hint, soon]) => {
               const sel = collection === k
               return (
                 <button
                   key={k}
                   type="button"
-                  onClick={() => setCollection(k)}
+                  disabled={soon}
+                  onClick={() => !soon && setCollection(k)}
                   style={{
                     flex: 1,
                     padding: '10px 12px',
                     borderRadius: 10,
-                    cursor: 'pointer',
+                    cursor: soon ? 'not-allowed' : 'pointer',
                     textAlign: 'left',
+                    opacity: soon ? 0.6 : 1,
                     background: sel ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
                     border: `1px solid ${sel ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`,
                   }}
                 >
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: sel ? '#fff' : 'var(--text-2)' }}>{label}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, color: sel ? '#fff' : 'var(--text-2)' }}>{label}</span>
+                    {soon && <Pill tone="yellow">Soon</Pill>}
+                  </div>
                   <div className="t-mute" style={{ fontSize: 10.5, marginTop: 2 }}>{hint}</div>
                 </button>
               )
@@ -522,16 +529,16 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
                 </div>
               )}
               {!['CANCELLED', 'EXPIRED'].includes(sub.status) && (
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   {m.collection_mode !== 'auto_debit' ? (
-                    <Btn
-                      kind="primary"
-                      size="sm"
-                      disabled={enable.isPending}
-                      onClick={() => act(() => enable.mutateAsync(sub.id), 'Auto-debit mandate requested — customer emailed')}
-                    >
-                      {enable.isPending ? 'Setting up…' : 'Enable auto-debit'}
-                    </Btn>
+                    // Ships next version — disabled here; Disable/Copy below
+                    // stay live so legacy auto-debit profiles remain manageable.
+                    <>
+                      <Btn kind="secondary" size="sm" disabled>
+                        Enable auto-debit
+                      </Btn>
+                      <Pill tone="yellow">Coming soon</Pill>
+                    </>
                   ) : (
                     <Btn
                       kind="ghost"
@@ -547,7 +554,7 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
             </>
           ) : null}
           <p className="t-caption" style={{ margin: 0 }}>
-            Auto-debit needs your Razorpay account connected (Invoicing → Settings) · INR profiles only.
+            Auto-debit via Razorpay e-mandate is coming in the next version.
           </p>
         </div>
 

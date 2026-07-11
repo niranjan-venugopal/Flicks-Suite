@@ -16,7 +16,13 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 60 * 1000,
+            // Perf pass (2026-07-11): cached data serves navigations instantly.
+            // 5-min staleness is fine for HRMS/invoicing lists; mutations
+            // invalidate their own keys, and focus-refetch was causing a
+            // spinner storm on every tab/window switch.
+            staleTime: 5 * 60 * 1000,
+            gcTime: 10 * 60 * 1000,
+            refetchOnWindowFocus: false,
             retry: 1,
           },
         },

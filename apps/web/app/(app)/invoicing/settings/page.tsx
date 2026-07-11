@@ -319,19 +319,24 @@ export default function InvoicingSettingsPage() {
               </Field>
             </div>
           </div>
-          <ToggleRow label="Razorpay" sub="Cards · UPI · Netbanking · international">
+          <ToggleRow label="Razorpay" sub="Online payments via Razorpay are coming in the next version.">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Pill tone={settings?.razorpay_connected ? 'green' : ''} dot={settings?.razorpay_connected}>
-                {settings?.razorpay_connected ? 'Connected' : 'Not connected'}
-              </Pill>
               {settings?.razorpay_connected ? (
-                <Btn kind="secondary" size="sm" onClick={disconnectRazorpay} disabled={disconnectRzp.isPending}>
-                  Disconnect
-                </Btn>
+                // Legacy connected tenants keep visibility + the exit door.
+                <>
+                  <Pill tone="green" dot>Connected</Pill>
+                  <Btn kind="secondary" size="sm" onClick={disconnectRazorpay} disabled={disconnectRzp.isPending}>
+                    Disconnect
+                  </Btn>
+                </>
               ) : (
-                <Btn kind="primary" size="sm" onClick={startRazorpayConnect} disabled={connectRzp.isPending}>
-                  {connectRzp.isPending ? 'Redirecting…' : 'Connect with Razorpay'}
-                </Btn>
+                // This version ships without the tenant-track integration.
+                <>
+                  <Pill tone="yellow" dot>Coming soon</Pill>
+                  <Btn kind="secondary" size="sm" disabled>
+                    Connect with Razorpay
+                  </Btn>
+                </>
               )}
             </div>
           </ToggleRow>

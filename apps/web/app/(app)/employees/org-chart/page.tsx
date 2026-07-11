@@ -82,47 +82,30 @@ function NodeCard({
   )
 }
 
-const Connector = ({ h = 24 }: { h?: number }) => (
-  <div style={{ width: 1.5, height: h, background: 'var(--bord-2)' }} />
-)
-
-/** Recursive top-down tree: node on top, a vertical drop, then children in a row. */
-function TreeNode({ node, depth }: { node: OrgNode; depth: number }) {
-  const tone = depth === 1 ? BRANCH_TONES[0] : undefined
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-      <NodeCard node={node} big={depth === 0} tone={tone} />
-      {node.children.length > 0 && (
-        <>
-          <Connector h={depth === 0 ? 24 : 20} />
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', justifyContent: 'center' }}>
-            {node.children.map((child, i) => (
-              <BranchNode key={child.id} node={child} depth={depth + 1} branchIndex={i} />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-/** Like TreeNode but colours the branch head by its sibling index. */
-function BranchNode({ node, depth, branchIndex }: { node: OrgNode; depth: number; branchIndex: number }) {
+/**
+ * Recursive top-down tree node. Connector elbows come from the `.org-tree`
+ * CSS in globals.css (nested <ul>/<li> brackets — visible var(--bord-3)
+ * lines grouping every children-row under its parent). Depth-1 heads keep
+ * their branch tone; deeper nodes inherit the branch's index.
+ */
+function TreeLi({ node, depth, branchIndex = 0 }: { node: OrgNode; depth: number; branchIndex?: number }) {
   const tone = depth === 1 ? BRANCH_TONES[branchIndex % BRANCH_TONES.length] : undefined
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-      <NodeCard node={node} tone={tone} />
+    <li>
+      <NodeCard node={node} big={depth === 0} tone={tone} />
       {node.children.length > 0 && (
-        <>
-          <Connector h={20} />
-          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'center' }}>
-            {node.children.map((child) => (
-              <BranchNode key={child.id} node={child} depth={depth + 1} branchIndex={branchIndex} />
-            ))}
-          </div>
-        </>
+        <ul>
+          {node.children.map((child, i) => (
+            <TreeLi
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              branchIndex={depth === 0 ? i : branchIndex}
+            />
+          ))}
+        </ul>
       )}
-    </div>
+    </li>
   )
 }
 
@@ -175,17 +158,17 @@ export default function OrgChartPage() {
               </p>
             </div>
           ) : (
-            <div style={{ minWidth: 'min-content', margin: '0 auto', padding: '12px 8px' }}>
+            <div className="org-tree" style={{ minWidth: 'min-content', margin: '0 auto', padding: '12px 8px' }}>
               {tree.length > 1 && (
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
                   <Pill tone="blue">{tree.length} top-level (no manager assigned)</Pill>
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 40, alignItems: 'flex-start', justifyContent: 'center' }}>
+              <ul>
                 {tree.map((root) => (
-                  <TreeNode key={root.id} node={root} depth={0} />
+                  <TreeLi key={root.id} node={root} depth={0} />
                 ))}
-              </div>
+              </ul>
             </div>
           )}
         </div>

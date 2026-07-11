@@ -39,6 +39,18 @@ const securityHeaders = [
 
 const config: NextConfig = {
   images: { domains: ['files.flickssuite.com'] },
+  // Perf: rewrite barrel imports (icons, radix) to per-module paths so route
+  // chunks only carry the icons/components they render — faster dev compiles
+  // and smaller production bundles.
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-select',
+      '@radix-ui/react-popover',
+    ],
+  },
   // Expose the build's commit SHA to the browser bundle so client-side Sentry
   // events carry a release (§9) — Vercel's own SHA isn't NEXT_PUBLIC by default.
   env: {

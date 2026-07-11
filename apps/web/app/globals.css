@@ -243,3 +243,73 @@ button { background: none; border: none; cursor: pointer; }
 @keyframes skel-shimmer {
   to { background-position: -200% 0; }
 }
+
+/* ─── Org-chart tree connectors (elbow brackets, v1 UX pass) ────────────────── */
+/* Classic nested-ul tree: each <li> draws half the horizontal bracket plus a
+   vertical drop; the parent's <ul>::before draws the stem down from the card.
+   --bord-3 (22% white) keeps lines clearly visible on the dark surface. */
+.org-tree ul {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  position: relative;
+  padding: 26px 0 0;
+  margin: 0;
+  list-style: none;
+}
+.org-tree li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding: 26px 10px 0;
+  list-style: none;
+}
+/* left half of the bracket */
+.org-tree li::before,
+.org-tree li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 26px;
+  border-top: 1.5px solid var(--bord-3);
+}
+/* right half + this child's vertical drop */
+.org-tree li::after {
+  right: auto;
+  left: 50%;
+  border-left: 1.5px solid var(--bord-3);
+}
+/* an only child gets a single straight stem, no bracket */
+.org-tree li:only-child::before { display: none; }
+.org-tree li:only-child::after {
+  width: 0;
+  border-top: none;
+  border-radius: 0;
+}
+/* outer bracket ends: trim the outward halves, round the elbows */
+.org-tree li:first-child::before,
+.org-tree li:last-child::after { border-top: none; }
+.org-tree li:last-child::before {
+  border-right: 1.5px solid var(--bord-3);
+  border-radius: 0 8px 0 0;
+}
+.org-tree li:first-child::after { border-radius: 8px 0 0 0; }
+/* stem from the parent card down into the bracket */
+.org-tree ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 26px;
+  border-left: 1.5px solid var(--bord-3);
+}
+/* top-level roots: no connectors above, wider spacing between trees */
+.org-tree > ul { padding-top: 0; gap: 40px; }
+.org-tree > ul::before { display: none; }
+.org-tree > ul > li { padding-top: 0; }
+.org-tree > ul > li::before,
+.org-tree > ul > li::after { display: none; }
