@@ -50,6 +50,7 @@ export const Icon = {
   search: makeIcon(<><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></>),
   inbox: makeIcon(<><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5 4h14l3 8v6a2 2 0 01-2 2H4a2 2 0 01-2-2v-6z" /></>),
   chart: makeIcon(<><path d="M3 21h18M5 19V9M10 19V5M15 19v-7M20 19v-4" /></>),
+  funnel: makeIcon(<><path d="M3 5h18l-7 8v6l-4 2v-8z" /></>),
   shield: makeIcon(<><path d="M12 2L4 5v7c0 5.5 3.5 9 8 10 4.5-1 8-4.5 8-10V5z" /></>),
   out: makeIcon(<><path d="M9 12h12M18 9l3 3-3 3" /><path d="M16 4H5a2 2 0 00-2 2v12a2 2 0 002 2h11" /></>),
   // Action

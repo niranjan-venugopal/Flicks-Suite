@@ -65,6 +65,18 @@ const ADMIN_NAV: NavSection[] = [
         ],
       },
       {
+        id: 'crm',
+        label: 'CRM',
+        icon: 'funnel',
+        // CRM_SUBITEMS from the v5 prototype (shell-crm.jsx). Deals/Leads/etc.
+        // arrive in later sprints; Contacts & Companies ship in Sprint 25.
+        children: [
+          { href: '/crm', label: 'Overview' },
+          { href: '/crm/contacts', label: 'Contacts' },
+          { href: '/crm/companies', label: 'Companies' },
+        ],
+      },
+      {
         id: 'invoicing',
         label: 'Invoicing',
         icon: 'wallet',
