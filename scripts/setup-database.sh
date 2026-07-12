@@ -173,6 +173,7 @@ REVOKE SELECT, UPDATE, DELETE ON domain_events FROM "${APP_ROLE}";        -- 003
 REVOKE ALL ON api_keys FROM "${APP_ROLE}";                                -- 0030 service-role only
 REVOKE ALL ON webhook_endpoints FROM "${APP_ROLE}";                       -- 0030 service-role only
 REVOKE ALL ON webhook_deliveries FROM "${APP_ROLE}";                      -- 0030 service-role only
+REVOKE INSERT, UPDATE, DELETE ON fx_rates FROM "${APP_ROLE}";             -- 0032 read-only reference
 SQL
   echo "  ✓ migration lockdowns (REVOKEs) re-asserted after the blanket grant"
 fi
