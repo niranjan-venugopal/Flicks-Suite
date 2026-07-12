@@ -28,6 +28,9 @@ export * from './invoicing';
 // ─── Platform evolution: domain events, API keys, webhooks (v5 §2/§11) ───────
 export * from './events';
 
+// ─── CRM: directory kernel, deals, activities, etc. (v5 §3+) ─────────────────
+export * from './crm';
+
 // ─── Combined schema object (for Drizzle client) ─────────────────────────────
 import * as platformSchema from './platform';
 import * as authSchema from './auth';
@@ -39,6 +42,7 @@ import * as famSchema from './fam';
 import * as notificationsSchema from './notifications';
 import * as invoicingSchema from './invoicing';
 import * as eventsSchema from './events';
+import * as crmSchema from './crm';
 
 export const schema = {
   ...platformSchema,
@@ -51,6 +55,7 @@ export const schema = {
   ...notificationsSchema,
   ...invoicingSchema,
   ...eventsSchema,
+  ...crmSchema,
 } as const;
 
 export type Schema = typeof schema;

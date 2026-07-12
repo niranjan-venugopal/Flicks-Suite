@@ -580,6 +580,63 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_delivery_endpoint_event
 ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON webhook_deliveries FROM flicks_app;
+
+-- CRM directory kernel — matches packages/db/drizzle/0031_directory_kernel.sql.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS citext;
+CREATE TABLE IF NOT EXISTS directory_companies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name text NOT NULL, domain citext, website text, industry text, size_band text, phone text,
+  address_line1 text, address_line2 text, city text, state text, postal_code text, country_code char(2),
+  owner_user_id uuid REFERENCES users(id) ON DELETE SET NULL, source text, last_activity_at timestamptz,
+  custom jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL, updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dir_company_domain ON directory_companies (tenant_id, domain)
+  WHERE domain IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dir_company_name ON directory_companies USING gin (to_tsvector('simple', name));
+CREATE INDEX IF NOT EXISTS idx_dir_company_name_trgm ON directory_companies USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_dir_company_tenant ON directory_companies (tenant_id) WHERE deleted_at IS NULL;
+ALTER TABLE directory_companies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE directory_companies FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_directory_companies ON directory_companies;
+CREATE POLICY tenant_isolation_directory_companies ON directory_companies FOR ALL
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT SELECT, INSERT, UPDATE, DELETE ON directory_companies TO flicks_app;
+CREATE TABLE IF NOT EXISTS directory_people (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  first_name text, last_name text,
+  display_name text GENERATED ALWAYS AS
+    (COALESCE(NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),''), first_name, last_name)) STORED,
+  email citext, secondary_emails citext[], phone text, secondary_phones text[], title text,
+  company_id uuid REFERENCES directory_companies(id) ON DELETE SET NULL,
+  owner_user_id uuid REFERENCES users(id) ON DELETE SET NULL, source text, last_activity_at timestamptz,
+  custom jsonb NOT NULL DEFAULT '{}', created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL, updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_dir_people_email ON directory_people (tenant_id, email)
+  WHERE email IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_dir_people_company ON directory_people (tenant_id, company_id);
+CREATE INDEX IF NOT EXISTS idx_dir_people_name ON directory_people
+  USING gin (to_tsvector('simple', coalesce(first_name,'')||' '||coalesce(last_name,'')));
+CREATE INDEX IF NOT EXISTS idx_dir_people_name_trgm ON directory_people
+  USING gin ((coalesce(first_name,'')||' '||coalesce(last_name,'')) gin_trgm_ops);
+ALTER TABLE directory_people ENABLE ROW LEVEL SECURITY;
+ALTER TABLE directory_people FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation_directory_people ON directory_people;
+CREATE POLICY tenant_isolation_directory_people ON directory_people FOR ALL
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT SELECT, INSERT, UPDATE, DELETE ON directory_people TO flicks_app;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS directory_company_id uuid REFERENCES directory_companies(id);
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS directory_person_id  uuid REFERENCES directory_people(id);
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"
