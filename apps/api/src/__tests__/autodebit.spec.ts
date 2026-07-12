@@ -99,6 +99,7 @@ beforeAll(async () => {
     config,
     notifications,
     {} as never,
+    { publish: async () => null } as never, // domain events — covered in platform-evolution.spec
   );
   mandates = new SubscriptionMandatesService(
     dbAdmin as never,

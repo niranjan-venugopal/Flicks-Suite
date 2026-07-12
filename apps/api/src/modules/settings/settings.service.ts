@@ -27,6 +27,7 @@ import {
 import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { MediaService } from '../media/media.service';
+import { DomainEventsService } from '../../core/events/domain-events.service';
 import type {
   CreateDepartmentDto,
   UpdateDepartmentDto,
@@ -52,6 +53,7 @@ export class SettingsService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
     private readonly mediaService: MediaService,
+    private readonly domainEvents: DomainEventsService,
   ) {}
 
   // ─── Organization (tenant profile) ─────────────────────────────────────────
@@ -1200,6 +1202,16 @@ export class SettingsService {
       beforeState: { status: before.status },
       afterState: { status: after.status },
     });
+
+    if (status === 'deactivated') {
+      // PRD v5 §19.7 — the CRM offboarding-reassign guard subscribes to this.
+      await this.domainEvents.publish({
+        name: 'member.deactivated',
+        tenantId,
+        actorUserId,
+        payload: { membership_id: membershipId, user_id: after.user_id },
+      });
+    }
 
     return after;
   }

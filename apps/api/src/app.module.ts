@@ -45,6 +45,8 @@ import { PresenceModule } from './modules/presence/presence.module';
 import { EventsModule } from './modules/events/events.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { DomainEventsModule } from './core/events/events.module';
+import { PublicApiModule } from './modules/public-api/public-api.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
 
@@ -159,6 +161,9 @@ import { TrustJobs } from './jobs/trust.jobs';
     FeedbackModule,
     BillingStateModule,
     BillingModule,
+    // PRD v5 §2/§11 — domain-event outbox (global) + public API framework.
+    DomainEventsModule,
+    PublicApiModule,
   ],
   controllers: [HealthController],
   providers: [

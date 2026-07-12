@@ -28,6 +28,7 @@ import type {
   InvoiceListQueryDto,
   RecordPaymentDto,
 } from './dto/invoicing.dto';
+import { DomainEventsService } from '../../core/events/domain-events.service';
 
 /**
  * Invoices service (PRD §6.1–6.5).
@@ -49,6 +50,7 @@ export class InvoicesService {
     private readonly config: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly orgFinancial: OrgFinancialService,
+    private readonly domainEvents: DomainEventsService,
   ) {}
 
   // ─── list / get ────────────────────────────────────────────────────────────
@@ -273,6 +275,18 @@ export class InvoicesService {
       resourceType: 'invoice',
       resourceId: created.id,
       afterState: created as unknown as Record<string, unknown>,
+    });
+    // PRD v5 §2.2 / Appendix A — CRM subscribes for the deal timeline.
+    await this.domainEvents.publish({
+      name: 'invoice.created',
+      tenantId,
+      actorUserId: userId,
+      payload: {
+        invoice_id: created.id,
+        document_type: created.document_type,
+        currency: created.currency,
+        total_amount: created.total_amount,
+      },
     });
     return { data: created };
   }
@@ -671,6 +685,16 @@ export class InvoicesService {
       resourceId: id,
       metadata: { to: result.customer.email, viewUrl },
     });
+    await this.domainEvents.publish({
+      name: 'invoice.sent',
+      tenantId,
+      actorUserId: userId,
+      payload: {
+        invoice_id: id,
+        currency: result.invoice.currency,
+        total_amount: result.invoice.total_amount,
+      },
+    });
     return { data: result.invoice, meta: { public_url: viewUrl } };
   }
 
@@ -809,6 +833,21 @@ export class InvoicesService {
         overpaid: result.overpaid,
       },
     });
+    // invoice.paid fires only on the transition to fully PAID (not on partials)
+    // — CRM echoes it onto the deal timeline (PRD v5 §4.4).
+    if (result.invoice.status === 'PAID') {
+      await this.domainEvents.publish({
+        name: 'invoice.paid',
+        tenantId,
+        actorUserId: userId,
+        payload: {
+          invoice_id: id,
+          currency: result.invoice.currency,
+          total_amount: result.invoice.total_amount,
+          payment_source: source,
+        },
+      });
+    }
     return {
       data: result.payment,
       meta: { invoice_status: result.invoice.status, overpaid: result.overpaid },

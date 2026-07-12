@@ -494,6 +494,90 @@ UPDATE subscription_charge_attempts SET status = 'created'  WHERE status = 'pend
 ALTER TABLE subscription_charge_attempts DROP CONSTRAINT IF EXISTS subscription_charge_attempts_status_check;
 ALTER TABLE subscription_charge_attempts ADD  CONSTRAINT subscription_charge_attempts_status_check
   CHECK (status IN ('created','captured','failed'));
+
+-- platform evolution: domain-event outbox + API keys + webhooks —
+-- matches packages/db/drizzle/0030_platform_evolution.sql (PRD v5 §2/§11).
+CREATE TABLE IF NOT EXISTS domain_events (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         uuid REFERENCES tenants(id) ON DELETE CASCADE,
+  event_name        text NOT NULL,
+  actor_user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
+  payload           jsonb NOT NULL DEFAULT '{}',
+  occurred_at       timestamptz NOT NULL DEFAULT now(),
+  dispatched_at     timestamptz,
+  dispatch_attempts smallint NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_de_undispatched
+  ON domain_events (occurred_at) WHERE dispatched_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_de_tenant_name_time
+  ON domain_events (tenant_id, event_name, occurred_at DESC);
+ALTER TABLE domain_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE domain_events FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS domain_events_tenant_insert ON domain_events;
+CREATE POLICY domain_events_tenant_insert ON domain_events
+  FOR INSERT WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+GRANT INSERT ON domain_events TO flicks_app;
+REVOKE SELECT, UPDATE, DELETE ON domain_events FROM flicks_app;
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id    uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name         text NOT NULL,
+  key_hash     text NOT NULL UNIQUE,
+  key_prefix   text NOT NULL,
+  scopes       text[] NOT NULL DEFAULT '{}',
+  last_used_at timestamptz,
+  revoked_at   timestamptz,
+  created_by   uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys (tenant_id, created_at DESC);
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON api_keys FROM flicks_app;
+
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+  id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id            uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  url                  text NOT NULL,
+  secret_encrypted     text NOT NULL,
+  events               text[] NOT NULL DEFAULT '{}',
+  active               boolean NOT NULL DEFAULT true,
+  consecutive_failures integer NOT NULL DEFAULT 0,
+  disabled_at          timestamptz,
+  disabled_reason      text,
+  created_by           uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  deleted_at           timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_endpoints_tenant
+  ON webhook_endpoints (tenant_id) WHERE deleted_at IS NULL;
+ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_endpoints FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON webhook_endpoints FROM flicks_app;
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  endpoint_id      uuid NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+  event_id         uuid,
+  event_name       text NOT NULL,
+  status           text NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','success','failed','exhausted')),
+  attempts         smallint NOT NULL DEFAULT 0,
+  last_status_code integer,
+  last_error       text,
+  delivered_at     timestamptz,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint
+  ON webhook_deliveries (endpoint_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_tenant
+  ON webhook_deliveries (tenant_id, created_at DESC);
+ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON webhook_deliveries FROM flicks_app;
 SCHEMA_SQL
 
 echo "  ↳ seeding demo data"

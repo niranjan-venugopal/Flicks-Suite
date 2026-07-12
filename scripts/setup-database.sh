@@ -169,6 +169,10 @@ REVOKE DELETE ON nps_responses FROM "${APP_ROLE}";                        -- 002
 REVOKE UPDATE, DELETE ON subscription_charge_attempts FROM "${APP_ROLE}"; -- 0027 ledger
 REVOKE ALL ON coupon_codes FROM "${APP_ROLE}";                            -- 0028 service-role only
 REVOKE INSERT, UPDATE, DELETE ON coupon_redemptions FROM "${APP_ROLE}";   -- 0028 read-only
+REVOKE SELECT, UPDATE, DELETE ON domain_events FROM "${APP_ROLE}";        -- 0030 outbox: INSERT-only
+REVOKE ALL ON api_keys FROM "${APP_ROLE}";                                -- 0030 service-role only
+REVOKE ALL ON webhook_endpoints FROM "${APP_ROLE}";                       -- 0030 service-role only
+REVOKE ALL ON webhook_deliveries FROM "${APP_ROLE}";                      -- 0030 service-role only
 SQL
   echo "  ✓ migration lockdowns (REVOKEs) re-asserted after the blanket grant"
 fi

@@ -82,11 +82,14 @@ async function bootstrap() {
   app.use(cookieParser());
 
   // Global prefix — /healthz and /readyz stay at the root so monitor/probe URLs
-  // are clean (e.g. https://api.flickssuite.com/healthz).
+  // are clean (e.g. https://api.flickssuite.com/healthz). The public API
+  // (PRD v5 §11) carries its own '/api/public/v1' path on its controllers, so
+  // it is excluded here rather than double-prefixed.
   app.setGlobalPrefix('api/v1', {
     exclude: [
       { path: 'healthz', method: RequestMethod.GET },
       { path: 'readyz', method: RequestMethod.GET },
+      { path: 'api/public/{*splat}', method: RequestMethod.ALL },
     ],
   });
 
@@ -141,12 +144,40 @@ async function bootstrap() {
     },
   });
 
+  // Public API docs (PRD v5 §11) — customer-facing OpenAPI, scoped to the
+  // public-api module only so internal app routes never leak into it.
+  const { PublicApiModule } = await import('./modules/public-api/public-api.module');
+  const publicConfig = new DocumentBuilder()
+    .setTitle('Flicks Suite Public API')
+    .setDescription(
+      'Key-authenticated REST API. Authenticate with `Authorization: Bearer flk_live_…`. Rate limit: 120 requests/minute per key.',
+    )
+    .setVersion('1.0')
+    .addBearerAuth({ type: 'http', scheme: 'bearer' }, 'api-key')
+    .build();
+  const publicDoc = SwaggerModule.createDocument(app, publicConfig, {
+    include: [PublicApiModule],
+  });
+  SwaggerModule.setup('api/public/docs', app, publicDoc, {
+    swaggerOptions: { persistAuthorization: true },
+  });
+
   // Shutdown hooks
   app.enableShutdownHooks();
 
-  await app.listen(port);
-  logger.log(`Application running on port ${port} [${nodeEnv}]`);
-  logger.log(`Swagger docs: http://localhost:${port}/api/docs`);
+  // Worker split (PRD v5 §2.5): WORKER_MODE=true runs the SAME app image as a
+  // queue consumer — BullMQ processors + the outbox dispatcher activate (see
+  // isWorkerMode() gates) and it listens on WORKER_PORT only for health
+  // probes. The API process keeps the request path free of background work.
+  const workerMode = process.env.WORKER_MODE === 'true';
+  const listenPort = workerMode
+    ? configService.get<number>('WORKER_PORT', 4001)
+    : port;
+  await app.listen(listenPort);
+  logger.log(
+    `${workerMode ? 'WORKER' : 'API'} process running on port ${listenPort} [${nodeEnv}]`,
+  );
+  if (!workerMode) logger.log(`Swagger docs: http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

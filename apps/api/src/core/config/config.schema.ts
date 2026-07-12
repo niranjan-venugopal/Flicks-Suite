@@ -101,4 +101,14 @@ export const configValidationSchema = Joi.object({
   R2_INVOICING_BUCKET: Joi.string().default('flicks-suite-invoicing'),
   // Tenant-branded public invoice base, e.g. https://{slug}.flickssuite.com.
   PUBLIC_INVOICE_BASE_URL: Joi.string().uri().default('http://localhost:3000'),
+
+  // ─── PRD v5 (CRM + architecture evolution) ─────────────────────────────────
+  // Worker split (§2.5): WORKER_MODE=true turns this image into the queue
+  // consumer (outbox dispatcher + BullMQ processors) listening on WORKER_PORT.
+  WORKER_MODE: Joi.string().valid('true', 'false').default('false'),
+  WORKER_PORT: Joi.number().default(4001),
+  // Per-purpose AES-256-GCM keys (§13). Optional in dev — AppCryptoService
+  // passes through plaintext when unset (mirrors INVOICING_SECRET_ENC_KEY).
+  WEBHOOK_SECRET_ENC_KEY: Joi.string().allow('').optional(),
+  EMAIL_TOKEN_KEY: Joi.string().allow('').optional(),
 });

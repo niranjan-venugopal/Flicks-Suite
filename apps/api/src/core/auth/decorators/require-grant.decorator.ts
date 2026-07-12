@@ -12,6 +12,7 @@ import { SetMetadata } from '@nestjs/common';
  */
 export type GrantModule =
   | 'invoicing'
+  | 'crm'
   | 'reports'
   | 'org_financial'
   | 'payroll'

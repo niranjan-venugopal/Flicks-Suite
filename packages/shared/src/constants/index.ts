@@ -358,3 +358,46 @@ export const PLATFORM_PLAN = {
 
 /** Days of grace after a failed platform charge before the workspace locks. */
 export const BILLING_GRACE_DAYS = 7;
+
+// ─── PRD v5: domain events + reserved slugs + public API ─────────────────────
+
+/**
+ * Domain-event catalog (PRD v5 Appendix A). The outbox (`domain_events`)
+ * accepts only names from this list — a typo'd publisher fails fast instead of
+ * silently emitting an event nobody subscribes to. Payloads: ids/enums/amounts
+ * only, never PII or message bodies.
+ */
+export const DOMAIN_EVENTS = [
+  // CRM (published from Sprint 25 onward)
+  'crm.lead.created', 'crm.lead.converted', 'crm.lead.discarded',
+  'crm.contact.created', 'crm.contact.updated', 'crm.contact.merged',
+  'crm.company.created', 'crm.company.updated', 'crm.company.merged',
+  'crm.deal.created', 'crm.deal.updated', 'crm.deal.stage_changed',
+  'crm.deal.won', 'crm.deal.lost', 'crm.deal.reopened', 'crm.deal.invoice_created',
+  'crm.activity.created', 'crm.activity.completed', 'crm.activity.overdue',
+  'crm.email.queued', 'crm.email.sent', 'crm.email.delivered', 'crm.email.opened',
+  'crm.email.clicked', 'crm.email.replied', 'crm.email.bounced',
+  'crm.sequence.enrolled', 'crm.sequence.step_sent', 'crm.sequence.exited', 'crm.sequence.completed',
+  'crm.form.submitted', 'crm.import.completed',
+  'crm.workflow.run_completed', 'crm.workflow.run_failed',
+  // Existing modules (Sprint 24 publishers)
+  'invoice.created', 'invoice.sent', 'invoice.paid', 'invoice.quote_accepted',
+  'member.deactivated',
+] as const;
+export type DomainEventName = (typeof DOMAIN_EVENTS)[number];
+
+/**
+ * Slugs that can never become tenant subdomains (PRD v5 §1) — they collide
+ * with the platform's own hosts and public surfaces. Enforced at signup and
+ * on slug change; existing tenants audited once during rollout.
+ */
+export const RESERVED_TENANT_SLUGS = [
+  'app', 'api', 'www', 'mail', 'in', 'admin', 'status', 'docs', 'help',
+  'support', 'assets', 'cdn', 'static', 'blog', 'billing', 'legal',
+] as const;
+
+/** Public-API key scopes (PRD v5 §11). */
+export const API_KEY_SCOPES = [
+  'crm:read', 'crm:write', 'directory:read', 'directory:write', 'webhooks:manage',
+] as const;
+export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];

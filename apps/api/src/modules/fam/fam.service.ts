@@ -1678,9 +1678,11 @@ export class FamService {
   // Service-role only. FAM never reads invoice CONTENT here — only enablement,
   // membership/seat metadata, and anonymized aggregates.
 
-  private static readonly MANAGED_MODULES = ['invoicing', 'payroll', 'expenses'];
+  private static readonly MANAGED_MODULES = ['invoicing', 'crm', 'payroll', 'expenses'];
+  /** ON when no toggle row exists (PRD v5 §13: crm ships default-enabled). */
+  private static readonly DEFAULT_ENABLED = new Set(['invoicing', 'crm']);
 
-  /** Per-module enablement for one tenant. Invoicing defaults ENABLED. */
+  /** Per-module enablement for one tenant. Invoicing + CRM default ENABLED. */
   async getTenantModules(tenantId: string) {
     const rows = await this.dbAdmin
       .select({
@@ -1697,9 +1699,9 @@ export class FamService {
         const row = byModule.get(module);
         return {
           module,
-          // Invoicing is on by default; payroll/expenses are reserved (off).
-          enabled: row ? row.enabled : module === 'invoicing',
-          live: module === 'invoicing',
+          // Invoicing/CRM on by default; payroll/expenses are reserved (off).
+          enabled: row ? row.enabled : FamService.DEFAULT_ENABLED.has(module),
+          live: FamService.DEFAULT_ENABLED.has(module),
           updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : null,
         };
       }),

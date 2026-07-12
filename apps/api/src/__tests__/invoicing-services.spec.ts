@@ -163,12 +163,15 @@ const notificationsStub = {
 // Generation-job reconciliation hook — only fires for auto_debit profiles;
 // these suites drive manual ones (the real path is covered in autodebit.spec).
 const mandatesStub = { settleUnreconciledCharge: async () => false };
+// Sprint 24: InvoicesService now publishes domain events; stub here — the
+// real outbox path is covered in platform-evolution.spec.ts.
+const domainEventsStub = { publish: async () => null } as never;
 
 import { OrgFinancialService } from '../modules/org-financial/org-financial.service';
 const orgFinancial = new OrgFinancialService(dbSvc, audit);
 
 describe('Invoicing services (Sprint 3 — invoices)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -426,7 +429,7 @@ const rawReq = (raw?: string) =>
   ({ rawBody: raw ? Buffer.from(raw) : undefined }) as never;
 
 describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
   let tenantId: string;
   let userId: string;
@@ -612,7 +615,7 @@ describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
 import { PublicInvoiceService as PubSvc5 } from '../modules/invoicing/public-invoice.service';
 
 describe('Org financial + bank accounts (Sprint 5)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
   let tenantId: string;
   let userId: string;
@@ -871,7 +874,7 @@ import {
 } from '@flicks/db/schema';
 
 describe('Invoicing services (Sprint 6 — notes/ledger/reminders/reports)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   const notesSvc = new NotesService(dbSvc, audit, numbering);
   const reportsSvc = new InvReportsService(dbSvc, audit);
   const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any, mandatesStub as any);
@@ -1086,7 +1089,7 @@ import {
 } from '@flicks/db/schema';
 
 describe('Invoicing services (Sprint 7 — subscriptions)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   const subsSvc = new SubscriptionsService(dbSvc, audit, configStub as any);
   const jobs = new InvoicingJobs(dbSvc, dbAdmin as any, notificationsStub as any, invoicesSvc, configStub as any, mandatesStub as any);
   let tenantId: string;
@@ -1963,7 +1966,7 @@ describe('FAM consented-debug (Sprint 10 §E)', () => {
 // ─── Sprint 11 §3: reports go global — per-currency + India-gated GST ─────────
 describe('Reports — per-currency totals + India gate (Sprint 11 §3)', () => {
   const reports = new InvReportsService(dbSvc, audit);
-  const invSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -2029,7 +2032,7 @@ import { razorpayOrders as roTable, invoicingSettings as isTable } from '@flicks
 import * as nodeCrypto from 'crypto';
 
 describe('Razorpay live payments (Sprint 15)', () => {
-  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial);
+  const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
   const WEBHOOK_SECRET = 'whsec_test_sprint15';
   const configWithSecret = {
     get: (key: string, fallback?: unknown) =>

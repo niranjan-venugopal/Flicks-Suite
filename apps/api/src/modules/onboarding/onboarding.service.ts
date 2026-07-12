@@ -21,7 +21,7 @@ import {
   subscriptions,
 } from '@flicks/db/schema';
 import { ConfigService } from '@nestjs/config';
-import { TRIAL_DAYS, PLATFORM_PLAN } from '@flicks/shared/constants';
+import { TRIAL_DAYS, PLATFORM_PLAN, RESERVED_TENANT_SLUGS } from '@flicks/shared/constants';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -187,6 +187,11 @@ export class OnboardingService {
   ) {}
 
   async checkSlug(slug: string): Promise<{ available: boolean }> {
+    // Reserved platform hosts (PRD v5 §1) can never become tenant subdomains —
+    // {slug}.flickssuite.com would collide with app/api/mail/in/admin/etc.
+    if ((RESERVED_TENANT_SLUGS as readonly string[]).includes(slug.toLowerCase())) {
+      return { available: false };
+    }
     const existing = await this.db
       .select({ id: tenants.id })
       .from(tenants)

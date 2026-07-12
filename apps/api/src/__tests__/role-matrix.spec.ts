@@ -40,7 +40,8 @@ const members = new MembersService(dbSvc, dbAdmin as never, audit, notifications
 const numbering = new NumberingService(dbSvc, audit);
 const customers = new CustomersService(dbSvc, audit);
 const orgFinancial = new OrgFinancialService(dbSvc, audit);
-const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub as never, orgFinancial);
+const domainEventsStub = { publish: async () => null } as never;
+const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub as never, orgFinancial, domainEventsStub);
 
 /** Run the real guard for a requirement against a synthetic JWT. */
 const guard = new InvoicingGrantGuard(
