@@ -204,3 +204,18 @@ $seed$;
 INSERT INTO tenant_module_toggles (tenant_id, module, enabled)
 SELECT id, 'crm', true FROM tenants
 ON CONFLICT (tenant_id, module) DO NOTHING;
+
+-- ─── Deal→invoice idempotency guards (review finding M5) ──────────────────────
+-- Defense-in-depth so a repeated deal→invoice call (double-click, retry, race)
+-- can never fan out duplicates: at most ONE billing customer per directory link,
+-- and at most ONE invoice per deal. The service also short-circuits on the
+-- deal↔invoice back-link; these make the invariant true at the storage layer.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_company
+  ON customers (tenant_id, directory_company_id)
+  WHERE directory_company_id IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_person
+  ON customers (tenant_id, directory_person_id)
+  WHERE directory_person_id IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal
+  ON invoices (tenant_id, deal_id)
+  WHERE deal_id IS NOT NULL;

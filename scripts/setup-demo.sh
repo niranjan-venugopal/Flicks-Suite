@@ -708,6 +708,11 @@ CREATE TABLE IF NOT EXISTS deal_products (
 );
 CREATE INDEX IF NOT EXISTS idx_deal_products_deal ON deal_products (tenant_id, deal_id);
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deal_id uuid REFERENCES deals(id);
+-- Deal→invoice idempotency guards (review M5): one customer per directory link,
+-- one invoice per deal — repeated deal→invoice calls can never fan out dupes.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_company ON customers (tenant_id, directory_company_id) WHERE directory_company_id IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_person ON customers (tenant_id, directory_person_id) WHERE directory_person_id IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal ON invoices (tenant_id, deal_id) WHERE deal_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS tags (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   label text NOT NULL, color text, created_at timestamptz NOT NULL DEFAULT now()

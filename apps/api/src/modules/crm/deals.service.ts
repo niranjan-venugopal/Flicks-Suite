@@ -5,13 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   dealProducts,
   deals,
   dealStageHistory,
   directoryCompanies,
   directoryPeople,
+  memberships,
   pipelines,
   pipelineStages,
   tenants,
@@ -56,6 +57,51 @@ export class DealsService {
       .limit(1);
     if (!s) throw new BadRequestException('Stage not found in this pipeline');
     return s;
+  }
+
+  /**
+   * Validate that inbound foreign-key references belong to THIS tenant before we
+   * write them onto a deal. Postgres FK checks run as the table owner and bypass
+   * RLS, so a global-by-id FK (company_id, primary_person_id, owner_user_id)
+   * would happily accept another tenant's row id. These lookups run under the
+   * tenant transaction (RLS-scoped), so a cross-tenant id resolves to nothing
+   * and is rejected. `owner_user_id` must be a live (non-deactivated) member.
+   */
+  private async assertRefsInTenant(
+    tx: Db,
+    tenantId: string,
+    refs: { company_id?: string | null; primary_person_id?: string | null; owner_user_id?: string | null },
+  ): Promise<void> {
+    if (refs.company_id) {
+      const [c] = await tx
+        .select({ id: directoryCompanies.id })
+        .from(directoryCompanies)
+        .where(and(eq(directoryCompanies.id, refs.company_id), isNull(directoryCompanies.deleted_at)))
+        .limit(1);
+      if (!c) throw new BadRequestException('company_id does not belong to this workspace');
+    }
+    if (refs.primary_person_id) {
+      const [p] = await tx
+        .select({ id: directoryPeople.id })
+        .from(directoryPeople)
+        .where(and(eq(directoryPeople.id, refs.primary_person_id), isNull(directoryPeople.deleted_at)))
+        .limit(1);
+      if (!p) throw new BadRequestException('primary_person_id does not belong to this workspace');
+    }
+    if (refs.owner_user_id) {
+      const [m] = await tx
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.user_id, refs.owner_user_id),
+            ne(memberships.status, 'deactivated'),
+          ),
+        )
+        .limit(1);
+      if (!m) throw new BadRequestException('owner_user_id is not an active member of this workspace');
+    }
   }
 
   // ─── Board (kanban) ─────────────────────────────────────────────────────────
@@ -159,6 +205,14 @@ export class DealsService {
           : stages.find((s) => s.stage_type === 'open');
         if (!stage) throw new BadRequestException('No valid stage for this pipeline');
 
+        // Reject cross-tenant / dangling references before writing them (FK
+        // checks bypass RLS). owner defaults to the acting user, who is a member.
+        await this.assertRefsInTenant(tx, tenantId, {
+          company_id: dto.company_id ?? null,
+          primary_person_id: dto.primary_person_id ?? null,
+          owner_user_id: dto.owner_user_id ?? null,
+        });
+
         const currency = (dto.currency ?? base).toUpperCase();
         const amount = dto.value_amount ?? 0;
         const { fxRate, baseAmount } = await this.fx.toBase(amount, currency, base);
@@ -215,6 +269,13 @@ export class DealsService {
         const [existing] = await tx.select().from(deals).where(and(eq(deals.id, id), isNull(deals.deleted_at))).limit(1);
         if (!existing) throw new NotFoundException('Deal not found');
 
+        // Reject cross-tenant / dangling references before writing them.
+        await this.assertRefsInTenant(tx, tenantId, {
+          company_id: 'company_id' in dto ? (dto.company_id as string | null) : null,
+          primary_person_id: 'primary_person_id' in dto ? (dto.primary_person_id as string | null) : null,
+          owner_user_id: 'owner_user_id' in dto ? (dto.owner_user_id as string | null) : null,
+        });
+
         const patch: Record<string, unknown> = { updated_by: userId, updated_at: new Date() };
         const allowed = ['title', 'company_id', 'primary_person_id', 'owner_user_id', 'expected_close_date', 'source', 'custom'];
         for (const k of allowed) if (k in dto) patch[k] = dto[k];
@@ -253,7 +314,15 @@ export class DealsService {
     const result = await this.db.withTenant(
       tenantId,
       async (tx) => {
-        const [d] = await tx.select().from(deals).where(and(eq(deals.id, id), isNull(deals.deleted_at))).limit(1);
+        // Row-lock the deal so concurrent stage moves serialize: without FOR
+        // UPDATE, two moves under READ COMMITTED both read the same
+        // stage_entered_at and write conflicting history / a lost update.
+        const [d] = await tx
+          .select()
+          .from(deals)
+          .where(and(eq(deals.id, id), isNull(deals.deleted_at)))
+          .limit(1)
+          .for('update');
         if (!d) throw new NotFoundException('Deal not found');
         const target = await this.loadStage(tx, tenantId, dto.stage_id);
         if (target.pipeline_id !== d.pipeline_id) {
@@ -289,6 +358,9 @@ export class DealsService {
           patch.status = 'won';
           patch.won_at = now;
           patch.lost_at = null;
+          // Leaving Lost → clear the stale loss reason.
+          patch.lost_reason_id = null;
+          patch.lost_reason_note = null;
         } else if (target.stage_type === 'lost') {
           patch.status = 'lost';
           patch.lost_at = now;
@@ -299,6 +371,9 @@ export class DealsService {
           patch.status = 'open';
           patch.won_at = null;
           patch.lost_at = null;
+          // Reopened into an open stage → clear any prior loss reason.
+          patch.lost_reason_id = null;
+          patch.lost_reason_note = null;
         }
 
         const [updated] = await tx.update(deals).set(patch).where(eq(deals.id, id)).returning();
@@ -338,30 +413,62 @@ export class DealsService {
     if (!['owner', 'admin', 'manager'].includes(user.role)) {
       throw new ForbiddenException('Only managers and above can reopen a deal');
     }
-    return this.db.withTenant(
+    const result = await this.db.withTenant(
       tenantId,
       async (tx) => {
-        const [d] = await tx.select().from(deals).where(and(eq(deals.id, id), isNull(deals.deleted_at))).limit(1);
+        const [d] = await tx
+          .select()
+          .from(deals)
+          .where(and(eq(deals.id, id), isNull(deals.deleted_at)))
+          .limit(1)
+          .for('update');
         if (!d) throw new NotFoundException('Deal not found');
-        if (d.status === 'open') return { data: d };
-        // Move back to the first open stage of the pipeline.
+        if (d.status === 'open') return { deal: d, moved: false };
+        // Move back to the first open stage of the pipeline. Refuse to reopen a
+        // pipeline that has no open stage rather than strand the deal on the
+        // won/lost column it currently sits in.
         const [firstOpen] = await tx
           .select()
           .from(pipelineStages)
           .where(and(eq(pipelineStages.pipeline_id, d.pipeline_id), eq(pipelineStages.stage_type, 'open'), isNull(pipelineStages.deleted_at)))
           .orderBy(asc(pipelineStages.display_order))
           .limit(1);
+        if (!firstOpen) throw new BadRequestException('This pipeline has no open stage to reopen into');
+
+        const now = new Date();
+        const secondsInPrev = Math.floor(
+          (now.getTime() - new Date(d.stage_entered_at as unknown as string).getTime()) / 1000,
+        );
+        // Reopening is a stage move too — record it so history stays coherent.
+        await tx.insert(dealStageHistory).values({
+          tenant_id: tenantId,
+          deal_id: id,
+          from_stage_id: d.stage_id,
+          to_stage_id: firstOpen.id,
+          changed_by: user.sub,
+          seconds_in_previous_stage: secondsInPrev,
+        });
         const [updated] = await tx
           .update(deals)
-          .set({ status: 'open', won_at: null, lost_at: null, lost_reason_id: null, stage_id: firstOpen?.id ?? d.stage_id, stage_entered_at: new Date(), updated_by: user.sub, updated_at: new Date() })
+          .set({ status: 'open', won_at: null, lost_at: null, lost_reason_id: null, lost_reason_note: null, stage_id: firstOpen.id, stage_entered_at: now, updated_by: user.sub, updated_at: now })
           .where(eq(deals.id, id))
           .returning();
         await this.audit.log({ tenantId, actorUserId: user.sub, action: 'crm.deal.reopen', resourceType: 'deal', resourceId: id });
         await this.domainEvents.publish({ name: 'crm.deal.reopened', tenantId, actorUserId: user.sub, payload: { deal_id: id } }, tx);
-        return { data: updated! };
+        return { deal: updated!, moved: true };
       },
       user.sub,
     );
+
+    if (result.moved) {
+      this.eventEmitter.emit('crm.board.changed', {
+        tenantId,
+        pipelineId: result.deal.pipeline_id,
+        dealId: id,
+        stageId: result.deal.stage_id,
+      });
+    }
+    return { data: result.deal };
   }
 
   /**
@@ -386,6 +493,16 @@ export class DealsService {
       return { deal: d, products: prods, company: co, person: pe };
     });
 
+    // Idempotency: a deal maps to at most one draft invoice. If we already
+    // minted one, return it instead of creating a duplicate (double-click, retry).
+    if (deal.invoice_id) {
+      const existing = await this.invoicing.getInvoiceRef(tenantId, deal.invoice_id);
+      if (existing) {
+        return { data: { invoice_id: existing.id, customer_id: existing.customer_id } };
+      }
+      // Back-link is stale (invoice deleted) — fall through and re-create.
+    }
+
     // Resolve or create the billing customer via the invoicing facade.
     let customer = await this.invoicing.findCustomerByDirectoryRef(tenantId, {
       companyId: deal.company_id,
@@ -404,14 +521,21 @@ export class DealsService {
       });
     }
 
-    // Lines: from deal_products, else a single line for the deal value.
+    // Lines: from deal_products, else a single line for the deal value. Bill the
+    // DISCOUNTED per-unit rate (line_total / quantity) so a product's discount_pct
+    // is carried onto the invoice instead of being silently dropped (over-billing).
     const lines = products.length
-      ? products.map((p) => ({
-          item_id: p.item_id ?? undefined,
-          item_name: p.name,
-          quantity: p.quantity,
-          rate: p.unit_price,
-        }))
+      ? products.map((p) => {
+          const qty = parseFloat(p.quantity);
+          const lineTotal = parseFloat(p.line_total);
+          const effRate = qty !== 0 ? lineTotal / qty : lineTotal;
+          return {
+            item_id: p.item_id ?? undefined,
+            item_name: p.name,
+            quantity: p.quantity,
+            rate: effRate.toFixed(2),
+          };
+        })
       : [{ item_name: deal.title, quantity: '1', rate: deal.value_amount }];
 
     const invoice = await this.invoicing.createDraftInvoiceFromDeal(tenantId, userId, {

@@ -4,6 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { and, eq } from 'drizzle-orm';
 import { db, dbAdmin, withTenant } from '@flicks/db';
 import {
+  dealProducts,
   deals,
   dealStageHistory,
   domainEvents,
@@ -126,15 +127,23 @@ describe('Deal create + FX snapshot (§4.2, §12.1)', () => {
     expect(res.data.value_base_amount).toBe('83000.00'); // 1000 × 83
   });
 
-  it('unknown currency falls back to rate 1.0 (never blocks the save)', async () => {
-    const res = await service.create(tenantA, userId, { title: 'Zzz', value_amount: 500, currency: 'XYZ' });
-    expect(res.data.fx_rate_to_base).toBe('1.000000');
-    expect(res.data.value_base_amount).toBe('500.00');
+  it('rejects a deal whose currency has no FX rate (never mis-values at a bogus 1.0)', async () => {
+    // Financial-correctness (review M7): silently snapshotting 1 USD = 1 INR
+    // corrupts the pipeline/forecast. The save must fail loudly instead.
+    await expect(
+      service.create(tenantA, userId, { title: 'Zzz', value_amount: 500, currency: 'XYZ' }),
+    ).rejects.toThrow(/exchange rate/i);
   });
 });
 
 describe('Board grouping + rotting (§4.1)', () => {
   it('groups open deals by open stage with count, base sum and weighted sum', async () => {
+    // Seed three deals into Qualified so the assertion is self-contained rather
+    // than relying on incidental deals left by earlier create tests.
+    const qStage = stages.find((s) => s.name === 'Qualified')!;
+    for (let i = 0; i < 3; i++) {
+      await service.create(tenantA, userId, { title: `Grp ${i}`, value_amount: 1000, currency: 'INR', stage_id: qStage.id });
+    }
     const board = await service.board(tenantA, pipelineId);
     expect(board.data.base_currency).toBe('INR');
     const cols = board.data.columns;
@@ -191,6 +200,19 @@ describe('Stage move engine (§4.2)', () => {
     expect(spy).toHaveBeenCalled(); // live board broadcast fired
   });
 
+  it('clears the loss reason when a lost deal is moved back to won/open (review M3)', async () => {
+    const d = await service.create(tenantA, userId, { title: 'Reasoned', value_amount: 400, currency: 'INR' });
+    await service.moveStage(tenantA, userId, d.data.id, { stage_id: stageByType('lost').id, lost_reason_note: 'Chose competitor' });
+    let [row] = await dbAdmin.select().from(deals).where(eq(deals.id, d.data.id));
+    expect(row!.lost_reason_note).toBe('Chose competitor');
+    // Moving to Won must not leave the stale loss reason hanging on the deal.
+    await service.moveStage(tenantA, userId, d.data.id, { stage_id: stageByType('won').id });
+    [row] = await dbAdmin.select().from(deals).where(eq(deals.id, d.data.id));
+    expect(row!.status).toBe('won');
+    expect(row!.lost_reason_note).toBeNull();
+    expect(row!.lost_reason_id).toBeNull();
+  });
+
   it('rejects a stage from another pipeline', async () => {
     const d = await service.create(tenantA, userId, { title: 'X', value_amount: 1, currency: 'INR' });
     const bStage = (await dbAdmin.select().from(pipelineStages).where(eq(pipelineStages.tenant_id, tenantB)))[0]!;
@@ -207,6 +229,15 @@ describe('Reopen gate + forecast (§4.2, §4.3)', () => {
     const manager = { sub: userId, tenantId: tenantA, role: 'manager' } as never;
     const re = await service.reopen(tenantA, manager, d.data.id);
     expect(re.data.status).toBe('open');
+    // Reopen writes a stage-history row (review M4) so the audit trail is coherent.
+    const hist = await dbAdmin
+      .select()
+      .from(dealStageHistory)
+      .where(eq(dealStageHistory.deal_id, d.data.id))
+      .orderBy(dealStageHistory.changed_at);
+    const reopenRow = hist[hist.length - 1]!;
+    expect(reopenRow.to_stage_id).toBe(re.data.stage_id);
+    expect(reopenRow.from_stage_id).toBe(stageByType('won').id);
   });
 
   it('forecast returns open/weighted/won in base currency', async () => {
@@ -242,10 +273,30 @@ describe('Deal → invoice (§4.4, the flagship suite hook)', () => {
     expect(deal!.invoice_id).toBe(r1.data.invoice_id);
     expect(eventsStub.publish).toHaveBeenCalledWith(expect.objectContaining({ name: 'crm.deal.invoice_created' }));
 
+    // Idempotent (review M5): a repeat call returns the SAME invoice, no dupes.
+    const r1again = await service.createInvoice(tenantA, userId, d1.data.id);
+    expect(r1again.data.invoice_id).toBe(r1.data.invoice_id);
+    const forDeal = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.deal_id, d1.data.id));
+    expect(forDeal).toHaveLength(1);
+
     // A second deal on the same company REUSES the existing billing customer.
     const d2 = await service.create(tenantA, userId, { title: 'Second deal', value_amount: 200, currency: 'INR', company_id: co.data.id });
     const r2 = await service.createInvoice(tenantA, userId, d2.data.id);
     expect(r2.data.customer_id).toBe(r1.data.customer_id);
+  });
+
+  it('carries a deal-product discount onto the invoice (no over-billing — review M6)', async () => {
+    const co = await directory.createCompany(tenantA, userId, { name: `Disc Co ${rid()}`, domain: `disc-${rid()}.com` });
+    const d = await service.create(tenantA, userId, { title: 'Discounted', value_amount: 180, currency: 'INR', company_id: co.data.id });
+    // 2 × ₹100 with 10% off = ₹180 line_total (NOT ₹200).
+    await dbAdmin.insert(dealProducts).values({
+      tenant_id: tenantA, deal_id: d.data.id, name: 'Widget',
+      quantity: '2', unit_price: '100.00', currency: 'INR', discount_pct: '10.00', line_total: '180.00',
+    });
+    const r = await service.createInvoice(tenantA, userId, d.data.id);
+    const [inv] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, r.data.invoice_id));
+    // The invoice bills the discounted total; the bug billed 2 × 100 = 200.
+    expect(inv!.total_amount).toBe('180.00');
   });
 });
 
@@ -257,5 +308,12 @@ describe('Tenant isolation', () => {
     expect(rows.every((r) => r.tenant_id === tenantA)).toBe(true);
     // The domain_events written across both tenants are correctly attributed.
     void domainEvents;
+  });
+
+  it('refuses a deal that references another tenant’s company (FK checks bypass RLS — review M1)', async () => {
+    const bCo = await directory.createCompany(tenantB, userId, { name: `B Co ${rid()}`, domain: `bco-${rid()}.com` });
+    await expect(
+      service.create(tenantA, userId, { title: 'Cross', value_amount: 1, currency: 'INR', company_id: bCo.data.id }),
+    ).rejects.toThrow(/does not belong/i);
   });
 });

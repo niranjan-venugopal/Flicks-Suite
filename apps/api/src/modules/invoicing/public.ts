@@ -98,6 +98,27 @@ export class InvoicingPublicService {
   }
 
   /**
+   * Resolve an invoice's id + customer by id, tenant-scoped (RLS). Used by the
+   * deal→invoice idempotency guard so a repeat call returns the existing draft
+   * rather than minting a duplicate. Returns null if the id resolves to nothing
+   * (stale back-link) so the caller can re-create. Invoices are not hard-deleted
+   * — they carry a status lifecycle — so any surviving row counts.
+   */
+  async getInvoiceRef(
+    tenantId: string,
+    invoiceId: string,
+  ): Promise<{ id: string; customer_id: string } | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const [row] = await tx
+        .select({ id: invoices.id, customer_id: invoices.customer_id })
+        .from(invoices)
+        .where(eq(invoices.id, invoiceId))
+        .limit(1);
+      return row ?? null;
+    });
+  }
+
+  /**
    * Create a DRAFT invoice from a deal (§4.4). Lines are supplied by CRM
    * (from deal_products or a single value line); this sets the deal↔invoice
    * back-links after creation. Returns the invoice.

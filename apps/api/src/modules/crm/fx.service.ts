@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, lte } from 'drizzle-orm';
 import { fxRates } from '@flicks/db/schema';
@@ -60,9 +60,23 @@ export class FxService {
   /**
    * Snapshot a deal's value into the tenant base currency.
    * Returns { fxRate, baseAmount } — baseAmount rounded to 2dp.
+   *
+   * Financial-correctness rule: when the deal currency differs from the base and
+   * no rate is available, we REJECT rather than silently snapshot at 1.0 — a
+   * bogus 1:1 rate mis-values the pipeline/forecast in ways nobody notices. The
+   * caller enters the value in the base currency, or an admin refreshes FX.
    */
   async toBase(amount: number, currency: string, baseCurrency: string) {
-    const fxRate = await this.rate(currency, baseCurrency);
+    const from = currency.toUpperCase();
+    const to = baseCurrency.toUpperCase();
+    if (from === to) return { fxRate: 1, baseAmount: Math.round(amount * 100) / 100 };
+    const [rf, rt] = await Promise.all([this.latestUsdRate(from), this.latestUsdRate(to)]);
+    if (rf == null || rt == null || rf === 0) {
+      throw new BadRequestException(
+        `No exchange rate available for ${from}→${to}. Refresh FX rates or enter the value in ${to}.`,
+      );
+    }
+    const fxRate = rt / rf; // USD→to ÷ USD→from = from→to
     return { fxRate, baseAmount: Math.round(amount * fxRate * 100) / 100 };
   }
 
