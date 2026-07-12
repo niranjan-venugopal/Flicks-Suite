@@ -88,7 +88,7 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
-    "maxWorkers": 3,
+    "maxWorkers": 2,
     "testTimeout": 30000
   }
 }

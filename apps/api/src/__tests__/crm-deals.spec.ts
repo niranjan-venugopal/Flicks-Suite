@@ -13,10 +13,22 @@ import {
   tenants,
   users,
 } from '@flicks/db/schema';
+import {
+  customers,
+  directoryCompanies,
+  invoices as invoicesTable,
+} from '@flicks/db/schema';
 import { DatabaseService } from '../core/database/database.service';
 import { AuditService } from '../modules/audit/audit.service';
 import { DealsService } from '../modules/crm/deals.service';
 import { FxService } from '../modules/crm/fx.service';
+import { CustomersService } from '../modules/invoicing/customers.service';
+import { ItemsService } from '../modules/invoicing/items.service';
+import { NumberingService } from '../modules/invoicing/numbering.service';
+import { InvoicesService } from '../modules/invoicing/invoices.service';
+import { OrgFinancialService } from '../modules/org-financial/org-financial.service';
+import { InvoicingPublicService } from '../modules/invoicing/public';
+import { DirectoryService } from '../modules/crm/directory.service';
 
 /**
  * PRD v5 §4 — deals & kanban (Sprint 26). Real-Postgres: FX-snapshot on create,
@@ -32,7 +44,17 @@ const eventsStub = { publish: jest.fn(async () => 'evt') };
 const emitter = new EventEmitter2();
 const fxConfig = { get: () => undefined } as never;
 const fx = new FxService(dbAdmin as never, fxConfig);
-const service = new DealsService(dbSvc, audit, eventsStub as never, fx, emitter);
+// Real invoicing facade so the deal→invoice E2E exercises the true path.
+const configStub = { get: (_: string, fb?: unknown) => fb } as never;
+const notificationsStub = { sendEmail: async () => true } as never;
+const numbering = new NumberingService(dbSvc, audit);
+const customersSvc = new CustomersService(dbSvc, audit);
+const itemsSvc = new ItemsService(dbSvc, audit);
+const orgFinancial = new OrgFinancialService(dbSvc, audit);
+const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, eventsStub as never);
+const invoicingFacade = new InvoicingPublicService(dbAdmin as never, dbSvc, customersSvc, invoicesSvc, itemsSvc);
+const directory = new DirectoryService(dbSvc, audit, eventsStub as never);
+const service = new DealsService(dbSvc, audit, eventsStub as never, fx, emitter, invoicingFacade);
 
 let tenantA: string;
 let tenantB: string;
@@ -193,6 +215,37 @@ describe('Reopen gate + forecast (§4.2, §4.3)', () => {
     expect(f.data.open_value).toBeGreaterThan(0);
     expect(f.data.weighted_value).toBeLessThanOrEqual(f.data.open_value);
     expect(f.data.won_value).toBeGreaterThan(0);
+  });
+});
+
+describe('Deal → invoice (§4.4, the flagship suite hook)', () => {
+  it('creates+links a customer, mints a DRAFT invoice with back-links, and reuses the customer next time', async () => {
+    const co = await directory.createCompany(tenantA, userId, { name: `Flagship Co ${rid()}`, domain: `flag-${rid()}.com` });
+    const d1 = await service.create(tenantA, userId, { title: 'Flagship deal', value_amount: 5000, currency: 'INR', company_id: co.data.id });
+
+    eventsStub.publish.mockClear();
+    const r1 = await service.createInvoice(tenantA, userId, d1.data.id);
+    expect(r1.data.invoice_id).toBeTruthy();
+
+    // A billing customer was created and linked to the directory company.
+    const [cust] = await dbAdmin.select().from(customers).where(eq(customers.id, r1.data.customer_id));
+    expect(cust!.directory_company_id).toBe(co.data.id);
+
+    // DRAFT invoice, back-linked to the deal; single value line = ₹5000.
+    const [inv] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, r1.data.invoice_id));
+    expect(inv!.status).toBe('DRAFT');
+    expect(inv!.deal_id).toBe(d1.data.id);
+    expect(inv!.total_amount).toBe('5000.00');
+
+    // The deal points back at the invoice; the timeline event fired.
+    const [deal] = await dbAdmin.select().from(deals).where(eq(deals.id, d1.data.id));
+    expect(deal!.invoice_id).toBe(r1.data.invoice_id);
+    expect(eventsStub.publish).toHaveBeenCalledWith(expect.objectContaining({ name: 'crm.deal.invoice_created' }));
+
+    // A second deal on the same company REUSES the existing billing customer.
+    const d2 = await service.create(tenantA, userId, { title: 'Second deal', value_amount: 200, currency: 'INR', company_id: co.data.id });
+    const r2 = await service.createInvoice(tenantA, userId, d2.data.id);
+    expect(r2.data.customer_id).toBe(r1.data.customer_id);
   });
 });
 

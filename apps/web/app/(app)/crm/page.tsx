@@ -1,9 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { Users, Building2, ArrowRight } from 'lucide-react'
+import { Users, Building2, Kanban, ArrowRight } from 'lucide-react'
 import { SectionHead } from '@/components/proto'
-import { useCompanies, useContacts } from '@/lib/api/queries/use-crm'
+import { useCompanies, useContacts, useForecast } from '@/lib/api/queries/use-crm'
+
+function fmt(n: number, cur: string) {
+  return `${cur === 'INR' ? '₹' : cur + ' '}${Math.round(n).toLocaleString('en-IN')}`
+}
 
 /**
  * CRM Overview (C1) — Sprint 25 ships the directory entry points; the full
@@ -13,10 +17,14 @@ import { useCompanies, useContacts } from '@/lib/api/queries/use-crm'
 export default function CrmOverviewPage() {
   const companies = useCompanies()
   const contacts = useContacts()
+  const forecast = useForecast()
+  const f = forecast.data?.data
+  const base = f?.base_currency ?? 'INR'
 
   const tiles = [
-    { href: '/crm/contacts', label: 'Contacts', icon: Users, count: contacts.data?.pagination.total },
-    { href: '/crm/companies', label: 'Companies', icon: Building2, count: companies.data?.pagination.total },
+    { href: '/crm/deals', label: 'Open pipeline', icon: Kanban, count: f ? fmt(f.open_value, base) : undefined, sub: f ? `${f.open_count} deals · weighted ${fmt(f.weighted_value, base)}` : undefined },
+    { href: '/crm/contacts', label: 'Contacts', icon: Users, count: contacts.data?.pagination.total, sub: 'total' },
+    { href: '/crm/companies', label: 'Companies', icon: Building2, count: companies.data?.pagination.total, sub: 'total' },
   ]
 
   return (
@@ -29,8 +37,8 @@ export default function CrmOverviewPage() {
               <t.icon size={20} style={{ color: 'var(--blue)' }} />
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>{t.label}</div>
-              <div className="t-mute" style={{ fontSize: 12 }}>{t.count ?? '—'} total</div>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>{t.count ?? '—'}</div>
+              <div className="t-mute" style={{ fontSize: 12 }}>{t.label}{t.sub ? ` · ${t.sub}` : ''}</div>
             </div>
             <ArrowRight size={16} style={{ color: 'var(--text-mute)' }} />
           </Link>

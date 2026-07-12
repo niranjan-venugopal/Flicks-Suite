@@ -9,6 +9,7 @@ import { FxRefreshJob } from './fx.job';
 import { CrmGateway } from '../../gateways/crm.gateway';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { AuditModule } from '../audit/audit.module';
+import { InvoicingModule } from '../invoicing/invoicing.module';
 
 /**
  * CRM module (PRD v5). Sprint 25: directory kernel (Contacts/Companies).
@@ -17,7 +18,8 @@ import { AuditModule } from '../audit/audit.module';
  * All controllers sit behind CrmGrantGuard; DomainEventsService is global.
  */
 @Module({
-  imports: [AuditModule],
+  // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
+  imports: [AuditModule, InvoicingModule],
   controllers: [DirectoryController, DealsController],
   providers: [
     DirectoryService,

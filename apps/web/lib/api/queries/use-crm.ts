@@ -1,6 +1,8 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { io } from 'socket.io-client'
 import { api } from '../client'
 
 // ─── Types (mirror the directory kernel, PRD v5 §3) ──────────────────────────
@@ -133,5 +135,118 @@ export function useDeleteContact() {
   return useMutation({
     mutationFn: (id: string) => api.delete(`/crm/contacts/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'contacts'] }),
+  })
+}
+
+// ─── Deals / board (PRD v5 §4) ────────────────────────────────────────────────
+export interface DealCard {
+  id: string
+  title: string
+  company_id: string | null
+  primary_person_id: string | null
+  owner_user_id: string
+  value_amount: string
+  currency: string
+  value_base_amount: string
+  expected_close_date: string | null
+  status: string
+  stage_id: string
+  idle_days: number
+  rot_state: 'amber' | 'red' | null
+}
+export interface BoardColumn {
+  stage: { id: string; name: string; win_probability: number; rotting_days: number | null; stage_type: string }
+  cards: DealCard[]
+  count: number
+  sum_base: number
+  weighted_base: number
+}
+export interface Board {
+  pipeline: { id: string; name: string }
+  base_currency: string
+  columns: BoardColumn[]
+}
+export interface Pipeline {
+  id: string
+  name: string
+  is_default: boolean
+  stages: Array<{ id: string; name: string; win_probability: number; rotting_days: number | null; stage_type: string; display_order: number }>
+}
+
+export function usePipelines() {
+  return useQuery({ queryKey: ['crm', 'pipelines'], queryFn: () => api.get<{ data: Pipeline[] }>('/crm/pipelines') })
+}
+
+export function useLostReasons() {
+  return useQuery({ queryKey: ['crm', 'lost-reasons'], queryFn: () => api.get<{ data: Array<{ id: string; label: string }> }>('/crm/lost-reasons') })
+}
+
+export function useBoard(pipelineId?: string) {
+  const qc = useQueryClient()
+  const query = useQuery({
+    queryKey: ['crm', 'board', pipelineId ?? 'default'],
+    queryFn: () => api.get<{ data: Board }>(`/crm/board${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
+  })
+  // Live board: any tenant member's move refreshes every open board.
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
+    const socket = io(`${base}/crm`, { withCredentials: true, transports: ['websocket', 'polling'] })
+    socket.on('board_changed', () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }))
+    return () => { socket.disconnect() }
+  }, [qc])
+  return query
+}
+
+export function useForecast(pipelineId?: string) {
+  return useQuery({
+    queryKey: ['crm', 'forecast', pipelineId ?? 'default'],
+    queryFn: () => api.get<{ data: { base_currency: string; open_count: number; open_value: number; weighted_value: number; won_value: number } }>(`/crm/forecast${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
+  })
+}
+
+export function useDeal(id: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'deal', id],
+    queryFn: () => api.get<{ data: DealCard & { stage_history: unknown[] } }>(`/crm/deals/${id}`),
+    enabled: !!id,
+  })
+}
+
+export function useCreateDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: DealCard }>('/crm/deals', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+  })
+}
+
+export function useMoveDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { stage_id: string; lost_reason_id?: string; lost_reason_note?: string } }) =>
+      api.post<{ data: DealCard }>(`/crm/deals/${id}/move`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+  })
+}
+
+export function useUpdateDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: DealCard }>(`/crm/deals/${id}`, body),
+    onSuccess: (_r, { id }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+    },
+  })
+}
+
+export function useCreateInvoiceFromDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dealId: string) => api.post<{ data: { invoice_id: string; customer_id: string } }>(`/crm/deals/${dealId}/create-invoice`, {}),
+    onSuccess: (_r, dealId) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
   })
 }

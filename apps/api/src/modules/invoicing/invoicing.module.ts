@@ -9,6 +9,7 @@ import { ItemsController } from './items.controller';
 import { ItemsService } from './items.service';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
+import { InvoicingPublicService } from './public';
 import { HsnSacController } from './hsn-sac.controller';
 import { HsnSacService } from './hsn-sac.service';
 import { NumberingController } from './numbering.controller';
@@ -75,6 +76,7 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     RazorpayService,
     InvoicingCryptoService,
     InvoicingGrantGuard,
+    InvoicingPublicService,
   ],
   exports: [
     CustomersService,
@@ -82,6 +84,8 @@ import { InvoicingGrantGuard } from '../../core/auth/guards/invoicing-grant.guar
     InvoicesService,
     NumberingService,
     SubscriptionMandatesService,
+    // PRD v5 §2.3 — the ONLY invoicing surface other modules may consume.
+    InvoicingPublicService,
   ],
 })
 export class InvoicingModule {}

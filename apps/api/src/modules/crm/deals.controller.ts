@@ -107,6 +107,13 @@ export class DealsController {
     return this.deals.reopen(user.tenantId, user, id);
   }
 
+  @Post('deals/:id/create-invoice')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Deal → DRAFT invoice (§4.4): resolve/create customer, products → lines, back-link' })
+  createInvoice(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.createInvoice(user.tenantId, user.sub, id);
+  }
+
   @Delete('deals/:id')
   @Roles('owner', 'admin', 'manager')
   @RequireGrant('crm', 'edit')

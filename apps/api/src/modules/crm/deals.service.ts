@@ -7,8 +7,11 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
+  dealProducts,
   deals,
   dealStageHistory,
+  directoryCompanies,
+  directoryPeople,
   pipelines,
   pipelineStages,
   tenants,
@@ -18,6 +21,7 @@ import type { JwtPayload } from '@flicks/shared/types';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { InvoicingPublicService } from '../invoicing/public';
 import { FxService } from './fx.service';
 
 /**
@@ -36,6 +40,7 @@ export class DealsService {
     private readonly domainEvents: DomainEventsService,
     private readonly fx: FxService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly invoicing: InvoicingPublicService,
   ) {}
 
   private async baseCurrency(tx: Db, tenantId: string): Promise<string> {
@@ -357,6 +362,68 @@ export class DealsService {
       },
       user.sub,
     );
+  }
+
+  /**
+   * Deal → DRAFT invoice (§4.4, the flagship suite hook). Resolves (or creates)
+   * the billing customer from the deal's linked directory company/person via the
+   * invoicing facade, turns deal_products (or the deal value) into lines, creates
+   * a DRAFT invoice back-linked to the deal, and echoes it on the timeline.
+   * Returns the invoice id so the UI can open the existing invoice editor.
+   */
+  async createInvoice(tenantId: string, userId: string, dealId: string) {
+    // Gather the deal + products + directory refs (app-role, tenant-scoped).
+    const { deal, products, company, person } = await this.db.withTenant(tenantId, async (tx) => {
+      const [d] = await tx.select().from(deals).where(and(eq(deals.id, dealId), isNull(deals.deleted_at))).limit(1);
+      if (!d) throw new NotFoundException('Deal not found');
+      const prods = await tx.select().from(dealProducts).where(eq(dealProducts.deal_id, dealId)).orderBy(asc(dealProducts.display_order));
+      const [co] = d.company_id
+        ? await tx.select().from(directoryCompanies).where(eq(directoryCompanies.id, d.company_id)).limit(1)
+        : [undefined];
+      const [pe] = d.primary_person_id
+        ? await tx.select().from(directoryPeople).where(eq(directoryPeople.id, d.primary_person_id)).limit(1)
+        : [undefined];
+      return { deal: d, products: prods, company: co, person: pe };
+    });
+
+    // Resolve or create the billing customer via the invoicing facade.
+    let customer = await this.invoicing.findCustomerByDirectoryRef(tenantId, {
+      companyId: deal.company_id,
+      personId: deal.primary_person_id,
+    });
+    if (!customer) {
+      const name = company?.name ?? person?.display_name ?? deal.title;
+      customer = await this.invoicing.createCustomerFromDirectory(tenantId, userId, {
+        display_name: name,
+        customer_type: company ? 'business' : 'individual',
+        email: (company ? null : person?.email) ?? null,
+        phone: company?.phone ?? person?.phone ?? null,
+        country_code: company?.country_code ?? null,
+        directory_company_id: deal.company_id,
+        directory_person_id: deal.primary_person_id,
+      });
+    }
+
+    // Lines: from deal_products, else a single line for the deal value.
+    const lines = products.length
+      ? products.map((p) => ({
+          item_id: p.item_id ?? undefined,
+          item_name: p.name,
+          quantity: p.quantity,
+          rate: p.unit_price,
+        }))
+      : [{ item_name: deal.title, quantity: '1', rate: deal.value_amount }];
+
+    const invoice = await this.invoicing.createDraftInvoiceFromDeal(tenantId, userId, {
+      dealId,
+      customerId: customer.id,
+      currency: deal.currency,
+      lines,
+    });
+
+    await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.invoice_created', resourceType: 'deal', resourceId: dealId, metadata: { invoice_id: invoice.id } });
+    await this.domainEvents.publish({ name: 'crm.deal.invoice_created', tenantId, actorUserId: userId, payload: { deal_id: dealId, invoice_id: invoice.id } });
+    return { data: { invoice_id: invoice.id, customer_id: customer.id } };
   }
 
   async remove(tenantId: string, userId: string, id: string) {

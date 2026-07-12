@@ -231,6 +231,9 @@ export const customers = pgTable(
     status: text('status').notNull().default('active'), // active | archived
     // Sub-merchant Razorpay customer handle for auto-debit mandates (0027).
     razorpay_customer_id: text('razorpay_customer_id'),
+    // CRM directory kernel linkage (0031) — one canonical person/org per tenant.
+    directory_company_id: uuid('directory_company_id'),
+    directory_person_id: uuid('directory_person_id'),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -661,6 +664,8 @@ export const invoices = pgTable(
       withTimezone: true,
     }),
     invoice_template: text('invoice_template'),
+    // CRM back-link (0032) — the deal this invoice was generated from (§4.4).
+    deal_id: uuid('deal_id'),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

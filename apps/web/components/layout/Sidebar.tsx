@@ -72,6 +72,7 @@ const ADMIN_NAV: NavSection[] = [
         // arrive in later sprints; Contacts & Companies ship in Sprint 25.
         children: [
           { href: '/crm', label: 'Overview' },
+          { href: '/crm/deals', label: 'Deals' },
           { href: '/crm/contacts', label: 'Contacts' },
           { href: '/crm/companies', label: 'Companies' },
         ],
