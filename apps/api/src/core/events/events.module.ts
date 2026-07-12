@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { DomainEventsService } from './domain-events.service';
 import { DomainEventsDispatcher } from './domain-events.dispatcher';
 import { DomainEventsProcessor } from './domain-events.processor';
+import { OutboxLagMonitor } from './outbox-lag.monitor';
 import { DOMAIN_EVENTS_QUEUE, WEBHOOK_DELIVERIES_QUEUE } from './events.constants';
 import { isWorkerMode } from '../worker/worker-mode';
 import { WebhooksModule } from '../../modules/webhooks/webhooks.module';
@@ -27,6 +28,9 @@ import { WebhooksModule } from '../../modules/webhooks/webhooks.module';
   providers: [
     DomainEventsService,
     DomainEventsDispatcher,
+    // Always-on: surfaces a stalled outbox (e.g. no worker running) in both
+    // processes so the misconfig can't fail silently.
+    OutboxLagMonitor,
     // The processor class self-registers a BullMQ worker on instantiation, so
     // THIS one is conditional: only the worker process consumes the queue.
     ...(isWorkerMode() ? [DomainEventsProcessor] : []),

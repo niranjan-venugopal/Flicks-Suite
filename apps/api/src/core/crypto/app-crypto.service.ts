@@ -42,7 +42,17 @@ export class AppCryptoService {
 
   encrypt(plain: string, purpose: keyof typeof PURPOSE_ENV | string): string {
     const key = this.keyFor(purpose);
-    if (!key) return plain;
+    if (!key) {
+      // Never silently downgrade "encrypted at rest" to plaintext in prod — a
+      // missing key must fail loudly, not leak every tenant's secrets to a
+      // read-only DB compromise. Dev/CI keep the plaintext passthrough.
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(
+          `Encryption key for purpose '${purpose}' is not configured (set ${PURPOSE_ENV[purpose] ?? purpose.toUpperCase()})`,
+        );
+      }
+      return plain;
+    }
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);
     const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);

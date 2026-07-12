@@ -8,7 +8,7 @@ import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { WEBHOOK_DELIVERIES_QUEUE } from '../../core/events/events.constants';
 import { AppCryptoService } from '../../core/crypto/app-crypto.service';
-import { assertPublicHttpUrl } from '../../core/security/ssrf.util';
+import { ssrfSafePostJson } from '../../core/security/ssrf.util';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { DomainEventEnvelope } from '../../core/events/domain-events.service';
 
@@ -60,7 +60,6 @@ export class WebhookDeliveryProcessor extends WorkerHost {
 
     const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 5);
     try {
-      await assertPublicHttpUrl(endpoint.url);
       const body = JSON.stringify({
         id: event.id,
         name: event.name,
@@ -71,26 +70,19 @@ export class WebhookDeliveryProcessor extends WorkerHost {
       const secret = this.crypto.decrypt(endpoint.secret_encrypted, 'webhook');
       const v1 = createHmac('sha256', secret).update(`${t}.${body}`).digest('hex');
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-      let status: number;
-      try {
-        const res = await fetch(endpoint.url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Flicks-Signature': `t=${t},v1=${v1}`,
-            'X-Flicks-Event': event.name,
-            'User-Agent': 'FlicksSuite-Webhooks/1.0',
-          },
-          body,
-          signal: controller.signal,
-          redirect: 'error', // a redirect could re-target into private space
-        });
-        status = res.status;
-      } finally {
-        clearTimeout(timer);
-      }
+      // SSRF is enforced at CONNECT time by ssrfSafePostJson's pinned DNS
+      // lookup — no rebinding window between validation and connection.
+      const { status } = await ssrfSafePostJson(
+        endpoint.url,
+        body,
+        {
+          'Content-Type': 'application/json',
+          'X-Flicks-Signature': `t=${t},v1=${v1}`,
+          'X-Flicks-Event': event.name,
+          'User-Agent': 'FlicksSuite-Webhooks/1.0',
+        },
+        TIMEOUT_MS,
+      );
 
       if (status >= 200 && status < 300) {
         await this.mark(deliveryId, {

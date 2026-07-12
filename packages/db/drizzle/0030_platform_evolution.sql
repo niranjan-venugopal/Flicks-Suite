@@ -107,6 +107,14 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint
   ON webhook_deliveries (endpoint_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_tenant
   ON webhook_deliveries (tenant_id, created_at DESC);
+-- At-least-once outbox + redelivered fan-out jobs would otherwise create
+-- duplicate delivery rows (and duplicate POSTs). One delivery per
+-- (endpoint, event) makes the fan-out idempotent. Non-partial: NULL event_id
+-- rows (e.g. test/manual deliveries) are already distinct under a unique
+-- index, so only real event ids dedupe — and ON CONFLICT matches cleanly.
+DROP INDEX IF EXISTS uq_webhook_delivery_endpoint_event;
+CREATE UNIQUE INDEX uq_webhook_delivery_endpoint_event
+  ON webhook_deliveries (endpoint_id, event_id);
 
 ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;

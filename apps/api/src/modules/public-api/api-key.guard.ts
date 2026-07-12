@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   SetMetadata,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -32,6 +33,8 @@ export interface PublicApiRequest extends Request {
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
+  private readonly logger = new Logger(ApiKeyGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly apiKeys: ApiKeysService,
@@ -48,7 +51,9 @@ export class ApiKeyGuard implements CanActivate {
     if (!ctx) throw new UnauthorizedException('Invalid or revoked API key');
 
     // Fixed-window per-key limit. Redis failure = fail-open (availability
-    // beats a hard outage for read APIs; the JWT app API is unaffected).
+    // beats a hard outage for read APIs; the JWT app API is unaffected) — but
+    // LOG it, so a degraded-Redis window where the only public-API throttle is
+    // off is visible in ops rather than silently swallowed (review M4).
     try {
       const windowKey = `apirl:${ctx.keyId}:${Math.floor(Date.now() / 60_000)}`;
       const count = await this.redis.incr(windowKey);
@@ -58,6 +63,9 @@ export class ApiKeyGuard implements CanActivate {
       }
     } catch (err) {
       if (err instanceof HttpException) throw err;
+      this.logger.warn(
+        `public-API rate limit not enforced (Redis error) for key ${ctx.keyId}: ${err instanceof Error ? err.message : err}`,
+      );
     }
 
     const required =

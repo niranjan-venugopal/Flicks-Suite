@@ -575,6 +575,8 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_endpoint
   ON webhook_deliveries (endpoint_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_tenant
   ON webhook_deliveries (tenant_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_delivery_endpoint_event
+  ON webhook_deliveries (endpoint_id, event_id);
 ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON webhook_deliveries FROM flicks_app;

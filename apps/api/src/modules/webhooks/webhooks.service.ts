@@ -138,7 +138,8 @@ export class WebhooksService {
           : {}),
         updated_at: new Date(),
       })
-      .where(eq(webhookEndpoints.id, id))
+      // tenant_id in the WHERE too (defense-in-depth — service role bypasses RLS).
+      .where(and(eq(webhookEndpoints.id, id), eq(webhookEndpoints.tenant_id, tenantId)))
       .returning();
     await this.audit.log({
       tenantId,

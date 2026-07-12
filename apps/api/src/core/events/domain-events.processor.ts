@@ -45,6 +45,8 @@ export class DomainEventsProcessor extends WorkerHost {
         ),
       );
     for (const ep of endpoints) {
+      // Idempotent on (endpoint_id, event_id): a redelivered fan-out job finds
+      // the row already there and does NOT create a second delivery/POST.
       const [delivery] = await this.dbAdmin
         .insert(webhookDeliveries)
         .values({
@@ -53,12 +55,16 @@ export class DomainEventsProcessor extends WorkerHost {
           event_id: event.id,
           event_name: event.name,
         })
+        .onConflictDoNothing({
+          target: [webhookDeliveries.endpoint_id, webhookDeliveries.event_id],
+        })
         .returning({ id: webhookDeliveries.id });
+      if (!delivery) continue; // already fanned out to this endpoint
       await this.deliveries.add(
         'deliver',
-        { deliveryId: delivery!.id, event },
+        { deliveryId: delivery.id, event },
         {
-          jobId: delivery!.id,
+          jobId: delivery.id,
           attempts: 5,
           backoff: { type: 'exponential', delay: 60_000 }, // 1m → 2m → 4m → 8m → 16m
           removeOnComplete: 1000,

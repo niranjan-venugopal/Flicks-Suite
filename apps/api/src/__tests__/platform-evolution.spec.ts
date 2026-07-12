@@ -17,7 +17,17 @@ import { ApiKeysService } from '../modules/public-api/api-keys.service';
 import { ApiKeyGuard } from '../modules/public-api/api-key.guard';
 import { WebhooksService } from '../modules/webhooks/webhooks.service';
 import { AppCryptoService } from '../core/crypto/app-crypto.service';
-import { assertPublicHttpUrl, isPrivateAddress } from '../core/security/ssrf.util';
+// Mock only the network call; assertPublicHttpUrl/isPrivateAddress stay real.
+jest.mock('../core/security/ssrf.util', () => {
+  const actual = jest.requireActual('../core/security/ssrf.util');
+  return { __esModule: true, ...actual, ssrfSafePostJson: jest.fn() };
+});
+import {
+  assertPublicHttpUrl,
+  isPrivateAddress,
+  ssrfSafePostJson,
+} from '../core/security/ssrf.util';
+const ssrfPostMock = ssrfSafePostJson as jest.Mock;
 import { DatabaseService } from '../core/database/database.service';
 import { AuditService } from '../modules/audit/audit.service';
 
@@ -117,11 +127,11 @@ describe('Domain-event outbox (PRD v5 §2.2)', () => {
 
   it('dispatcher batch: claims undispatched rows, enqueues, stamps dispatched_at (idempotent)', async () => {
     const { DomainEventsDispatcher } = await import('../core/events/domain-events.dispatcher');
-    const enqueued: Array<{ name: string; data: { id: string } }> = [];
+    const enqueued: Array<{ name: string; jobId: string }> = [];
     const queueStub = {
-      addBulk: async (jobs: Array<{ name: string; data: { id: string } }>) => {
-        enqueued.push(...jobs);
-        return [];
+      add: async (name: string, _data: unknown, opts: { jobId: string }) => {
+        enqueued.push({ name, jobId: opts.jobId });
+        return {};
       },
     };
     const dispatcher = new DomainEventsDispatcher(dbAdmin as never, queueStub as never);
@@ -152,7 +162,7 @@ describe('Domain-event outbox (PRD v5 §2.2)', () => {
     const enqueued: unknown[] = [];
     const dispatcher = new DomainEventsDispatcher(
       dbAdmin as never,
-      { addBulk: async (j: unknown[]) => (enqueued.push(...j), []) } as never,
+      { add: async (n: string) => (enqueued.push(n), {}) } as never,
     );
     process.env.WORKER_MODE = 'false';
     await dispatcher.tick();
@@ -288,8 +298,13 @@ describe('API keys + public API (PRD v5 §11)', () => {
 });
 
 describe('SSRF guard (PRD v5 §11/§13)', () => {
-  it('flags private/reserved space, passes public addresses', () => {
-    for (const bad of ['10.1.2.3', '192.168.1.1', '127.0.0.1', '169.254.169.254', '172.20.0.5', '100.64.0.9', '0.0.0.0', '::1', 'fc00::1', 'fe80::1', '::ffff:10.0.0.1']) {
+  it('flags private/reserved space (incl. NAT64/IPv4-compat), passes public addresses', () => {
+    for (const bad of [
+      '10.1.2.3', '192.168.1.1', '127.0.0.1', '169.254.169.254', '172.20.0.5',
+      '100.64.0.9', '0.0.0.0', '::1', 'fc00::1', 'fe80::1', '::ffff:10.0.0.1',
+      '64:ff9b::7f00:1', // NAT64-encoded 127.0.0.1
+      '::127.0.0.1', // IPv4-compatible (dotted) loopback
+    ]) {
       expect(isPrivateAddress(bad)).toBe(true);
     }
     for (const ok of ['8.8.8.8', '1.1.1.1', '52.95.116.115', '2606:4700:4700::1111']) {
@@ -363,69 +378,78 @@ describe('Outbound webhooks (PRD v5 §11)', () => {
       return d!.id;
     };
 
-    // Success path — capture the signed request and verify the HMAC.
+    // Success path — capture the signed request (delivery uses the SSRF-safe
+    // POST helper, mocked here) and verify the HMAC over the exact body sent.
     let captured: { url: string; headers: Record<string, string>; body: string } | null = null;
-    const fetchSpy = jest
-      .spyOn(global, 'fetch')
-      .mockImplementation(async (url, init) => {
-        captured = {
-          url: String(url),
-          headers: init?.headers as Record<string, string>,
-          body: String(init?.body),
-        };
-        return { status: 200 } as Response;
-      });
-    try {
-      const okId = await mkDelivery();
-      await processor.process({
-        data: { deliveryId: okId, event: envelope },
-        attemptsMade: 0,
-        opts: { attempts: 5 },
-      } as never);
-      const [okRow] = await dbAdmin
-        .select()
-        .from(webhookDeliveries)
-        .where(eq(webhookDeliveries.id, okId));
-      expect(okRow!.status).toBe('success');
-      const sig = captured!.headers['X-Flicks-Signature'];
-      const [tPart, vPart] = sig.split(',');
-      const t = tPart!.split('=')[1];
-      const expected = crypto
-        .createHmac('sha256', plainSecret)
-        .update(`${t}.${captured!.body}`)
-        .digest('hex');
-      expect(vPart!.split('=')[1]).toBe(expected);
+    ssrfPostMock.mockReset();
+    ssrfPostMock.mockImplementation(async (url: string, body: string, headers: Record<string, string>) => {
+      captured = { url, body, headers };
+      return { status: 200 };
+    });
 
-      // Failure on the FINAL attempt marks exhausted and strikes the endpoint.
-      fetchSpy.mockImplementation(async () => ({ status: 500 }) as Response);
-      // Pre-set strikes to 19 so this exhaustion crosses the disable threshold.
-      await dbAdmin
-        .update(webhookEndpoints)
-        .set({ consecutive_failures: 19 })
-        .where(eq(webhookEndpoints.id, endpointId));
-      const failId = await mkDelivery();
-      await expect(
-        processor.process({
-          data: { deliveryId: failId, event: envelope },
-          attemptsMade: 4,
-          opts: { attempts: 5 },
-        } as never),
-      ).rejects.toThrow(/HTTP 500/);
-      const [failRow] = await dbAdmin
-        .select()
-        .from(webhookDeliveries)
-        .where(eq(webhookDeliveries.id, failId));
-      expect(failRow!.status).toBe('exhausted');
-      const [ep] = await dbAdmin
-        .select()
-        .from(webhookEndpoints)
-        .where(eq(webhookEndpoints.id, endpointId));
-      expect(ep!.active).toBe(false);
-      expect(ep!.disabled_reason).toContain('consecutive');
-      expect(notified).toContain('webhooks.endpoint_disabled');
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    const okId = await mkDelivery();
+    await processor.process({
+      data: { deliveryId: okId, event: envelope },
+      attemptsMade: 0,
+      opts: { attempts: 5 },
+    } as never);
+    const [okRow] = await dbAdmin
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.id, okId));
+    expect(okRow!.status).toBe('success');
+    const sig = captured!.headers['X-Flicks-Signature'];
+    const [tPart, vPart] = sig.split(',');
+    const t = tPart!.split('=')[1];
+    const expected = crypto
+      .createHmac('sha256', plainSecret)
+      .update(`${t}.${captured!.body}`)
+      .digest('hex');
+    expect(vPart!.split('=')[1]).toBe(expected);
+
+    // Failure on the FINAL attempt marks exhausted and strikes the endpoint.
+    ssrfPostMock.mockResolvedValue({ status: 500 });
+    // Pre-set strikes to 19 so this exhaustion crosses the disable threshold.
+    await dbAdmin
+      .update(webhookEndpoints)
+      .set({ consecutive_failures: 19 })
+      .where(eq(webhookEndpoints.id, endpointId));
+    const failId = await mkDelivery();
+    await expect(
+      processor.process({
+        data: { deliveryId: failId, event: envelope },
+        attemptsMade: 4,
+        opts: { attempts: 5 },
+      } as never),
+    ).rejects.toThrow(/HTTP 500/);
+    const [failRow] = await dbAdmin
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.id, failId));
+    expect(failRow!.status).toBe('exhausted');
+    const [ep] = await dbAdmin
+      .select()
+      .from(webhookEndpoints)
+      .where(eq(webhookEndpoints.id, endpointId));
+    expect(ep!.active).toBe(false);
+    expect(ep!.disabled_reason).toContain('consecutive');
+    expect(notified).toContain('webhooks.endpoint_disabled');
+  });
+
+  it('fan-out is idempotent: one delivery per (endpoint, event) even on redelivery', async () => {
+    const evId = crypto.randomUUID();
+    const ins = () =>
+      dbAdmin
+        .insert(webhookDeliveries)
+        .values({ tenant_id: tenantId, endpoint_id: endpointId, event_id: evId, event_name: 'invoice.paid' })
+        .onConflictDoNothing({
+          target: [webhookDeliveries.endpoint_id, webhookDeliveries.event_id],
+        })
+        .returning({ id: webhookDeliveries.id });
+    const first = await ins();
+    const second = await ins(); // simulated redelivery of the same fan-out job
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0); // no duplicate row → no duplicate POST
   });
 
   it('re-enabling resets strikes; RLS posture: app role fully denied', async () => {
