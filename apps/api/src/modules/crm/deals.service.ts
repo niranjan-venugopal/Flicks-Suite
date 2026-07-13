@@ -515,24 +515,57 @@ export class DealsService {
   }
 
   /**
-   * Turn deal_products (or the deal value) into invoice/quote lines. Bills the
-   * DISCOUNTED per-unit rate (line_total / quantity) so a product's discount_pct
-   * is carried onto the document instead of being silently dropped (over-billing).
+   * Turn deal_products (or the deal value) into invoice/quote lines. Product
+   * discounts are carried as an EXACT invoice-level fixed discount (gross − net)
+   * over undiscounted rates, so the document total equals the deal's line totals
+   * to the paisa — dividing line_total by quantity into a 2dp per-unit rate
+   * would drift a penny whenever the division doesn't terminate (e.g. 200/3).
    */
-  private buildLines(deal: typeof deals.$inferSelect, products: Array<typeof dealProducts.$inferSelect>) {
-    return products.length
-      ? products.map((p) => {
-          const qty = parseFloat(p.quantity);
-          const lineTotal = parseFloat(p.line_total);
-          const effRate = qty !== 0 ? lineTotal / qty : lineTotal;
-          return {
-            item_id: p.item_id ?? undefined,
-            item_name: p.name,
-            quantity: p.quantity,
-            rate: effRate.toFixed(2),
-          };
-        })
-      : [{ item_name: deal.title, quantity: '1', rate: deal.value_amount }];
+  private buildLines(
+    deal: typeof deals.$inferSelect,
+    products: Array<typeof dealProducts.$inferSelect>,
+  ): {
+    lines: Array<{ item_id?: string; item_name: string; quantity: string; rate: string }>;
+    discount?: { type: 'fixed'; value: string };
+  } {
+    if (!products.length) {
+      return { lines: [{ item_name: deal.title, quantity: '1', rate: deal.value_amount }] };
+    }
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const gross = products.reduce((a, p) => a + round2(parseFloat(p.quantity) * parseFloat(p.unit_price)), 0);
+    const net = products.reduce((a, p) => a + parseFloat(p.line_total), 0);
+    const totalDiscount = round2(gross - net);
+
+    if (totalDiscount > 0.005) {
+      // Undiscounted rates + one exact fixed discount.
+      const lines = products.map((p) => ({
+        item_id: p.item_id ?? undefined,
+        item_name: p.name,
+        quantity: p.quantity,
+        rate: p.unit_price,
+      }));
+      return { lines, discount: { type: 'fixed', value: totalDiscount.toFixed(2) } };
+    }
+    if (totalDiscount < -0.005) {
+      // Marked-up line_totals (net > gross) can't be a discount — fall back to
+      // the effective per-unit rate (worst case ±1 paisa per line).
+      const lines = products.map((p) => {
+        const qty = parseFloat(p.quantity);
+        const lineTotal = parseFloat(p.line_total);
+        const effRate = qty !== 0 ? lineTotal / qty : lineTotal;
+        return { item_id: p.item_id ?? undefined, item_name: p.name, quantity: p.quantity, rate: effRate.toFixed(2) };
+      });
+      return { lines };
+    }
+    // No discount at all — bill unit prices as-is.
+    return {
+      lines: products.map((p) => ({
+        item_id: p.item_id ?? undefined,
+        item_name: p.name,
+        quantity: p.quantity,
+        rate: p.unit_price,
+      })),
+    };
   }
 
   /**
@@ -554,12 +587,13 @@ export class DealsService {
     }
 
     const customer = await this.resolveCustomer(tenantId, userId, deal, company, person);
-    const lines = this.buildLines(deal, products);
+    const { lines, discount } = this.buildLines(deal, products);
     const invoice = await this.invoicing.createDraftInvoiceFromDeal(tenantId, userId, {
       dealId,
       customerId: customer.id,
       currency: deal.currency,
       lines,
+      discount,
     });
 
     await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.invoice_created', resourceType: 'deal', resourceId: dealId, metadata: { invoice_id: invoice.id } });
@@ -582,12 +616,13 @@ export class DealsService {
     }
 
     const customer = await this.resolveCustomer(tenantId, userId, deal, company, person);
-    const lines = this.buildLines(deal, products);
+    const { lines, discount } = this.buildLines(deal, products);
     const quote = await this.invoicing.createDraftQuoteFromDeal(tenantId, userId, {
       dealId,
       customerId: customer.id,
       currency: deal.currency,
       lines,
+      discount,
     });
 
     await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.quote_created', resourceType: 'deal', resourceId: dealId, metadata: { quote_id: quote.id } });

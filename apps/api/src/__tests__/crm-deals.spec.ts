@@ -298,6 +298,23 @@ describe('Deal → invoice (§4.4, the flagship suite hook)', () => {
     const [inv] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, r.data.invoice_id));
     // The invoice bills the discounted total; the bug billed 2 × 100 = 200.
     expect(inv!.total_amount).toBe('180.00');
+    // Carried as an exact invoice-level fixed discount over undiscounted rates.
+    expect(inv!.discount_amount).toBe('20.00');
+  });
+
+  it('discount stays paisa-exact even when line_total/quantity does not divide (no penny drift)', async () => {
+    const co = await directory.createCompany(tenantA, userId, { name: `Drift Co ${rid()}`, domain: `drift-${rid()}.com` });
+    const d = await service.create(tenantA, userId, { title: 'Drifty', value_amount: 200, currency: 'INR', company_id: co.data.id });
+    // 3 × ₹100 with a flat ₹100 off = ₹200. A 2dp per-unit rate (66.67) would
+    // recompute 3 × 66.67 = 200.01 — the fixed-discount carry avoids that.
+    await dbAdmin.insert(dealProducts).values({
+      tenant_id: tenantA, deal_id: d.data.id, name: 'Bundle',
+      quantity: '3', unit_price: '100.00', currency: 'INR', discount_pct: '33.33', line_total: '200.00',
+    });
+    const r = await service.createInvoice(tenantA, userId, d.data.id);
+    const [inv] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, r.data.invoice_id));
+    expect(inv!.total_amount).toBe('200.00'); // exactly — not 200.01
+    expect(inv!.discount_amount).toBe('100.00');
   });
 });
 
@@ -352,6 +369,23 @@ describe('Deal → quote + accept (§4.4 / §19.3)', () => {
     // Re-accepting is a no-op.
     const again = await publicInv.acceptQuote(token);
     expect(again.data.already).toBe(true);
+  });
+
+  it('refuses to accept a quote past valid_until and flips it to EXPIRED', async () => {
+    const publicInv = new PublicInvoiceService(dbAdmin as never, {} as never, {} as never, {} as never, eventsStub as never);
+    const co = await directory.createCompany(tenantA, userId, { name: `Stale Co ${rid()}`, domain: `st-${rid()}.com` });
+    const d = await service.create(tenantA, userId, { title: 'StaleQuote', value_amount: 100, currency: 'INR', company_id: co.data.id });
+    const q = await service.createQuote(tenantA, userId, d.data.id);
+    const token = `qexp_${rid()}${Date.now()}`;
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await dbAdmin
+      .update(invoicesTable)
+      .set({ status: 'SENT', public_view_token: token, valid_until: yesterday })
+      .where(eq(invoicesTable.id, q.data.quote_id));
+    await expect(publicInv.acceptQuote(token)).rejects.toThrow(/expired/i);
+    const [row] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, q.data.quote_id));
+    expect(row!.status).toBe('EXPIRED'); // flipped inline, not left SENT
+    expect(row!.quote_accepted_at).toBeNull();
   });
 });
 

@@ -119,6 +119,48 @@ export class InvoicingPublicService {
   }
 
   /**
+   * Claim the deal back-link for a freshly minted document. The partial unique
+   * index uq_invoices_deal_doc (tenant, deal, document_type) makes the claim
+   * atomic: if a concurrent request won the race, our UPDATE hits a unique
+   * violation — we then delete our orphaned draft and return the winner, so a
+   * double-submit converges on ONE document instead of leaving clutter.
+   */
+  private async claimDealBackLink(
+    tenantId: string,
+    dealId: string,
+    createdId: string,
+    documentType: 'INVOICE' | 'QUOTE',
+  ): Promise<{ winnerId: string }> {
+    try {
+      await this.dbAdmin
+        .update(invoices)
+        .set({ deal_id: dealId })
+        .where(and(eq(invoices.id, createdId), eq(invoices.tenant_id, tenantId)));
+      return { winnerId: createdId };
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code !== '23505') throw err;
+      // Lost the race: fetch the winner, discard our orphan draft.
+      const [winner] = await this.dbAdmin
+        .select({ id: invoices.id })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.tenant_id, tenantId),
+            eq(invoices.deal_id, dealId),
+            eq(invoices.document_type, documentType),
+          ),
+        )
+        .limit(1);
+      await this.dbAdmin
+        .delete(invoices)
+        .where(and(eq(invoices.id, createdId), eq(invoices.tenant_id, tenantId)));
+      if (!winner) throw err; // shouldn't happen; surface the original conflict
+      return { winnerId: winner.id };
+    }
+  }
+
+  /**
    * Create a DRAFT invoice from a deal (§4.4). Lines are supplied by CRM
    * (from deal_products or a single value line); this sets the deal↔invoice
    * back-links after creation. Returns the invoice.
@@ -126,7 +168,13 @@ export class InvoicingPublicService {
   async createDraftInvoiceFromDeal(
     tenantId: string,
     userId: string,
-    args: { dealId: string; customerId: string; currency: string; lines: DraftInvoiceLine[] },
+    args: {
+      dealId: string;
+      customerId: string;
+      currency: string;
+      lines: DraftInvoiceLine[];
+      discount?: { type: 'fixed'; value: string };
+    },
   ) {
     const today = new Date().toISOString().slice(0, 10);
     const dueDate = new Date(Date.now() + 15 * 86_400_000).toISOString().slice(0, 10);
@@ -138,15 +186,16 @@ export class InvoicingPublicService {
         currency: args.currency,
         reference: `Deal ${args.dealId}`,
         line_items: args.lines,
+        ...(args.discount ? { discount_type: args.discount.type, discount_value: args.discount.value } : {}),
       } as never,
       userId,
       tenantId,
     );
-    // Back-links: invoice.deal_id and deal.invoice_id (service-role, id-scoped).
-    await this.dbAdmin
-      .update(invoices)
-      .set({ deal_id: args.dealId })
-      .where(and(eq(invoices.id, created.data.id), eq(invoices.tenant_id, tenantId)));
+    const { winnerId } = await this.claimDealBackLink(tenantId, args.dealId, created.data.id, 'INVOICE');
+    if (winnerId !== created.data.id) {
+      const [winner] = await this.dbAdmin.select().from(invoices).where(eq(invoices.id, winnerId)).limit(1);
+      return winner!;
+    }
     await this.dbAdmin
       .update(deals)
       .set({ invoice_id: created.data.id, updated_at: new Date() })
@@ -163,7 +212,13 @@ export class InvoicingPublicService {
   async createDraftQuoteFromDeal(
     tenantId: string,
     userId: string,
-    args: { dealId: string; customerId: string; currency: string; lines: DraftInvoiceLine[] },
+    args: {
+      dealId: string;
+      customerId: string;
+      currency: string;
+      lines: DraftInvoiceLine[];
+      discount?: { type: 'fixed'; value: string };
+    },
   ) {
     const today = new Date().toISOString().slice(0, 10);
     const validUntil = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
@@ -177,14 +232,16 @@ export class InvoicingPublicService {
         currency: args.currency,
         reference: `Deal ${args.dealId}`,
         line_items: args.lines,
+        ...(args.discount ? { discount_type: args.discount.type, discount_value: args.discount.value } : {}),
       } as never,
       userId,
       tenantId,
     );
-    await this.dbAdmin
-      .update(invoices)
-      .set({ deal_id: args.dealId })
-      .where(and(eq(invoices.id, created.data.id), eq(invoices.tenant_id, tenantId)));
+    const { winnerId } = await this.claimDealBackLink(tenantId, args.dealId, created.data.id, 'QUOTE');
+    if (winnerId !== created.data.id) {
+      const [winner] = await this.dbAdmin.select().from(invoices).where(eq(invoices.id, winnerId)).limit(1);
+      return winner!;
+    }
     await this.dbAdmin
       .update(deals)
       .set({ quote_id: created.data.id, updated_at: new Date() })

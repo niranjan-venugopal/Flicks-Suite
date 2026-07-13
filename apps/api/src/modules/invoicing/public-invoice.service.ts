@@ -255,6 +255,17 @@ export class PublicInvoiceService {
     if (!['SENT', 'VIEWED'].includes(inv.status)) {
       throw new BadRequestException(`This quote cannot be accepted (status: ${inv.status})`);
     }
+    // valid_until is a hard acceptance deadline, not decoration: past it the
+    // quoted pricing/terms are stale. Flip to EXPIRED inline (don't wait for the
+    // hourly expire-quotes sweep) and refuse.
+    const today = new Date().toISOString().slice(0, 10);
+    if (inv.valid_until && inv.valid_until < today) {
+      await this.dbAdmin
+        .update(invoices)
+        .set({ status: 'EXPIRED', updated_at: new Date() })
+        .where(eq(invoices.id, inv.id));
+      throw new BadRequestException('This quote has expired — ask the seller for a fresh one');
+    }
     const now = new Date();
     await this.dbAdmin
       .update(invoices)

@@ -712,6 +712,7 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deal_id uuid REFERENCES deals(id);
 -- one invoice per deal — repeated deal→invoice calls can never fan out dupes.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_company ON customers (tenant_id, directory_company_id) WHERE directory_company_id IS NOT NULL AND deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_person ON customers (tenant_id, directory_person_id) WHERE directory_person_id IS NOT NULL AND deleted_at IS NULL;
+DROP INDEX IF EXISTS uq_invoices_deal; -- 0032-era 2-col index; superseded by _doc (see 0033)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal_doc ON invoices (tenant_id, deal_id, document_type) WHERE deal_id IS NOT NULL;
 -- 0033: deal→quote support (per-pipeline on-accept move, deal↔quote back-link, accept audit).
 ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS quote_accepted_stage_id uuid;

@@ -42,13 +42,15 @@ export class InvoicingJobs {
   @Cron(CronExpression.EVERY_HOUR, { name: 'mark-overdue-invoices' })
   async markOverdueInvoices(): Promise<void> {
     // SENT/VIEWED/PARTIALLY_PAID past due_date → OVERDUE (§6.5). Cross-tenant
-    // sweep on the service role; RLS-scoped reads are unaffected.
+    // sweep on the service role; RLS-scoped reads are unaffected. Scoped to
+    // INVOICEs — quotes age out via expire-quotes below, not OVERDUE.
     const today = new Date().toISOString().slice(0, 10);
     const updated = await this.dbAdmin
       .update(invoices)
       .set({ status: 'OVERDUE', updated_at: new Date() })
       .where(
         and(
+          eq(invoices.document_type, 'INVOICE'),
           inArray(invoices.status, ['SENT', 'VIEWED', 'PARTIALLY_PAID']),
           lt(invoices.due_date, today),
         ),
@@ -60,9 +62,26 @@ export class InvoicingJobs {
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'expire-quotes' })
-  async expireQuotes(): Promise<void> {
-    // Sprint 3: SENT_AS_QUOTE past valid_until → QUOTE_EXPIRED.
-    this.logger.debug('expire-quotes (stub)');
+  async expireQuotes(): Promise<number> {
+    // SENT/VIEWED quotes past valid_until → EXPIRED (§6.5/§19.3). Belt for the
+    // hosted-accept check's braces: even between sweeps, acceptQuote re-checks
+    // valid_until itself, so an expired quote can never be accepted.
+    const today = new Date().toISOString().slice(0, 10);
+    const updated = await this.dbAdmin
+      .update(invoices)
+      .set({ status: 'EXPIRED', updated_at: new Date() })
+      .where(
+        and(
+          eq(invoices.document_type, 'QUOTE'),
+          inArray(invoices.status, ['SENT', 'VIEWED']),
+          lt(invoices.valid_until, today),
+        ),
+      )
+      .returning({ id: invoices.id });
+    if (updated.length > 0) {
+      this.logger.log(`expire-quotes: ${updated.length} quote(s) → EXPIRED`);
+    }
+    return updated.length;
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'send-reminders' })

@@ -18,6 +18,16 @@ ALTER TABLE pipelines ADD COLUMN IF NOT EXISTS quote_accepted_stage_id uuid;
 -- Deal → quote back-link (mirrors deals.invoice_id).
 ALTER TABLE deals ADD COLUMN IF NOT EXISTS quote_id uuid;
 
+-- Forward-drop the 0032-era per-deal invoice index. 0032 was amended in-place to
+-- key on (tenant_id, deal_id, document_type) — fresh DBs only ever create the new
+-- index, but ALREADY-PROVISIONED DBs still carry the old two-column one, which
+-- would reject "one quote AND one invoice on the same deal" with a unique
+-- violation. Idempotent on both kinds of environment.
+DROP INDEX IF EXISTS uq_invoices_deal;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal_doc
+  ON invoices (tenant_id, deal_id, document_type)
+  WHERE deal_id IS NOT NULL;
+
 -- Quote acceptance audit timestamp (the ACCEPTED status lives in invoices.status).
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS quote_accepted_at timestamptz;
 
