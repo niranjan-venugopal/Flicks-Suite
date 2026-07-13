@@ -263,3 +263,61 @@ export const recordTags = pgTable(
     index('idx_record_tags_object').on(t.tenant_id, t.object_type, t.object_id),
   ],
 );
+
+// ─── Custom fields, saved views, record files (§9.1-9.2, §19.2 / 0033) ────────
+
+export const customFieldDefs = pgTable(
+  'custom_field_defs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    object_type: text('object_type').notNull(), // deal | person | company | lead
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    field_type: text('field_type').notNull(), // text|number|date|select|multiselect|checkbox|url
+    options: jsonb('options').notNull().default([]),
+    is_required: boolean('is_required').notNull().default(false),
+    display_order: smallint('display_order').notNull().default(0),
+    archived: boolean('archived').notNull().default(false),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_custom_field_key').on(t.tenant_id, t.object_type, t.key).where(sql`${t.archived} = false`),
+  ],
+);
+
+export const savedViews = pgTable(
+  'saved_views',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    object_type: text('object_type').notNull(),
+    name: text('name').notNull(),
+    owner_user_id: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+    is_shared: boolean('is_shared').notNull().default(false),
+    filters: jsonb('filters').notNull().default({}),
+    sort: jsonb('sort').notNull().default({}),
+    columns: jsonb('columns').notNull().default([]),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_saved_views_scope').on(t.tenant_id, t.object_type)],
+);
+
+export const recordFiles = pgTable(
+  'record_files',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    object_type: text('object_type').notNull(),
+    object_id: uuid('object_id').notNull(),
+    file_name: text('file_name').notNull(),
+    mime_type: text('mime_type').notNull(),
+    size_bytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    storage_key: text('storage_key').notNull(),
+    uploaded_by: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [index('idx_record_files_object').on(t.tenant_id, t.object_type, t.object_id).where(sql`${t.deleted_at} IS NULL`)],
+);

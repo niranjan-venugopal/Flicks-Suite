@@ -728,10 +728,34 @@ CREATE TABLE IF NOT EXISTS record_tags (
   PRIMARY KEY (tenant_id, tag_id, object_type, object_id)
 );
 CREATE INDEX IF NOT EXISTS idx_record_tags_object ON record_tags (tenant_id, object_type, object_id);
+-- 0033: custom fields, saved views, record files (§9.1-9.2, §19.2).
+CREATE TABLE IF NOT EXISTS custom_field_defs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  object_type text NOT NULL CHECK (object_type IN ('deal','person','company','lead')), key text NOT NULL, label text NOT NULL,
+  field_type text NOT NULL CHECK (field_type IN ('text','number','date','select','multiselect','checkbox','url')),
+  options jsonb NOT NULL DEFAULT '[]', is_required boolean NOT NULL DEFAULT false, display_order smallint NOT NULL DEFAULT 0,
+  archived boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_field_key ON custom_field_defs (tenant_id, object_type, key) WHERE archived = false;
+CREATE TABLE IF NOT EXISTS saved_views (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  object_type text NOT NULL CHECK (object_type IN ('deal','person','company','lead')), name text NOT NULL,
+  owner_user_id uuid REFERENCES users(id) ON DELETE SET NULL, is_shared boolean NOT NULL DEFAULT false,
+  filters jsonb NOT NULL DEFAULT '{}', sort jsonb NOT NULL DEFAULT '{}', columns jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_saved_views_scope ON saved_views (tenant_id, object_type);
+CREATE TABLE IF NOT EXISTS record_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  object_type text NOT NULL CHECK (object_type IN ('deal','person','company','lead')), object_id uuid NOT NULL,
+  file_name text NOT NULL, mime_type text NOT NULL, size_bytes bigint NOT NULL, storage_key text NOT NULL,
+  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_record_files_object ON record_files (tenant_id, object_type, object_id) WHERE deleted_at IS NULL;
 DO $crmrls$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags'] LOOP
+  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags','custom_field_defs','saved_views','record_files'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I ON %I', t, t);

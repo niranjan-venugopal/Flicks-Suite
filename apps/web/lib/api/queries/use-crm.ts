@@ -261,3 +261,107 @@ export function useCreateQuoteFromDeal() {
     },
   })
 }
+
+// ─── Custom fields (§9.1) ─────────────────────────────────────────────────────
+export interface CustomFieldDef {
+  id: string
+  object_type: string
+  key: string
+  label: string
+  field_type: string
+  options: string[]
+  is_required: boolean
+  display_order: number
+  archived: boolean
+}
+
+export function useCustomFields(objectType?: string) {
+  return useQuery({
+    queryKey: ['crm', 'custom-fields', objectType ?? 'all'],
+    queryFn: () => api.get<{ data: CustomFieldDef[] }>(`/crm/custom-fields${objectType ? `?object_type=${objectType}` : ''}`),
+  })
+}
+
+export function useCreateCustomField() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: CustomFieldDef }>('/crm/custom-fields', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
+  })
+}
+
+export function useUpdateCustomField() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: CustomFieldDef }>(`/crm/custom-fields/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
+  })
+}
+
+export function useArchiveCustomField() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/crm/custom-fields/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
+  })
+}
+
+// ─── Saved views (§9.2) ───────────────────────────────────────────────────────
+export interface SavedView {
+  id: string
+  object_type: string
+  name: string
+  owner_user_id: string | null
+  is_shared: boolean
+  filters: Record<string, unknown>
+  sort: Record<string, unknown>
+  columns: string[]
+}
+
+export function useSavedViews(objectType?: string) {
+  return useQuery({
+    queryKey: ['crm', 'views', objectType ?? 'all'],
+    queryFn: () => api.get<{ data: SavedView[] }>(`/crm/views${objectType ? `?object_type=${objectType}` : ''}`),
+  })
+}
+
+export function useCreateSavedView() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: SavedView }>('/crm/views', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
+  })
+}
+
+export function useUpdateSavedView() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: SavedView }>(`/crm/views/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
+  })
+}
+
+export function useDeleteSavedView() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/crm/views/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
+  })
+}
+
+// ─── Global search (§19.8) ────────────────────────────────────────────────────
+export interface CrmSearchResults {
+  query: string
+  companies: Array<{ id: string; name: string; domain: string | null }>
+  people: Array<{ id: string; display_name: string | null; email: string | null; company_id: string | null }>
+  deals: Array<{ id: string; title: string; status: string; value_base_amount: string }>
+}
+
+export function useGlobalSearch(q: string) {
+  const query = q.trim()
+  return useQuery({
+    queryKey: ['crm', 'search', query],
+    queryFn: () => api.get<{ data: CrmSearchResults }>(`/crm/search?q=${encodeURIComponent(query)}`),
+    enabled: query.length >= 2,
+  })
+}
