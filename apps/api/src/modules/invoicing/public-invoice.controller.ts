@@ -58,6 +58,14 @@ export class PublicInvoiceController {
     return this.publicInvoices.trackView(token);
   }
 
+  @Post(':token/accept')
+  @Public()
+  @Throttle({ medium: { ttl: 10000, limit: 10 } })
+  @ApiOperation({ summary: 'Customer accepts a quote (§19.3) → ACCEPTED + deal auto-advance' })
+  acceptQuote(@Param('token') token: string) {
+    return this.publicInvoices.acceptQuote(token);
+  }
+
   @Post(':token/pay/razorpay')
   @Public()
   @Throttle({ medium: { ttl: 10000, limit: 20 } })

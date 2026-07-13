@@ -105,6 +105,9 @@ export const pipelines = pgTable(
     name: text('name').notNull(),
     display_order: smallint('display_order').notNull().default(0),
     is_default: boolean('is_default').notNull().default(false),
+    // §19.3 — when a quote generated from a deal in this pipeline is accepted,
+    // auto-advance the deal to this stage (NULL = leave it where it is).
+    quote_accepted_stage_id: uuid('quote_accepted_stage_id'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),
   },
@@ -155,6 +158,7 @@ export const deals = pgTable(
     next_activity_at: timestamp('next_activity_at', { withTimezone: true }),
     last_activity_at: timestamp('last_activity_at', { withTimezone: true }),
     invoice_id: uuid('invoice_id'),
+    quote_id: uuid('quote_id'),
     custom: jsonb('custom').notNull().default({}),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

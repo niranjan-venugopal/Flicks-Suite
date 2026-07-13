@@ -20,6 +20,7 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { RazorpayService } from './razorpay.service';
 import { InvSettingsService } from './inv-settings.service';
 import { R2Service } from '../../core/storage/r2.service';
+import { DomainEventsService } from '../../core/events/domain-events.service';
 
 /**
  * Hosted public invoice page backend (PRD §9.3).
@@ -36,6 +37,7 @@ export class PublicInvoiceService {
     private readonly razorpay: RazorpayService,
     private readonly invSettings: InvSettingsService,
     private readonly r2: R2Service,
+    private readonly domainEvents: DomainEventsService,
   ) {}
 
   /**
@@ -144,9 +146,11 @@ export class PublicInvoiceService {
     // Sanitized invoice surface — what the customer sees, nothing more.
     const pub = {
       invoice_number: inv.invoice_number,
+      document_type: inv.document_type,
       status: inv.status,
       invoice_date: inv.invoice_date,
       due_date: inv.due_date,
+      valid_until: inv.valid_until,
       currency: inv.currency,
       subtotal: inv.subtotal,
       discount_amount: inv.discount_amount,
@@ -233,6 +237,35 @@ export class PublicInvoiceService {
         show_powered_by: settings?.show_powered_by_footer ?? true,
       },
     };
+  }
+
+  /**
+   * Accept a quote from the hosted page (§19.3). Only a sent/viewed QUOTE can be
+   * accepted; flips it to ACCEPTED and publishes invoice.quote_accepted so CRM
+   * can auto-advance the linked deal. Idempotent — re-accepting is a no-op.
+   */
+  async acceptQuote(token: string) {
+    const inv = await this.fetchByToken(token);
+    if (inv.document_type !== 'QUOTE') {
+      throw new BadRequestException('This document is not a quote');
+    }
+    if (inv.status === 'ACCEPTED') {
+      return { data: { status: 'ACCEPTED', already: true } };
+    }
+    if (!['SENT', 'VIEWED'].includes(inv.status)) {
+      throw new BadRequestException(`This quote cannot be accepted (status: ${inv.status})`);
+    }
+    const now = new Date();
+    await this.dbAdmin
+      .update(invoices)
+      .set({ status: 'ACCEPTED', quote_accepted_at: now, updated_at: now })
+      .where(eq(invoices.id, inv.id));
+    await this.domainEvents.publish({
+      name: 'invoice.quote_accepted',
+      tenantId: inv.tenant_id,
+      payload: { invoice_id: inv.id, deal_id: inv.deal_id ?? null },
+    });
+    return { data: { status: 'ACCEPTED', already: false } };
   }
 
   /** View tracking (§9.3): SENT → VIEWED, count + first/last timestamps. */

@@ -153,4 +153,42 @@ export class InvoicingPublicService {
       .where(and(eq(deals.id, args.dealId), eq(deals.tenant_id, tenantId)));
     return created.data;
   }
+
+  /**
+   * Create a DRAFT QUOTE from a deal (§4.4 / §19.3). Same shape as
+   * createDraftInvoiceFromDeal but issues a quote (document_type=QUOTE, its own
+   * numbering sequence) and sets the deal↔quote back-links. When the customer
+   * later accepts it on the hosted page, the deal can auto-advance a stage.
+   */
+  async createDraftQuoteFromDeal(
+    tenantId: string,
+    userId: string,
+    args: { dealId: string; customerId: string; currency: string; lines: DraftInvoiceLine[] },
+  ) {
+    const today = new Date().toISOString().slice(0, 10);
+    const validUntil = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    const created = await this.invoices.create(
+      {
+        customer_id: args.customerId,
+        document_type: 'QUOTE',
+        invoice_date: today,
+        due_date: validUntil,
+        valid_until: validUntil,
+        currency: args.currency,
+        reference: `Deal ${args.dealId}`,
+        line_items: args.lines,
+      } as never,
+      userId,
+      tenantId,
+    );
+    await this.dbAdmin
+      .update(invoices)
+      .set({ deal_id: args.dealId })
+      .where(and(eq(invoices.id, created.data.id), eq(invoices.tenant_id, tenantId)));
+    await this.dbAdmin
+      .update(deals)
+      .set({ quote_id: created.data.id, updated_at: new Date() })
+      .where(and(eq(deals.id, args.dealId), eq(deals.tenant_id, tenantId)));
+    return created.data;
+  }
 }

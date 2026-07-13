@@ -430,7 +430,7 @@ const rawReq = (raw?: string) =>
 
 describe('Invoicing services (Sprint 4 — send/public/payments)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
-  const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
+  const publicSvc = new PublicInvoiceService(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub, domainEventsStub);
   let tenantId: string;
   let userId: string;
   let customerId: string;
@@ -616,7 +616,7 @@ import { PublicInvoiceService as PubSvc5 } from '../modules/invoicing/public-inv
 
 describe('Org financial + bank accounts (Sprint 5)', () => {
   const invoicesSvc = new InvoicesService(dbSvc, audit, numbering, configStub, notificationsStub, orgFinancial, domainEventsStub);
-  const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub);
+  const publicSvc = new PubSvc5(dbAdmin as any, razorpaySvc, invSettingsSvc4, r2Stub, domainEventsStub);
   let tenantId: string;
   let userId: string;
   let customerId: string;

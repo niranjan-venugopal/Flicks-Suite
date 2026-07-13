@@ -666,6 +666,9 @@ export const invoices = pgTable(
     invoice_template: text('invoice_template'),
     // CRM back-link (0032) — the deal this invoice was generated from (§4.4).
     deal_id: uuid('deal_id'),
+    // Quote acceptance timestamp (0033) — set when a QUOTE is accepted on the
+    // hosted page; the ACCEPTED state itself lives in `status`.
+    quote_accepted_at: timestamp('quote_accepted_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

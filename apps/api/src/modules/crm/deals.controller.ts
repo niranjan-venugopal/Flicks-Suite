@@ -114,6 +114,13 @@ export class DealsController {
     return this.deals.createInvoice(user.tenantId, user.sub, id);
   }
 
+  @Post('deals/:id/create-quote')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Deal → DRAFT quote (§4.4/§19.3): same as invoice but issues a QUOTE' })
+  createQuote(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.createQuote(user.tenantId, user.sub, id);
+  }
+
   @Delete('deals/:id')
   @Roles('owner', 'admin', 'manager')
   @RequireGrant('crm', 'edit')

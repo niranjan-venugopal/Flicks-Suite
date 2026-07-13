@@ -374,6 +374,7 @@ export const DOMAIN_EVENTS = [
   'crm.company.created', 'crm.company.updated', 'crm.company.merged',
   'crm.deal.created', 'crm.deal.updated', 'crm.deal.stage_changed',
   'crm.deal.won', 'crm.deal.lost', 'crm.deal.reopened', 'crm.deal.invoice_created',
+  'crm.deal.quote_created',
   'crm.activity.created', 'crm.activity.completed', 'crm.activity.overdue',
   'crm.email.queued', 'crm.email.sent', 'crm.email.delivered', 'crm.email.opened',
   'crm.email.clicked', 'crm.email.replied', 'crm.email.bounced',

@@ -250,3 +250,14 @@ export function useCreateInvoiceFromDeal() {
     },
   })
 }
+
+export function useCreateQuoteFromDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dealId: string) => api.post<{ data: { quote_id: string; customer_id: string } }>(`/crm/deals/${dealId}/create-quote`, {}),
+    onSuccess: (_r, dealId) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
+  })
+}

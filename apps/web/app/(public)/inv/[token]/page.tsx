@@ -17,6 +17,7 @@ import {
   usePublicInvoice,
   useDownloadPublicInvoicePdf,
   useCreateRazorpayOrder,
+  useAcceptQuote,
   trackPublicView,
   type PublicInvoicePayload,
 } from '@/lib/api/queries/use-invoicing'
@@ -227,6 +228,78 @@ function PaymentBlock({
   )
 }
 
+/**
+ * Quote acceptance block (§19.3) — shown instead of the payment block when the
+ * document is a QUOTE. A sent/viewed quote can be accepted with one click; once
+ * accepted it shows a confirmation (and the seller's deal auto-advances).
+ */
+function QuoteBlock({
+  payload,
+  theme,
+  token,
+}: {
+  payload: PublicInvoicePayload
+  theme: InvoiceThemeName
+  token: string
+}) {
+  const { invoice } = payload
+  const t = invoiceTheme(theme)
+  const { toast } = useToast()
+  const accept = useAcceptQuote(token)
+  const card: React.CSSProperties = {
+    maxWidth: 820,
+    margin: '24px auto 0',
+    background: t.cardBg,
+    border: t.cardBorder,
+    boxShadow: t.cardShadow,
+    borderRadius: 16,
+    padding: 28,
+    textAlign: 'center',
+  }
+
+  if (invoice.status === 'ACCEPTED') {
+    return (
+      <div style={card}>
+        <div style={{ fontWeight: 700, fontSize: 18, color: INVO.green, letterSpacing: '-0.02em' }}>
+          ✓ You’ve accepted this quote — thank you! The seller has been notified.
+        </div>
+      </div>
+    )
+  }
+  if (['CANCELLED', 'VOIDED', 'EXPIRED'].includes(invoice.status)) {
+    return (
+      <div style={card}>
+        <div style={{ fontWeight: 700, fontSize: 16, color: t.muted50 }}>This quote is no longer available.</div>
+      </div>
+    )
+  }
+
+  const onAccept = async () => {
+    try {
+      await accept.mutateAsync()
+      toast({ title: 'Quote accepted', description: 'The seller has been notified.' })
+    } catch (err) {
+      toast({ title: 'Could not accept', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+
+  return (
+    <div style={card}>
+      <div style={{ fontWeight: 700, fontSize: 18, color: t.text, letterSpacing: '-0.02em', marginBottom: 8 }}>
+        Ready to proceed?
+      </div>
+      <div style={{ fontWeight: 600, fontSize: 13, color: t.muted50, marginBottom: 18 }}>
+        Accepting confirms the quoted scope and pricing{invoice.valid_until ? ` (valid until ${invoice.valid_until})` : ''}.
+      </div>
+      <div style={{ maxWidth: 320, margin: '0 auto' }}>
+        <InvoBtn kind="primary" full height={46} disabled={accept.isPending} onClick={onAccept}>
+          {accept.isPending ? 'Accepting…' : 'Accept quote'}
+        </InvoBtn>
+      </div>
+    </div>
+  )
+}
+
 export default function PublicInvoicePage() {
   const params = useParams<{ token: string }>()
   const token = params?.token
@@ -314,7 +387,11 @@ export default function PublicInvoicePage() {
         {data?.data && (
           <>
             <InvoiceRenderer payload={data.data} theme={theme} />
-            <PaymentBlock payload={data.data} theme={theme} token={token!} />
+            {data.data.invoice.document_type === 'QUOTE' ? (
+              <QuoteBlock payload={data.data} theme={theme} token={token!} />
+            ) : (
+              <PaymentBlock payload={data.data} theme={theme} token={token!} />
+            )}
             {data.data.show_powered_by && (
               <div style={{ textAlign: 'center', marginTop: 32, fontWeight: 600, fontSize: 12, color: t.muted30 }}>
                 Powered by Flicks Suite

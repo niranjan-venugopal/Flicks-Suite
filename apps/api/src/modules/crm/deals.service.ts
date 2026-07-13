@@ -471,16 +471,11 @@ export class DealsService {
     return { data: result.deal };
   }
 
-  /**
-   * Deal → DRAFT invoice (§4.4, the flagship suite hook). Resolves (or creates)
-   * the billing customer from the deal's linked directory company/person via the
-   * invoicing facade, turns deal_products (or the deal value) into lines, creates
-   * a DRAFT invoice back-linked to the deal, and echoes it on the timeline.
-   * Returns the invoice id so the UI can open the existing invoice editor.
-   */
-  async createInvoice(tenantId: string, userId: string, dealId: string) {
-    // Gather the deal + products + directory refs (app-role, tenant-scoped).
-    const { deal, products, company, person } = await this.db.withTenant(tenantId, async (tx) => {
+  // ─── Shared deal→document billing helpers (invoice & quote) ──────────────────
+
+  /** Load the deal plus its products and linked directory company/person. */
+  private async loadDealForBilling(tenantId: string, dealId: string) {
+    return this.db.withTenant(tenantId, async (tx) => {
       const [d] = await tx.select().from(deals).where(and(eq(deals.id, dealId), isNull(deals.deleted_at))).limit(1);
       if (!d) throw new NotFoundException('Deal not found');
       const prods = await tx.select().from(dealProducts).where(eq(dealProducts.deal_id, dealId)).orderBy(asc(dealProducts.display_order));
@@ -492,39 +487,40 @@ export class DealsService {
         : [undefined];
       return { deal: d, products: prods, company: co, person: pe };
     });
+  }
 
-    // Idempotency: a deal maps to at most one draft invoice. If we already
-    // minted one, return it instead of creating a duplicate (double-click, retry).
-    if (deal.invoice_id) {
-      const existing = await this.invoicing.getInvoiceRef(tenantId, deal.invoice_id);
-      if (existing) {
-        return { data: { invoice_id: existing.id, customer_id: existing.customer_id } };
-      }
-      // Back-link is stale (invoice deleted) — fall through and re-create.
-    }
-
-    // Resolve or create the billing customer via the invoicing facade.
-    let customer = await this.invoicing.findCustomerByDirectoryRef(tenantId, {
+  /** Resolve the billing customer for a deal, creating+linking one if needed. */
+  private async resolveCustomer(
+    tenantId: string,
+    userId: string,
+    deal: typeof deals.$inferSelect,
+    company?: typeof directoryCompanies.$inferSelect,
+    person?: typeof directoryPeople.$inferSelect,
+  ) {
+    const existing = await this.invoicing.findCustomerByDirectoryRef(tenantId, {
       companyId: deal.company_id,
       personId: deal.primary_person_id,
     });
-    if (!customer) {
-      const name = company?.name ?? person?.display_name ?? deal.title;
-      customer = await this.invoicing.createCustomerFromDirectory(tenantId, userId, {
-        display_name: name,
-        customer_type: company ? 'business' : 'individual',
-        email: (company ? null : person?.email) ?? null,
-        phone: company?.phone ?? person?.phone ?? null,
-        country_code: company?.country_code ?? null,
-        directory_company_id: deal.company_id,
-        directory_person_id: deal.primary_person_id,
-      });
-    }
+    if (existing) return existing;
+    const name = company?.name ?? person?.display_name ?? deal.title;
+    return this.invoicing.createCustomerFromDirectory(tenantId, userId, {
+      display_name: name,
+      customer_type: company ? 'business' : 'individual',
+      email: (company ? null : person?.email) ?? null,
+      phone: company?.phone ?? person?.phone ?? null,
+      country_code: company?.country_code ?? null,
+      directory_company_id: deal.company_id,
+      directory_person_id: deal.primary_person_id,
+    });
+  }
 
-    // Lines: from deal_products, else a single line for the deal value. Bill the
-    // DISCOUNTED per-unit rate (line_total / quantity) so a product's discount_pct
-    // is carried onto the invoice instead of being silently dropped (over-billing).
-    const lines = products.length
+  /**
+   * Turn deal_products (or the deal value) into invoice/quote lines. Bills the
+   * DISCOUNTED per-unit rate (line_total / quantity) so a product's discount_pct
+   * is carried onto the document instead of being silently dropped (over-billing).
+   */
+  private buildLines(deal: typeof deals.$inferSelect, products: Array<typeof dealProducts.$inferSelect>) {
+    return products.length
       ? products.map((p) => {
           const qty = parseFloat(p.quantity);
           const lineTotal = parseFloat(p.line_total);
@@ -537,7 +533,28 @@ export class DealsService {
           };
         })
       : [{ item_name: deal.title, quantity: '1', rate: deal.value_amount }];
+  }
 
+  /**
+   * Deal → DRAFT invoice (§4.4, the flagship suite hook). Resolves (or creates)
+   * the billing customer from the deal's linked directory company/person via the
+   * invoicing facade, turns deal_products (or the deal value) into lines, creates
+   * a DRAFT invoice back-linked to the deal, and echoes it on the timeline.
+   * Returns the invoice id so the UI can open the existing invoice editor.
+   */
+  async createInvoice(tenantId: string, userId: string, dealId: string) {
+    const { deal, products, company, person } = await this.loadDealForBilling(tenantId, dealId);
+
+    // Idempotency: a deal maps to at most one draft invoice. If we already
+    // minted one, return it instead of creating a duplicate (double-click, retry).
+    if (deal.invoice_id) {
+      const existing = await this.invoicing.getInvoiceRef(tenantId, deal.invoice_id);
+      if (existing) return { data: { invoice_id: existing.id, customer_id: existing.customer_id } };
+      // Back-link is stale (invoice deleted) — fall through and re-create.
+    }
+
+    const customer = await this.resolveCustomer(tenantId, userId, deal, company, person);
+    const lines = this.buildLines(deal, products);
     const invoice = await this.invoicing.createDraftInvoiceFromDeal(tenantId, userId, {
       dealId,
       customerId: customer.id,
@@ -548,6 +565,62 @@ export class DealsService {
     await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.invoice_created', resourceType: 'deal', resourceId: dealId, metadata: { invoice_id: invoice.id } });
     await this.domainEvents.publish({ name: 'crm.deal.invoice_created', tenantId, actorUserId: userId, payload: { deal_id: dealId, invoice_id: invoice.id } });
     return { data: { invoice_id: invoice.id, customer_id: customer.id } };
+  }
+
+  /**
+   * Deal → DRAFT quote (§4.4 / §19.3). Mirrors createInvoice but issues a QUOTE.
+   * When the customer accepts it on the hosted page, invoice.quote_accepted fires
+   * and applyQuoteAccepted (below) auto-advances the deal if the pipeline is
+   * configured to. Returns the quote id so the UI can open the quote editor.
+   */
+  async createQuote(tenantId: string, userId: string, dealId: string) {
+    const { deal, products, company, person } = await this.loadDealForBilling(tenantId, dealId);
+
+    if (deal.quote_id) {
+      const existing = await this.invoicing.getInvoiceRef(tenantId, deal.quote_id);
+      if (existing) return { data: { quote_id: existing.id, customer_id: existing.customer_id } };
+    }
+
+    const customer = await this.resolveCustomer(tenantId, userId, deal, company, person);
+    const lines = this.buildLines(deal, products);
+    const quote = await this.invoicing.createDraftQuoteFromDeal(tenantId, userId, {
+      dealId,
+      customerId: customer.id,
+      currency: deal.currency,
+      lines,
+    });
+
+    await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.quote_created', resourceType: 'deal', resourceId: dealId, metadata: { quote_id: quote.id } });
+    await this.domainEvents.publish({ name: 'crm.deal.quote_created', tenantId, actorUserId: userId, payload: { deal_id: dealId, quote_id: quote.id } });
+    return { data: { quote_id: quote.id, customer_id: customer.id } };
+  }
+
+  /**
+   * React to a quote acceptance (§19.3): if the deal's pipeline defines a
+   * quote_accepted_stage_id, advance the deal to it. Attributed to the deal's
+   * owner (there's no logged-in user on the hosted page). No-op when the pipeline
+   * has no configured stage or the deal is already there. Invoked by the CRM
+   * subscriber on the invoice.quote_accepted domain event.
+   */
+  async applyQuoteAccepted(tenantId: string, dealId: string): Promise<void> {
+    const plan = await this.db.withTenant(tenantId, async (tx) => {
+      const [d] = await tx
+        .select({ owner: deals.owner_user_id, pipeline_id: deals.pipeline_id, stage_id: deals.stage_id })
+        .from(deals)
+        .where(and(eq(deals.id, dealId), isNull(deals.deleted_at)))
+        .limit(1);
+      if (!d) return null;
+      const [pl] = await tx
+        .select({ target: pipelines.quote_accepted_stage_id })
+        .from(pipelines)
+        .where(eq(pipelines.id, d.pipeline_id))
+        .limit(1);
+      if (!pl?.target || pl.target === d.stage_id) return null;
+      return { ownerUserId: d.owner, stageId: pl.target };
+    });
+    if (!plan) return;
+    // Reuse the full stage-move engine (row-lock, history, events, board push).
+    await this.moveStage(tenantId, plan.ownerUserId, dealId, { stage_id: plan.stageId });
   }
 
   async remove(tenantId: string, userId: string, id: string) {

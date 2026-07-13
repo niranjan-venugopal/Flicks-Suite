@@ -3,7 +3,7 @@
 import { use } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Loader2, FileText, Trophy } from 'lucide-react'
+import { ArrowLeft, Loader2, FileText, FileCheck, Trophy } from 'lucide-react'
 import { Btn, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -12,6 +12,7 @@ import {
   useCompany,
   useMoveDeal,
   useCreateInvoiceFromDeal,
+  useCreateQuoteFromDeal,
 } from '@/lib/api/queries/use-crm'
 
 function fmt(n: number, cur: string) {
@@ -24,6 +25,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
   const pipelines = usePipelines()
   const move = useMoveDeal()
   const createInvoice = useCreateInvoiceFromDeal()
+  const createQuote = useCreateQuoteFromDeal()
   const { toast } = useToast()
   const router = useRouter()
   const d = data?.data
@@ -55,6 +57,16 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
       router.push('/invoicing/invoices')
     } catch (err) {
       toast({ title: 'Could not create invoice', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+
+  const onCreateQuote = async () => {
+    try {
+      await createQuote.mutateAsync(id)
+      toast({ title: 'Draft quote created', description: 'Opening Invoicing → Quotes to edit and send it.' })
+      router.push('/invoicing/quotes')
+    } catch (err) {
+      toast({ title: 'Could not create quote', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
   }
 
@@ -99,6 +111,9 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
         <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
           <Btn kind="primary" size="sm" icon={<FileText size={14} />} onClick={onCreateInvoice} disabled={createInvoice.isPending}>
             {createInvoice.isPending ? 'Creating…' : 'Create invoice'}
+          </Btn>
+          <Btn kind="secondary" size="sm" icon={<FileCheck size={14} />} onClick={onCreateQuote} disabled={createQuote.isPending}>
+            {createQuote.isPending ? 'Creating…' : 'Create quote'}
           </Btn>
           {d.status === 'open' && wonStage && (
             <Btn kind="secondary" size="sm" icon={<Trophy size={14} />} onClick={() => doMove(wonStage.id)}>Mark Won</Btn>

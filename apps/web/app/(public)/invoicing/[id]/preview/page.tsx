@@ -29,9 +29,11 @@ function toPayload(inv: InvoiceDetail, org: OrgProfile): PublicInvoicePayload {
   return {
     invoice: {
       invoice_number: inv.invoice_number,
+      document_type: (inv as { document_type?: string }).document_type ?? 'INVOICE',
       status: inv.status,
       invoice_date: inv.invoice_date,
       due_date: inv.due_date,
+      valid_until: (inv as { valid_until?: string | null }).valid_until ?? null,
       currency: inv.currency,
       subtotal: inv.subtotal,
       discount_amount: inv.discount_amount,

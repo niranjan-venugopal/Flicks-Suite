@@ -216,6 +216,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_company
 CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_directory_person
   ON customers (tenant_id, directory_person_id)
   WHERE directory_person_id IS NOT NULL AND deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal
-  ON invoices (tenant_id, deal_id)
+-- One invoice AND one quote per deal (document_type keyed) — a deal legitimately
+-- produces a quote and, separately, an invoice, but never two of the same kind.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_deal_doc
+  ON invoices (tenant_id, deal_id, document_type)
   WHERE deal_id IS NOT NULL;

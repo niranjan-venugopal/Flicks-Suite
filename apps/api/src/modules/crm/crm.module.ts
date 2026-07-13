@@ -7,6 +7,7 @@ import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
 import { CrmGateway } from '../../gateways/crm.gateway';
+import { CrmEventsSubscriber } from './crm-events.subscriber';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { AuditModule } from '../audit/audit.module';
 import { InvoicingModule } from '../invoicing/invoicing.module';
@@ -28,6 +29,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     FxService,
     FxRefreshJob,
     CrmGateway,
+    CrmEventsSubscriber,
     CrmGrantGuard,
   ],
   exports: [DirectoryService, DealsService, FxService],

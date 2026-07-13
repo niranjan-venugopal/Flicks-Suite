@@ -29,6 +29,7 @@ import { NumberingService } from '../modules/invoicing/numbering.service';
 import { InvoicesService } from '../modules/invoicing/invoices.service';
 import { OrgFinancialService } from '../modules/org-financial/org-financial.service';
 import { InvoicingPublicService } from '../modules/invoicing/public';
+import { PublicInvoiceService } from '../modules/invoicing/public-invoice.service';
 import { DirectoryService } from '../modules/crm/directory.service';
 
 /**
@@ -297,6 +298,60 @@ describe('Deal → invoice (§4.4, the flagship suite hook)', () => {
     const [inv] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, r.data.invoice_id));
     // The invoice bills the discounted total; the bug billed 2 × 100 = 200.
     expect(inv!.total_amount).toBe('180.00');
+  });
+});
+
+describe('Deal → quote + accept (§4.4 / §19.3)', () => {
+  it('creates a DRAFT quote from a deal, links it, and is idempotent', async () => {
+    const co = await directory.createCompany(tenantA, userId, { name: `Quote Co ${rid()}`, domain: `q-${rid()}.com` });
+    const d = await service.create(tenantA, userId, { title: 'Quote deal', value_amount: 2500, currency: 'INR', company_id: co.data.id });
+    const q1 = await service.createQuote(tenantA, userId, d.data.id);
+    expect(q1.data.quote_id).toBeTruthy();
+    const [quote] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, q1.data.quote_id));
+    expect(quote!.document_type).toBe('QUOTE');
+    expect(quote!.deal_id).toBe(d.data.id);
+    expect(quote!.status).toBe('DRAFT');
+    const [deal] = await dbAdmin.select().from(deals).where(eq(deals.id, d.data.id));
+    expect(deal!.quote_id).toBe(q1.data.quote_id);
+    // Idempotent — a repeat call returns the same quote.
+    const q2 = await service.createQuote(tenantA, userId, d.data.id);
+    expect(q2.data.quote_id).toBe(q1.data.quote_id);
+    // A deal can carry both a quote AND an invoice (separate back-links).
+    const inv = await service.createInvoice(tenantA, userId, d.data.id);
+    expect(inv.data.invoice_id).not.toBe(q1.data.quote_id);
+  });
+
+  it('auto-advances the deal to the pipeline’s quote_accepted_stage_id', async () => {
+    const proposal = stages.find((s) => s.name === 'Proposal')!;
+    await dbAdmin.update(pipelines).set({ quote_accepted_stage_id: proposal.id }).where(eq(pipelines.id, pipelineId));
+    try {
+      const d = await service.create(tenantA, userId, { title: 'AcceptMove', value_amount: 100, currency: 'INR' }); // → Qualified
+      await service.applyQuoteAccepted(tenantA, d.data.id);
+      const [deal] = await dbAdmin.select().from(deals).where(eq(deals.id, d.data.id));
+      expect(deal!.stage_id).toBe(proposal.id);
+    } finally {
+      await dbAdmin.update(pipelines).set({ quote_accepted_stage_id: null }).where(eq(pipelines.id, pipelineId));
+    }
+  });
+
+  it('accepting a sent quote on the hosted page flips it to ACCEPTED and emits the event', async () => {
+    const publicInv = new PublicInvoiceService(dbAdmin as never, {} as never, {} as never, {} as never, eventsStub as never);
+    const co = await directory.createCompany(tenantA, userId, { name: `Accept Co ${rid()}`, domain: `a-${rid()}.com` });
+    const d = await service.create(tenantA, userId, { title: 'AcceptQuote', value_amount: 300, currency: 'INR', company_id: co.data.id });
+    const q = await service.createQuote(tenantA, userId, d.data.id);
+    // Simulate "sent": give the quote a public token + SENT status (skips email).
+    const token = `qtok_${rid()}${Date.now()}`;
+    await dbAdmin.update(invoicesTable).set({ status: 'SENT', public_view_token: token }).where(eq(invoicesTable.id, q.data.quote_id));
+    eventsStub.publish.mockClear();
+    const res = await publicInv.acceptQuote(token);
+    expect(res.data.status).toBe('ACCEPTED');
+    const [row] = await dbAdmin.select().from(invoicesTable).where(eq(invoicesTable.id, q.data.quote_id));
+    expect(row!.status).toBe('ACCEPTED');
+    expect(row!.quote_accepted_at).not.toBeNull();
+    expect(eventsStub.publish).toHaveBeenCalledWith(expect.objectContaining({ name: 'invoice.quote_accepted' }));
+    // Re-accepting is a no-op.
+    const again = await publicInv.acceptQuote(token);
+    expect(again.data.already).toBe(true);
   });
 });
 

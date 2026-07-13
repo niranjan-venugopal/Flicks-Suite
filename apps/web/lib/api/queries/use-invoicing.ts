@@ -424,9 +424,11 @@ export function useRecordPayment() {
 export interface PublicInvoicePayload {
   invoice: {
     invoice_number: string
+    document_type: string
     status: string
     invoice_date: string
     due_date: string
+    valid_until: string | null
     currency: string
     subtotal: string
     discount_amount: string | null
@@ -513,6 +515,15 @@ export function usePublicInvoice(token: string | undefined) {
 export function trackPublicView(token: string) {
   // Fire-and-forget view pixel; failures must never break the page.
   api.post(`/api/v1/public/inv/${token}/track`).catch(() => {})
+}
+
+/** Customer accepts a quote on the hosted page (§19.3). */
+export function useAcceptQuote(token: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<{ data: { status: string; already: boolean } }>(`/api/v1/public/inv/${token}/accept`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['public-invoice', token] }),
+  })
 }
 
 export interface RazorpayOrderResponse {
