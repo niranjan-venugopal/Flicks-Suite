@@ -54,6 +54,47 @@ export class DealsService {
     return t?.currency ?? 'INR';
   }
 
+  /**
+   * Guarantee the tenant has a pipeline. Migration 0032 seeded one per
+   * EXISTING tenant, but tenants created after it ran have none — every deal
+   * create then dies with "No pipeline available" and the board 404s. Seeds the
+   * same default "Sales" pipeline + stages + lost reasons as the migration
+   * (idempotent: no-op when any live pipeline exists).
+   */
+  private async ensureDefaultPipeline(tx: Db, tenantId: string) {
+    const [existing] = await tx
+      .select({ id: pipelines.id })
+      .from(pipelines)
+      .where(isNull(pipelines.deleted_at))
+      .orderBy(asc(pipelines.display_order))
+      .limit(1);
+    if (existing) return;
+    const [pl] = await tx
+      .insert(pipelines)
+      .values({ tenant_id: tenantId, name: 'Sales', is_default: true, display_order: 0 })
+      .returning();
+    const defs: Array<[string, number, number | null, string]> = [
+      ['Qualified', 10, null, 'open'],
+      ['Contact Made', 25, null, 'open'],
+      ['Demo Scheduled', 40, 7, 'open'],
+      ['Proposal Sent', 60, 10, 'open'],
+      ['Negotiation', 80, 10, 'open'],
+      ['Won', 100, null, 'won'],
+      ['Lost', 0, null, 'lost'],
+    ];
+    await tx.insert(pipelineStages).values(
+      defs.map(([name, prob, rot, type], i) => ({
+        tenant_id: tenantId,
+        pipeline_id: pl!.id,
+        name,
+        display_order: i,
+        win_probability: prob,
+        rotting_days: rot,
+        stage_type: type,
+      })),
+    );
+  }
+
   private async loadStage(tx: Db, tenantId: string, stageId: string) {
     const [s] = await tx
       .select()
@@ -114,6 +155,9 @@ export class DealsService {
   async board(tenantId: string, pipelineId?: string) {
     return this.db.withTenant(tenantId, async (tx) => {
       const base = await this.baseCurrency(tx, tenantId);
+      // Post-0032 tenants have no seeded pipeline — heal on first board view so
+      // the CRM is never a dead end.
+      await this.ensureDefaultPipeline(tx, tenantId);
       const pl = pipelineId
         ? (await tx.select().from(pipelines).where(and(eq(pipelines.id, pipelineId), isNull(pipelines.deleted_at))).limit(1))[0]
         : (await tx.select().from(pipelines).where(isNull(pipelines.deleted_at)).orderBy(asc(pipelines.display_order)).limit(1))[0];
@@ -283,6 +327,7 @@ export class DealsService {
       tenantId,
       async (tx) => {
         const base = await this.baseCurrency(tx, tenantId);
+        await this.ensureDefaultPipeline(tx, tenantId);
         // Resolve pipeline + entry stage (first open stage of the pipeline).
         const pl = dto.pipeline_id
           ? (await tx.select().from(pipelines).where(and(eq(pipelines.id, dto.pipeline_id), isNull(pipelines.deleted_at))).limit(1))[0]

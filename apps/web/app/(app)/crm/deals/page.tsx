@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
+import { useQuickAdd } from '@/lib/stores/quick-add.store'
 import { TagChip, OwnerAv, EmptyState, SavedViewTabs, FilterBar, BulkBar, KeymapOverlay, fmtCur, type FilterChip } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import {
@@ -85,17 +86,18 @@ export default function DealsBoardPage() {
   const lostStage = pl?.stages.find((s) => s.stage_type === 'lost')
   const f = forecast.data?.data
 
-  // N opens quick-add on the first column, ? opens the keymap.
+  const quickAdd = useQuickAdd()
+
+  // ? opens the keymap (N is handled globally by QuickAddGlobal in the layout).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return
-      if (e.key === 'n' || e.key === 'N') { e.preventDefault(); setQuickAddCol(data?.columns[0]?.stage.id ?? null) }
       if (e.key === '?') { e.preventDefault(); setKeymap((v) => !v) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [data])
+  }, [])
 
   // Built-in views + saved views from the API (§9.2).
   const viewTabs = useMemo(() => [
@@ -181,7 +183,7 @@ export default function DealsBoardPage() {
     : []
 
   if (isMobile) {
-    return <MobileSwimlane columns={data?.columns ?? []} base={base} onOpen={(id) => router.push(`/crm/deals/${id}`)} onQuickAdd={() => setQuickAddCol(data?.columns[0]?.stage.id ?? null)} quickAddCol={quickAddCol} pipelineId={data?.pipeline.id} onCloseQuickAdd={() => setQuickAddCol(null)} />
+    return <MobileSwimlane columns={data?.columns ?? []} base={base} onOpen={(id) => router.push(`/crm/deals/${id}`)} onQuickAdd={() => quickAdd.openWith('deal')} quickAddCol={quickAddCol} pipelineId={data?.pipeline.id} onCloseQuickAdd={() => setQuickAddCol(null)} />
   }
 
   return (
@@ -201,7 +203,7 @@ export default function DealsBoardPage() {
         <button onClick={() => setKeymap(true)} title="Keyboard (?)" style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Icon.keyboard size={15} />
         </button>
-        <Btn kind="primary" size="sm" icon={<Icon.plus size={14} />} onClick={() => setQuickAddCol(data?.columns[0]?.stage.id ?? null)}>
+        <Btn kind="primary" size="sm" icon={<Icon.plus size={14} />} onClick={() => quickAdd.openWith('deal')}>
           New deal <span style={{ opacity: 0.6, fontFamily: 'var(--font-mono)', fontSize: 10 }}>N</span>
         </Btn>
       </div>
@@ -233,7 +235,7 @@ export default function DealsBoardPage() {
           icon={<Icon.kanban size={22} />}
           line="No deals yet. Create your first deal and start moving it through the pipeline — imports from Pipedrive, HubSpot and CSV arrive with the reports phase."
           cta="New deal"
-          onCta={() => setQuickAddCol(data?.columns[0]?.stage.id ?? null)}
+          onCta={() => quickAdd.openWith('deal')}
         />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(218px, 1fr))`, gap: 12, alignItems: 'start', overflowX: 'auto', paddingBottom: 8 }}>
