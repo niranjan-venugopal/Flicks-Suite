@@ -151,14 +151,24 @@ export class AttendanceService {
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
-  /** Resolves the employee_id for a logged-in user inside the active tenant. */
+  /**
+   * Resolves the employee_id for a logged-in user inside the active tenant.
+   *
+   * SELF-HEALS when the membership has no employee bridge: workspaces that
+   * start with CRM/Invoicing (or members added outside HR onboarding) have
+   * `memberships.employee_id = NULL`, which used to make every attendance
+   * call die with "No employee record found" — the clock-in button clicked
+   * but the status never changed. Now we link an existing employee row by
+   * work_email, or mint a minimal one from the user profile, so attendance
+   * is never a dead end. HR can enrich the record later.
+   */
   private async getEmployeeIdForUser(
     userId: string,
     tenantId: string,
   ): Promise<string> {
     return this.databaseService.withTenant(tenantId, async (tx) => {
       const [m] = await tx
-        .select({ employeeId: memberships.employee_id })
+        .select({ membershipId: memberships.id, employeeId: memberships.employee_id })
         .from(memberships)
         .where(
           and(
@@ -167,12 +177,73 @@ export class AttendanceService {
           ),
         )
         .limit(1);
-      if (!m?.employeeId) {
+      if (!m) {
         throw new NotFoundException(
-          'No employee record found for the current user',
+          'No membership found for the current user',
         );
       }
-      return m.employeeId;
+      if (m.employeeId) return m.employeeId;
+
+      const [u] = await tx
+        .select({ email: users.email, fullName: users.full_name })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!u) {
+        throw new NotFoundException('No user profile found');
+      }
+
+      // Prefer linking an employee HR already created with this work email.
+      let employeeId: string | undefined;
+      const [existing] = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.tenant_id, tenantId), eq(employees.work_email, u.email)))
+        .limit(1);
+      if (existing) {
+        employeeId = existing.id;
+      } else {
+        const nameParts = (u.fullName ?? u.email.split('@')[0] ?? 'Member').trim().split(/\s+/);
+        const firstName = nameParts[0] || 'Member';
+        const lastName = nameParts.slice(1).join(' ') || '—';
+        // employee_code is unique per tenant — retry a few random suffixes.
+        for (let attempt = 0; attempt < 4 && !employeeId; attempt++) {
+          const code = `EMP-${Math.random().toString(16).slice(2, 6).toUpperCase()}`;
+          try {
+            const [created] = await tx
+              .insert(employees)
+              .values({
+                tenant_id: tenantId,
+                employee_code: code,
+                first_name: firstName,
+                last_name: lastName,
+                work_email: u.email,
+                date_of_joining: new Date().toISOString().slice(0, 10),
+              })
+              .returning({ id: employees.id });
+            employeeId = created!.id;
+          } catch (err) {
+            if ((err as { code?: string })?.code !== '23505' || attempt === 3) throw err;
+          }
+        }
+      }
+
+      await tx
+        .update(memberships)
+        .set({ employee_id: employeeId! })
+        .where(eq(memberships.id, m.membershipId));
+      await this.auditService.log({
+        tenantId,
+        actorUserId: userId,
+        action: 'attendance.employee_autolink',
+        resourceType: 'employee',
+        resourceId: employeeId!,
+        metadata: { linked_existing: !!existing },
+      });
+      this.logger.log(
+        `attendance self-heal: ${existing ? 'linked' : 'created'} employee ${employeeId} for user ${userId}`,
+      );
+      return employeeId!;
     });
   }
 
@@ -223,12 +294,34 @@ export class AttendanceService {
           ),
         )
         .limit(1);
-      if (!fallback) {
-        throw new NotFoundException(
-          'No shift assignment and no default shift template configured for this tenant',
-        );
-      }
-      return fallback;
+      if (fallback) return fallback;
+
+      // SELF-HEAL: tenants that never ran HR onboarding have no shift templates
+      // at all, which used to kill every punch with a 404. Seed the same
+      // default "General" shift onboarding would have created (Mon–Fri,
+      // 09:00–18:00 IST) so clocking in always works; admins can edit it later.
+      const [seeded] = await tx
+        .insert(shiftTemplates)
+        .values({
+          tenant_id: tenantId,
+          name: 'General',
+          description: 'Default 9-to-6 shift, Mon–Fri, IST. Auto-created on first clock-in.',
+          start_time: '09:00',
+          end_time: '18:00',
+          is_overnight: false,
+          break_minutes: 60,
+          break_paid: false,
+          working_days: [1, 2, 3, 4, 5],
+          timezone: 'Asia/Kolkata',
+          grace_period_minutes: 15,
+          half_day_threshold_minutes: 240,
+          full_day_threshold_minutes: 480,
+          is_default: true,
+          is_active: true,
+        })
+        .returning();
+      this.logger.log(`attendance self-heal: seeded default shift for tenant ${tenantId}`);
+      return seeded!;
     });
   }
 

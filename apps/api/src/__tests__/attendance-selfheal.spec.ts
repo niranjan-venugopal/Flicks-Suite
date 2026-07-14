@@ -1,0 +1,104 @@
+import 'dotenv/config';
+import * as crypto from 'crypto';
+import { and, eq } from 'drizzle-orm';
+import { db, dbAdmin } from '@flicks/db';
+import { employees, memberships, shiftTemplates, tenants, users } from '@flicks/db/schema';
+import { DatabaseService } from '../core/database/database.service';
+import { AuditService } from '../modules/audit/audit.service';
+import { AttendanceService } from '../modules/attendance/attendance.service';
+
+/**
+ * Attendance self-heal (beta blocker): members without an HR employee record
+ * (CRM-first workspaces, invited members) and tenants without shift templates
+ * could never clock in — the status never updated. Punch-in must now mint the
+ * missing employee bridge + default shift, or link an HR-created employee row
+ * by work email.
+ */
+
+const rid = () => crypto.randomBytes(4).toString('hex');
+const dbSvc = new DatabaseService();
+const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
+const notificationsStub = { sendEmail: async () => true, notify: async () => undefined } as never;
+const service = new AttendanceService(dbSvc, dbAdmin as never, audit, notificationsStub);
+
+let tenantId: string;
+let bareUser: string; // membership WITHOUT employee_id
+let linkUser: string; // membership without bridge, but HR employee row exists by email
+
+beforeAll(async () => {
+  const [t] = await dbAdmin
+    .insert(tenants)
+    .values({ name: `Heal${rid()}`, slug: `heal-${rid()}-${Date.now()}`, status: 'active', currency: 'INR' })
+    .returning();
+  tenantId = t!.id;
+  const mkMember = async (email: string) => {
+    const [u] = await dbAdmin.insert(users).values({ email, full_name: 'Sam Heal Carter', status: 'active' }).returning();
+    await dbAdmin.insert(memberships).values({ tenant_id: tenantId, user_id: u!.id, role: 'owner', status: 'active' });
+    return u!.id;
+  };
+  bareUser = await mkMember(`bare-${rid()}@heal.test`);
+  const linkEmail = `linked-${rid()}@heal.test`;
+  linkUser = await mkMember(linkEmail);
+  // HR created this employee separately; the membership was never bridged.
+  await dbAdmin.insert(employees).values({
+    tenant_id: tenantId,
+    employee_code: `EMP-${rid().toUpperCase()}`,
+    first_name: 'Linked',
+    last_name: 'Person',
+    work_email: linkEmail,
+    date_of_joining: '2026-01-01',
+  });
+  // NOTE: deliberately NO shift template for this tenant.
+});
+
+afterAll(async () => {
+  await dbAdmin.delete(tenants).where(eq(tenants.id, tenantId));
+  const emails = [bareUser, linkUser];
+  for (const id of emails) await dbAdmin.delete(users).where(eq(users.id, id));
+  await (dbAdmin as unknown as { $client?: { end?: () => Promise<void> } }).$client?.end?.();
+  await (db as unknown as { $client?: { end?: () => Promise<void> } }).$client?.end?.();
+});
+
+describe('Clock-in self-heal', () => {
+  it('mints employee + default shift on first punch for a bare member, and the status updates', async () => {
+    // Was: NotFoundException('No employee record found for the current user').
+    const punch = await service.punchIn(bareUser, tenantId, {});
+    expect(punch.type).toBe('in');
+
+    // Bridge exists now, employee minted from the user profile.
+    const [m] = await dbAdmin
+      .select({ employee_id: memberships.employee_id })
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, bareUser)));
+    expect(m!.employee_id).not.toBeNull();
+    const [emp] = await dbAdmin.select().from(employees).where(eq(employees.id, m!.employee_id!));
+    expect(emp!.first_name).toBe('Sam');
+    expect(emp!.last_name).toBe('Heal Carter');
+
+    // Default shift was seeded for the tenant.
+    const shifts = await dbAdmin
+      .select()
+      .from(shiftTemplates)
+      .where(and(eq(shiftTemplates.tenant_id, tenantId), eq(shiftTemplates.is_default, true)));
+    expect(shifts).toHaveLength(1);
+    expect(shifts[0]!.name).toBe('General');
+
+    // THE symptom: /me/today must now reflect the punch (status updated).
+    const today = await service.getMyToday(bareUser, tenantId);
+    expect(today.firstPunchInAt).not.toBeNull();
+    expect(['present', 'late']).toContain(today.attendanceStatus);
+  });
+
+  it('links an HR-created employee row by work email instead of duplicating it', async () => {
+    await service.punchIn(linkUser, tenantId, {});
+    const [m] = await dbAdmin
+      .select({ employee_id: memberships.employee_id })
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, linkUser)));
+    const [emp] = await dbAdmin.select().from(employees).where(eq(employees.id, m!.employee_id!));
+    expect(emp!.first_name).toBe('Linked'); // the HR row, not a fresh mint
+    // Exactly one employee for that email — no duplicate.
+    const all = await dbAdmin.select().from(employees).where(and(eq(employees.tenant_id, tenantId), eq(employees.work_email, emp!.work_email)));
+    expect(all).toHaveLength(1);
+  });
+});
