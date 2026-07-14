@@ -156,7 +156,7 @@ describe('Domain-event outbox (PRD v5 §2.2)', () => {
     }
   });
 
-  it('API process never drains (WORKER_MODE gate)', async () => {
+  it('single-process deployment drains INLINE by default; declaring a dedicated worker (INLINE_WORKER=false) stops the API replica', async () => {
     const { DomainEventsDispatcher } = await import('../core/events/domain-events.dispatcher');
     await events.publish({ name: 'invoice.paid', tenantId, payload: { invoice_id: 'z' } });
     const enqueued: unknown[] = [];
@@ -164,10 +164,17 @@ describe('Domain-event outbox (PRD v5 §2.2)', () => {
       dbAdmin as never,
       { add: async (n: string) => (enqueued.push(n), {}) } as never,
     );
+    // Dedicated worker declared → this API-only replica must NOT drain.
     process.env.WORKER_MODE = 'false';
+    process.env.INLINE_WORKER = 'false';
     await dispatcher.tick();
     expect(enqueued).toHaveLength(0);
-    // Clean up the stranded row so later assertions stay tight.
+    // Beta default (no dedicated worker) → the same process drains the outbox,
+    // so async webhooks/workflows fire without a second replica.
+    delete process.env.INLINE_WORKER;
+    await dispatcher.tick();
+    expect(enqueued.length).toBeGreaterThan(0);
+    // Clean up any leftovers so later assertions stay tight.
     await dbAdmin
       .update(domainEvents)
       .set({ dispatched_at: new Date() })

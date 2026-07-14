@@ -36,7 +36,7 @@ export class OutboxLagMonitor {
       if (stalled > 0) {
         this.logger.error(
           `OUTBOX STALLED: ${stalled} event(s) undispatched for >5min (oldest ${row?.oldest}). ` +
-            `Is a WORKER_MODE=true process running? Async webhooks/workflows are not firing.`,
+            `Either run a WORKER_MODE=true process or unset INLINE_WORKER=false (single-process deployments drain inline by default). Async webhooks/workflows are not firing.`,
         );
       }
     } catch (err) {

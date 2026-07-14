@@ -12,32 +12,76 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
  * time so historical reporting is stable. Falls back to 1.0 (and logs) when a
  * symbol/date is missing, never blocking a deal save.
  */
+/**
+ * Approximate USD-base reference rates (mid-2026) — the LAST-RESORT fallback so
+ * a workspace without an OPENEXCHANGERATES_APP_ID and no fetched rates can
+ * still value a cross-currency deal instead of hitting a dead end ("No
+ * exchange rate available"). Deals use FX for pipeline valuation/forecast,
+ * never for billing amounts, so an approximate snapshot beats a blocked save.
+ * The daily refresh (or the first on-demand fetch once a key is set)
+ * supersedes these; every use is logged.
+ */
+const STATIC_USD_RATES: Record<string, number> = {
+  USD: 1, INR: 83.5, EUR: 0.92, GBP: 0.79, SGD: 1.35, AED: 3.6725,
+  AUD: 1.52, CAD: 1.36, JPY: 155, CNY: 7.25, CHF: 0.9, HKD: 7.8,
+  SAR: 3.75, QAR: 3.64, LKR: 300, BDT: 110, NPR: 133.6, MYR: 4.7,
+  THB: 36, IDR: 16200, PHP: 56, VND: 25400, KRW: 1380, ZAR: 18.5,
+  NGN: 1500, KES: 129, EGP: 48, BRL: 5.4, MXN: 17, NZD: 1.65,
+};
+
 @Injectable()
 export class FxService {
   private readonly logger = new Logger(FxService.name);
   /** in-process cache: `${quote}` → { rate, as_of } (latest USD→quote). */
   private readonly cache = new Map<string, { rate: number; asOf: string }>();
+  /** single-flight guard for the on-demand refresh. */
+  private refreshing: Promise<number> | null = null;
 
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly config: ConfigService,
   ) {}
 
+  private async readUsdRate(quote: string): Promise<number | null> {
+    const [row] = await this.dbAdmin
+      .select({ rate: fxRates.rate, as_of: fxRates.as_of })
+      .from(fxRates)
+      .where(and(eq(fxRates.base, 'USD'), eq(fxRates.quote, quote)))
+      .orderBy(desc(fxRates.as_of))
+      .limit(1);
+    if (!row) return null;
+    const rate = parseFloat(row.rate);
+    this.cache.set(quote, { rate, asOf: row.as_of });
+    return rate;
+  }
+
   private async latestUsdRate(quote: string): Promise<number | null> {
     const q = quote.toUpperCase();
     if (q === 'USD') return 1;
     const cached = this.cache.get(q);
     if (cached) return cached.rate;
-    const [row] = await this.dbAdmin
-      .select({ rate: fxRates.rate, as_of: fxRates.as_of })
-      .from(fxRates)
-      .where(and(eq(fxRates.base, 'USD'), eq(fxRates.quote, q)))
-      .orderBy(desc(fxRates.as_of))
-      .limit(1);
-    if (!row) return null;
-    const rate = parseFloat(row.rate);
-    this.cache.set(q, { rate, asOf: row.as_of });
-    return rate;
+
+    let rate = await this.readUsdRate(q);
+    if (rate != null) return rate;
+
+    // Nothing fetched yet — if a key is configured, fetch NOW (single-flight)
+    // rather than making the user wait for the daily cron.
+    if (this.config.get<string>('OPENEXCHANGERATES_APP_ID')) {
+      this.refreshing ??= this.refresh().finally(() => (this.refreshing = null));
+      await this.refreshing;
+      rate = await this.readUsdRate(q);
+      if (rate != null) return rate;
+    }
+
+    // Last resort: approximate built-in reference (valuation only, never billing).
+    const approx = STATIC_USD_RATES[q];
+    if (approx != null) {
+      this.logger.warn(
+        `FX: using APPROXIMATE built-in rate USD→${q}=${approx} — set OPENEXCHANGERATES_APP_ID for live rates`,
+      );
+      return approx;
+    }
+    return null;
   }
 
   /**

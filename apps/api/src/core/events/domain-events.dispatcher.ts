@@ -6,7 +6,7 @@ import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { domainEvents } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../database/database.module';
-import { isWorkerMode } from '../worker/worker-mode';
+import { runsWorkloads } from '../worker/worker-mode';
 import { DOMAIN_EVENTS_QUEUE } from './events.constants';
 
 /**
@@ -34,7 +34,7 @@ export class DomainEventsDispatcher {
 
   @Cron('*/2 * * * * *', { name: 'domain-events-dispatcher' })
   async tick(): Promise<void> {
-    if (!isWorkerMode()) return; // API process never drains the outbox
+    if (!runsWorkloads()) return; // API-only replica with a dedicated worker declared
     if (this.draining) return; // no overlapping drains
     this.draining = true;
     try {
