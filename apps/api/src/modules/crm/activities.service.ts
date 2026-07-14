@@ -5,6 +5,8 @@ import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PresencePublicService } from '../presence/public';
 
 const TYPES = ['task', 'call', 'meeting', 'note'] as const;
 const CALL_OUTCOMES = ['connected', 'no_answer', 'busy', 'voicemail', 'wrong_number'] as const;
@@ -21,7 +23,32 @@ export class ActivitiesService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
+    private readonly notifications: NotificationsService,
+    private readonly presence: PresencePublicService,
   ) {}
+
+  /**
+   * In-app ping to the assignee of an activity someone ELSE scheduled (§6.3),
+   * respecting Do-Not-Disturb: a dnd presence swallows the ping (the item is
+   * still in their queue + morning digest, so nothing is lost). Best-effort —
+   * a notification hiccup must never fail the activity write.
+   */
+  private async pingAssignee(tenantId: string, assigneeId: string, actorId: string, a: { type: string; subject: string; deal_id: string | null; id: string }) {
+    if (assigneeId === actorId) return;
+    try {
+      const status = await this.presence.statusOf(tenantId, assigneeId);
+      if (status === 'dnd') return; // respect Do-Not-Disturb
+      await this.notifications.createInAppNotification(
+        assigneeId,
+        'crm.activity.assigned',
+        `New ${a.type} assigned to you: “${a.subject}”`,
+        a.deal_id ? `/crm/deals/${a.deal_id}` : '/crm/activities',
+        tenantId,
+      );
+    } catch {
+      /* best-effort */
+    }
+  }
 
   /** Recompute the deal's next/last activity stamps. Runs inside the caller's tx. */
   private async syncDealStamps(tx: Db, dealId: string) {
@@ -116,7 +143,11 @@ export class ActivitiesService {
         return { data: row! };
       },
       userId,
-    );
+    ).then(async (res) => {
+      // Outside the tx: ping the assignee when it isn't the creator (DND-aware).
+      await this.pingAssignee(tenantId, res.data.assignee_user_id, userId, res.data);
+      return res;
+    });
   }
 
   /** Activities on one deal (open first by due, then completed desc). */

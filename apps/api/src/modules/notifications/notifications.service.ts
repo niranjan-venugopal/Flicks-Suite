@@ -20,6 +20,9 @@ export const NOTIFICATION_EVENTS = [
   'regularization_reviewed',
   'onboarding_submitted',
   'onboarding_reviewed',
+  // CRM (PRD v5 §6.3) — assignment pings + the morning digest.
+  'crm_activity',
+  'crm_digest',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 export type NotificationChannel = 'in_app' | 'email';
@@ -37,6 +40,9 @@ const PREFERENCE_DEFAULTS: Record<
   regularization_reviewed: { in_app: true, email: true },
   onboarding_submitted: { in_app: true, email: true },
   onboarding_reviewed: { in_app: true, email: true },
+  // CRM (§6.3/§6.4): pings default on in-app; email flavours join Sprint 29.
+  crm_activity: { in_app: true, email: false },
+  crm_digest: { in_app: true, email: false },
 };
 
 // Map the free-form in-app `type` string (e.g. 'timesheet.approve',
@@ -47,6 +53,8 @@ function eventForInAppType(type: string): NotificationEvent | null {
   if (type.startsWith('leave.')) return 'leave_reviewed';
   if (type.startsWith('regularization.')) return 'regularization_reviewed';
   if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
+  if (type.startsWith('crm.digest')) return 'crm_digest';
+  if (type.startsWith('crm.')) return 'crm_activity';
   return null;
 }
 

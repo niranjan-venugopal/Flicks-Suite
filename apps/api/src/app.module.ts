@@ -58,6 +58,7 @@ import { NotificationsGateway } from './gateways/notifications.gateway';
 import { DailySnapshotsJob } from './jobs/daily-snapshots.job';
 import { LeaveAccrualJob } from './jobs/leave-accrual.job';
 import { InvoicingJobs } from './jobs/invoicing.jobs';
+import { CrmJobs } from './jobs/crm.jobs';
 import { TrustJobs } from './jobs/trust.jobs';
 
 @Module({
@@ -191,6 +192,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     DailySnapshotsJob,
     LeaveAccrualJob,
     InvoicingJobs,
+    CrmJobs,
     TrustJobs,
   ],
 })

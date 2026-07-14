@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PresencePublicService } from './public';
 import { PresenceService } from './presence.service';
 import { PresenceController } from './presence.controller';
 import { PresenceGateway } from '../../gateways/presence.gateway';
@@ -9,7 +10,7 @@ import { PresenceGateway } from '../../gateways/presence.gateway';
  */
 @Module({
   controllers: [PresenceController],
-  providers: [PresenceService, PresenceGateway],
-  exports: [PresenceService, PresenceGateway],
+  providers: [PresenceService, PresenceGateway, PresencePublicService],
+  exports: [PresenceService, PresencePublicService, PresenceGateway],
 })
 export class PresenceModule {}

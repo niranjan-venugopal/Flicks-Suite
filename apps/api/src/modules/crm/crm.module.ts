@@ -17,6 +17,8 @@ import { CrmGateway } from '../../gateways/crm.gateway';
 import { CrmEventsSubscriber } from './crm-events.subscriber';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { AuditModule } from '../audit/audit.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { PresenceModule } from '../presence/presence.module';
 import { InvoicingModule } from '../invoicing/invoicing.module';
 
 /**
@@ -27,7 +29,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
  */
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
-  imports: [AuditModule, InvoicingModule],
+  imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
   controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController],
   providers: [
     DirectoryService,

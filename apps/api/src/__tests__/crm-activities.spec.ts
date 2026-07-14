@@ -17,7 +17,9 @@ const rid = () => crypto.randomBytes(4).toString('hex');
 const dbSvc = new DatabaseService();
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const eventsStub = { publish: jest.fn(async () => 'evt') };
-const service = new ActivitiesService(dbSvc, audit, eventsStub as never);
+const notifyStub = { createInAppNotification: jest.fn(async () => undefined) };
+const presenceStub = { statusOf: jest.fn(async () => 'available') };
+const service = new ActivitiesService(dbSvc, audit, eventsStub as never, notifyStub as never, presenceStub as never);
 
 let tenantA: string;
 let tenantB: string;
@@ -108,6 +110,65 @@ describe('Activity loop (§6)', () => {
     expect(mine.data.completed.some((r) => r.subject === 'Intro call')).toBe(true);
     // Deal titles ride along for the C8 rows.
     expect(mine.data.overdue.find((r) => r.subject === 'Overdue thing')!.deal_title).toBeTruthy();
+  });
+
+  it('pings the assignee when someone ELSE schedules for them — and DND swallows the ping (§6.3)', async () => {
+    const [other] = await dbAdmin.insert(users).values({ email: `assignee-${rid()}@test.test`, full_name: 'Assignee A', status: 'active' }).returning();
+    await dbAdmin.insert((await import('@flicks/db/schema')).memberships).values({ tenant_id: tenantA, user_id: other!.id, role: 'employee', status: 'active' });
+    const due = new Date(Date.now() + 3600_000).toISOString();
+
+    // Available assignee → ping delivered with the deal link.
+    notifyStub.createInAppNotification.mockClear();
+    await service.create(tenantA, userId, { type: 'task', subject: 'For you', deal_id: dealA, due_at: due, assignee_user_id: other!.id });
+    expect(notifyStub.createInAppNotification).toHaveBeenCalledWith(
+      other!.id, 'crm.activity.assigned', expect.stringContaining('For you'), `/crm/deals/${dealA}`, tenantA,
+    );
+
+    // Self-assigned → no ping.
+    notifyStub.createInAppNotification.mockClear();
+    await service.create(tenantA, userId, { type: 'task', subject: 'For me', deal_id: dealA, due_at: due });
+    expect(notifyStub.createInAppNotification).not.toHaveBeenCalled();
+
+    // DND assignee → ping suppressed (queue + digest still carry it).
+    presenceStub.statusOf.mockImplementationOnce(async () => 'dnd');
+    await service.create(tenantA, userId, { type: 'call', subject: 'Quiet hours', deal_id: dealA, due_at: due, assignee_user_id: other!.id });
+    expect(notifyStub.createInAppNotification).not.toHaveBeenCalled();
+    // FK order: the assignee's activities reference them — clear those first.
+    await dbAdmin.delete(activities).where(eq(activities.assignee_user_id, other!.id));
+    await dbAdmin.delete(users).where(eq(users.id, other!.id));
+  });
+
+  it('morning digest fires at the user’s local 08:00, once per day (§6.4)', async () => {
+    const { CrmJobs } = await import('../jobs/crm.jobs');
+    const digestNotify = { createInAppNotification: jest.fn(async () => undefined) };
+    const jobs = new CrmJobs(dbAdmin as never, digestNotify as never);
+    // An overdue task exists for userId (created in earlier tests). Pick a
+    // `now` that is 08:xx in the user's timezone (users.timezone default IST).
+    const now = new Date();
+    const istHour = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(now), 10);
+    const at8 = new Date(now.getTime() + (8 - istHour) * 3600_000);
+    const sent = await jobs.runDigestSweep(at8);
+    expect(sent).toBeGreaterThanOrEqual(1);
+    expect(digestNotify.createInAppNotification).toHaveBeenCalledWith(
+      userId, 'crm.digest', expect.stringContaining('Good morning'), '/crm/activities', tenantA,
+    );
+    // Second sweep the same morning → idempotent, nothing re-sent to that user…
+    // (the ledger row was written by the real notifications table? No — stub!)
+    // The idempotency check reads the notifications TABLE, so simulate the real
+    // write and re-run.
+    const { notifications } = await import('@flicks/db/schema');
+    await dbAdmin.insert(notifications).values({ user_id: userId, type: 'crm.digest', message: 'x', tenant_id: tenantA });
+    digestNotify.createInAppNotification.mockClear();
+    await jobs.runDigestSweep(at8);
+    expect(digestNotify.createInAppNotification).not.toHaveBeenCalledWith(
+      userId, 'crm.digest', expect.anything(), expect.anything(), expect.anything(),
+    );
+    await dbAdmin.delete(notifications).where(eq(notifications.user_id, userId));
+    // Not 08:00 locally → nothing fires.
+    const at11 = new Date(at8.getTime() + 3 * 3600_000);
+    digestNotify.createInAppNotification.mockClear();
+    await jobs.runDigestSweep(at11);
+    expect(digestNotify.createInAppNotification).not.toHaveBeenCalled();
   });
 
   it('refuses another tenant’s deal and never leaks activities across tenants', async () => {
