@@ -2,19 +2,35 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Loader2, Users } from 'lucide-react'
+import { Plus, Loader2, Trash2 } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
-import { useContacts, useCreateContact, useCompanies } from '@/lib/api/queries/use-crm'
+import { FilterBar, BulkBar, EmptyState, type FilterChip } from '@/components/crm/kit'
+import { Icon } from '@/components/proto'
+import { useContacts, useCreateContact, useDeleteContact, useCompanies } from '@/lib/api/queries/use-crm'
 
 export default function ContactsPage() {
   const [q, setQ] = useState('')
+  const [companyId, setCompanyId] = useState<string | null>(null)
   const [modal, setModal] = useState(false)
-  const { data, isLoading } = useContacts({ q: q || undefined })
+  const [sel, setSel] = useState<string[]>([])
+  const { data, isLoading } = useContacts({ q: q || undefined, company_id: companyId ?? undefined })
+  const { data: companies } = useCompanies()
+  const del = useDeleteContact()
   const rows = data?.data ?? []
+
+  const chips: FilterChip[] = companyId
+    ? [{ key: 'company', label: 'Company', value: companies?.data.find((c) => c.id === companyId)?.name ?? '—' }]
+    : []
+
+  const bulkDelete = async () => {
+    if (!window.confirm(`Delete ${sel.length} contact(s)?`)) return
+    for (const id of sel) { try { await del.mutateAsync(id) } catch { /* server enforces */ } }
+    setSel([])
+  }
 
   return (
     <div style={{ padding: '28px 32px 64px' }}>
@@ -24,29 +40,40 @@ export default function ContactsPage() {
         right={<Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New contact</Btn>}
       />
 
-      <div style={{ position: 'relative', maxWidth: 320, marginTop: 16 }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} />
-        <input className="input" placeholder="Search name or email…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: '100%', paddingLeft: 34 }} />
-      </div>
+      <FilterBar
+        search={q}
+        onSearch={setQ}
+        searchPlaceholder="Search name or email…"
+        chips={chips}
+        onRemoveChip={() => setCompanyId(null)}
+        addFilter={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--text-faint)' }}>Where</span>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>Company is</span>
+            <select className="input" value={companyId ?? ''} onChange={(e) => setCompanyId(e.target.value || null)} style={{ height: 34, width: 210, fontSize: 12 }}>
+              <option value="">Any</option>
+              {(companies?.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        }
+      />
 
-      <div className="card" style={{ marginTop: 18, padding: 0, overflow: 'hidden' }}>
+      <div className="card" style={{ marginTop: 4, padding: 0, overflow: 'hidden' }}>
         {isLoading ? (
           <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
             <Loader2 className="animate-spin" style={{ color: 'var(--text-mute)' }} />
           </div>
         ) : rows.length === 0 ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center' }}>
-            <Users size={28} style={{ color: 'var(--text-mute)', marginBottom: 10 }} />
-            <div className="t-h3" style={{ marginBottom: 4 }}>No contacts yet</div>
-            <p className="t-mute" style={{ fontSize: 13, marginBottom: 14 }}>Add your first contact to build your directory.</p>
-            <Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New contact</Btn>
-          </div>
+          <EmptyState icon={<Icon.people size={22} />} line="No contacts yet. Add your first contact to build your directory — every deal, email and activity hangs off it." cta="New contact" onCta={() => setModal(true)} />
         ) : (
           <table className="tbl" style={{ width: '100%' }}>
-            <thead><tr><th>Name</th><th>Email</th><th>Title</th><th>Phone</th><th>Source</th></tr></thead>
+            <thead><tr><th style={{ width: 34 }} /><th>Name</th><th>Email</th><th>Title</th><th>Phone</th><th>Source</th></tr></thead>
             <tbody>
               {rows.map((p) => (
-                <tr key={p.id}>
+                <tr key={p.id} style={{ background: sel.includes(p.id) ? 'rgba(62,123,250,.08)' : undefined }}>
+                  <td>
+                    <input type="checkbox" checked={sel.includes(p.id)} onChange={() => setSel((s) => (s.includes(p.id) ? s.filter((x) => x !== p.id) : [...s, p.id]))} />
+                  </td>
                   <td>
                     <Link href={`/crm/contacts/${p.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'inherit' }}>
                       <RowPresenceAvatar name={p.display_name ?? p.email ?? 'Contact'} userId={p.owner_user_id} size={26} />
@@ -63,6 +90,10 @@ export default function ContactsPage() {
           </table>
         )}
       </div>
+
+      <BulkBar count={sel.length} onClear={() => setSel([])} actions={[
+        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => void bulkDelete() },
+      ]} />
 
       <NewContactModal open={modal} onClose={() => setModal(false)} />
     </div>

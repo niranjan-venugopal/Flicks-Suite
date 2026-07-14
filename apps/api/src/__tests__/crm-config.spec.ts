@@ -18,6 +18,7 @@ import { AuditService } from '../modules/audit/audit.service';
 import { CustomFieldsService } from '../modules/crm/custom-fields.service';
 import { SavedViewsService } from '../modules/crm/saved-views.service';
 import { SearchService } from '../modules/crm/search.service';
+import { TagsService } from '../modules/crm/tags.service';
 
 /**
  * PRD v5 §9.1-9.2 + §19.8 — custom fields, saved views, global search
@@ -31,6 +32,7 @@ const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const fields = new CustomFieldsService(dbSvc, audit);
 const views = new SavedViewsService(dbSvc, audit);
 const search = new SearchService(dbSvc);
+const tagsSvc = new TagsService(dbSvc, audit);
 
 let tenantA: string;
 let tenantB: string;
@@ -115,6 +117,27 @@ describe('Saved views (§9.2)', () => {
     expect(gone.data.deleted).toBe(true);
     const [row] = await dbAdmin.select().from(savedViews).where(eq(savedViews.id, v.data.id));
     expect(row).toBeUndefined();
+  });
+});
+
+describe('Tags (§19.1)', () => {
+  it('creates a tag (idempotent by label, auto-color) and attaches idempotently', async () => {
+    const t1 = await tagsSvc.create(tenantA, userA, { label: 'Enterprise' });
+    expect(t1.data.color).toBeTruthy();
+    const t2 = await tagsSvc.create(tenantA, userA, { label: 'enterprise' }); // case-insensitive dedupe
+    expect(t2.data.id).toBe(t1.data.id);
+    const objectId = crypto.randomUUID();
+    await tagsSvc.attach(tenantA, userA, 'deal', objectId, t1.data.id);
+    await tagsSvc.attach(tenantA, userA, 'deal', objectId, t1.data.id); // no dupes
+    const list = await tagsSvc.list(tenantA);
+    expect(list.data.some((x) => x.id === t1.data.id)).toBe(true);
+  });
+
+  it('cannot attach another tenant’s tag; tag lists never cross tenants', async () => {
+    const bTag = await tagsSvc.create(tenantB, userB, { label: 'B-only' });
+    await expect(tagsSvc.attach(tenantA, userA, 'deal', crypto.randomUUID(), bTag.data.id)).rejects.toThrow(/not found/i);
+    const aList = await tagsSvc.list(tenantA);
+    expect(aList.data.some((x) => x.label === 'B-only')).toBe(false);
   });
 });
 

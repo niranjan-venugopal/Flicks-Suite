@@ -16,12 +16,19 @@ export function CrmSearchPalette() {
   const [q, setQ] = useState('')
   const router = useRouter()
 
-  // ⌘K / Ctrl-K toggles; Esc closes.
+  // ⌘K / Ctrl-K toggles; "/" opens (prototype keymap §19.8); Esc closes.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setOpen((v) => !v)
+        return
+      }
+      const t = e.target as HTMLElement
+      const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+      if (e.key === '/' && !typing) {
+        e.preventDefault()
+        setOpen(true)
       } else if (e.key === 'Escape') {
         setOpen(false)
       }

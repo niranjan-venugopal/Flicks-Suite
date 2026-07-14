@@ -38,6 +38,19 @@ class MoveStageDto {
   @IsOptional() @IsString() lost_reason_note?: string;
 }
 
+class AddProductDto {
+  @IsOptional() @IsString() item_id?: string;
+  @IsString() @MaxLength(200) name!: string;
+  @IsOptional() @IsNumber() @Min(0) quantity?: number;
+  @IsNumber() @Min(0) unit_price!: number;
+  @IsOptional() @IsNumber() @Min(0) discount_pct?: number;
+}
+
+class AddPersonDto {
+  @IsString() person_id!: string;
+  @IsOptional() @IsString() @MaxLength(60) role?: string;
+}
+
 @ApiTags('crm-deals')
 @Controller('crm')
 @UseGuards(CrmGrantGuard)
@@ -58,6 +71,13 @@ export class DealsController {
   @RequireGrant('crm', 'view')
   lostReasons(@CurrentUser() user: JwtPayload) {
     return this.pipelines.lostReasons(user.tenantId);
+  }
+
+  @Get('reps')
+  @RequireGrant('crm', 'view')
+  @ApiOperation({ summary: 'Active members for owner pickers / filters' })
+  reps(@CurrentUser() user: JwtPayload) {
+    return this.deals.reps(user.tenantId);
   }
 
   // ─── Board / forecast ───────────────────────────────────────────────────────
@@ -119,6 +139,33 @@ export class DealsController {
   @ApiOperation({ summary: 'Deal → DRAFT quote (§4.4/§19.3): same as invoice but issues a QUOTE' })
   createQuote(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.deals.createQuote(user.tenantId, user.sub, id);
+  }
+
+  // ─── Deal products (C3 Products tab — the lines behind invoice/quote) ────────
+  @Post('deals/:id/products')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Add a product line (deal value auto-sums)' })
+  addProduct(@Param('id') id: string, @Body() dto: AddProductDto, @CurrentUser() user: JwtPayload) {
+    return this.deals.addProduct(user.tenantId, user.sub, id, dto);
+  }
+
+  @Delete('deals/:id/products/:productId')
+  @RequireGrant('crm', 'edit')
+  removeProduct(@Param('id') id: string, @Param('productId') productId: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.removeProduct(user.tenantId, user.sub, id, productId);
+  }
+
+  // ─── Deal participants (C3 People tab) ────────────────────────────────────────
+  @Post('deals/:id/people')
+  @RequireGrant('crm', 'edit')
+  addPerson(@Param('id') id: string, @Body() dto: AddPersonDto, @CurrentUser() user: JwtPayload) {
+    return this.deals.addPerson(user.tenantId, user.sub, id, dto);
+  }
+
+  @Delete('deals/:id/people/:personId')
+  @RequireGrant('crm', 'edit')
+  removePerson(@Param('id') id: string, @Param('personId') personId: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.removePerson(user.tenantId, user.sub, id, personId);
   }
 
   @Delete('deals/:id')

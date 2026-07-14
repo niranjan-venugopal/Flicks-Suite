@@ -5,17 +5,22 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import {
+  dealPeople,
   dealProducts,
   deals,
   dealStageHistory,
   directoryCompanies,
   directoryPeople,
+  invoices,
   memberships,
   pipelines,
   pipelineStages,
+  recordTags,
+  tags,
   tenants,
+  users,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import type { JwtPayload } from '@flicks/shared/types';
@@ -126,6 +131,28 @@ export class DealsService {
         .where(and(eq(deals.pipeline_id, pl.id), eq(deals.status, 'open'), isNull(deals.deleted_at)))
         .orderBy(desc(deals.updated_at));
 
+      // Card enrichment for the C2 prototype: tag chips + owner names in one
+      // round-trip each (never per-card queries).
+      const dealIds = openDeals.map((d) => d.id);
+      const tagRows = dealIds.length
+        ? await tx
+            .select({ object_id: recordTags.object_id, id: tags.id, label: tags.label, color: tags.color })
+            .from(recordTags)
+            .innerJoin(tags, eq(tags.id, recordTags.tag_id))
+            .where(and(eq(recordTags.object_type, 'deal'), inArray(recordTags.object_id, dealIds)))
+        : [];
+      const ownerIds = [...new Set(openDeals.map((d) => d.owner_user_id))];
+      const ownerRows = ownerIds.length
+        ? await tx.select({ id: users.id, name: users.full_name }).from(users).where(inArray(users.id, ownerIds))
+        : [];
+      const ownerName = new Map(ownerRows.map((o) => [o.id, o.name]));
+      const tagsByDeal = new Map<string, Array<{ id: string; label: string; color: string | null }>>();
+      for (const t of tagRows) {
+        const list = tagsByDeal.get(t.object_id) ?? [];
+        list.push({ id: t.id, label: t.label, color: t.color });
+        tagsByDeal.set(t.object_id, list);
+      }
+
       const now = Date.now();
       const columns = stages
         .filter((s) => s.stage_type === 'open')
@@ -137,7 +164,13 @@ export class DealsService {
               const idleDays = Math.floor((now - enteredMs) / 86_400_000);
               const rot = s.rotting_days ?? null;
               const rotState = rot == null ? null : idleDays >= rot * 1.5 ? 'red' : idleDays >= rot ? 'amber' : null;
-              return { ...d, idle_days: idleDays, rot_state: rotState };
+              return {
+                ...d,
+                idle_days: idleDays,
+                rot_state: rotState,
+                owner_name: ownerName.get(d.owner_user_id) ?? null,
+                tags: tagsByDeal.get(d.id) ?? [],
+              };
             });
           const sumBase = cards.reduce((a, d) => a + parseFloat(d.value_base_amount), 0);
           const weighted = cards.reduce((a, d) => a + parseFloat(d.value_base_amount) * (s.win_probability / 100), 0);
@@ -154,16 +187,76 @@ export class DealsService {
     });
   }
 
+  /** Full deal payload for the C3 detail page — one request, everything on it. */
   async get(tenantId: string, id: string) {
     return this.db.withTenant(tenantId, async (tx) => {
       const [d] = await tx.select().from(deals).where(and(eq(deals.id, id), isNull(deals.deleted_at))).limit(1);
       if (!d) throw new NotFoundException('Deal not found');
-      const history = await tx
-        .select()
-        .from(dealStageHistory)
-        .where(eq(dealStageHistory.deal_id, id))
-        .orderBy(desc(dealStageHistory.changed_at));
-      return { data: { ...d, stage_history: history } };
+      const base = await this.baseCurrency(tx, tenantId);
+      const [history, products, people, tagRows, [owner], company] = await Promise.all([
+        tx.select().from(dealStageHistory).where(eq(dealStageHistory.deal_id, id)).orderBy(desc(dealStageHistory.changed_at)),
+        tx.select().from(dealProducts).where(eq(dealProducts.deal_id, id)).orderBy(asc(dealProducts.display_order)),
+        tx
+          .select({
+            person_id: dealPeople.person_id,
+            role: dealPeople.role,
+            name: directoryPeople.display_name,
+            email: directoryPeople.email,
+            phone: directoryPeople.phone,
+            title: directoryPeople.title,
+          })
+          .from(dealPeople)
+          .innerJoin(directoryPeople, eq(directoryPeople.id, dealPeople.person_id))
+          .where(eq(dealPeople.deal_id, id)),
+        tx
+          .select({ id: tags.id, label: tags.label, color: tags.color })
+          .from(recordTags)
+          .innerJoin(tags, eq(tags.id, recordTags.tag_id))
+          .where(and(eq(recordTags.object_type, 'deal'), eq(recordTags.object_id, id))),
+        tx.select({ name: users.full_name }).from(users).where(eq(users.id, d.owner_user_id)).limit(1),
+        d.company_id
+          ? tx
+              .select({ id: directoryCompanies.id, name: directoryCompanies.name, country_code: directoryCompanies.country_code })
+              .from(directoryCompanies)
+              .where(eq(directoryCompanies.id, d.company_id))
+              .limit(1)
+          : Promise.resolve([]),
+      ]);
+      // Linked billing documents (§4.4 echo chips) — number + status via RLS reads.
+      const docIds = [d.invoice_id, d.quote_id].filter((x): x is string => !!x);
+      const docs = docIds.length
+        ? await tx
+            .select({ id: invoices.id, number: invoices.invoice_number, status: invoices.status, total: invoices.total_amount, document_type: invoices.document_type, created_at: invoices.created_at })
+            .from(invoices)
+            .where(inArray(invoices.id, docIds))
+        : [];
+      return {
+        data: {
+          ...d,
+          base_currency: base,
+          owner_name: owner?.name ?? null,
+          company: company[0] ?? null,
+          stage_history: history,
+          products,
+          people,
+          tags: tagRows,
+          linked_invoice: docs.find((x) => x.id === d.invoice_id) ?? null,
+          linked_quote: docs.find((x) => x.id === d.quote_id) ?? null,
+        },
+      };
+    });
+  }
+
+  /** Active workspace members for owner pickers / filters (id + name). */
+  async reps(tenantId: string) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const rows = await tx
+        .select({ user_id: memberships.user_id, name: users.full_name, role: memberships.role })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.user_id))
+        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')))
+        .orderBy(asc(users.full_name));
+      return { data: rows };
     });
   }
 
@@ -656,6 +749,119 @@ export class DealsService {
     if (!plan) return;
     // Reuse the full stage-move engine (row-lock, history, events, board push).
     await this.moveStage(tenantId, plan.ownerUserId, dealId, { stage_id: plan.stageId });
+  }
+
+  // ─── Deal products (§4.4 — the lines behind invoice/quote) ───────────────────
+
+  /** Recompute value_amount = Σ line_totals + re-snapshot FX. Runs inside tx. */
+  private async resumDealValue(tx: Db, tenantId: string, deal: typeof deals.$inferSelect, userId: string) {
+    const rows = await tx.select({ line_total: dealProducts.line_total }).from(dealProducts).where(eq(dealProducts.deal_id, deal.id));
+    if (!rows.length) return; // no products — keep the manual value
+    const sum = Math.round(rows.reduce((a, r) => a + parseFloat(r.line_total), 0) * 100) / 100;
+    const base = await this.baseCurrency(tx, tenantId);
+    const { fxRate, baseAmount } = await this.fx.toBase(sum, deal.currency, base);
+    await tx
+      .update(deals)
+      .set({ value_amount: sum.toFixed(2), fx_rate_to_base: fxRate.toFixed(6), value_base_amount: baseAmount.toFixed(2), updated_by: userId, updated_at: new Date() })
+      .where(eq(deals.id, deal.id));
+  }
+
+  async addProduct(
+    tenantId: string,
+    userId: string,
+    dealId: string,
+    dto: { item_id?: string; name: string; quantity?: number; unit_price: number; discount_pct?: number },
+  ) {
+    if (!dto.name?.trim()) throw new BadRequestException('Product name is required');
+    const qty = dto.quantity ?? 1;
+    const disc = dto.discount_pct ?? 0;
+    if (qty <= 0 || dto.unit_price < 0 || disc < 0 || disc > 100) {
+      throw new BadRequestException('Invalid quantity, price or discount');
+    }
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [d] = await tx.select().from(deals).where(and(eq(deals.id, dealId), isNull(deals.deleted_at))).limit(1).for('update');
+        if (!d) throw new NotFoundException('Deal not found');
+        const lineTotal = Math.round(qty * dto.unit_price * (1 - disc / 100) * 100) / 100;
+        const [row] = await tx
+          .insert(dealProducts)
+          .values({
+            tenant_id: tenantId,
+            deal_id: dealId,
+            item_id: dto.item_id ?? null,
+            name: dto.name.trim(),
+            quantity: String(qty),
+            unit_price: dto.unit_price.toFixed(2),
+            currency: d.currency,
+            discount_pct: disc.toFixed(2),
+            line_total: lineTotal.toFixed(2),
+          })
+          .returning();
+        // Deal value auto-sums from products (C3 products tab contract).
+        await this.resumDealValue(tx, tenantId, d, userId);
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.product_add', resourceType: 'deal', resourceId: dealId });
+        return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  async removeProduct(tenantId: string, userId: string, dealId: string, productId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [d] = await tx.select().from(deals).where(and(eq(deals.id, dealId), isNull(deals.deleted_at))).limit(1).for('update');
+        if (!d) throw new NotFoundException('Deal not found');
+        const [gone] = await tx
+          .delete(dealProducts)
+          .where(and(eq(dealProducts.id, productId), eq(dealProducts.deal_id, dealId)))
+          .returning({ id: dealProducts.id });
+        if (!gone) throw new NotFoundException('Product not found on this deal');
+        await this.resumDealValue(tx, tenantId, d, userId);
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.product_remove', resourceType: 'deal', resourceId: dealId });
+        return { data: { deleted: true } };
+      },
+      userId,
+    );
+  }
+
+  // ─── Deal participants (deal_people) ─────────────────────────────────────────
+
+  async addPerson(tenantId: string, userId: string, dealId: string, dto: { person_id: string; role?: string }) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [d] = await tx.select({ id: deals.id }).from(deals).where(and(eq(deals.id, dealId), isNull(deals.deleted_at))).limit(1);
+        if (!d) throw new NotFoundException('Deal not found');
+        // RLS-scoped person lookup (FK checks bypass RLS — same rule as create()).
+        const [p] = await tx
+          .select({ id: directoryPeople.id })
+          .from(directoryPeople)
+          .where(and(eq(directoryPeople.id, dto.person_id), isNull(directoryPeople.deleted_at)))
+          .limit(1);
+        if (!p) throw new BadRequestException('person_id does not belong to this workspace');
+        await tx
+          .insert(dealPeople)
+          .values({ tenant_id: tenantId, deal_id: dealId, person_id: dto.person_id, role: dto.role ?? null })
+          .onConflictDoNothing();
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.person_add', resourceType: 'deal', resourceId: dealId });
+        return { data: { added: true } };
+      },
+      userId,
+    );
+  }
+
+  async removePerson(tenantId: string, userId: string, dealId: string, personId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await tx.delete(dealPeople).where(and(eq(dealPeople.deal_id, dealId), eq(dealPeople.person_id, personId)));
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.deal.person_remove', resourceType: 'deal', resourceId: dealId });
+        return { data: { deleted: true } };
+      },
+      userId,
+    );
   }
 
   async remove(tenantId: string, userId: string, id: string) {

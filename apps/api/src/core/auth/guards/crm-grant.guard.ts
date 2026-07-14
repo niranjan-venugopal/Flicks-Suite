@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { UserRole } from '@flicks/shared/types';
+import { DatabaseService } from '../../database/database.service';
+import { AuditService } from '../../../modules/audit/audit.service';
 import { ModuleGrantGuard } from './module-grant.guard';
 
 /**
@@ -13,6 +16,14 @@ import { ModuleGrantGuard } from './module-grant.guard';
  */
 @Injectable()
 export class CrmGrantGuard extends ModuleGrantGuard {
+  // An explicit constructor is REQUIRED on every ModuleGrantGuard subclass:
+  // TypeScript only emits DI parameter metadata for classes that declare their
+  // own constructor, so without this Nest instantiates the guard with ZERO
+  // dependencies and every request dies on `this.db` being undefined.
+  constructor(reflector: Reflector, db: DatabaseService, audit: AuditService) {
+    super(reflector, db, audit);
+  }
+
   protected readonly module = 'crm' as const;
   protected readonly moduleDisplayName = 'CRM';
   protected readonly fullAccessRoles: ReadonlySet<UserRole> = new Set<UserRole>([

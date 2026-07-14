@@ -120,6 +120,14 @@ export const Icon = {
   // v4 feedback (design bundle icon additions — chat + star/smiley)
   chat: makeIcon(<><path d="M21 12a8 8 0 01-8 8H4l2.2-2.6A8 8 0 1121 12z" /></>),
   star: makeIcon(<><path d="M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6-5.4-2.9-5.4 2.9 1.1-6L3.2 9.4l6.1-.8z" /></>),
+  // CRM v5 additions (crm-shared.jsx / components.jsx — verbatim paths)
+  kanban: makeIcon(<><rect x="3" y="3" width="5.5" height="18" rx="1.5" /><rect x="9.7" y="3" width="5.5" height="12" rx="1.5" /><rect x="16.4" y="3" width="5.5" height="8" rx="1.5" /></>),
+  keyboard: makeIcon(<><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" /></>),
+  target: makeIcon(<><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /></>),
+  receipt: makeIcon(<><path d="M5 3v18l2-1.4 2 1.4 2-1.4 2 1.4 2-1.4 2 1.4V3l-2 1.4L14 3l-2 1.4L10 3 8 4.4 6 3z" /><path d="M9 8h6M9 12h6" /></>),
+  file: makeIcon(<><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6" /></>),
+  userPlus: makeIcon(<><circle cx="9" cy="8" r="4" /><path d="M2 21c0-4 3.5-7 7-7 1.5 0 2.9.4 4 1.2" /><path d="M18 14v6M15 17h6" /></>),
+  switchH: makeIcon(<><path d="M8 3L4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" /></>),
 } as const
 
 export type IconKey = keyof typeof Icon

@@ -318,6 +318,42 @@ describe('Deal → invoice (§4.4, the flagship suite hook)', () => {
   });
 });
 
+describe('Deal products + participants (C3 tabs)', () => {
+  it('products auto-sum the deal value (discounted) and removal re-sums', async () => {
+    const d = await service.create(tenantA, userId, { title: 'ProdSum', value_amount: 100, currency: 'INR' });
+    // 2 × ₹100 with 10% off → line 180; deal value auto-sums to 180.
+    const p1 = await service.addProduct(tenantA, userId, d.data.id, { name: 'Widget', quantity: 2, unit_price: 100, discount_pct: 10 });
+    expect(p1.data.line_total).toBe('180.00');
+    let detail = await service.get(tenantA, d.data.id);
+    expect(detail.data.value_amount).toBe('180.00');
+    expect(detail.data.products).toHaveLength(1);
+    // Second line +20 → 200.
+    const p2 = await service.addProduct(tenantA, userId, d.data.id, { name: 'Addon', unit_price: 20 });
+    detail = await service.get(tenantA, d.data.id);
+    expect(detail.data.value_amount).toBe('200.00');
+    // Remove the addon → back to 180.
+    await service.removeProduct(tenantA, userId, d.data.id, p2.data.id);
+    detail = await service.get(tenantA, d.data.id);
+    expect(detail.data.value_amount).toBe('180.00');
+    expect(detail.data.products.map((x) => x.id)).toEqual([p1.data.id]);
+  });
+
+  it('attaches/detaches participants; refuses another tenant’s person', async () => {
+    const person = await directory.createPerson(tenantA, userId, { first_name: 'Amanda', last_name: 'Reyes', email: `am-${rid()}@t.test` });
+    const d = await service.create(tenantA, userId, { title: 'PeopleDeal', value_amount: 5, currency: 'INR' });
+    await service.addPerson(tenantA, userId, d.data.id, { person_id: person.data.id, role: 'decision maker' });
+    let detail = await service.get(tenantA, d.data.id);
+    expect(detail.data.people).toHaveLength(1);
+    expect(detail.data.people[0]!.role).toBe('decision maker');
+    // Cross-tenant person id is rejected (FK checks bypass RLS).
+    const foreign = await directory.createPerson(tenantB, userId, { first_name: 'Foreign', email: `f-${rid()}@t.test` });
+    await expect(service.addPerson(tenantA, userId, d.data.id, { person_id: foreign.data.id })).rejects.toThrow(/does not belong/i);
+    await service.removePerson(tenantA, userId, d.data.id, person.data.id);
+    detail = await service.get(tenantA, d.data.id);
+    expect(detail.data.people).toHaveLength(0);
+  });
+});
+
 describe('Deal → quote + accept (§4.4 / §19.3)', () => {
   it('creates a DRAFT quote from a deal, links it, and is idempotent', async () => {
     const co = await directory.createCompany(tenantA, userId, { name: `Quote Co ${rid()}`, domain: `q-${rid()}.com` });

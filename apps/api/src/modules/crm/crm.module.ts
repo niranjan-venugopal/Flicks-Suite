@@ -7,6 +7,7 @@ import { CrmConfigController } from './crm-config.controller';
 import { CustomFieldsService } from './custom-fields.service';
 import { SavedViewsService } from './saved-views.service';
 import { SearchService } from './search.service';
+import { TagsService } from './tags.service';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
@@ -33,6 +34,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     CustomFieldsService,
     SavedViewsService,
     SearchService,
+    TagsService,
     FxService,
     FxRefreshJob,
     CrmGateway,

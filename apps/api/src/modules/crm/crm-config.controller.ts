@@ -27,6 +27,7 @@ import type { JwtPayload } from '@flicks/shared/types';
 import { CustomFieldsService } from './custom-fields.service';
 import { SavedViewsService } from './saved-views.service';
 import { SearchService } from './search.service';
+import { TagsService } from './tags.service';
 
 class CreateCustomFieldDto {
   @IsString() object_type!: string;
@@ -47,6 +48,11 @@ class CreateSavedViewDto {
   @IsOptional() @IsArray() columns?: string[];
 }
 
+class CreateTagDto {
+  @IsString() @MaxLength(40) label!: string;
+  @IsOptional() @IsString() @MaxLength(9) color?: string;
+}
+
 /**
  * CRM configuration + search surface (PRD v5 §9.1, §9.2, §19.8): custom field
  * definitions, saved views, and the ⌘K global search. Custom fields are Owner/
@@ -60,7 +66,45 @@ export class CrmConfigController {
     private readonly customFields: CustomFieldsService,
     private readonly views: SavedViewsService,
     private readonly search: SearchService,
+    private readonly tags: TagsService,
   ) {}
+
+  // ─── Tags (§19.1) ─────────────────────────────────────────────────────────────
+  @Get('tags')
+  @RequireGrant('crm', 'view')
+  listTags(@CurrentUser() user: JwtPayload) {
+    return this.tags.list(user.tenantId);
+  }
+
+  @Post('tags')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Create a tag (idempotent by label)' })
+  createTag(@Body() dto: CreateTagDto, @CurrentUser() user: JwtPayload) {
+    return this.tags.create(user.tenantId, user.sub, dto);
+  }
+
+  @Post('records/:type/:id/tags/:tagId')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Attach a tag to a person/company/deal/lead' })
+  attachTag(
+    @Param('type') type: string,
+    @Param('id') id: string,
+    @Param('tagId') tagId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.tags.attach(user.tenantId, user.sub, type, id, tagId);
+  }
+
+  @Delete('records/:type/:id/tags/:tagId')
+  @RequireGrant('crm', 'edit')
+  detachTag(
+    @Param('type') type: string,
+    @Param('id') id: string,
+    @Param('tagId') tagId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.tags.detach(user.tenantId, user.sub, type, id, tagId);
+  }
 
   // ─── Custom fields (§9.1) — Owner/Admin manage ───────────────────────────────
   @Get('custom-fields')

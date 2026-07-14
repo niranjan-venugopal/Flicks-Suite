@@ -29,7 +29,7 @@ export default function CrmOverviewPage() {
 
   return (
     <div style={{ padding: '28px 32px 64px' }}>
-      <SectionHead title="CRM" sub="Your sales directory — contacts, companies, and (soon) deals." />
+      <SectionHead title="CRM" sub="Your pipeline at a glance — deals, contacts and companies." />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14, marginTop: 18 }}>
         {tiles.map((t) => (
           <Link key={t.href} href={t.href} className="card" style={{ padding: 18, display: 'flex', alignItems: 'center', gap: 14, textDecoration: 'none', color: 'inherit' }}>
@@ -45,10 +45,11 @@ export default function CrmOverviewPage() {
         ))}
       </div>
       <div className="card" style={{ marginTop: 18, padding: 20 }}>
-        <div className="t-caption" style={{ marginBottom: 6 }}>Coming soon</div>
+        <div className="t-caption" style={{ marginBottom: 6 }}>Coming next</div>
         <p className="t-mute" style={{ fontSize: 13 }}>
-          Deals kanban, leads inbox, activities & follow-ups, email sequences, workflows, and reports
-          arrive in the next CRM sprints. Your contacts and companies are the shared directory they all build on.
+          Activities & follow-ups, email sequences, leads inbox, workflows and reports arrive in the
+          next CRM phases. Press <b style={{ color: 'var(--text-1)' }}>⌘K</b> or <b style={{ color: 'var(--text-1)' }}>/</b> to
+          search everything, and <b style={{ color: 'var(--text-1)' }}>N</b> on the board for a new deal.
         </p>
       </div>
     </div>

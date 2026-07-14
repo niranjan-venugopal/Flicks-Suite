@@ -48,14 +48,14 @@ export function useCompanies(q?: string) {
   return useQuery({
     queryKey: ['crm', 'companies', q ?? ''],
     queryFn: () =>
-      api.get<Paged<DirectoryCompany>>(`/crm/companies${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+      api.get<Paged<DirectoryCompany>>(`/api/v1/crm/companies${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   })
 }
 
 export function useCompany(id: string | null) {
   return useQuery({
     queryKey: ['crm', 'company', id],
-    queryFn: () => api.get<{ data: DirectoryCompany }>(`/crm/companies/${id}`),
+    queryFn: () => api.get<{ data: DirectoryCompany }>(`/api/v1/crm/companies/${id}`),
     enabled: !!id,
   })
 }
@@ -64,7 +64,7 @@ export function useCreateCompany() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      api.post<{ data: DirectoryCompany; meta: { warnings: unknown[] } }>('/crm/companies', body),
+      api.post<{ data: DirectoryCompany; meta: { warnings: unknown[] } }>('/api/v1/crm/companies', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'companies'] }),
   })
 }
@@ -73,7 +73,7 @@ export function useUpdateCompany() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch<{ data: DirectoryCompany }>(`/crm/companies/${id}`, body),
+      api.patch<{ data: DirectoryCompany }>(`/api/v1/crm/companies/${id}`, body),
     onSuccess: (_r, { id }) => {
       qc.invalidateQueries({ queryKey: ['crm', 'companies'] })
       qc.invalidateQueries({ queryKey: ['crm', 'company', id] })
@@ -84,7 +84,7 @@ export function useUpdateCompany() {
 export function useDeleteCompany() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/crm/companies/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/companies/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'companies'] }),
   })
 }
@@ -97,14 +97,14 @@ export function useContacts(opts?: { q?: string; company_id?: string }) {
   const qs = params.toString()
   return useQuery({
     queryKey: ['crm', 'contacts', opts?.q ?? '', opts?.company_id ?? ''],
-    queryFn: () => api.get<Paged<DirectoryPerson>>(`/crm/contacts${qs ? `?${qs}` : ''}`),
+    queryFn: () => api.get<Paged<DirectoryPerson>>(`/api/v1/crm/contacts${qs ? `?${qs}` : ''}`),
   })
 }
 
 export function useContact(id: string | null) {
   return useQuery({
     queryKey: ['crm', 'contact', id],
-    queryFn: () => api.get<{ data: DirectoryPerson }>(`/crm/contacts/${id}`),
+    queryFn: () => api.get<{ data: DirectoryPerson }>(`/api/v1/crm/contacts/${id}`),
     enabled: !!id,
   })
 }
@@ -113,7 +113,7 @@ export function useCreateContact() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Record<string, unknown>) =>
-      api.post<{ data: DirectoryPerson }>('/crm/contacts', body),
+      api.post<{ data: DirectoryPerson }>('/api/v1/crm/contacts', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'contacts'] }),
   })
 }
@@ -122,7 +122,7 @@ export function useUpdateContact() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch<{ data: DirectoryPerson }>(`/crm/contacts/${id}`, body),
+      api.patch<{ data: DirectoryPerson }>(`/api/v1/crm/contacts/${id}`, body),
     onSuccess: (_r, { id }) => {
       qc.invalidateQueries({ queryKey: ['crm', 'contacts'] })
       qc.invalidateQueries({ queryKey: ['crm', 'contact', id] })
@@ -133,18 +133,24 @@ export function useUpdateContact() {
 export function useDeleteContact() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/crm/contacts/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/contacts/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'contacts'] }),
   })
 }
 
 // ─── Deals / board (PRD v5 §4) ────────────────────────────────────────────────
+export interface TagRef {
+  id: string
+  label: string
+  color: string | null
+}
 export interface DealCard {
   id: string
   title: string
   company_id: string | null
   primary_person_id: string | null
   owner_user_id: string
+  owner_name?: string | null
   value_amount: string
   currency: string
   value_base_amount: string
@@ -153,6 +159,62 @@ export interface DealCard {
   stage_id: string
   idle_days: number
   rot_state: 'amber' | 'red' | null
+  next_activity_at?: string | null
+  invoice_id?: string | null
+  quote_id?: string | null
+  tags?: TagRef[]
+  custom?: Record<string, unknown>
+}
+export interface DealProduct {
+  id: string
+  item_id: string | null
+  name: string
+  quantity: string
+  unit_price: string
+  currency: string
+  discount_pct: string | null
+  line_total: string
+}
+export interface DealPerson {
+  person_id: string
+  role: string | null
+  name: string | null
+  email: string | null
+  phone: string | null
+  title: string | null
+}
+export interface LinkedDoc {
+  id: string
+  number: string
+  status: string
+  total: string
+  document_type: string
+  created_at: string
+}
+export interface StageHistoryRow {
+  id: string
+  from_stage_id: string | null
+  to_stage_id: string
+  changed_by: string | null
+  changed_at: string
+  seconds_in_previous_stage: number | null
+}
+export interface DealDetail extends DealCard {
+  base_currency: string
+  pipeline_id: string
+  lost_reason_id: string | null
+  lost_reason_note: string | null
+  source: string | null
+  won_at: string | null
+  lost_at: string | null
+  created_at: string
+  company: { id: string; name: string; country_code: string | null } | null
+  stage_history: StageHistoryRow[]
+  products: DealProduct[]
+  people: DealPerson[]
+  tags: TagRef[]
+  linked_invoice: LinkedDoc | null
+  linked_quote: LinkedDoc | null
 }
 export interface BoardColumn {
   stage: { id: string; name: string; win_probability: number; rotting_days: number | null; stage_type: string }
@@ -174,18 +236,18 @@ export interface Pipeline {
 }
 
 export function usePipelines() {
-  return useQuery({ queryKey: ['crm', 'pipelines'], queryFn: () => api.get<{ data: Pipeline[] }>('/crm/pipelines') })
+  return useQuery({ queryKey: ['crm', 'pipelines'], queryFn: () => api.get<{ data: Pipeline[] }>('/api/v1/crm/pipelines') })
 }
 
 export function useLostReasons() {
-  return useQuery({ queryKey: ['crm', 'lost-reasons'], queryFn: () => api.get<{ data: Array<{ id: string; label: string }> }>('/crm/lost-reasons') })
+  return useQuery({ queryKey: ['crm', 'lost-reasons'], queryFn: () => api.get<{ data: Array<{ id: string; label: string }> }>('/api/v1/crm/lost-reasons') })
 }
 
 export function useBoard(pipelineId?: string) {
   const qc = useQueryClient()
   const query = useQuery({
     queryKey: ['crm', 'board', pipelineId ?? 'default'],
-    queryFn: () => api.get<{ data: Board }>(`/crm/board${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
+    queryFn: () => api.get<{ data: Board }>(`/api/v1/crm/board${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
   })
   // Live board: any tenant member's move refreshes every open board.
   useEffect(() => {
@@ -200,22 +262,109 @@ export function useBoard(pipelineId?: string) {
 export function useForecast(pipelineId?: string) {
   return useQuery({
     queryKey: ['crm', 'forecast', pipelineId ?? 'default'],
-    queryFn: () => api.get<{ data: { base_currency: string; open_count: number; open_value: number; weighted_value: number; won_value: number } }>(`/crm/forecast${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
+    queryFn: () => api.get<{ data: { base_currency: string; open_count: number; open_value: number; weighted_value: number; won_value: number } }>(`/api/v1/crm/forecast${pipelineId ? `?pipeline_id=${pipelineId}` : ''}`),
   })
 }
 
 export function useDeal(id: string | null) {
   return useQuery({
     queryKey: ['crm', 'deal', id],
-    queryFn: () => api.get<{ data: DealCard & { stage_history: unknown[] } }>(`/crm/deals/${id}`),
+    queryFn: () => api.get<{ data: DealDetail }>(`/api/v1/crm/deals/${id}`),
     enabled: !!id,
+  })
+}
+
+export function useReps() {
+  return useQuery({
+    queryKey: ['crm', 'reps'],
+    queryFn: () => api.get<{ data: Array<{ user_id: string; name: string; role: string }> }>('/api/v1/crm/reps'),
+  })
+}
+
+// ─── Tags (§19.1) ─────────────────────────────────────────────────────────────
+export function useTags() {
+  return useQuery({ queryKey: ['crm', 'tags'], queryFn: () => api.get<{ data: TagRef[] }>('/api/v1/crm/tags') })
+}
+
+export function useCreateTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { label: string; color?: string }) => api.post<{ data: TagRef }>('/api/v1/crm/tags', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'tags'] }),
+  })
+}
+
+export function useAttachTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ type, id, tagId }: { type: string; id: string; tagId: string }) =>
+      api.post(`/api/v1/crm/records/${type}/${id}/tags/${tagId}`, {}),
+    onSuccess: (_r, { type, id }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      if (type === 'deal') qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+    },
+  })
+}
+
+export function useDetachTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ type, id, tagId }: { type: string; id: string; tagId: string }) =>
+      api.delete(`/api/v1/crm/records/${type}/${id}/tags/${tagId}`),
+    onSuccess: (_r, { type, id }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      if (type === 'deal') qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+    },
+  })
+}
+
+// ─── Deal products / people (C3 tabs) ─────────────────────────────────────────
+export function useAddDealProduct() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ dealId, body }: { dealId: string; body: Record<string, unknown> }) =>
+      api.post<{ data: DealProduct }>(`/api/v1/crm/deals/${dealId}/products`, body),
+    onSuccess: (_r, { dealId }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
+  })
+}
+
+export function useRemoveDealProduct() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ dealId, productId }: { dealId: string; productId: string }) =>
+      api.delete(`/api/v1/crm/deals/${dealId}/products/${productId}`),
+    onSuccess: (_r, { dealId }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
+  })
+}
+
+export function useAddDealPerson() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ dealId, body }: { dealId: string; body: { person_id: string; role?: string } }) =>
+      api.post(`/api/v1/crm/deals/${dealId}/people`, body),
+    onSuccess: (_r, { dealId }) => qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] }),
+  })
+}
+
+export function useRemoveDealPerson() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ dealId, personId }: { dealId: string; personId: string }) =>
+      api.delete(`/api/v1/crm/deals/${dealId}/people/${personId}`),
+    onSuccess: (_r, { dealId }) => qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] }),
   })
 }
 
 export function useCreateDeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post<{ data: DealCard }>('/crm/deals', body),
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: DealCard }>('/api/v1/crm/deals', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
   })
 }
@@ -224,7 +373,7 @@ export function useMoveDeal() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: { stage_id: string; lost_reason_id?: string; lost_reason_note?: string } }) =>
-      api.post<{ data: DealCard }>(`/crm/deals/${id}/move`, body),
+      api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/move`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
   })
 }
@@ -232,7 +381,7 @@ export function useMoveDeal() {
 export function useUpdateDeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: DealCard }>(`/crm/deals/${id}`, body),
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: DealCard }>(`/api/v1/crm/deals/${id}`, body),
     onSuccess: (_r, { id }) => {
       qc.invalidateQueries({ queryKey: ['crm', 'board'] })
       qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
@@ -240,10 +389,29 @@ export function useUpdateDeal() {
   })
 }
 
+export function useReopenDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/reopen`, {}),
+    onSuccess: (_r, id) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
+  })
+}
+
+export function useDeleteDeal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/deals/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+  })
+}
+
 export function useCreateInvoiceFromDeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (dealId: string) => api.post<{ data: { invoice_id: string; customer_id: string } }>(`/crm/deals/${dealId}/create-invoice`, {}),
+    mutationFn: (dealId: string) => api.post<{ data: { invoice_id: string; customer_id: string } }>(`/api/v1/crm/deals/${dealId}/create-invoice`, {}),
     onSuccess: (_r, dealId) => {
       qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
       qc.invalidateQueries({ queryKey: ['crm', 'board'] })
@@ -254,7 +422,7 @@ export function useCreateInvoiceFromDeal() {
 export function useCreateQuoteFromDeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (dealId: string) => api.post<{ data: { quote_id: string; customer_id: string } }>(`/crm/deals/${dealId}/create-quote`, {}),
+    mutationFn: (dealId: string) => api.post<{ data: { quote_id: string; customer_id: string } }>(`/api/v1/crm/deals/${dealId}/create-quote`, {}),
     onSuccess: (_r, dealId) => {
       qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
       qc.invalidateQueries({ queryKey: ['crm', 'board'] })
@@ -278,14 +446,14 @@ export interface CustomFieldDef {
 export function useCustomFields(objectType?: string) {
   return useQuery({
     queryKey: ['crm', 'custom-fields', objectType ?? 'all'],
-    queryFn: () => api.get<{ data: CustomFieldDef[] }>(`/crm/custom-fields${objectType ? `?object_type=${objectType}` : ''}`),
+    queryFn: () => api.get<{ data: CustomFieldDef[] }>(`/api/v1/crm/custom-fields${objectType ? `?object_type=${objectType}` : ''}`),
   })
 }
 
 export function useCreateCustomField() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post<{ data: CustomFieldDef }>('/crm/custom-fields', body),
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: CustomFieldDef }>('/api/v1/crm/custom-fields', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
   })
 }
@@ -293,7 +461,7 @@ export function useCreateCustomField() {
 export function useUpdateCustomField() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: CustomFieldDef }>(`/crm/custom-fields/${id}`, body),
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: CustomFieldDef }>(`/api/v1/crm/custom-fields/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
   })
 }
@@ -301,7 +469,7 @@ export function useUpdateCustomField() {
 export function useArchiveCustomField() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/crm/custom-fields/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/custom-fields/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'custom-fields'] }),
   })
 }
@@ -321,14 +489,14 @@ export interface SavedView {
 export function useSavedViews(objectType?: string) {
   return useQuery({
     queryKey: ['crm', 'views', objectType ?? 'all'],
-    queryFn: () => api.get<{ data: SavedView[] }>(`/crm/views${objectType ? `?object_type=${objectType}` : ''}`),
+    queryFn: () => api.get<{ data: SavedView[] }>(`/api/v1/crm/views${objectType ? `?object_type=${objectType}` : ''}`),
   })
 }
 
 export function useCreateSavedView() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post<{ data: SavedView }>('/crm/views', body),
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: SavedView }>('/api/v1/crm/views', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
   })
 }
@@ -336,7 +504,7 @@ export function useCreateSavedView() {
 export function useUpdateSavedView() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: SavedView }>(`/crm/views/${id}`, body),
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: SavedView }>(`/api/v1/crm/views/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
   })
 }
@@ -344,7 +512,7 @@ export function useUpdateSavedView() {
 export function useDeleteSavedView() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/crm/views/${id}`),
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/views/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'views'] }),
   })
 }
@@ -361,7 +529,7 @@ export function useGlobalSearch(q: string) {
   const query = q.trim()
   return useQuery({
     queryKey: ['crm', 'search', query],
-    queryFn: () => api.get<{ data: CrmSearchResults }>(`/crm/search?q=${encodeURIComponent(query)}`),
+    queryFn: () => api.get<{ data: CrmSearchResults }>(`/api/v1/crm/search?q=${encodeURIComponent(query)}`),
     enabled: query.length >= 2,
   })
 }

@@ -2,18 +2,27 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Plus, Search, Loader2, Building2 } from 'lucide-react'
-import { Btn, Pill, SectionHead, Avatar } from '@/components/proto'
+import { Plus, Loader2, Trash2 } from 'lucide-react'
+import { Btn, Pill, SectionHead, Avatar, Icon } from '@/components/proto'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
-import { useCompanies, useCreateCompany } from '@/lib/api/queries/use-crm'
+import { FilterBar, BulkBar, EmptyState } from '@/components/crm/kit'
+import { useCompanies, useCreateCompany, useDeleteCompany } from '@/lib/api/queries/use-crm'
 
 export default function CompaniesPage() {
   const [q, setQ] = useState('')
   const [modal, setModal] = useState(false)
+  const [sel, setSel] = useState<string[]>([])
   const { data, isLoading } = useCompanies(q || undefined)
+  const del = useDeleteCompany()
   const rows = data?.data ?? []
+
+  const bulkDelete = async () => {
+    if (!window.confirm(`Delete ${sel.length} compan${sel.length === 1 ? 'y' : 'ies'}?`)) return
+    for (const id of sel) { try { await del.mutateAsync(id) } catch { /* server enforces */ } }
+    setSel([])
+  }
 
   return (
     <div style={{ padding: '28px 32px 64px' }}>
@@ -23,39 +32,28 @@ export default function CompaniesPage() {
         right={<Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New company</Btn>}
       />
 
-      <div style={{ position: 'relative', maxWidth: 320, marginTop: 16 }}>
-        <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.4 }} />
-        <input
-          className="input"
-          placeholder="Search companies…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ width: '100%', paddingLeft: 34 }}
-        />
-      </div>
+      <FilterBar search={q} onSearch={setQ} searchPlaceholder="Search companies…" />
 
-      <div className="card" style={{ marginTop: 18, padding: 0, overflow: 'hidden' }}>
+      <div className="card" style={{ marginTop: 4, padding: 0, overflow: 'hidden' }}>
         {isLoading ? (
           <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}>
             <Loader2 className="animate-spin" style={{ color: 'var(--text-mute)' }} />
           </div>
         ) : rows.length === 0 ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center' }}>
-            <Building2 size={28} style={{ color: 'var(--text-mute)', marginBottom: 10 }} />
-            <div className="t-h3" style={{ marginBottom: 4 }}>No companies yet</div>
-            <p className="t-mute" style={{ fontSize: 13, marginBottom: 14 }}>Add your first company to start tracking accounts.</p>
-            <Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New company</Btn>
-          </div>
+          <EmptyState icon={<Icon.building size={22} />} line="No companies yet. Add your first company to start tracking accounts — deals and billing link straight to it." cta="New company" onCta={() => setModal(true)} />
         ) : (
           <table className="tbl" style={{ width: '100%' }}>
             <thead>
               <tr>
-                <th>Company</th><th>Domain</th><th>Industry</th><th>Location</th><th>Source</th>
+                <th style={{ width: 34 }} /><th>Company</th><th>Domain</th><th>Industry</th><th>Location</th><th>Source</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((c) => (
-                <tr key={c.id}>
+                <tr key={c.id} style={{ background: sel.includes(c.id) ? 'rgba(62,123,250,.08)' : undefined }}>
+                  <td>
+                    <input type="checkbox" checked={sel.includes(c.id)} onChange={() => setSel((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]))} />
+                  </td>
                   <td>
                     <Link href={`/crm/companies/${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', color: 'inherit' }}>
                       <Avatar name={c.name} size="sm" />
@@ -72,6 +70,10 @@ export default function CompaniesPage() {
           </table>
         )}
       </div>
+
+      <BulkBar count={sel.length} onClear={() => setSel([])} actions={[
+        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => void bulkDelete() },
+      ]} />
 
       <NewCompanyModal open={modal} onClose={() => setModal(false)} />
     </div>
