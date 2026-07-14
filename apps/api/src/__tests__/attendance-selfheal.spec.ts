@@ -3,9 +3,12 @@ import * as crypto from 'crypto';
 import { and, eq } from 'drizzle-orm';
 import { db, dbAdmin } from '@flicks/db';
 import { employees, memberships, shiftTemplates, tenants, users } from '@flicks/db/schema';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DatabaseService } from '../core/database/database.service';
 import { AuditService } from '../modules/audit/audit.service';
 import { AttendanceService } from '../modules/attendance/attendance.service';
+import { AttendanceController } from '../modules/attendance/attendance.controller';
+import { PresenceService } from '../modules/presence/presence.service';
 
 /**
  * Attendance self-heal (beta blocker): members without an HR employee record
@@ -100,5 +103,31 @@ describe('Clock-in self-heal', () => {
     // Exactly one employee for that email — no duplicate.
     const all = await dbAdmin.select().from(employees).where(and(eq(employees.tenant_id, tenantId), eq(employees.work_email, emp!.work_email)));
     expect(all).toHaveLength(1);
+  });
+});
+
+describe('Punch overrides a stale manual Set-status (PRD v4 §5)', () => {
+  it('clock-in through the controller clears "Appear offline" → profile flips to the green in-office state', async () => {
+    const presence = new PresenceService(dbAdmin as never, dbSvc);
+    const controller = new AttendanceController(service, presence, new EventEmitter2());
+    // A fresh member who pinned a manual status from the profile picker…
+    const [u] = await dbAdmin.insert(users).values({ email: `status-${rid()}@heal.test`, full_name: 'Stat Us', status: 'active' }).returning();
+    const [mem] = await dbAdmin
+      .insert(memberships)
+      .values({ tenant_id: tenantId, user_id: u!.id, role: 'employee', status: 'active' })
+      .returning();
+    await presence.setStatus(tenantId, u!.id, { status: 'offline' });
+    let [resolved] = await presence.resolve(tenantId, [u!.id], new Map());
+    expect(resolved!.status).toBe('offline');
+    expect(resolved!.manual).toBe(true);
+
+    // …then clocks in through the REAL endpoint handler. The punch is the
+    // newer, explicit availability signal — it must clear the manual pin.
+    const jwtUser = { sub: u!.id, tenantId, membershipId: mem!.id, role: 'employee' } as never;
+    await controller.punchIn({}, jwtUser, { ip: '127.0.0.1', headers: {} } as never);
+    ;[resolved] = await presence.resolve(tenantId, [u!.id], new Map());
+    expect(resolved!.manual).toBe(false);
+    expect(resolved!.status).toBe('in_office'); // open punch → green, org-wide
+    await dbAdmin.delete(users).where(eq(users.id, u!.id));
   });
 });

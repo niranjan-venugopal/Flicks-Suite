@@ -18,6 +18,7 @@ import {
 import type { Request } from 'express';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AttendanceService } from './attendance.service';
+import { PresenceService } from '../presence/presence.service';
 import {
   PunchDto,
   RegularizationRequestDto,
@@ -41,6 +42,7 @@ function clientIp(req: Request): string | undefined {
 export class AttendanceController {
   constructor(
     private readonly attendanceService: AttendanceService,
+    private readonly presence: PresenceService,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -61,6 +63,10 @@ export class AttendanceController {
       clientIp(req),
     );
     // PRD v4 §5 — a punch flips presence (In office / Remote) org-wide ≤5s.
+    // A punch is an explicit availability signal, so it OVERRIDES any stale
+    // manual "Set status" (Busy / Away / Appear offline) — otherwise the
+    // profile dot never changes on clock-in and reads as broken.
+    await this.presence.clearStatus(user.tenantId, user.sub);
     this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
     return res;
   }
@@ -81,6 +87,8 @@ export class AttendanceController {
       dto,
       clientIp(req),
     );
+    // Same rule on the way out — the punch wins over a stale manual status.
+    await this.presence.clearStatus(user.tenantId, user.sub);
     this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
     return res;
   }
