@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
+import { EmailsTab } from '@/components/crm/EmailsTab'
 import {
   useDeal,
   usePipelines,
@@ -244,13 +245,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
 
       {tab === 'timeline' && <TimelineTab deal={d} stages={stages} activities={dealActivities.data?.data ?? []} onComplete={completeLoop.start} onLog={() => setScheduleOpen(true)} />}
       {tab === 'products' && <ProductsTab deal={d} onCreateInvoice={() => void onCreateInvoice()} onCreateQuote={() => void onCreateQuote()} busy={createInvoice.isPending || createQuote.isPending} />}
-      {tab === 'emails' && (
-        <div className="card" style={{ padding: '36px 24px', textAlign: 'center' }}>
-          <Icon.mail size={22} style={{ color: 'var(--text-mute)', marginBottom: 8 }} />
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)' }}>Email on deals arrives with the Email phase</div>
-          <div className="t-caption" style={{ marginTop: 4 }}>Compose, tracking, sequences and the BCC dropbox are next up (§7)</div>
-        </div>
-      )}
+      {tab === 'emails' && <EmailsTab deal={d} />}
       {tab === 'files' && (
         <div className="card">
           <div style={{ border: '1.5px dashed var(--bord-2)', borderRadius: 12, padding: 22, textAlign: 'center', color: 'var(--text-mute)' }}>

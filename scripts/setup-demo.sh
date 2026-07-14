@@ -770,10 +770,84 @@ CREATE TABLE IF NOT EXISTS activity_mentions (
   mentioned_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (activity_id, mentioned_user_id)
 );
+-- 0035: Email Phase A (§7.1, §19.4/5).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_signature_html text;
+ALTER TABLE directory_people ADD COLUMN IF NOT EXISTS email_do_not_contact boolean NOT NULL DEFAULT false;
+ALTER TABLE directory_people ADD COLUMN IF NOT EXISTS email_do_not_contact_reason text;
+CREATE TABLE IF NOT EXISTS email_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name text NOT NULL, subject text NOT NULL, body_html text NOT NULL,
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(), archived boolean NOT NULL DEFAULT false
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_template_name ON email_templates (tenant_id, lower(name)) WHERE archived = false;
+CREATE TABLE IF NOT EXISTS email_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  direction text NOT NULL CHECK (direction IN ('out','in')), status text NOT NULL DEFAULT 'sent', provider_id text,
+  from_email text, to_email text NOT NULL, subject text NOT NULL, body_html text,
+  person_id uuid REFERENCES directory_people(id) ON DELETE SET NULL, deal_id uuid REFERENCES deals(id) ON DELETE SET NULL,
+  sender_user_id uuid REFERENCES users(id) ON DELETE SET NULL, open_token text UNIQUE,
+  open_count integer NOT NULL DEFAULT 0, click_count integer NOT NULL DEFAULT 0, tracking boolean NOT NULL DEFAULT false,
+  sequence_enrollment_id uuid, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_email_messages_deal ON email_messages (tenant_id, deal_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_email_messages_person ON email_messages (tenant_id, person_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_email_messages_provider ON email_messages (provider_id);
+CREATE TABLE IF NOT EXISTS email_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE, token text NOT NULL UNIQUE,
+  url text NOT NULL, click_count integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_email_links_message ON email_links (tenant_id, message_id);
+CREATE TABLE IF NOT EXISTS email_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE, type text NOT NULL,
+  meta jsonb NOT NULL DEFAULT '{}', occurred_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_email_events_message ON email_events (tenant_id, message_id, occurred_at);
+CREATE TABLE IF NOT EXISTS sequences (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name text NOT NULL, is_active boolean NOT NULL DEFAULT true, send_window_start text NOT NULL DEFAULT '09:00',
+  send_window_end text NOT NULL DEFAULT '18:00', timezone text NOT NULL DEFAULT 'Asia/Kolkata',
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sequence_steps (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  sequence_id uuid NOT NULL REFERENCES sequences(id) ON DELETE CASCADE, step_order smallint NOT NULL,
+  wait_days smallint NOT NULL DEFAULT 0, subject text NOT NULL, body_html text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sequence_steps ON sequence_steps (tenant_id, sequence_id, step_order);
+CREATE TABLE IF NOT EXISTS sequence_enrollments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  sequence_id uuid NOT NULL REFERENCES sequences(id) ON DELETE CASCADE, person_id uuid NOT NULL REFERENCES directory_people(id) ON DELETE CASCADE,
+  deal_id uuid REFERENCES deals(id) ON DELETE SET NULL, enrolled_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  current_step smallint NOT NULL DEFAULT 0, next_send_at timestamptz, status text NOT NULL DEFAULT 'active',
+  exit_reason text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sequence_enrollment ON sequence_enrollments (sequence_id, person_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_sequence_enrollments_due ON sequence_enrollments (tenant_id, next_send_at) WHERE status = 'active';
+CREATE TABLE IF NOT EXISTS tenant_inbound_addresses (
+  tenant_id uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE, token text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS connected_email_accounts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, provider text NOT NULL CHECK (provider IN ('google','microsoft')),
+  email text NOT NULL, access_token_enc text, refresh_token_enc text, status text NOT NULL DEFAULT 'pending',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_connected_account ON connected_email_accounts (tenant_id, user_id, provider);
+CREATE TABLE IF NOT EXISTS resend_webhook_events (id text PRIMARY KEY, received_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE connected_email_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connected_email_accounts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS self_connected_email_accounts ON connected_email_accounts;
+CREATE POLICY self_connected_email_accounts ON connected_email_accounts
+  FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)::uuid AND user_id = current_setting('app.user_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid AND user_id = current_setting('app.user_id', true)::uuid);
+GRANT SELECT, INSERT, UPDATE, DELETE ON connected_email_accounts TO flicks_app;
 DO $crmrls$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags','custom_field_defs','saved_views','record_files','activities','activity_mentions'] LOOP
+  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags','custom_field_defs','saved_views','record_files','activities','activity_mentions','email_templates','email_messages','email_links','email_events','sequences','sequence_steps','sequence_enrollments','tenant_inbound_addresses'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I ON %I', t, t);

@@ -76,6 +76,10 @@ export const directoryPeople = pgTable(
     phone: text('phone'), // E.164
     secondary_phones: text('secondary_phones').array(),
     title: text('title'),
+    // §19.5 do-not-contact: hard block on compose/sequences; auto-set on
+    // bounce/complaint; badge on the person.
+    email_do_not_contact: boolean('email_do_not_contact').notNull().default(false),
+    email_do_not_contact_reason: text('email_do_not_contact_reason'),
     company_id: uuid('company_id').references(() => directoryCompanies.id, { onDelete: 'set null' }),
     owner_user_id: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     source: text('source'),
@@ -263,6 +267,151 @@ export const activityMentions = pgTable(
   },
   (t) => [primaryKey({ columns: [t.activity_id, t.mentioned_user_id] })],
 );
+
+// ─── Email Phase A (PRD v5 §7.1 / 0035) ───────────────────────────────────────
+
+export const emailTemplates = pgTable(
+  'email_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    subject: text('subject').notNull(),
+    body_html: text('body_html').notNull(),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    archived: boolean('archived').notNull().default(false),
+  },
+);
+
+export const emailMessages = pgTable(
+  'email_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    direction: text('direction').notNull(), // out | in
+    status: text('status').notNull().default('sent'),
+    provider_id: text('provider_id'),
+    from_email: text('from_email'),
+    to_email: text('to_email').notNull(),
+    subject: text('subject').notNull(),
+    body_html: text('body_html'),
+    person_id: uuid('person_id').references(() => directoryPeople.id, { onDelete: 'set null' }),
+    deal_id: uuid('deal_id').references(() => deals.id, { onDelete: 'set null' }),
+    sender_user_id: uuid('sender_user_id').references(() => users.id, { onDelete: 'set null' }),
+    open_token: text('open_token').unique(),
+    open_count: integer('open_count').notNull().default(0),
+    click_count: integer('click_count').notNull().default(0),
+    tracking: boolean('tracking').notNull().default(false),
+    sequence_enrollment_id: uuid('sequence_enrollment_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('idx_email_messages_deal').on(t.tenant_id, t.deal_id, t.created_at),
+    index('idx_email_messages_person').on(t.tenant_id, t.person_id, t.created_at),
+    index('idx_email_messages_provider').on(t.provider_id),
+  ],
+);
+
+export const emailLinks = pgTable(
+  'email_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    message_id: uuid('message_id').notNull().references(() => emailMessages.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    url: text('url').notNull(),
+    click_count: integer('click_count').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_email_links_message').on(t.tenant_id, t.message_id)],
+);
+
+export const emailEvents = pgTable(
+  'email_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    message_id: uuid('message_id').notNull().references(() => emailMessages.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    meta: jsonb('meta').notNull().default({}),
+    occurred_at: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_email_events_message').on(t.tenant_id, t.message_id, t.occurred_at)],
+);
+
+export const sequences = pgTable('sequences', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  is_active: boolean('is_active').notNull().default(true),
+  send_window_start: text('send_window_start').notNull().default('09:00'),
+  send_window_end: text('send_window_end').notNull().default('18:00'),
+  timezone: text('timezone').notNull().default('Asia/Kolkata'),
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const sequenceSteps = pgTable(
+  'sequence_steps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    sequence_id: uuid('sequence_id').notNull().references(() => sequences.id, { onDelete: 'cascade' }),
+    step_order: smallint('step_order').notNull(),
+    wait_days: smallint('wait_days').notNull().default(0),
+    subject: text('subject').notNull(),
+    body_html: text('body_html').notNull(),
+  },
+  (t) => [index('idx_sequence_steps').on(t.tenant_id, t.sequence_id, t.step_order)],
+);
+
+export const sequenceEnrollments = pgTable(
+  'sequence_enrollments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    sequence_id: uuid('sequence_id').notNull().references(() => sequences.id, { onDelete: 'cascade' }),
+    person_id: uuid('person_id').notNull().references(() => directoryPeople.id, { onDelete: 'cascade' }),
+    deal_id: uuid('deal_id').references(() => deals.id, { onDelete: 'set null' }),
+    enrolled_by: uuid('enrolled_by').references(() => users.id, { onDelete: 'set null' }),
+    current_step: smallint('current_step').notNull().default(0),
+    next_send_at: timestamp('next_send_at', { withTimezone: true }),
+    status: text('status').notNull().default('active'),
+    exit_reason: text('exit_reason'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_sequence_enrollments_due').on(t.tenant_id, t.next_send_at).where(sql`${t.status} = 'active'`)],
+);
+
+export const tenantInboundAddresses = pgTable('tenant_inbound_addresses', {
+  tenant_id: uuid('tenant_id').primaryKey().references(() => tenants.id, { onDelete: 'cascade' }),
+  token: text('token').notNull().unique(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const connectedEmailAccounts = pgTable(
+  'connected_email_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    email: text('email').notNull(),
+    access_token_enc: text('access_token_enc'),
+    refresh_token_enc: text('refresh_token_enc'),
+    status: text('status').notNull().default('pending'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('uq_connected_account').on(t.tenant_id, t.user_id, t.provider)],
+);
+
+export const resendWebhookEvents = pgTable('resend_webhook_events', {
+  id: text('id').primaryKey(),
+  received_at: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─── FX rates (global reference; §12.1) ───────────────────────────────────────
 export const fxRates = pgTable(

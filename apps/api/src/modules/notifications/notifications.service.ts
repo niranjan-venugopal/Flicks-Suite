@@ -144,6 +144,43 @@ export class NotificationsService {
   }
 
   /**
+   * Raw send for CALLER-COMPOSED email (CRM compose/sequences, PRD v5 §7) —
+   * subject/html arrive ready-made instead of a platform template. Returns the
+   * provider message id (used to correlate Resend webhooks) or null on
+   * failure/no-op. Never throws.
+   */
+  async sendRawEmail(args: {
+    to: string;
+    subject: string;
+    html: string;
+    fromName?: string;
+    replyTo?: string;
+    bcc?: string;
+    headers?: Record<string, string>;
+  }): Promise<string | null> {
+    const from = `${args.fromName ?? this.configService.get('EMAIL_FROM_NAME', 'Flicks Suite')} <${this.configService.get('EMAIL_FROM', 'noreply@flicks.app')}>`;
+    try {
+      const { data, error } = await this.resend.emails.send({
+        from,
+        to: args.to,
+        subject: args.subject,
+        html: args.html,
+        ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+        ...(args.bcc ? { bcc: args.bcc } : {}),
+        ...(args.headers ? { headers: args.headers } : {}),
+      });
+      if (error) {
+        this.logger.error(`Raw email to ${args.to} failed: ${error.name ?? ''} ${error.message ?? ''}`);
+        return null;
+      }
+      return data?.id ?? null;
+    } catch (err) {
+      this.logger.error(`Raw email to ${args.to} threw: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  /**
    * Returns whether the email was accepted by Resend (or deliberately
    * suppressed by preference — a user choice, not a failure). Never throws:
    * email failures must not break flows. Callers that must not lose a notice

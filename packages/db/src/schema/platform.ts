@@ -127,6 +127,8 @@ export const users = pgTable(
     phone_verified_at: timestamp('phone_verified_at', { withTimezone: true }),
     locale: text('locale').notNull().default('en-IN'),
     timezone: text('timezone').notNull().default('Asia/Kolkata'),
+    // §19.4 — appended to CRM composed email.
+    email_signature_html: text('email_signature_html'),
     is_platform_admin: boolean('is_platform_admin').notNull().default(false),
     // FAM (platform-admin) second factor. Base32 TOTP secret, set at enrolment.
     // FAM logins are gated on this being non-null (PRD §11.6).

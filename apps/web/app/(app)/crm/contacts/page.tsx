@@ -80,7 +80,10 @@ export default function ContactsPage() {
                       <b>{p.display_name ?? '—'}</b>
                     </Link>
                   </td>
-                  <td>{p.email ?? '—'}</td>
+                  <td>
+                    {p.email ?? '—'}
+                    {p.email_do_not_contact && <Pill tone="coral" style={{ marginLeft: 8 }}>do not contact</Pill>}
+                  </td>
                   <td>{p.title ?? '—'}</td>
                   <td>{p.phone ?? '—'}</td>
                   <td>{p.source ? <Pill>{p.source.replace(/_/g, ' ')}</Pill> : '—'}</td>

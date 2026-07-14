@@ -36,6 +36,8 @@ export interface DirectoryPerson {
   source: string | null
   last_activity_at: string | null
   created_at: string
+  email_do_not_contact?: boolean
+  email_do_not_contact_reason?: string | null
 }
 
 interface Paged<T> {
@@ -583,6 +585,71 @@ export function useDeleteActivity() {
     mutationFn: ({ id }: { id: string; dealId?: string | null }) => api.delete(`/api/v1/crm/activities/${id}`),
     onSuccess: (_r, { dealId }) => invalidateActivityScopes(qc, dealId),
   })
+}
+
+// ─── Email Phase A (§7.1, C9–C11) ─────────────────────────────────────────────
+export interface EmailMessage {
+  id: string
+  direction: 'out' | 'in'
+  status: string
+  to_email: string
+  from_email: string | null
+  subject: string
+  open_count: number
+  click_count: number
+  tracking: boolean
+  sender_name: string | null
+  created_at: string
+}
+
+export function useDealEmails(dealId: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'emails', 'deal', dealId],
+    queryFn: () => api.get<{ data: EmailMessage[] }>(`/api/v1/crm/deals/${dealId}/emails`),
+    enabled: !!dealId,
+    refetchInterval: 60_000, // opens/clicks tick in near-live
+  })
+}
+
+export function useSendEmail() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: { id: string; status: string; to: string } }>('/api/v1/crm/emails', body),
+    onSuccess: (_r, body) => {
+      const dealId = (body as { deal_id?: string }).deal_id
+      if (dealId) {
+        qc.invalidateQueries({ queryKey: ['crm', 'emails', 'deal', dealId] })
+        qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+      }
+    },
+  })
+}
+
+export interface EmailTemplate {
+  id: string
+  name: string
+  subject: string
+  body_html: string
+}
+
+export function useEmailTemplates() {
+  return useQuery({ queryKey: ['crm', 'email-templates'], queryFn: () => api.get<{ data: EmailTemplate[] }>('/api/v1/crm/email-templates') })
+}
+
+export function useSignature() {
+  return useQuery({ queryKey: ['crm', 'signature'], queryFn: () => api.get<{ data: { signature: string | null } }>('/api/v1/crm/me/signature') })
+}
+
+export function useSetSignature() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (signature: string | null) => api.put('/api/v1/crm/me/signature', { signature }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'signature'] }),
+  })
+}
+
+export function useInboundAddress() {
+  return useQuery({ queryKey: ['crm', 'inbound-address'], queryFn: () => api.get<{ data: { address: string } }>('/api/v1/crm/inbound-address') })
 }
 
 // ─── Global search (§19.8) ────────────────────────────────────────────────────

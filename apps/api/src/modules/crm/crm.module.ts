@@ -10,6 +10,10 @@ import { SearchService } from './search.service';
 import { TagsService } from './tags.service';
 import { ActivitiesService } from './activities.service';
 import { ActivitiesController } from './activities.controller';
+import { CrmEmailService } from './email.service';
+import { CrmEmailController } from './email.controller';
+import { CrmEmailPublicController } from './email-public.controller';
+import { ResendWebhookController } from './resend-webhook.controller';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
@@ -30,7 +34,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
   imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
-  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController],
+  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController],
   providers: [
     DirectoryService,
     DealsService,
@@ -40,6 +44,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     SearchService,
     TagsService,
     ActivitiesService,
+    CrmEmailService,
     FxService,
     FxRefreshJob,
     CrmGateway,
