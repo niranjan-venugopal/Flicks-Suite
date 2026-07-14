@@ -73,6 +73,7 @@ const ADMIN_NAV: NavSection[] = [
         children: [
           { href: '/crm', label: 'Overview' },
           { href: '/crm/deals', label: 'Deals' },
+          { href: '/crm/activities', label: 'Activities' },
           { href: '/crm/contacts', label: 'Contacts' },
           { href: '/crm/companies', label: 'Companies' },
         ],

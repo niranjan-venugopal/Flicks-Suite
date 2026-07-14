@@ -224,6 +224,46 @@ export const dealProducts = pgTable(
   (t) => [index('idx_deal_products_deal').on(t.tenant_id, t.deal_id)],
 );
 
+// ─── Activities (PRD v5 §6 / 0034) ────────────────────────────────────────────
+
+export const activities = pgTable(
+  'activities',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(), // task | call | meeting | note
+    subject: text('subject').notNull(),
+    body: text('body'),
+    deal_id: uuid('deal_id').references(() => deals.id, { onDelete: 'cascade' }),
+    person_id: uuid('person_id').references(() => directoryPeople.id, { onDelete: 'set null' }),
+    company_id: uuid('company_id').references(() => directoryCompanies.id, { onDelete: 'set null' }),
+    assignee_user_id: uuid('assignee_user_id').notNull().references(() => users.id),
+    due_at: timestamp('due_at', { withTimezone: true }),
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    completed_by: uuid('completed_by').references(() => users.id),
+    outcome: text('outcome'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('idx_activities_assignee_due').on(t.tenant_id, t.assignee_user_id, t.due_at).where(sql`${t.completed_at} IS NULL AND ${t.deleted_at} IS NULL`),
+    index('idx_activities_deal').on(t.tenant_id, t.deal_id, t.due_at).where(sql`${t.deleted_at} IS NULL`),
+  ],
+);
+
+export const activityMentions = pgTable(
+  'activity_mentions',
+  {
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    activity_id: uuid('activity_id').notNull().references(() => activities.id, { onDelete: 'cascade' }),
+    mentioned_user_id: uuid('mentioned_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.activity_id, t.mentioned_user_id] })],
+);
+
 // ─── FX rates (global reference; §12.1) ───────────────────────────────────────
 export const fxRates = pgTable(
   'fx_rates',

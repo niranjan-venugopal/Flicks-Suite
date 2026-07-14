@@ -517,6 +517,74 @@ export function useDeleteSavedView() {
   })
 }
 
+// ─── Activities (§6, C8) ──────────────────────────────────────────────────────
+export interface Activity {
+  id: string
+  type: 'task' | 'call' | 'meeting' | 'note'
+  subject: string
+  body: string | null
+  due_at: string | null
+  completed_at: string | null
+  outcome: string | null
+  assignee_user_id?: string
+  assignee_name?: string | null
+  deal_id?: string | null
+  deal_title?: string | null
+  created_at: string
+}
+export interface MyActivities {
+  overdue: Activity[]
+  today: Activity[]
+  upcoming: Activity[]
+  completed: Activity[]
+}
+
+export function useMyActivities() {
+  return useQuery({
+    queryKey: ['crm', 'activities', 'mine'],
+    queryFn: () => api.get<{ data: MyActivities }>('/api/v1/crm/activities/mine'),
+  })
+}
+
+export function useDealActivities(dealId: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'activities', 'deal', dealId],
+    queryFn: () => api.get<{ data: Activity[] }>(`/api/v1/crm/deals/${dealId}/activities`),
+    enabled: !!dealId,
+  })
+}
+
+function invalidateActivityScopes(qc: ReturnType<typeof useQueryClient>, dealId?: string | null) {
+  qc.invalidateQueries({ queryKey: ['crm', 'activities'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'board'] }) // next_activity_at chips
+  if (dealId) qc.invalidateQueries({ queryKey: ['crm', 'deal', dealId] })
+}
+
+export function useCreateActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: Activity }>('/api/v1/crm/activities', body),
+    onSuccess: (_r, body) => invalidateActivityScopes(qc, (body as { deal_id?: string }).deal_id),
+  })
+}
+
+export function useCompleteActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body?: { outcome?: string; note?: string }; dealId?: string | null }) =>
+      api.post<{ data: Activity }>(`/api/v1/crm/activities/${id}/complete`, body ?? {}),
+    onSuccess: (_r, { dealId }) => invalidateActivityScopes(qc, dealId),
+  })
+}
+
+export function useDeleteActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string; dealId?: string | null }) => api.delete(`/api/v1/crm/activities/${id}`),
+    onSuccess: (_r, { dealId }) => invalidateActivityScopes(qc, dealId),
+  })
+}
+
 // ─── Global search (§19.8) ────────────────────────────────────────────────────
 export interface CrmSearchResults {
   query: string

@@ -7,6 +7,7 @@ import { Btn, Icon, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
+import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
 import {
   useDeal,
   usePipelines,
@@ -26,7 +27,9 @@ import {
   useRemoveDealPerson,
   useContacts,
   useCustomFields,
+  useDealActivities,
   type DealDetail,
+  type Activity,
 } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -56,6 +59,9 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
   const [tab, setTab] = useState<TabKey>('timeline')
   const [wonOpen, setWonOpen] = useState(false)
   const [lostOpen, setLostOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const dealActivities = useDealActivities(id)
+  const completeLoop = useCompleteWithNext(id)
 
   const d = data?.data
   const pipeline = pipelines.data?.data.find((p) => p.id === d?.pipeline_id)
@@ -203,20 +209,27 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
         )}
       </div>
 
-      {/* Next-activity banner (doctrine 4c) — activities land next phase */}
-      {d.status === 'open' && (
-        d.next_activity_at ? (
+      {/* Next-activity banner — the §6 follow-up loop (doctrine 4c) */}
+      {d.status === 'open' && (() => {
+        const nextAct = (dealActivities.data?.data ?? []).find((a) => !a.completed_at && a.due_at)
+        return nextAct ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 15px', borderRadius: 11, marginBottom: 14, background: 'rgba(62,123,250,.08)', border: '1px solid rgba(62,123,250,.3)' }}>
             <Icon.cal size={15} style={{ color: 'var(--blue)', flexShrink: 0 }} />
-            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>Next activity: {new Date(d.next_activity_at).toLocaleString()}</span>
+            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>
+              Next: <b>{nextAct.subject}</b> · {dueLabel(nextAct).text}
+              {nextAct.assignee_name ? ` with ${nextAct.assignee_name}` : ''}
+            </span>
+            <Btn kind="ghost" size="sm" onClick={() => setScheduleOpen(true)}>Schedule more</Btn>
+            <Btn kind="secondary" size="sm" icon={<Icon.check size={13} />} onClick={() => completeLoop.start(nextAct)} disabled={completeLoop.busy}>Complete</Btn>
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 15px', borderRadius: 11, marginBottom: 14, background: 'rgba(248,120,107,.07)', border: '1px solid rgba(248,120,107,.3)' }}>
             <Icon.warn size={15} style={{ color: 'var(--coral)', flexShrink: 0 }} />
-            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>No next activity — activity scheduling arrives with the Activities phase.</span>
+            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>No next activity — schedule the next step so this deal never goes quiet.</span>
+            <Btn kind="secondary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setScheduleOpen(true)}>Schedule next</Btn>
           </div>
         )
-      )}
+      })()}
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 16, width: 'fit-content' }}>
@@ -229,7 +242,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
         ))}
       </div>
 
-      {tab === 'timeline' && <TimelineTab deal={d} stages={stages} />}
+      {tab === 'timeline' && <TimelineTab deal={d} stages={stages} activities={dealActivities.data?.data ?? []} onComplete={completeLoop.start} onLog={() => setScheduleOpen(true)} />}
       {tab === 'products' && <ProductsTab deal={d} onCreateInvoice={() => void onCreateInvoice()} onCreateQuote={() => void onCreateQuote()} busy={createInvoice.isPending || createQuote.isPending} />}
       {tab === 'emails' && (
         <div className="card" style={{ padding: '36px 24px', textAlign: 'center' }}>
@@ -275,6 +288,8 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
           }}
         />
       )}
+      <ScheduleActivityModal open={scheduleOpen} onClose={() => setScheduleOpen(false)} dealId={id} />
+      {completeLoop.ui}
     </div>
   )
 }
@@ -323,11 +338,27 @@ function DealTags({ deal }: { deal: DealDetail }) {
   )
 }
 
-// ── Timeline tab — stage history + creation + billing echoes ──
-function TimelineTab({ deal, stages }: { deal: DealDetail; stages: Array<{ id: string; name: string; stage_type: string }> }) {
+// ── Timeline tab — open activities + stage history + billing echoes ──
+function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
+  deal: DealDetail
+  stages: Array<{ id: string; name: string; stage_type: string }>
+  activities: Activity[]
+  onComplete: (a: Activity) => void
+  onLog: () => void
+}) {
   const stageName = (sid: string | null) => stages.find((s) => s.id === sid)?.name ?? '—'
-  type Entry = { icon: keyof typeof Icon; title: string; meta: string; when: string; suite?: boolean }
+  const open = activities.filter((a) => !a.completed_at)
+  type Entry = { icon: keyof typeof Icon; title: string; meta: string; when: string; suite?: boolean; act?: boolean; color?: string }
   const entries: Entry[] = []
+  for (const a of activities.filter((x) => x.completed_at)) {
+    const M = ACT_META[a.type]
+    entries.push({
+      icon: M.icon, color: M.color, act: true,
+      title: a.type === 'note' ? a.subject : `${M.label} completed — ${a.subject}`,
+      meta: [a.outcome?.replace(/_/g, ' '), a.body].filter(Boolean).join(' · ') || (a.assignee_name ?? ''),
+      when: new Date(a.completed_at!).toLocaleString(),
+    })
+  }
   if (deal.linked_invoice) entries.push({ icon: 'receipt', title: `Invoice ${deal.linked_invoice.number} created from this deal`, meta: `${deal.linked_invoice.status} · ${fmtCur(parseFloat(deal.linked_invoice.total), deal.currency)}`, when: new Date(deal.linked_invoice.created_at).toLocaleDateString(), suite: true })
   if (deal.linked_quote) entries.push({ icon: 'doc', title: `Quote ${deal.linked_quote.number} created from this deal`, meta: `${deal.linked_quote.status}`, when: new Date(deal.linked_quote.created_at).toLocaleDateString(), suite: true })
   for (const h of deal.stage_history) {
@@ -338,26 +369,54 @@ function TimelineTab({ deal, stages }: { deal: DealDetail; stages: Array<{ id: s
     )
   }
   return (
-    <div className="card" style={{ padding: '6px 0' }}>
-      {entries.length === 0 && <div className="t-mute" style={{ padding: 20, fontSize: 12.5 }}>No timeline entries yet.</div>}
-      {entries.map((t, i) => {
-        const Ic = Icon[t.icon]
-        return (
-          <div key={i} style={{ display: 'flex', gap: 13, padding: '13px 20px', borderBottom: i < entries.length - 1 ? '1px solid var(--bord)' : 'none' }}>
-            <div style={{ width: 30, height: 30, borderRadius: 9, background: t.suite ? 'rgba(39,210,128,.13)' : 'var(--surf-2)', color: t.suite ? 'var(--green)' : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <Ic size={14} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>
-                {t.title}{t.suite && <Pill tone="green" style={{ marginLeft: 8 }}>suite event</Pill>}
+    <>
+      {open.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
+          <div className="t-caption" style={{ padding: '12px 20px 4px' }}>Scheduled</div>
+          {open.map((a, i) => {
+            const M = ACT_META[a.type]
+            const Ic = Icon[M.icon]
+            const due = dueLabel(a)
+            return (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 20px', borderBottom: i < open.length - 1 ? '1px solid var(--bord)' : 'none' }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: `${M.color}20`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={14} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{a.subject}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: due.overdue ? 'var(--coral)' : 'var(--text-mute)', marginTop: 2 }}>
+                    {due.text}{a.assignee_name ? ` · ${a.assignee_name}` : ''}{due.overdue ? ' · overdue' : ''}
+                  </div>
+                </div>
+                <Btn kind="secondary" size="sm" icon={<Icon.check size={13} />} onClick={() => onComplete(a)}>Complete</Btn>
               </div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>{t.meta}</div>
+            )
+          })}
+        </div>
+      )}
+      <div className="card" style={{ padding: '6px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 20px 4px' }}>
+          <span className="t-caption" style={{ flex: 1 }}>History</span>
+          <Btn kind="ghost" size="sm" icon={<Icon.plus size={12} />} onClick={onLog}>Schedule activity</Btn>
+        </div>
+        {entries.length === 0 && <div className="t-mute" style={{ padding: 20, fontSize: 12.5 }}>No timeline entries yet.</div>}
+        {entries.map((t, i) => {
+          const Ic = Icon[t.icon]
+          return (
+            <div key={i} style={{ display: 'flex', gap: 13, padding: '13px 20px', borderBottom: i < entries.length - 1 ? '1px solid var(--bord)' : 'none' }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: t.suite ? 'rgba(39,210,128,.13)' : t.act ? `${t.color}20` : 'var(--surf-2)', color: t.suite ? 'var(--green)' : t.act ? t.color : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Ic size={14} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>
+                  {t.title}{t.suite && <Pill tone="green" style={{ marginLeft: 8 }}>suite event</Pill>}
+                </div>
+                {t.meta && <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>{t.meta}</div>}
+              </div>
+              <span className="t-caption" style={{ whiteSpace: 'nowrap' }}>{t.when}</span>
             </div>
-            <span className="t-caption" style={{ whiteSpace: 'nowrap' }}>{t.when}</span>
-          </div>
-        )
-      })}
-    </div>
+          )
+        })}
+      </div>
+    </>
   )
 }
 

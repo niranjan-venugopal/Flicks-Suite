@@ -8,6 +8,8 @@ import { CustomFieldsService } from './custom-fields.service';
 import { SavedViewsService } from './saved-views.service';
 import { SearchService } from './search.service';
 import { TagsService } from './tags.service';
+import { ActivitiesService } from './activities.service';
+import { ActivitiesController } from './activities.controller';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
@@ -26,7 +28,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
   imports: [AuditModule, InvoicingModule],
-  controllers: [DirectoryController, DealsController, CrmConfigController],
+  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController],
   providers: [
     DirectoryService,
     DealsService,
@@ -35,6 +37,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     SavedViewsService,
     SearchService,
     TagsService,
+    ActivitiesService,
     FxService,
     FxRefreshJob,
     CrmGateway,

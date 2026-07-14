@@ -753,10 +753,27 @@ CREATE TABLE IF NOT EXISTS record_files (
   uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS idx_record_files_object ON record_files (tenant_id, object_type, object_id) WHERE deleted_at IS NULL;
+-- 0034: activities + mentions (§6).
+CREATE TABLE IF NOT EXISTS activities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  type text NOT NULL CHECK (type IN ('task','call','meeting','note')), subject text NOT NULL, body text,
+  deal_id uuid REFERENCES deals(id) ON DELETE CASCADE, person_id uuid REFERENCES directory_people(id) ON DELETE SET NULL,
+  company_id uuid REFERENCES directory_companies(id) ON DELETE SET NULL, assignee_user_id uuid NOT NULL REFERENCES users(id),
+  due_at timestamptz, completed_at timestamptz, completed_by uuid REFERENCES users(id), outcome text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL, deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_activities_assignee_due ON activities (tenant_id, assignee_user_id, due_at) WHERE completed_at IS NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_activities_deal ON activities (tenant_id, deal_id, due_at) WHERE deleted_at IS NULL;
+CREATE TABLE IF NOT EXISTS activity_mentions (
+  tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE, activity_id uuid NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  mentioned_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (activity_id, mentioned_user_id)
+);
 DO $crmrls$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags','custom_field_defs','saved_views','record_files'] LOOP
+  FOREACH t IN ARRAY ARRAY['pipelines','pipeline_stages','deals','deal_people','deal_stage_history','lost_reasons','deal_products','tags','record_tags','custom_field_defs','saved_views','record_files','activities','activity_mentions'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I ON %I', t, t);
