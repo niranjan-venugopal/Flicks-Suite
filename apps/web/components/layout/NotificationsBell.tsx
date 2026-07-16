@@ -33,8 +33,8 @@ export function NotificationsBell() {
   const markRead = useMarkRead()
   const markAllRead = useMarkAllRead()
 
-  // Force a refetch the moment the popover opens so the list reflects the
-  // very latest unread notifications, not whatever was cached 45s ago.
+  // Force a refetch the moment the popover opens so the list reflects the very
+  // latest unread notifications even if the real-time socket missed a push.
   const handleOpenChange = (next: boolean) => {
     setOpen(next)
     if (next) void unread.refetch()

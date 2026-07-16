@@ -628,13 +628,19 @@ export class TimesheetService {
     // In-app notification for the approver — surfaces in the Topbar bell
     // even when the email lands in spam or is disabled.
     if (approver?.userId) {
-      await this.notificationsService.createInAppNotification(
-        approver.userId,
-        'timesheet.submitted',
-        `${submitterName} submitted a timesheet for ${period.period_start}.`,
-        '/team/timesheets',
-        tenantId,
-      );
+      try {
+        await this.notificationsService.createInAppNotification(
+          approver.userId,
+          'timesheet.submitted',
+          `${submitterName} submitted a timesheet for ${period.period_start}.`,
+          '/team/timesheets',
+          tenantId,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `Could not create timesheet-submitted in-app notification: ${(e as Error).message}`,
+        );
+      }
     }
 
     await this.auditService.log({
@@ -821,13 +827,19 @@ export class TimesheetService {
           : dto.action === 'reject'
             ? 'rejected'
             : 'sent back for changes';
-      await this.notificationsService.createInAppNotification(
-        ownerUser.userId,
-        `timesheet.${dto.action}`,
-        `Your timesheet for ${period.period_start} was ${verb}.`,
-        '/timesheets',
-        period.tenant_id,
-      );
+      try {
+        await this.notificationsService.createInAppNotification(
+          ownerUser.userId,
+          `timesheet.${dto.action}`,
+          `Your timesheet for ${period.period_start} was ${verb}.`,
+          '/timesheets',
+          period.tenant_id,
+        );
+      } catch (e) {
+        this.logger.warn(
+          `Could not create timesheet-review in-app notification: ${(e as Error).message}`,
+        );
+      }
 
       if (ownerUser.email) {
         const tpl =

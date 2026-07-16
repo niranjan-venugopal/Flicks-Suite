@@ -97,7 +97,7 @@ export class CrmEmailService {
     if (!dto.subject?.trim() && !dto.template_id) throw new BadRequestException('Subject is required');
     if (!dto.body_html?.trim() && !dto.template_id) throw new BadRequestException('Body is required');
 
-    return this.db.withTenant(
+    const prepared = await this.db.withTenant(
       tenantId,
       async (tx) => {
         // Resolve the deal + person context.
@@ -170,18 +170,6 @@ export class CrmEmailService {
 
         const htmlToSend = tracking ? await this.instrument(tx, tenantId, msg!.id, body, openToken) : body;
 
-        const providerId = await this.notifications.sendRawEmail({
-          to,
-          subject,
-          html: htmlToSend,
-          fromName: sender?.name ?? undefined,
-          replyTo: sender?.email ?? undefined,
-        });
-        await tx
-          .update(emailMessages)
-          .set({ provider_id: providerId, status: providerId ? 'sent' : 'failed' })
-          .where(eq(emailMessages.id, msg!.id));
-
         // Timeline stamps.
         if (person?.id) await tx.update(directoryPeople).set({ last_activity_at: new Date() }).where(eq(directoryPeople.id, person.id));
         if (deal?.id) await tx.update(deals).set({ last_activity_at: new Date() }).where(eq(deals.id, deal.id));
@@ -191,11 +179,36 @@ export class CrmEmailService {
           { name: 'crm.email.sent', tenantId, actorUserId: userId, payload: { message_id: msg!.id, deal_id: deal?.id ?? null, person_id: person?.id ?? null } },
           tx,
         );
-        if (!providerId) throw new BadRequestException('Email provider rejected the send — check RESEND_API_KEY');
-        return { data: { id: msg!.id, status: 'sent', to } };
+        return {
+          msgId: msg!.id,
+          to,
+          subject,
+          htmlToSend,
+          fromName: sender?.name ?? undefined,
+          replyTo: sender?.email ?? undefined,
+        };
       },
       userId,
     );
+
+    // The Resend HTTP call runs AFTER the tenant tx commits, so a pooled
+    // connection isn't pinned across the network round-trip (pool-exhaustion
+    // guard). A short follow-up write records the provider id + final status.
+    const providerId = await this.notifications.sendRawEmail({
+      to: prepared.to,
+      subject: prepared.subject,
+      html: prepared.htmlToSend,
+      fromName: prepared.fromName,
+      replyTo: prepared.replyTo,
+    });
+    await this.db.withTenant(tenantId, (tx) =>
+      tx
+        .update(emailMessages)
+        .set({ provider_id: providerId, status: providerId ? 'sent' : 'failed' })
+        .where(eq(emailMessages.id, prepared.msgId)),
+    );
+    if (!providerId) throw new BadRequestException('Email provider rejected the send — check RESEND_API_KEY');
+    return { data: { id: prepared.msgId, status: 'sent' as const, to: prepared.to } };
   }
 
   /** Messages on a deal (outbound + BCC'd inbound), newest first. */

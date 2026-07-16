@@ -964,12 +964,13 @@ export class AttendanceService {
           email: employees.work_email,
           firstName: employees.first_name,
           lastName: employees.last_name,
+          userId: employees.user_id,
         })
         .from(employees)
         .where(eq(employees.id, employee.managerId!))
         .limit(1),
     );
-    if (!manager?.email) return;
+    if (!manager) return;
 
     const [reg] = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
@@ -983,12 +984,31 @@ export class AttendanceService {
         .limit(1),
     );
 
+    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
+
+    // Real-time in-app ping to the approver (Topbar bell). Best-effort.
+    if (manager.userId) {
+      await this.notificationsService
+        .createInAppNotification(
+          manager.userId,
+          'regularization.requested',
+          `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}.`,
+          '/team/attendance',
+          tenantId,
+        )
+        .catch((err) =>
+          this.logger.warn(`Regularization in-app notification failed: ${err}`),
+        );
+    }
+
+    if (!manager.email) return;
+
     await this.notificationsService.sendEmail(
       'attendance-regularization-requested',
       manager.email,
       {
         managerName: `${manager.firstName} ${manager.lastName}`.trim() || 'there',
-        employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+        employeeName,
         attendanceDate: reg?.attendanceDate ?? '',
         requestType: reg?.requestType,
         reason: reg?.reason ?? undefined,
@@ -1133,6 +1153,7 @@ export class AttendanceService {
             firstName: employees.first_name,
             lastName: employees.last_name,
             email: employees.work_email,
+            userId: employees.user_id,
           })
           .from(employees)
           .where(eq(employees.id, reg.employee_id))
@@ -1156,6 +1177,24 @@ export class AttendanceService {
         })
         .catch((err) =>
           this.logger.warn(`Regularization-review notification failed: ${err}`),
+        );
+    }
+
+    // Real-time in-app ping to the requester with the decision. Best-effort.
+    if (result.requester?.userId) {
+      const approved = dto.action === 'approve';
+      await this.notificationsService
+        .createInAppNotification(
+          result.requester.userId,
+          approved ? 'regularization.approved' : 'regularization.rejected',
+          `Your regularization for ${result.updated.attendance_date} was ${approved ? 'approved' : 'declined'}.`,
+          '/attendance',
+          tenantId,
+        )
+        .catch((err) =>
+          this.logger.warn(
+            `Regularization-review in-app notification failed: ${err}`,
+          ),
         );
     }
 

@@ -13,12 +13,25 @@ import * as schema from './schema/index'
 const IS_TEST =
   !!process.env['JEST_WORKER_ID'] || process.env['NODE_ENV'] === 'test';
 
+// Pool hardening (launch-readiness): bound how long a connection can be held so
+// one slow query or a stalled network can't pin a pooled connection until the
+// whole pool starves. These are client-side postgres.js options (seconds), so
+// they pass through any pooler unchanged. The per-statement cap
+// (statement_timeout) is applied inside withTenant via set_config instead of a
+// startup parameter, because transaction poolers (e.g. Supabase/Supavisor) can
+// reject non-whitelisted startup params.
+const POOL_TUNING = {
+  idle_timeout: 30, // close a connection idle for 30s
+  max_lifetime: 60 * 30, // recycle a connection after 30 min
+  connect_timeout: 10, // fail fast (10s) if a connection can't be established
+} as const;
+
 // ─── Tenant DB (RLS-enforced, uses app.tenant_id) ────────────────────────────
 
 function createTenantClient() {
   const url = process.env['DATABASE_URL'];
   if (!url) throw new Error('DATABASE_URL environment variable is required');
-  const sql = postgres(url, { max: IS_TEST ? 4 : 10 });
+  const sql = postgres(url, { max: IS_TEST ? 4 : 10, ...POOL_TUNING });
   return drizzle(sql, { schema });
 }
 
@@ -30,9 +43,15 @@ function createAdminClient() {
     throw new Error(
       'DATABASE_SERVICE_ROLE_URL environment variable is required',
     );
-  const sql = postgres(url, { max: IS_TEST ? 3 : 5 });
+  const sql = postgres(url, { max: IS_TEST ? 3 : 5, ...POOL_TUNING });
   return drizzle(sql, { schema });
 }
+
+// Per-statement cap applied to every tenant transaction (see POOL_TUNING note).
+// 30s is far above any legitimate window/limit-bounded app query, so it only
+// ever fires on a runaway/pathological one — releasing the pooled connection
+// instead of letting it hang.
+const TENANT_STATEMENT_TIMEOUT_MS = 30_000;
 
 export const db = createTenantClient();
 export const dbAdmin = createAdminClient();
@@ -64,8 +83,10 @@ export async function withTenant<T>(
   return db.transaction(async (tx) => {
     // Use set_config with a parameterized call — SET LOCAL is scoped to this transaction.
     // set_config(key, value, is_local=true) is safe with parameterized binding.
+    // The statement_timeout is set LOCAL in the same round-trip (pooler-safe;
+    // no extra latency) so a runaway query can't pin this connection.
     await tx.execute(
-      sql`SELECT set_config('app.tenant_id', ${tenantId}::text, true)`,
+      sql`SELECT set_config('app.tenant_id', ${tenantId}::text, true), set_config('statement_timeout', ${String(TENANT_STATEMENT_TIMEOUT_MS)}, true)`,
     )
     if (userId) {
       await tx.execute(

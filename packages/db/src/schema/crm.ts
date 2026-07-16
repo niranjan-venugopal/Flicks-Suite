@@ -177,6 +177,9 @@ export const deals = pgTable(
   (t) => [
     index('idx_deals_owner').on(t.tenant_id, t.owner_user_id, t.status),
     index('idx_deals_close').on(t.tenant_id, t.expected_close_date).where(sql`${t.status} = 'open'`),
+    // 360° detail pages: deals for a contact / company (deals.service.listForRef).
+    index('idx_deals_person').on(t.tenant_id, t.primary_person_id).where(sql`${t.deleted_at} IS NULL`),
+    index('idx_deals_company').on(t.tenant_id, t.company_id).where(sql`${t.deleted_at} IS NULL`),
   ],
 );
 
@@ -258,6 +261,9 @@ export const activities = pgTable(
   (t) => [
     index('idx_activities_assignee_due').on(t.tenant_id, t.assignee_user_id, t.due_at).where(sql`${t.completed_at} IS NULL AND ${t.deleted_at} IS NULL`),
     index('idx_activities_deal').on(t.tenant_id, t.deal_id, t.due_at).where(sql`${t.deleted_at} IS NULL`),
+    // 360° detail pages: activity timeline for a contact / company (activities.service.listForRef).
+    index('idx_activities_person').on(t.tenant_id, t.person_id).where(sql`${t.deleted_at} IS NULL`),
+    index('idx_activities_company').on(t.tenant_id, t.company_id).where(sql`${t.deleted_at} IS NULL`),
   ],
 );
 
@@ -315,6 +321,9 @@ export const emailMessages = pgTable(
     index('idx_email_messages_deal').on(t.tenant_id, t.deal_id, t.created_at),
     index('idx_email_messages_person').on(t.tenant_id, t.person_id, t.created_at),
     index('idx_email_messages_provider').on(t.provider_id),
+    // Per-user send throttle (sequences) + activity leaderboard (reports) both
+    // scan by sender over a time window.
+    index('idx_email_messages_sender').on(t.sender_user_id, t.created_at),
   ],
 );
 

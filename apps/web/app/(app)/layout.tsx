@@ -9,6 +9,7 @@ import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ConsentLedgerSync } from '@/components/consent/ConsentLedgerSync'
 import { ReacceptanceGate } from '@/components/consent/ReacceptanceGate'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
+import { NotificationsSocket } from '@/lib/notifications/NotificationsSocket'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NpsCard } from '@/components/feedback/NpsCard'
@@ -215,6 +216,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <ReacceptanceGate />
       {/* PRD v4 §5: live presence socket (heartbeats + status_changed) */}
       <PresenceProvider />
+      {/* Real-time notifications: push the bell instead of waiting on the poll */}
+      <NotificationsSocket />
       {/* PRD v4 §6: consent-gated module_opened capture */}
       <ModuleOpenedTracker />
       {/* PRD v4 §7: menu-triggered feedback panel + NPS micro-card (no pill) */}

@@ -25,13 +25,16 @@ export interface ListResponse {
   pageSize: number
 }
 
-// Polled by the Topbar bell every 45s; also refetches on window focus so
-// flipping back from another tab surfaces new items quickly.
+// Real-time delivery is the primary path: NotificationsSocket (mounted in the
+// app layout) invalidates this query on a `notification` push. This poll is now
+// just a safety net for a dropped/blocked socket — hence the long 120s
+// interval. Still refetches on window focus and on popover open so a returning
+// tab surfaces new items immediately.
 export function useUnreadNotifications() {
   return useQuery({
     queryKey: ['notifications', 'unread'],
     queryFn: () => api.get<UnreadResponse>('/api/v1/notifications/unread?limit=10'),
-    refetchInterval: 20_000,
+    refetchInterval: 120_000,
     refetchOnWindowFocus: true,
     refetchOnMount: 'always',
     staleTime: 5_000,

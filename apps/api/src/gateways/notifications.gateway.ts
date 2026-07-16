@@ -128,6 +128,16 @@ export class NotificationsGateway
       return header.slice('Bearer '.length).trim();
     }
 
+    // Cookie-auth web app: the browser bell can't read the httpOnly
+    // access_token to pass via auth.token, so parse it off the handshake
+    // cookie (sent because the client connects with withCredentials). Mirrors
+    // PresenceGateway.extractToken.
+    const cookies = client.handshake.headers.cookie;
+    if (cookies) {
+      const m = cookies.match(/(?:^|;\s*)access_token=([^;]+)/);
+      if (m) return decodeURIComponent(m[1]);
+    }
+
     return null;
   }
 }

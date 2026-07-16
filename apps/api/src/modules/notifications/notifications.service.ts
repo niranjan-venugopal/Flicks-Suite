@@ -50,7 +50,12 @@ const PREFERENCE_DEFAULTS: Record<
 // delivered (critical/security — e.g. impersonation).
 function eventForInAppType(type: string): NotificationEvent | null {
   if (type.startsWith('timesheet.')) return 'timesheet_reviewed';
+  // The "*.requested" types go to the approver on submit; everything else on
+  // the prefix is a review outcome to the requester. Kept specific-first so the
+  // dedicated "requested" preferences actually gate the approver's bell.
+  if (type === 'leave.requested') return 'leave_requested';
   if (type.startsWith('leave.')) return 'leave_reviewed';
+  if (type === 'regularization.requested') return 'regularization_requested';
   if (type.startsWith('regularization.')) return 'regularization_reviewed';
   if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
   if (type.startsWith('crm.digest')) return 'crm_digest';

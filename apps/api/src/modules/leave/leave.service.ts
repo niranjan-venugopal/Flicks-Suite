@@ -448,15 +448,36 @@ export class LeaveService {
         .select({
           email: employees.work_email,
           firstName: employees.first_name,
+          userId: employees.user_id,
         })
         .from(employees)
         .where(eq(employees.id, employee.managerId!))
         .limit(1),
     );
-    if (!manager?.email) return;
+    if (!manager) return;
+
+    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
+
+    // Real-time in-app ping to the approver — surfaces in the Topbar bell even
+    // when the email lands in spam or is disabled. Best-effort.
+    if (manager.userId) {
+      await this.notificationsService
+        .createInAppNotification(
+          manager.userId,
+          'leave.requested',
+          `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'}).`,
+          '/team/leave',
+          tenantId,
+        )
+        .catch((err) =>
+          this.logger.warn(`Leave-apply in-app notification failed: ${err}`),
+        );
+    }
+
+    if (!manager.email) return;
 
     await this.notificationsService.sendEmail('leave-requested', manager.email, {
-      employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+      employeeName,
       leaveType: leaveTypeName,
       startDate: dates.startDate,
       endDate: dates.endDate,
@@ -764,6 +785,7 @@ export class LeaveService {
             firstName: employees.first_name,
             lastName: employees.last_name,
             email: employees.work_email,
+            userId: employees.user_id,
           })
           .from(employees)
           .where(eq(employees.id, req.employee_id))
@@ -785,6 +807,7 @@ export class LeaveService {
         return {
           updated: updated!,
           requesterEmail: requester?.email ?? null,
+          requesterUserId: requester?.userId ?? null,
           requesterName:
             `${requester?.firstName ?? ''} ${requester?.lastName ?? ''}`.trim(),
           reviewerName:
@@ -810,6 +833,22 @@ export class LeaveService {
         })
         .catch((err) =>
           this.logger.warn(`Leave-review notification failed: ${err}`),
+        );
+    }
+
+    // Real-time in-app ping to the requester with the decision. Best-effort.
+    if (result.requesterUserId) {
+      const approved = dto.action === 'approve';
+      await this.notificationsService
+        .createInAppNotification(
+          result.requesterUserId,
+          approved ? 'leave.approved' : 'leave.rejected',
+          `Your ${result.leaveTypeName} (${result.startDate} – ${result.endDate}) was ${approved ? 'approved' : 'declined'}${result.reviewerName ? ` by ${result.reviewerName}` : ''}.`,
+          '/leave',
+          tenantId,
+        )
+        .catch((err) =>
+          this.logger.warn(`Leave-review in-app notification failed: ${err}`),
         );
     }
 
