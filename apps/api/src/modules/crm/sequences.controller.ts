@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsArray, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
@@ -12,7 +13,7 @@ class CreateSequenceDto {
   @IsOptional() @IsString() send_window_start?: string;
   @IsOptional() @IsString() send_window_end?: string;
   @IsOptional() @IsString() timezone?: string;
-  @IsArray() steps!: Array<{ subject: string; body_html: string; wait_days?: number }>;
+  @IsArray() @Type(() => Object) steps!: Array<{ subject: string; body_html: string; wait_days?: number }>;
 }
 
 class EnrollDto {

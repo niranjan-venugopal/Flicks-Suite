@@ -16,6 +16,13 @@ import { CrmEmailPublicController } from './email-public.controller';
 import { ResendWebhookController } from './resend-webhook.controller';
 import { SequencesService } from './sequences.service';
 import { SequencesController } from './sequences.controller';
+import { LeadsService } from './leads.service';
+import { LeadsController } from './leads.controller';
+import { FormsService } from './forms.service';
+import { FormsController, PublicFormsController } from './forms.controller';
+import { WorkflowsService } from './workflows.service';
+import { CrmPublicService } from './public';
+import { WorkflowsController } from './workflows.controller';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
@@ -36,7 +43,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
   imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
-  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController],
+  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController, LeadsController, FormsController, PublicFormsController, WorkflowsController],
   providers: [
     DirectoryService,
     DealsService,
@@ -48,12 +55,16 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     ActivitiesService,
     CrmEmailService,
     SequencesService,
+    LeadsService,
+    FormsService,
+    WorkflowsService,
     FxService,
     FxRefreshJob,
     CrmGateway,
     CrmEventsSubscriber,
     CrmGrantGuard,
+    CrmPublicService,
   ],
-  exports: [DirectoryService, DealsService, FxService, SequencesService],
+  exports: [DirectoryService, DealsService, FxService, SequencesService, LeadsService, CrmPublicService],
 })
 export class CrmModule {}

@@ -753,3 +753,157 @@ export function useGlobalSearch(q: string) {
     enabled: query.length >= 2,
   })
 }
+
+// ─── Leads (§5.1, C6) ─────────────────────────────────────────────────────────
+export interface Lead {
+  id: string
+  first_name: string
+  last_name: string | null
+  company_name: string | null
+  email: string | null
+  phone: string | null
+  note: string | null
+  source: string
+  score: number
+  status: string
+  owner_user_id: string | null
+  owner_name?: string | null
+  utm: Record<string, string>
+  converted_deal_id: string | null
+  created_at: string
+  dupe_person?: { id: string; email: string | null; display_name: string | null } | null
+}
+
+export function useLeads(status: string) {
+  return useQuery({
+    queryKey: ['crm', 'leads', status],
+    queryFn: () => api.get<{ data: Lead[]; counts: Record<string, number> }>(`/api/v1/crm/leads?status=${status}`),
+  })
+}
+
+export function useCreateLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: Lead }>('/api/v1/crm/leads', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
+  })
+}
+
+export function useDiscardLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/crm/leads/${id}/discard`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
+  })
+}
+
+export function useConvertLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      api.post<{ data: { deal_id: string; person_id: string; company_id: string | null } }>(`/api/v1/crm/leads/${id}/convert`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'leads'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+    },
+  })
+}
+
+// ─── Web forms (§5.2, C13) ────────────────────────────────────────────────────
+export interface WebForm {
+  id: string
+  name: string
+  token: string
+  title: string
+  intro: string | null
+  fields: Array<{ key: string; label: string; type: string; required?: boolean }>
+  source_tag: string
+  assignment: string
+  success_message: string
+  active: boolean
+  submission_count: number
+  created_at: string
+}
+
+export function useForms() {
+  return useQuery({ queryKey: ['crm', 'forms'], queryFn: () => api.get<{ data: WebForm[] }>('/api/v1/crm/forms') })
+}
+
+export function useCreateForm() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: WebForm }>('/api/v1/crm/forms', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'forms'] }),
+  })
+}
+
+export function useSetFormActive() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.patch(`/api/v1/crm/forms/${id}/active`, { active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'forms'] }),
+  })
+}
+
+export function useFormSubmissions(formId: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'forms', formId, 'submissions'],
+    queryFn: () => api.get<{ data: Array<{ id: string; payload: Record<string, string>; utm: Record<string, string>; lead_id: string | null; lead_status: string | null; created_at: string }> }>(`/api/v1/crm/forms/${formId}/submissions`),
+    enabled: !!formId,
+  })
+}
+
+// ─── Workflows (§8, C12) ──────────────────────────────────────────────────────
+export interface Workflow {
+  id: string
+  name: string
+  trigger: string
+  conditions: Array<{ field: string; op: string; value?: string | number }>
+  actions: Array<Record<string, unknown> & { type: string }>
+  active: boolean
+  runs_count: number
+  last_run_at: string | null
+  created_at: string
+}
+
+export interface WorkflowRun {
+  id: string
+  workflow_id: string
+  workflow_name: string
+  subject_type: string | null
+  subject_id: string | null
+  status: string
+  steps: Array<{ label: string; status: string; error?: string }>
+  created_at: string
+}
+
+export function useWorkflows() {
+  return useQuery({
+    queryKey: ['crm', 'workflows'],
+    queryFn: () => api.get<{ data: Workflow[]; limits: { max_active: number; runs_per_day: number; chain_depth: number } }>('/api/v1/crm/workflows'),
+  })
+}
+
+export function useWorkflowTriggers() {
+  return useQuery({ queryKey: ['crm', 'workflow-triggers'], queryFn: () => api.get<{ data: string[] }>('/api/v1/crm/workflows/triggers') })
+}
+
+export function useCreateWorkflow() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: Workflow }>('/api/v1/crm/workflows', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'workflows'] }),
+  })
+}
+
+export function useSetWorkflowActive() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.patch(`/api/v1/crm/workflows/${id}/active`, { active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'workflows'] }),
+  })
+}
+
+export function useWorkflowRuns() {
+  return useQuery({ queryKey: ['crm', 'workflow-runs'], queryFn: () => api.get<{ data: WorkflowRun[] }>('/api/v1/crm/workflow-runs') })
+}

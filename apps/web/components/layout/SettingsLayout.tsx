@@ -27,6 +27,7 @@ const NAV: Array<NavItem & { disabled?: boolean }> = [
   { href: '/settings/members',      label: 'Roles & permissions',  icon: 'shield' },
   { href: '/settings/billing',      label: 'Billing & plan',       icon: 'card' },
   { href: '/settings/notifications',label: 'Notifications',        icon: 'bell' },
+  { href: '/settings/developer',    label: 'API & webhooks',       icon: 'key' },
   { href: '/settings/privacy',      label: 'Privacy & data',       icon: 'eye' },
 ]
 

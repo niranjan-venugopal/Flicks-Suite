@@ -510,3 +510,108 @@ export const recordFiles = pgTable(
   },
   (t) => [index('idx_record_files_object').on(t.tenant_id, t.object_type, t.object_id).where(sql`${t.deleted_at} IS NULL`)],
 );
+
+// ─── Automation & capture: leads, web forms, workflows (§5/§8 / 0036) ─────────
+
+export const leads = pgTable(
+  'leads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    first_name: text('first_name').notNull(),
+    last_name: text('last_name'),
+    company_name: text('company_name'),
+    email: text('email'),
+    phone: text('phone'),
+    note: text('note'),
+    source: text('source').notNull().default('manual'), // manual|api|import|email_in|form:<tag>
+    score: integer('score').notNull().default(0),
+    status: text('status').notNull().default('new'), // new|working|converted|discarded
+    owner_user_id: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+    form_id: uuid('form_id'),
+    utm: jsonb('utm').notNull().default({}),
+    extra: jsonb('extra').notNull().default({}),
+    converted_person_id: uuid('converted_person_id').references(() => directoryPeople.id, { onDelete: 'set null' }),
+    converted_company_id: uuid('converted_company_id').references(() => directoryCompanies.id, { onDelete: 'set null' }),
+    converted_deal_id: uuid('converted_deal_id').references(() => deals.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_leads_inbox').on(t.tenant_id, t.status, t.created_at.desc())],
+);
+
+export const webForms = pgTable(
+  'web_forms',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    token: text('token').notNull().unique(),
+    title: text('title').notNull().default('Talk to sales'),
+    intro: text('intro'),
+    fields: jsonb('fields').notNull().default([]), // [{key,label,type,required}]
+    source_tag: text('source_tag').notNull().default('form'),
+    assignment: text('assignment').notNull().default('round_robin'), // none|round_robin
+    success_message: text('success_message').notNull().default("Thanks — we'll be in touch"),
+    redirect_url: text('redirect_url'),
+    active: boolean('active').notNull().default(true),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('uq_web_form_name').on(t.tenant_id, sql`lower(${t.name})`)],
+);
+
+export const formSubmissions = pgTable(
+  'form_submissions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    form_id: uuid('form_id').notNull().references(() => webForms.id, { onDelete: 'cascade' }),
+    lead_id: uuid('lead_id').references(() => leads.id, { onDelete: 'set null' }),
+    payload: jsonb('payload').notNull().default({}),
+    utm: jsonb('utm').notNull().default({}),
+    ip_hash: text('ip_hash'), // sha256(ip) — throttle key, never the raw IP
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_form_submissions').on(t.tenant_id, t.form_id, t.created_at.desc())],
+);
+
+export const workflows = pgTable(
+  'workflows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    trigger: text('trigger').notNull(), // domain event name (crm.*)
+    conditions: jsonb('conditions').notNull().default([]), // [{field,op,value}] AND-combined
+    actions: jsonb('actions').notNull().default([]), // [{type,...config}] in order
+    active: boolean('active').notNull().default(true),
+    runs_count: integer('runs_count').notNull().default(0),
+    last_run_at: timestamp('last_run_at', { withTimezone: true }),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_workflows_trigger').on(t.tenant_id, t.trigger).where(sql`${t.active} = true`)],
+);
+
+export const workflowRuns = pgTable(
+  'workflow_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    workflow_id: uuid('workflow_id').notNull().references(() => workflows.id, { onDelete: 'cascade' }),
+    event_id: text('event_id').notNull(), // domain_events.id that fired it
+    subject_type: text('subject_type'), // deal|lead|activity|email
+    subject_id: uuid('subject_id'),
+    status: text('status').notNull().default('ok'), // ok|error|skipped
+    steps: jsonb('steps').notNull().default([]), // [{label,status,error?}]
+    depth: smallint('depth').notNull().default(0), // workflow-caused chain depth (loop guard)
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('uq_workflow_run').on(t.workflow_id, t.event_id),
+    index('idx_workflow_runs').on(t.tenant_id, t.created_at.desc()),
+  ],
+);

@@ -64,4 +64,14 @@ export class WebhooksController {
   deliveries(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.webhooks.deliveries(user.tenantId, id);
   }
+
+  @Post(':id/deliveries/:deliveryId/redrive')
+  @ApiOperation({ summary: 'Re-enqueue one delivery with the original event (C19)' })
+  redrive(
+    @Param('id') id: string,
+    @Param('deliveryId') deliveryId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.webhooks.redrive(user.tenantId, user.sub, id, deliveryId);
+  }
 }

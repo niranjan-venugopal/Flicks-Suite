@@ -94,7 +94,7 @@ export class CrmEmailService {
       sequence_enrollment_id?: string;
     },
   ) {
-    if (!dto.subject?.trim()) throw new BadRequestException('Subject is required');
+    if (!dto.subject?.trim() && !dto.template_id) throw new BadRequestException('Subject is required');
     if (!dto.body_html?.trim() && !dto.template_id) throw new BadRequestException('Body is required');
 
     return this.db.withTenant(

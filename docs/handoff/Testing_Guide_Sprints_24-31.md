@@ -7,18 +7,19 @@ Sprints 26–27 **deals** — pipelines, kanban, FX, deal→invoice/quote, custo
 fields, saved views, global search (§4, §9, §12.1, §19.1-3/8) → **Checkpoint 2**.
 Phase C: Sprints 28–29 **activities & email** — follow-up loop, pings/digest,
 Email Phase A (compose, tracking, DNC, BCC dropbox, sequences, templates,
-signature) → **Checkpoint 3**. Later phases add automation/capture and reports
-(Checkpoints 4–5).
+signature) → **Checkpoint 3**. Phase D: Sprint 30 **automation & capture** —
+leads inbox, web forms, workflows, public API resources + webhook log →
+**Checkpoint 4**. Sprint 31 adds reports/import/i18n → Beta gate.
 
-This guide grows per phase. **Checkpoint 3 is the current hand-off.**
+This guide grows per phase. **Checkpoint 4 is the current hand-off.**
 
 ## 0. Environment prep
 
 ```bash
 git pull && pnpm install
 # Apply the new migrations (idempotent, additive — safe to re-run):
-pnpm sync:supabase          # applies packages/db/drizzle/0030–0035
-# OR re-run the demo bootstrap (also idempotent; carries the 0030–0035 deltas
+pnpm sync:supabase          # applies packages/db/drizzle/0030–0036
+# OR re-run the demo bootstrap (also idempotent; carries the 0030–0036 deltas
 # inline + seeds a Sales pipeline, stages, lost reasons, and the crm toggle):
 bash scripts/setup-demo.sh
 pnpm dev
@@ -123,7 +124,7 @@ another workspace's records.
 
 ---
 
-## Checkpoint 3 (THIS hand-off) — Activities & Email Phase A
+## Checkpoint 3 (recap) — Activities & Email Phase A
 
 ### 1. Activities & the follow-up loop (§6, C8)
 
@@ -192,6 +193,73 @@ another workspace's records.
 - No extra process needed: the API drains its own outbox and runs the sequence
   tick + digests **inline** by default. (Set `INLINE_WORKER=false` + run a
   `WORKER_MODE=true` replica only if you want the split later.)
+
+---
+
+## Checkpoint 4 (THIS hand-off) — Automation & Capture
+
+### 1. Leads inbox (C6, §5.1)
+
+1. **CRM → Leads**: triage tabs (New / Working / Converted / Discarded) with
+   per-tab counts. Each row shows a **rule-based score** (§5.3: email +10,
+   company +10, form source +10, phone +5, long note +5, UTM +5), the source
+   pill, owner and age.
+2. A lead whose email matches an existing contact shows a **possible
+   duplicate** pill; the convert modal then offers **Link to existing** vs
+   Create new — linking never duplicates the person.
+3. **Convert** = ONE action: person (link-or-create) + company
+   (match-by-name-or-create) + a deal in your chosen pipeline/stage (FX rules
+   apply). The lead flips to Converted with a **View deal →** link; converting
+   twice is refused.
+4. **Discard** needs no reason; the row stays for source analytics.
+
+### 2. Web forms (C13, §5.2)
+
+1. **CRM → Web forms → Create form**: pick fields (name/email/company/phone/
+   note, required toggles), title + intro. You get a **hosted page** at
+   `/f/<token>` — copy the link or open the preview.
+2. Submissions become **leads** with source `form:<tag>`, **round-robin
+   assigned** (skips reps whose presence is Out of office) and the owner gets
+   an in-app ping. `utm_*` query params on the hosted page are captured.
+3. **Spam defense** (test it): a submission with the hidden honeypot filled,
+   or made under 3 seconds after page load, is **silently accepted but
+   dropped** — bots learn nothing. The 11th submission from one IP within an
+   hour is rejected. No CAPTCHAs, no third parties.
+4. The **Submissions** drawer shows each capture with its UTM source and the
+   lead's current status.
+
+### 3. Workflows (C12, §8) — Manager and above
+
+1. **CRM → Automation**: enable a **starter** in one click (form lead →
+   assign + call task; hot lead → ping; deal won → invoice task; bounce →
+   notify) or build your own: trigger (lead created, form submitted, deal
+   created/stage-changed/won/lost, activity overdue, email bounced/replied) →
+   conditions (field/op/value over source, score, status, stage, value…) →
+   up to 5 actions (create task, notify, round-robin assign, send template
+   email, move stage).
+2. **Guards you can verify**: a workflow runs **once per event** (idempotent);
+   the same record churning through workflows within a minute trips the
+   **loop guard** (run recorded as `skipped`); beta caps are 20 active
+   workflows and 2,000 runs/day; **email actions respect do-not-contact** and
+   the 200/user/day throttle exactly like human sends.
+3. **Run history** shows every run with per-step results — failures show the
+   step error and mark the run, later steps still execute.
+
+### 4. Public API & webhook log (C19, §13) — Owner/Admin
+
+1. **Settings → API & webhooks**: create an **API key** (scoped, shown once).
+   Then, with `Authorization: Bearer <key>`:
+   `GET /api/public/v1/me`, `GET/POST …/people`, `…/companies`, `…/leads`,
+   `GET …/deals/:id`, `POST …/deals`. Writes act as the workspace owner and
+   flow through the SAME services as the UI — RLS, FX snapshots, dedupe and
+   domain events apply. API-created leads/deals carry source `api` (and
+   trigger workflows).
+2. **Webhook endpoints**: create one (signing secret shown once; SSRF-vetted
+   URL), pick events. The **Delivery log** shows each POST with attempts/
+   status; failed or exhausted deliveries have a **Redrive** button that
+   re-queues the SAME event id/payload (receiver idempotency keys keep
+   working). 20 consecutive failures auto-disable the endpoint + notify
+   owners.
 
 ---
 

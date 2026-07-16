@@ -46,7 +46,8 @@ const apiKeysSvc = new ApiKeysService(dbAdmin as never, audit);
 const cryptoSvc = new AppCryptoService({
   get: (key: string) => (key === 'WEBHOOK_SECRET_ENC_KEY' ? 'test-webhook-enc-key' : undefined),
 } as never);
-const webhooks = new WebhooksService(dbAdmin as never, cryptoSvc, audit);
+const deliveryQueueStub = { add: jest.fn(async () => undefined) };
+const webhooks = new WebhooksService(dbAdmin as never, cryptoSvc, audit, deliveryQueueStub as never);
 
 let tenantId: string;
 let userId: string;
