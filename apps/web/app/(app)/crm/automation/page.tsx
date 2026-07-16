@@ -100,7 +100,7 @@ export default function AutomationPage() {
     return (
       <ComingSoon
         title="Automation"
-        line="Workflow automation is being reimagined — the trigger → conditions → actions engine is built and tested, and it returns here in a new shape soon."
+        line="Workflow automation is being reimagined and returns here in a new shape soon. One automation already runs today: every assigned web-form lead gets a “Call within 1h” follow-up task automatically."
         icon={<Icon.zap size={24} />}
         bullets={['Triggers on leads, deals, activities and email events', 'Actions: tasks, notifications, assignment, stage moves', 'Loop-protected, idempotent, with a full run history']}
       />

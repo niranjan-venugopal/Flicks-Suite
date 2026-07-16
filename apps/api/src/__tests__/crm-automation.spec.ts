@@ -70,7 +70,7 @@ const directorySvc = new DirectoryService(dbSvc, audit, eventsStub as never);
 const activitiesSvc = new ActivitiesService(dbSvc, audit, eventsStub as never, notifyStub as never, presenceStub as never);
 const emailSvc = new CrmEmailService(dbSvc, dbAdmin as never, audit, eventsStub as never, notifyStub as never, configStub);
 const leadsSvc = new LeadsService(dbSvc, audit, eventsStub as never, presenceStub as never, dealsSvc);
-const formsSvc = new FormsService(dbSvc, dbAdmin as never, audit, eventsStub as never, notifyStub as never, leadsSvc, configStub);
+const formsSvc = new FormsService(dbSvc, dbAdmin as never, audit, eventsStub as never, notifyStub as never, leadsSvc, activitiesSvc, configStub);
 const workflowsSvc = new WorkflowsService(dbSvc, dbAdmin as never, audit, eventsStub as never, notifyStub as never, activitiesSvc, dealsSvc, leadsSvc, emailSvc);
 
 void directorySvc; // directory dedupe is exercised through convert()
@@ -226,6 +226,16 @@ describe('Web forms (§5.2, C13)', () => {
     const subs = await dbAdmin.select().from(formSubmissions).where(eq(formSubmissions.form_id, formId));
     expect(subs.length).toBe(1); // spam rows were never recorded
     expect(inAppPings.some((p) => p.type === 'crm.lead.assigned')).toBe(true);
+
+    // Speed-to-lead: the assigned owner gets a "Call within 1h" task due ~+1h.
+    const [task] = await dbAdmin.select().from(activities)
+      .where(and(eq(activities.tenant_id, tenantA), eq(activities.subject, 'Call within 1h — Asha @ TechCorp')));
+    expect(task).toBeTruthy();
+    expect(task!.type).toBe('call');
+    expect(task!.assignee_user_id).toBe(lead!.owner_user_id);
+    const dueInMs = new Date(task!.due_at!).getTime() - Date.now();
+    expect(dueInMs).toBeGreaterThan(30 * 60_000);
+    expect(dueInMs).toBeLessThan(90 * 60_000);
   });
 
   it('hard-limits 10 submissions/hr/IP', async () => {

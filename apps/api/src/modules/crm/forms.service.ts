@@ -10,6 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { LeadsService, scoreLead } from './leads.service';
+import { ActivitiesService } from './activities.service';
 
 /**
  * Web forms (PRD v5 §5.2, C13) — hosted lead capture at /f/:token (and an
@@ -64,6 +65,7 @@ export class FormsService {
     private readonly domainEvents: DomainEventsService,
     private readonly notifications: NotificationsService,
     private readonly leads: LeadsService,
+    private readonly activities: ActivitiesService,
     private readonly config: ConfigService,
   ) {}
 
@@ -280,6 +282,19 @@ export class FormsService {
       await this.notifications
         .createInAppNotification(owner, 'crm.lead.assigned', `New lead assigned to you: ${who || 'form submission'}`, '/crm/leads', form.tenant_id)
         .catch(() => undefined); // best-effort
+      // Speed-to-lead follow-up: every assigned form lead gets a "Call within
+      // 1h" task on the owner's plate (the C8 loop), so capture always ends
+      // with a next step. Best-effort — a task hiccup must not fail the
+      // public submit.
+      await this.activities
+        .create(form.tenant_id, owner, {
+          type: 'call',
+          subject: `Call within 1h — ${who || 'new form lead'}`,
+          body: `Captured by the "${form.name}" form.`,
+          assignee_user_id: owner,
+          due_at: new Date(Date.now() + 3600_000).toISOString(),
+        })
+        .catch((err) => this.logger.warn(`follow-up task failed for lead ${lead.data.id}: ${err instanceof Error ? err.message : err}`));
     }
     return { data: { ok: true, message: form.success_message, redirect_url: form.redirect_url } };
   }

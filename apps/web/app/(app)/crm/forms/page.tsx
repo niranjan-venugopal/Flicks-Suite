@@ -71,7 +71,7 @@ export default function FormsPage() {
         </div>
       )}
       <div className="t-caption" style={{ marginTop: 10 }}>
-        Spam defense: honeypot + min-fill-time + 10/hr/IP — submissions become leads with round-robin assignment and UTM capture.
+        Spam defense: honeypot + min-fill-time + 10/hr/IP — submissions become leads with round-robin assignment, UTM capture, and an automatic “Call within 1h” follow-up task for the owner.
       </div>
 
       {createOpen && <CreateFormModal onClose={() => setCreateOpen(false)} />}
