@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
+import { FEATURES } from '@/lib/feature-flags'
+import { ComingSoon } from '@/components/crm/ComingSoon'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useArchiveEmailTemplate,
@@ -22,6 +24,20 @@ import {
 const FEATURE_EMAIL_SYNC = false
 
 export default function EmailTemplatesPage() {
+  if (!FEATURES.crm_email) {
+    return (
+      <ComingSoon
+        title="Email"
+        line="Sending email from the CRM is being reimagined — templates, signatures and tracked sends return here in a new shape soon."
+        icon={<Icon.mail size={24} />}
+        bullets={['Compose from a deal with variables and your signature', 'Open/click tracking with do-not-contact protection', 'A BCC dropbox that files mail onto the right deal']}
+      />
+    )
+  }
+  return <EmailSettingsLive />
+}
+
+function EmailSettingsLive() {
   const [createOpen, setCreateOpen] = useState(false)
   return (
     <div style={{ padding: '28px 32px 64px', maxWidth: 760, margin: '0 auto' }}>

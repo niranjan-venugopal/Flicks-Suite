@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { Btn, Icon, Modal, Pill, SectionHead, Toggle } from '@/components/proto'
+import { FEATURES } from '@/lib/feature-flags'
+import { ComingSoon } from '@/components/crm/ComingSoon'
 import { EmptyState } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -94,6 +96,20 @@ const STARTERS: Array<{ title: string; sub: string; wf: { name: string; trigger:
 ]
 
 export default function AutomationPage() {
+  if (!FEATURES.crm_automation) {
+    return (
+      <ComingSoon
+        title="Automation"
+        line="Workflow automation is being reimagined — the trigger → conditions → actions engine is built and tested, and it returns here in a new shape soon."
+        icon={<Icon.zap size={24} />}
+        bullets={['Triggers on leads, deals, activities and email events', 'Actions: tasks, notifications, assignment, stage moves', 'Loop-protected, idempotent, with a full run history']}
+      />
+    )
+  }
+  return <AutomationLive />
+}
+
+function AutomationLive() {
   const [mode, setMode] = useState<'list' | 'runs'>('list')
   const { data, isLoading } = useWorkflows()
   const setActive = useSetWorkflowActive()

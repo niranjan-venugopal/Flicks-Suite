@@ -9,6 +9,8 @@ import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
 import { EmailsTab } from '@/components/crm/EmailsTab'
+import { FEATURES } from '@/lib/feature-flags'
+import { ComingSoon } from '@/components/crm/ComingSoon'
 import {
   useDeal,
   usePipelines,
@@ -151,7 +153,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {d.status === 'open' ? (
               <>
-                <EnrollInSequence deal={d} />
+                {FEATURES.crm_email && <EnrollInSequence deal={d} />}
                 <Btn kind="secondary" size="sm" icon={<Icon.doc size={13} />} onClick={() => void onCreateQuote()} disabled={createQuote.isPending}>Create quote</Btn>
                 <Btn kind="secondary" size="sm" icon={<Icon.receipt size={13} />} onClick={() => void onCreateInvoice()} disabled={createInvoice.isPending}>Create invoice</Btn>
                 {wonStage && <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={async () => { if (await doMove(wonStage.id)) setWonOpen(true) }}>Won</Btn>}
@@ -248,7 +250,14 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
 
       {tab === 'timeline' && <TimelineTab deal={d} stages={stages} activities={dealActivities.data?.data ?? []} onComplete={completeLoop.start} onLog={() => setScheduleOpen(true)} />}
       {tab === 'products' && <ProductsTab deal={d} onCreateInvoice={() => void onCreateInvoice()} onCreateQuote={() => void onCreateQuote()} busy={createInvoice.isPending || createQuote.isPending} />}
-      {tab === 'emails' && <EmailsTab deal={d} />}
+      {tab === 'emails' && (FEATURES.crm_email ? <EmailsTab deal={d} /> : (
+        <ComingSoon
+          compact
+          title="Email"
+          line="Sending and tracking email from a deal is being reimagined — it returns here in a new shape soon. Activities and notes keep the full story meanwhile."
+          icon={<Icon.mail size={24} />}
+        />
+      ))}
       {tab === 'files' && (
         <div className="card">
           <div style={{ border: '1.5px dashed var(--bord-2)', borderRadius: 12, padding: 22, textAlign: 'center', color: 'var(--text-mute)' }}>

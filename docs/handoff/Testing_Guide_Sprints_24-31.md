@@ -15,6 +15,16 @@ goals, CSV import, merge & dedupe, offboarding reassignment, sample data →
 
 This guide grows per phase. **The BETA GATE is the current hand-off.**
 
+> **Currently parked behind "Coming soon":** the Email suite (sequences,
+> templates/signature, the deal Emails tab) and Automation (workflows) are
+> hidden in the UI while the product direction is rethought — the pages show
+> a Coming-soon card instead. The code, APIs and tests underneath are intact;
+> flipping `FEATURES.crm_email` / `FEATURES.crm_automation` in
+> `apps/web/lib/feature-flags.ts` to `true` restores them instantly. Skip the
+> email/sequence/workflow walkthroughs below until then — everything else
+> (leads, web forms, deals, activities, reports, import/merge, public API)
+> is live.
+
 ## 0. Environment prep
 
 ```bash

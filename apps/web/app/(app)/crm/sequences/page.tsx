@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { EmptyState } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
+import { FEATURES } from '@/lib/feature-flags'
+import { ComingSoon } from '@/components/crm/ComingSoon'
 import {
   useSequences,
   useCreateSequence,
@@ -21,6 +23,20 @@ import {
 // ─────────────────────────────────────────────────────────
 
 export default function SequencesPage() {
+  if (!FEATURES.crm_email) {
+    return (
+      <ComingSoon
+        title="Sequences"
+        line="Timed follow-up email is being reimagined — the engine is built and tested, and it returns here in a new shape soon."
+        icon={<Icon.send size={24} />}
+        bullets={['Multi-step follow-ups with send windows', 'Automatic exits on reply, unsubscribe, win or loss', 'Daily per-sender safety throttles']}
+      />
+    )
+  }
+  return <SequencesLive />
+}
+
+function SequencesLive() {
   const { data, isLoading } = useSequences()
   const [createOpen, setCreateOpen] = useState(false)
   const [drawerFor, setDrawerFor] = useState<Sequence | null>(null)
