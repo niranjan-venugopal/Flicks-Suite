@@ -90,6 +90,8 @@ export class CrmEmailService {
       body_html: string;
       template_id?: string;
       tracking?: boolean;
+      /** Set by the sequences engine so the message links to its enrollment. */
+      sequence_enrollment_id?: string;
     },
   ) {
     if (!dto.subject?.trim()) throw new BadRequestException('Subject is required');
@@ -162,6 +164,7 @@ export class CrmEmailService {
             sender_user_id: userId,
             open_token: openToken,
             tracking,
+            sequence_enrollment_id: dto.sequence_enrollment_id ?? null,
           })
           .returning();
 
@@ -242,6 +245,23 @@ export class CrmEmailService {
           .returning();
         await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.email_template.create', resourceType: 'email_template', resourceId: row!.id });
         return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  async archiveTemplate(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [row] = await tx
+          .update(emailTemplates)
+          .set({ archived: true, updated_at: new Date() })
+          .where(and(eq(emailTemplates.id, id), eq(emailTemplates.archived, false)))
+          .returning({ id: emailTemplates.id });
+        if (!row) throw new NotFoundException('Template not found');
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.email_template.archive', resourceType: 'email_template', resourceId: id });
+        return { data: { archived: true } };
       },
       userId,
     );

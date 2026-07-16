@@ -652,6 +652,91 @@ export function useInboundAddress() {
   return useQuery({ queryKey: ['crm', 'inbound-address'], queryFn: () => api.get<{ data: { address: string } }>('/api/v1/crm/inbound-address') })
 }
 
+// ─── Sequences (§7.1, C10) ────────────────────────────────────────────────────
+export interface SequenceStep {
+  id: string
+  step_order: number
+  wait_days: number
+  subject: string
+  body_html: string
+}
+export interface Sequence {
+  id: string
+  name: string
+  is_active: boolean
+  send_window_start: string
+  send_window_end: string
+  timezone: string
+  steps: SequenceStep[]
+  active_enrollments: number
+}
+export interface SequenceEnrollment {
+  id: string
+  person_id: string
+  person_name: string | null
+  person_email: string | null
+  deal_id: string | null
+  current_step: number
+  next_send_at: string | null
+  status: string
+  exit_reason: string | null
+  created_at: string
+}
+
+export function useSequences() {
+  return useQuery({ queryKey: ['crm', 'sequences'], queryFn: () => api.get<{ data: Sequence[] }>('/api/v1/crm/sequences') })
+}
+
+export function useCreateSequence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post<{ data: Sequence }>('/api/v1/crm/sequences', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'sequences'] }),
+  })
+}
+
+export function useSequenceEnrollments(sequenceId: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'sequences', sequenceId, 'enrollments'],
+    queryFn: () => api.get<{ data: SequenceEnrollment[] }>(`/api/v1/crm/sequences/${sequenceId}/enrollments`),
+    enabled: !!sequenceId,
+  })
+}
+
+export function useEnrollInSequence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ sequenceId, body }: { sequenceId: string; body: { person_id: string; deal_id?: string } }) =>
+      api.post<{ data: SequenceEnrollment }>(`/api/v1/crm/sequences/${sequenceId}/enroll`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'sequences'] }),
+  })
+}
+
+export function useExitEnrollment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/crm/enrollments/${id}/exit`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'sequences'] }),
+  })
+}
+
+export function useCreateEmailTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; subject: string; body_html: string }) =>
+      api.post<{ data: EmailTemplate }>('/api/v1/crm/email-templates', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'email-templates'] }),
+  })
+}
+
+export function useArchiveEmailTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/email-templates/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'email-templates'] }),
+  })
+}
+
 // ─── Global search (§19.8) ────────────────────────────────────────────────────
 export interface CrmSearchResults {
   query: string

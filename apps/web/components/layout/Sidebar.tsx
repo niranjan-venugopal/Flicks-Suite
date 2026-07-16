@@ -74,6 +74,8 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/crm', label: 'Overview' },
           { href: '/crm/deals', label: 'Deals' },
           { href: '/crm/activities', label: 'Activities' },
+          { href: '/crm/sequences', label: 'Sequences' },
+          { href: '/crm/templates', label: 'Email settings' },
           { href: '/crm/contacts', label: 'Contacts' },
           { href: '/crm/companies', label: 'Companies' },
         ],

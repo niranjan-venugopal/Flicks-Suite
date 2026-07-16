@@ -5,17 +5,20 @@ ModuleGrantGuard, public-API framework, webhooks, boundaries lint) · Sprint 25
 **directory kernel** — Contacts/Companies (§3) → **Checkpoint 1**. Phase B:
 Sprints 26–27 **deals** — pipelines, kanban, FX, deal→invoice/quote, custom
 fields, saved views, global search (§4, §9, §12.1, §19.1-3/8) → **Checkpoint 2**.
-Later phases add activities/email, automation/capture, reports (Checkpoints 3–5).
+Phase C: Sprints 28–29 **activities & email** — follow-up loop, pings/digest,
+Email Phase A (compose, tracking, DNC, BCC dropbox, sequences, templates,
+signature) → **Checkpoint 3**. Later phases add automation/capture and reports
+(Checkpoints 4–5).
 
-This guide grows per phase. **Checkpoint 2 is the current hand-off.**
+This guide grows per phase. **Checkpoint 3 is the current hand-off.**
 
 ## 0. Environment prep
 
 ```bash
 git pull && pnpm install
 # Apply the new migrations (idempotent, additive — safe to re-run):
-pnpm sync:supabase          # applies packages/db/drizzle/0030–0033
-# OR re-run the demo bootstrap (also idempotent; carries the 0030–0033 deltas
+pnpm sync:supabase          # applies packages/db/drizzle/0030–0035
+# OR re-run the demo bootstrap (also idempotent; carries the 0030–0035 deltas
 # inline + seeds a Sales pipeline, stages, lost reasons, and the crm toggle):
 bash scripts/setup-demo.sh
 pnpm dev
@@ -25,6 +28,8 @@ New optional env (`apps/api/.env`) — all blank-safe for testing:
 
 ```
 OPENEXCHANGERATES_APP_ID=      # set to snapshot real FX on non-base-currency deals
+RESEND_WEBHOOK_SECRET=         # svix secret from the Resend webhook you create (Checkpoint 3)
+INBOUND_EMAIL_DOMAIN=          # e.g. in.yourdomain.com — the BCC dropbox domain (Checkpoint 3)
 ```
 
 Blank FX key = deals in your **base currency** always work; a deal entered in a
@@ -47,7 +52,7 @@ refresh, or enter the value in your base currency.
 
 ---
 
-## Checkpoint 2 (THIS hand-off) — Deals, pipeline, suite hooks
+## Checkpoint 2 (recap) — Deals, pipeline, suite hooks
 
 ### 1. Pipeline board / kanban (C2, §4.1)
 
@@ -115,6 +120,78 @@ refresh, or enter the value in your base currency.
 Press **⌘K / Ctrl-K** anywhere in CRM → type ≥2 chars → grouped results across
 **companies, people, and deals**. Enter opens the top hit. Results never include
 another workspace's records.
+
+---
+
+## Checkpoint 3 (THIS hand-off) — Activities & Email Phase A
+
+### 1. Activities & the follow-up loop (§6, C8)
+
+1. On any deal: **Schedule activity** (call/meeting/task/email/note, due date,
+   assignee). The deal card shows the next-activity chip; overdue turns coral.
+2. **Complete** an activity → the "what's next?" prompt asks you to schedule the
+   follow-up right there — the loop never leaves a deal without a next step.
+3. **CRM → Activities (C8)**: your day/week lists with overdue rollup; complete
+   or reschedule inline.
+4. **Assignment pings (§6.3)**: assign an activity to a teammate → they get an
+   in-app ping, unless they're in **Do-Not-Disturb** (presence-aware).
+5. **Daily digest (§6.4)**: at local 8am each user gets one in-app digest of
+   today + overdue items (idempotent — re-runs never duplicate).
+
+### 2. Compose & tracked email (C9/C11, §7.1)
+
+1. Deal → **Emails tab → Compose**. Variables (`{{first_name}}`, `{{company}}`,
+   `{{deal_title}}`, `{{sender_name}}`, `{{unsubscribe_link}}`) render per
+   recipient; your **signature** (§19.4) is appended automatically.
+2. Sent mail shows in the tab with **delivery/open/click badges** (tracking
+   pixel + wrapped links). Opens/clicks tick in near-live (60s refetch).
+3. **Do-not-contact (§19.5)**: recipients can unsubscribe via the footer link;
+   bounces/complaints auto-set DNC. A DNC contact is **hard-blocked** from any
+   further send — compose and sequences both refuse.
+4. **BCC dropbox**: CRM → Email settings shows your tenant's
+   `{slug}-{token}@in.…` address. Auto-BCC it from Gmail/Outlook and every sent
+   email files itself onto the matching contact + latest open deal; replies
+   also **exit** that person's active sequences.
+
+### 3. Sequences (C10, §7.1)
+
+1. **CRM → Sequences → New sequence**: name, send window (e.g. 09:00–18:00, its
+   own timezone), steps with subject/body and **wait days** between them.
+2. On an open deal: **Enroll in sequence** (uses the primary contact; disabled
+   when the deal has no contact; DNC contacts are refused server-side). One
+   active enrollment per contact per sequence — duplicates get a friendly 409.
+3. The engine ticks **every 5 minutes**: sends the due step *inside the window
+   only* (outside → deferred to the next window opening), max **200
+   sequence-sends per user per day** (over → deferred an hour, the step is
+   never skipped), then schedules the next step after its wait.
+4. **Exits are automatic**: reply (via webhook/BCC), unsubscribe/DNC, deal
+   **won/lost** — plus a manual Exit button in the sequence's Enrollments
+   drawer. Completed enrollments show as **completed**.
+
+### 4. Templates & signature (CRM → Email settings)
+
+1. **Templates**: create/archive; they appear in the compose modal and are
+   usable as sequence-step bodies. Variables resolve per recipient.
+2. **Your signature (§19.4)**: per-user HTML, appended to composed AND
+   sequence email.
+3. **Connected accounts (C21)**: shows the Phase B two-way sync card as
+   **Coming soon** — BCC covers logging until Google/Microsoft verifications
+   clear. (Security posture already enforced: a connected account row and its
+   encrypted tokens are visible **only to the owning user**, not even to other
+   admins of the same workspace.)
+
+### Checkpoint 3 ops box (your side)
+
+- In Resend: create a **webhook** pointing at
+  `https://<api-host>/api/v1/webhooks/resend`, subscribe to delivery/open/
+  click/bounce/complaint/inbound events, and copy its signing secret into
+  `RESEND_WEBHOOK_SECRET`. Unverified webhook calls are **rejected in
+  production**.
+- Verify the **receiving domain** (`in.<your-domain>`) in Resend and set
+  `INBOUND_EMAIL_DOMAIN` so the BCC dropbox address resolves.
+- No extra process needed: the API drains its own outbox and runs the sequence
+  tick + digests **inline** by default. (Set `INLINE_WORKER=false` + run a
+  `WORKER_MODE=true` replica only if you want the split later.)
 
 ---
 

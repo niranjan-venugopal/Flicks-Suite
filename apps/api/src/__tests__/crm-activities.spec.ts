@@ -141,7 +141,7 @@ describe('Activity loop (§6)', () => {
   it('morning digest fires at the user’s local 08:00, once per day (§6.4)', async () => {
     const { CrmJobs } = await import('../jobs/crm.jobs');
     const digestNotify = { createInAppNotification: jest.fn(async () => undefined) };
-    const jobs = new CrmJobs(dbAdmin as never, digestNotify as never);
+    const jobs = new CrmJobs(dbAdmin as never, digestNotify as never, { tick: async () => 0 } as never);
     // An overdue task exists for userId (created in earlier tests). Pick a
     // `now` that is 08:xx in the user's timezone (users.timezone default IST).
     const now = new Date();

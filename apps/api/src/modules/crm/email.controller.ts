@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
@@ -57,6 +57,12 @@ export class CrmEmailController {
   @RequireGrant('crm', 'edit')
   createTemplate(@Body() dto: TemplateDto, @CurrentUser() user: JwtPayload) {
     return this.email.createTemplate(user.tenantId, user.sub, dto);
+  }
+
+  @Delete('email-templates/:id')
+  @RequireGrant('crm', 'edit')
+  archiveTemplate(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.email.archiveTemplate(user.tenantId, user.sub, id);
   }
 
   @Get('me/signature')

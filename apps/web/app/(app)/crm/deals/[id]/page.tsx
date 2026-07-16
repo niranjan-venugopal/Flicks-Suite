@@ -3,7 +3,7 @@
 import { use, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Btn, Icon, Pill } from '@/components/proto'
+import { Btn, Icon, Modal, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
@@ -29,6 +29,8 @@ import {
   useContacts,
   useCustomFields,
   useDealActivities,
+  useSequences,
+  useEnrollInSequence,
   type DealDetail,
   type Activity,
 } from '@/lib/api/queries/use-crm'
@@ -149,6 +151,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {d.status === 'open' ? (
               <>
+                <EnrollInSequence deal={d} />
                 <Btn kind="secondary" size="sm" icon={<Icon.doc size={13} />} onClick={() => void onCreateQuote()} disabled={createQuote.isPending}>Create quote</Btn>
                 <Btn kind="secondary" size="sm" icon={<Icon.receipt size={13} />} onClick={() => void onCreateInvoice()} disabled={createInvoice.isPending}>Create invoice</Btn>
                 {wonStage && <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={async () => { if (await doMove(wonStage.id)) setWonOpen(true) }}>Won</Btn>}
@@ -286,6 +289,64 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
       <ScheduleActivityModal open={scheduleOpen} onClose={() => setScheduleOpen(false)} dealId={id} />
       {completeLoop.ui}
     </div>
+  )
+}
+
+// ── Enroll the deal's contact in a sequence (C10) ──
+function EnrollInSequence({ deal }: { deal: DealDetail }) {
+  const { data } = useSequences()
+  const enroll = useEnrollInSequence()
+  const { toast } = useToast()
+  const [open, setOpen] = useState(false)
+  const sequences = data?.data ?? []
+  // Primary contact first; fall back to any participant with an email.
+  const contact =
+    deal.people.find((p) => p.person_id === deal.primary_person_id && p.email) ??
+    deal.people.find((p) => p.email) ??
+    (deal.primary_person_id ? { person_id: deal.primary_person_id, name: null, email: null } : null)
+  const disabledWhy = !contact ? 'Add a contact to the deal first' : undefined
+
+  const doEnroll = async (sequenceId: string) => {
+    if (!contact) return
+    try {
+      await enroll.mutateAsync({ sequenceId, body: { person_id: contact.person_id, deal_id: deal.id } })
+      toast({ title: 'Enrolled in sequence', description: `${contact.name ?? 'Contact'} — exits automatically on reply, unsubscribe or when the deal decides.` })
+      setOpen(false)
+    } catch (err) {
+      toast({ title: 'Could not enroll', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+
+  return (
+    <>
+      <Btn kind="secondary" size="sm" icon={<Icon.send size={13} />} title={disabledWhy} disabled={!contact} onClick={() => setOpen(true)}>
+        Enroll in sequence
+      </Btn>
+      {open && (
+        <Modal open onClose={() => setOpen(false)} width={460} title="Enroll in sequence"
+          sub={contact ? `Sends to ${contact.name ?? contact.email ?? 'the primary contact'} — do-not-contact is always respected` : undefined}>
+          {sequences.length === 0 ? (
+            <div className="t-mute" style={{ fontSize: 12.5 }}>
+              No sequences yet — create one under CRM → Sequences and it will show here.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {sequences.map((s) => (
+                <button key={s.id} onClick={() => void doEnroll(s.id)} disabled={enroll.isPending}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', textAlign: 'left' }}>
+                  <Icon.send size={14} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{s.name}</div>
+                    <div className="t-mute" style={{ fontSize: 10.5 }}>{s.steps.length} step{s.steps.length === 1 ? '' : 's'} · sends {s.send_window_start}–{s.send_window_end}</div>
+                  </div>
+                  <Icon.chevR size={14} style={{ color: 'var(--text-faint)' }} />
+                </button>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+    </>
   )
 }
 

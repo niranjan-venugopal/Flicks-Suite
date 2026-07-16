@@ -14,6 +14,8 @@ import { CrmEmailService } from './email.service';
 import { CrmEmailController } from './email.controller';
 import { CrmEmailPublicController } from './email-public.controller';
 import { ResendWebhookController } from './resend-webhook.controller';
+import { SequencesService } from './sequences.service';
+import { SequencesController } from './sequences.controller';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
 import { FxRefreshJob } from './fx.job';
@@ -34,7 +36,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
   imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
-  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController],
+  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController],
   providers: [
     DirectoryService,
     DealsService,
@@ -45,12 +47,13 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     TagsService,
     ActivitiesService,
     CrmEmailService,
+    SequencesService,
     FxService,
     FxRefreshJob,
     CrmGateway,
     CrmEventsSubscriber,
     CrmGrantGuard,
   ],
-  exports: [DirectoryService, DealsService, FxService],
+  exports: [DirectoryService, DealsService, FxService, SequencesService],
 })
 export class CrmModule {}

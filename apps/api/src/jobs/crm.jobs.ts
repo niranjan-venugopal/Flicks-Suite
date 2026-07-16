@@ -5,6 +5,8 @@ import { activities, notifications, users } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../core/database/database.module';
 import { NotificationsService } from '../modules/notifications/notifications.service';
+import { SequencesService } from '../modules/crm/sequences.service';
+import { runsWorkloads } from '../core/worker/worker-mode';
 
 /**
  * CRM jobs (PRD v5 §6.4) — the daily activity digest. Every hour the sweep
@@ -21,7 +23,20 @@ export class CrmJobs {
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly notifications: NotificationsService,
+    private readonly sequences: SequencesService,
   ) {}
+
+  /** §7.1 sequence engine — every 5 minutes in whichever process runs workloads. */
+  @Cron('*/5 * * * *', { name: 'crm-sequences-tick' })
+  async sequencesTick(): Promise<void> {
+    if (!runsWorkloads()) return;
+    try {
+      const sent = await this.sequences.tick(new Date());
+      if (sent > 0) this.logger.log(`crm-sequences-tick: ${sent} step(s) sent`);
+    } catch (err) {
+      this.logger.error(`crm-sequences-tick failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   @Cron('0 * * * *', { name: 'crm-activity-digest' })
   async tick(): Promise<void> {
