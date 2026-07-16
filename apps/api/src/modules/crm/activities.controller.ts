@@ -44,6 +44,18 @@ export class ActivitiesController {
     return this.activities.listForDeal(user.tenantId, id);
   }
 
+  @Get('contacts/:id/activities')
+  @RequireGrant('crm', 'view')
+  listForContact(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.activities.listForContact(user.tenantId, id);
+  }
+
+  @Get('companies/:id/activities')
+  @RequireGrant('crm', 'view')
+  listForCompany(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.activities.listForCompany(user.tenantId, id);
+  }
+
   @Post('activities')
   @RequireGrant('crm', 'edit')
   @ApiOperation({ summary: 'Schedule a task/call/meeting or log a note' })

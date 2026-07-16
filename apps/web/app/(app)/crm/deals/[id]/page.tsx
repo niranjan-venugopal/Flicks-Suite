@@ -10,7 +10,6 @@ import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
 import { EmailsTab } from '@/components/crm/EmailsTab'
 import { FEATURES } from '@/lib/feature-flags'
-import { ComingSoon } from '@/components/crm/ComingSoon'
 import {
   useDeal,
   usePipelines,
@@ -43,11 +42,14 @@ import {
 // files · people · details) + linked-doc chips + Won/Lost dialogs
 // ─────────────────────────────────────────────────────────
 
-type TabKey = 'timeline' | 'products' | 'emails' | 'files' | 'people' | 'details'
-const TABS: Array<[TabKey, string]> = [
+type TabKey = 'timeline' | 'products' | 'emails' | 'people' | 'details'
+// Emails only shows when the email suite is live; file attachments (§19.2) are
+// a later phase, so no Files tab yet — we don't ship a dead placeholder tab.
+const ALL_TABS: Array<[TabKey, string]> = [
   ['timeline', 'Timeline'], ['products', 'Products'], ['emails', 'Emails'],
-  ['files', 'Files'], ['people', 'People'], ['details', 'Details'],
+  ['people', 'People'], ['details', 'Details'],
 ]
+const TABS = ALL_TABS.filter(([k]) => k !== 'emails' || FEATURES.crm_email)
 
 export default function DealDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -250,23 +252,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
 
       {tab === 'timeline' && <TimelineTab deal={d} stages={stages} activities={dealActivities.data?.data ?? []} onComplete={completeLoop.start} onLog={() => setScheduleOpen(true)} />}
       {tab === 'products' && <ProductsTab deal={d} onCreateInvoice={() => void onCreateInvoice()} onCreateQuote={() => void onCreateQuote()} busy={createInvoice.isPending || createQuote.isPending} />}
-      {tab === 'emails' && (FEATURES.crm_email ? <EmailsTab deal={d} /> : (
-        <ComingSoon
-          compact
-          title="Email"
-          line="Sending and tracking email from a deal is being reimagined — it returns here in a new shape soon. Activities and notes keep the full story meanwhile."
-          icon={<Icon.mail size={24} />}
-        />
-      ))}
-      {tab === 'files' && (
-        <div className="card">
-          <div style={{ border: '1.5px dashed var(--bord-2)', borderRadius: 12, padding: 22, textAlign: 'center', color: 'var(--text-mute)' }}>
-            <Icon.upload size={20} style={{ marginBottom: 6 }} />
-            <div style={{ fontSize: 12.5, fontWeight: 700 }}>File attachments arrive with the Activities phase</div>
-            <div className="t-caption" style={{ marginTop: 4 }}>Up to 25 MB · images, docs, PDFs · no SVG (upload pipeline rule)</div>
-          </div>
-        </div>
-      )}
+      {tab === 'emails' && FEATURES.crm_email && <EmailsTab deal={d} />}
       {tab === 'people' && <PeopleTab deal={d} />}
       {tab === 'details' && <DetailsTab deal={d} pipelineName={pipeline?.name} stageName={currentStage?.name} stageProb={currentStage?.win_probability} />}
 

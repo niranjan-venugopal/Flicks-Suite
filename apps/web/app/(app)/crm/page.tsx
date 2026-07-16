@@ -110,7 +110,7 @@ export default function CrmOverviewPage() {
         <Kpi label="Pipeline · open" value={fmtCur(f?.open_value ?? 0, base)} delta={`${totalOpenDeals} deals · weighted ${fmtCur(f?.weighted_value ?? 0, base)}`} icon={<Icon.funnel size={16} />} accent="blue" />
         <Kpi label="Tasks today" value={String(acts?.today.length ?? 0)} delta={`${acts?.overdue.length ?? 0} overdue`} trend={acts?.overdue.length ? 'down' : undefined} icon={<Icon.check size={16} />} accent="green" />
         <Kpi label="Rotting deals" value={String(rotting.length)} delta={`${noNext.length} with no next activity`} trend={rotting.length ? 'down' : undefined} icon={<Icon.clock size={16} />} accent="coral" />
-        <Kpi label="Won · all time" value={fmtCur(f?.won_value ?? 0, base)} delta="monthly win metrics join the reports phase" icon={<Icon.award size={16} />} accent="purple" />
+        <Kpi label="Won · all time" value={fmtCur(f?.won_value ?? 0, base)} delta="win rate & forecast live in Reports" icon={<Icon.award size={16} />} accent="purple" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
@@ -201,7 +201,7 @@ export default function CrmOverviewPage() {
               <Link href="/crm/activities"><Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} style={{ width: '100%' }}>My activities</Btn></Link>
             </div>
             <div className="t-caption" style={{ marginTop: 12 }}>
-              Sales goals (§19.6) and the email BCC dropbox join with the reports and email phases.
+              Open <Link href="/crm/reports" style={{ color: 'var(--blue)' }}>Reports</Link> for pipeline health, forecast and goals — or <Link href="/crm/leads" style={{ color: 'var(--blue)' }}>Leads</Link> to triage new business.
             </div>
           </div>
         </div>

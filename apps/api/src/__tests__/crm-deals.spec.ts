@@ -354,6 +354,28 @@ describe('Deal products + participants (C3 tabs)', () => {
   });
 });
 
+describe('Contact / Company deal lists (C4/C5 360°)', () => {
+  it('lists a contact’s and company’s deals with stage + owner, scoped to tenant', async () => {
+    const co = await directory.createCompany(tenantA, userId, { name: `Ref Co ${rid()}` });
+    const person = await directory.createPerson(tenantA, userId, { first_name: 'Ref', email: `ref-${rid()}@t.test`, company_id: co.data.id });
+    const d1 = await service.create(tenantA, userId, { title: 'RefDealA', value_amount: 10, currency: 'INR', primary_person_id: person.data.id, company_id: co.data.id });
+    await service.create(tenantA, userId, { title: 'RefDealB', value_amount: 20, currency: 'INR', company_id: co.data.id });
+
+    const byContact = await service.listForContact(tenantA, person.data.id);
+    expect(byContact.data.map((d) => d.id)).toEqual([d1.data.id]);
+    expect(byContact.data[0]!.stage_name).toBeTruthy();
+    expect(byContact.data[0]!.owner_user_id).toBe(userId);
+    expect(byContact.base_currency).toBe('INR');
+
+    const byCompany = await service.listForCompany(tenantA, co.data.id);
+    expect(byCompany.data).toHaveLength(2);
+
+    // Cross-tenant company id yields nothing (RLS-scoped).
+    const other = await service.listForCompany(tenantB, co.data.id);
+    expect(other.data).toHaveLength(0);
+  });
+});
+
 describe('Deal → quote + accept (§4.4 / §19.3)', () => {
   it('creates a DRAFT quote from a deal, links it, and is idempotent', async () => {
     const co = await directory.createCompany(tenantA, userId, { name: `Quote Co ${rid()}`, domain: `q-${rid()}.com` });

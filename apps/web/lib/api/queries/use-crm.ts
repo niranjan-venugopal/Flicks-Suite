@@ -1095,3 +1095,62 @@ export function useSampleData() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm'] }),
   })
 }
+
+// ─── Contact / Company 360° detail (C4/C5 depth) ─────────────────────────────
+export interface RefDeal {
+  id: string
+  title: string
+  value_amount: string
+  currency: string
+  value_base_amount: string
+  status: string
+  stage_id: string
+  stage_name: string | null
+  win_probability: number | null
+  expected_close_date: string | null
+  owner_user_id: string
+  owner_name: string | null
+  updated_at: string
+}
+export interface RefActivity {
+  id: string
+  type: string
+  subject: string
+  body: string | null
+  due_at: string | null
+  completed_at: string | null
+  outcome: string | null
+  assignee_user_id: string
+  assignee_name: string | null
+  deal_id: string | null
+  created_at: string
+}
+
+export function useContactDeals(id: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'contact', id, 'deals'],
+    queryFn: () => api.get<{ data: RefDeal[]; base_currency: string }>(`/api/v1/crm/contacts/${id}/deals`),
+    enabled: !!id,
+  })
+}
+export function useCompanyDeals(id: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'company', id, 'deals'],
+    queryFn: () => api.get<{ data: RefDeal[]; base_currency: string }>(`/api/v1/crm/companies/${id}/deals`),
+    enabled: !!id,
+  })
+}
+export function useContactActivities(id: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'contact', id, 'activities'],
+    queryFn: () => api.get<{ data: RefActivity[] }>(`/api/v1/crm/contacts/${id}/activities`),
+    enabled: !!id,
+  })
+}
+export function useCompanyActivities(id: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'company', id, 'activities'],
+    queryFn: () => api.get<{ data: RefActivity[] }>(`/api/v1/crm/companies/${id}/activities`),
+    enabled: !!id,
+  })
+}

@@ -154,11 +154,13 @@ describe('Sequence engine (§7.1 / C10)', () => {
   it('defers (not burns) the step at the 200/user/day throttle', async () => {
     const [p5] = await dbAdmin.insert(directoryPeople).values({ tenant_id: tenantA, first_name: 'Cap', email: `cap-${rid()}@m.example` }).returning();
     const enr = await service.enroll(tenantA, userId, { sequence_id: seqId, person_id: p5!.id });
-    // Seed 200 outbound messages today for the enrolling user.
+    // Seed 200 outbound messages for the enrolling user, stamped to the tick's
+    // own day (the throttle counts created_at >= UTC-midnight-of-now, and
+    // nowInWindow can land on a later UTC day than wall-clock `now()`).
     const now = nowInWindow();
     await dbAdmin.insert(emailMessages).values(
       Array.from({ length: 200 }, (_, i) => ({
-        tenant_id: tenantA, direction: 'out' as const, status: 'sent', to_email: `x${i}@y.z`, subject: 's', sender_user_id: userId,
+        tenant_id: tenantA, direction: 'out' as const, status: 'sent', to_email: `x${i}@y.z`, subject: 's', sender_user_id: userId, created_at: now,
       })),
     );
     await dbAdmin.update(sequenceEnrollments).set({ next_send_at: now, current_step: 0 }).where(eq(sequenceEnrollments.id, enr.data.id));

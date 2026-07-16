@@ -304,6 +304,44 @@ export class DealsService {
     });
   }
 
+  /** Compact deal list for a contact / company detail page. */
+  async listForContact(tenantId: string, personId: string) {
+    return this.listForRef(tenantId, eq(deals.primary_person_id, personId));
+  }
+
+  async listForCompany(tenantId: string, companyId: string) {
+    return this.listForRef(tenantId, eq(deals.company_id, companyId));
+  }
+
+  private async listForRef(tenantId: string, refWhere: ReturnType<typeof eq>) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const base = await this.baseCurrency(tx, tenantId);
+      const rows = await tx
+        .select({
+          id: deals.id,
+          title: deals.title,
+          value_amount: deals.value_amount,
+          currency: deals.currency,
+          value_base_amount: deals.value_base_amount,
+          status: deals.status,
+          stage_id: deals.stage_id,
+          stage_name: pipelineStages.name,
+          win_probability: pipelineStages.win_probability,
+          expected_close_date: deals.expected_close_date,
+          owner_user_id: deals.owner_user_id,
+          owner_name: users.full_name,
+          updated_at: deals.updated_at,
+        })
+        .from(deals)
+        .leftJoin(pipelineStages, eq(pipelineStages.id, deals.stage_id))
+        .leftJoin(users, eq(users.id, deals.owner_user_id))
+        .where(and(refWhere, isNull(deals.deleted_at)))
+        .orderBy(desc(deals.updated_at))
+        .limit(50);
+      return { data: rows, base_currency: base };
+    });
+  }
+
   // ─── Create ─────────────────────────────────────────────────────────────────
   async create(
     tenantId: string,

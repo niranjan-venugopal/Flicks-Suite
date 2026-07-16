@@ -95,6 +95,18 @@ export class DealsController {
   }
 
   // ─── Deals ──────────────────────────────────────────────────────────────────
+  @Get('contacts/:id/deals')
+  @RequireGrant('crm', 'view')
+  dealsForContact(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.listForContact(user.tenantId, id);
+  }
+
+  @Get('companies/:id/deals')
+  @RequireGrant('crm', 'view')
+  dealsForCompany(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.deals.listForCompany(user.tenantId, id);
+  }
+
   @Get('deals/:id')
   @RequireGrant('crm', 'view')
   get(@Param('id') id: string, @CurrentUser() user: JwtPayload) {

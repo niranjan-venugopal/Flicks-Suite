@@ -9,6 +9,27 @@ import { useMyCompanies, type ModuleGrant } from '@/lib/api/queries/use-members'
 import { CompanySwitcher } from '@/components/invoicing/CompanySwitcher'
 import { Icon, LogoMark } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
+import { FEATURES } from '@/lib/feature-flags'
+
+// Hrefs hidden from the CRM nav while a feature is parked behind its flag, so a
+// menu item never dead-ends at a "Coming soon" card.
+const PARKED_CRM_HREFS = new Set<string>([
+  ...(FEATURES.crm_email ? [] : ['/crm/sequences', '/crm/templates']),
+  ...(FEATURES.crm_automation ? [] : ['/crm/automation']),
+])
+
+/** Drop parked CRM sub-items from every section's item list. */
+function withoutParkedCrm(sections: NavSection[]): NavSection[] {
+  if (PARKED_CRM_HREFS.size === 0) return sections
+  return sections.map((sec) => ({
+    ...sec,
+    items: sec.items.map((it) =>
+      it.id === 'crm' && it.children
+        ? { ...it, children: it.children.filter((c) => !PARKED_CRM_HREFS.has(c.href)) }
+        : it,
+    ),
+  }))
+}
 
 // ─── Nav model ─────────────────────────────────────────────────────────────
 
@@ -327,10 +348,10 @@ export function Sidebar() {
   }, [grantDriven, myCompanies.data, currentUser?.tenantId])
 
   const nav = useMemo(() => {
-    if (role === 'AUDITOR') return auditorNavFor(activeGrants)
-    if (role === 'MANAGER') return withGrantedInvoicing(MANAGER_NAV, activeGrants)
-    if (role === 'EMPLOYEE') return withGrantedInvoicing(EMPLOYEE_NAV, activeGrants)
-    return navFor(role)
+    if (role === 'AUDITOR') return withoutParkedCrm(auditorNavFor(activeGrants))
+    if (role === 'MANAGER') return withoutParkedCrm(withGrantedInvoicing(MANAGER_NAV, activeGrants))
+    if (role === 'EMPLOYEE') return withoutParkedCrm(withGrantedInvoicing(EMPLOYEE_NAV, activeGrants))
+    return withoutParkedCrm(navFor(role))
   }, [role, activeGrants])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.

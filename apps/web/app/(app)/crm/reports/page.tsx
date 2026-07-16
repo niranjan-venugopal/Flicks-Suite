@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
+import { FEATURES } from '@/lib/feature-flags'
 import {
   useReportsOverview,
   useForecastReport,
@@ -164,7 +165,7 @@ function Dashboard() {
 
       <RptCard title="Activity leaderboard" sub={`completed in the last ${d.window_days}d · goal progress where set (§19.6)`} wide>
         <table className="tbl" style={{ margin: '0 -20px', width: 'calc(100% + 40px)' }}>
-          <thead><tr><th>Rep</th><th style={{ textAlign: 'right' }}>Calls</th><th style={{ textAlign: 'right' }}>Meetings</th><th style={{ textAlign: 'right' }}>Tasks done</th><th style={{ textAlign: 'right' }}>Emails</th><th style={{ width: 200 }}>Goal progress</th></tr></thead>
+          <thead><tr><th>Rep</th><th style={{ textAlign: 'right' }}>Calls</th><th style={{ textAlign: 'right' }}>Meetings</th><th style={{ textAlign: 'right' }}>Tasks done</th>{FEATURES.crm_email && <th style={{ textAlign: 'right' }}>Emails</th>}<th style={{ width: 200 }}>Goal progress</th></tr></thead>
           <tbody>
             {d.leaderboard.map((r) => (
               <tr key={r.user_id}>
@@ -172,7 +173,7 @@ function Dashboard() {
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.calls}</td>
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.meetings}</td>
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.tasks}</td>
-                <td className="t-num" style={{ textAlign: 'right' }}>{r.emails}</td>
+                {FEATURES.crm_email && <td className="t-num" style={{ textAlign: 'right' }}>{r.emails}</td>}
                 <td>
                   {r.goal_pct != null ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

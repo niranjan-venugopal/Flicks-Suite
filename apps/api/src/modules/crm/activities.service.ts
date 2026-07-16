@@ -178,6 +178,40 @@ export class ActivitiesService {
    * My Activities (C8): the signed-in user's open activities bucketed into
    * overdue / today / upcoming, plus recently completed.
    */
+  /** Activities linked to a contact / company — the detail-page timeline. */
+  async listForContact(tenantId: string, personId: string) {
+    return this.listForRef(tenantId, eq(activities.person_id, personId));
+  }
+
+  async listForCompany(tenantId: string, companyId: string) {
+    return this.listForRef(tenantId, eq(activities.company_id, companyId));
+  }
+
+  private async listForRef(tenantId: string, refWhere: ReturnType<typeof eq>) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const rows = await tx
+        .select({
+          id: activities.id,
+          type: activities.type,
+          subject: activities.subject,
+          body: activities.body,
+          due_at: activities.due_at,
+          completed_at: activities.completed_at,
+          outcome: activities.outcome,
+          assignee_user_id: activities.assignee_user_id,
+          assignee_name: users.full_name,
+          deal_id: activities.deal_id,
+          created_at: activities.created_at,
+        })
+        .from(activities)
+        .innerJoin(users, eq(users.id, activities.assignee_user_id))
+        .where(and(refWhere, isNull(activities.deleted_at)))
+        .orderBy(sql`${activities.completed_at} IS NOT NULL`, asc(activities.due_at))
+        .limit(50);
+      return { data: rows };
+    });
+  }
+
   async mine(tenantId: string, userId: string) {
     return this.db.withTenant(
       tenantId,
