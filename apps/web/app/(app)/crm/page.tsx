@@ -7,11 +7,14 @@ import { Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
 import { EmptyState, fmtCur } from '@/components/crm/kit'
 import { ACT_META, dueLabel, useCompleteWithNext } from '@/components/crm/activity-widgets'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
+import { useToast } from '@/components/ui/use-toast'
 import {
   useBoard,
   useForecast,
   useMyActivities,
   useReps,
+  useSampleDataStatus,
+  useSampleData,
   type Activity,
   type DealCard,
 } from '@/lib/api/queries/use-crm'
@@ -62,9 +65,10 @@ export default function CrmOverviewPage() {
         <SectionHead title="CRM" sub="Your pipeline at a glance." />
         <EmptyState
           icon={<Icon.funnel size={22} />}
-          line="Your CRM is ready. Create your first deal — or seed realistic sample data (scripts/seed-crm-sample.sh) to explore every screen."
+          line="Your CRM is ready. Create your first deal — or load sample data to explore every screen (removable in one click, C22)."
           cta="New deal"
           onCta={() => quickAdd.openWith('deal')}
+          secondary={<SampleDataButton />}
         />
       </div>
     )
@@ -205,5 +209,22 @@ export default function CrmOverviewPage() {
 
       {completeLoop.ui}
     </div>
+  )
+}
+
+// ── C22 · Sample data toggle — seed a labelled pack, remove it in one click ──
+function SampleDataButton() {
+  const { toast } = useToast()
+  const status = useSampleDataStatus()
+  const sample = useSampleData()
+  const loaded = status.data?.data.loaded ?? false
+  return (
+    <Btn kind="secondary" size="sm" icon={loaded ? <Icon.trash size={13} /> : <Icon.spark size={13} />} disabled={sample.isPending || status.isLoading}
+      onClick={() => sample.mutate(loaded ? 'remove' : 'seed', {
+        onSuccess: () => toast({ title: loaded ? 'Sample data removed' : 'Sample data loaded', description: loaded ? 'Only the demo records were deleted.' : 'Companies, contacts, deals, activities and leads — all labelled “(sample)”.' }),
+        onError: (err) => toast({ title: 'Sample data', description: err instanceof Error ? err.message : undefined, variant: 'destructive' }),
+      })}>
+      {sample.isPending ? 'Working…' : loaded ? 'Remove sample data' : 'Load sample data'}
+    </Btn>
   )
 }

@@ -9,17 +9,19 @@ Phase C: Sprints 28–29 **activities & email** — follow-up loop, pings/digest
 Email Phase A (compose, tracking, DNC, BCC dropbox, sequences, templates,
 signature) → **Checkpoint 3**. Phase D: Sprint 30 **automation & capture** —
 leads inbox, web forms, workflows, public API resources + webhook log →
-**Checkpoint 4**. Sprint 31 adds reports/import/i18n → Beta gate.
+**Checkpoint 4**. Phase E: Sprint 31 **reports & polish** — reports/forecast/
+goals, CSV import, merge & dedupe, offboarding reassignment, sample data →
+**BETA GATE**.
 
-This guide grows per phase. **Checkpoint 4 is the current hand-off.**
+This guide grows per phase. **The BETA GATE is the current hand-off.**
 
 ## 0. Environment prep
 
 ```bash
 git pull && pnpm install
 # Apply the new migrations (idempotent, additive — safe to re-run):
-pnpm sync:supabase          # applies packages/db/drizzle/0030–0036
-# OR re-run the demo bootstrap (also idempotent; carries the 0030–0036 deltas
+pnpm sync:supabase          # applies packages/db/drizzle/0030–0037
+# OR re-run the demo bootstrap (also idempotent; carries the 0030–0037 deltas
 # inline + seeds a Sales pipeline, stages, lost reasons, and the crm toggle):
 bash scripts/setup-demo.sh
 pnpm dev
@@ -196,7 +198,7 @@ another workspace's records.
 
 ---
 
-## Checkpoint 4 (THIS hand-off) — Automation & Capture
+## Checkpoint 4 (recap) — Automation & Capture
 
 ### 1. Leads inbox (C6, §5.1)
 
@@ -260,6 +262,70 @@ another workspace's records.
    re-queues the SAME event id/payload (receiver idempotency keys keep
    working). 20 consecutive failures auto-disable the endpoint + notify
    owners.
+
+---
+
+## BETA GATE (THIS hand-off) — Reports, import/merge, polish
+
+### 1. Reports dashboard (C16, §10)
+
+1. **CRM → Reports**: pipeline snapshot (raw vs weighted bars per stage, avg
+   days in stage), funnel conversion (how far deals created in the window
+   travelled, overall win rate), win/loss by **source ⇄ owner** with lost-
+   reason distribution, monthly **sales velocity**, and the **activity
+   leaderboard** (calls/meetings/tasks/emails per rep). All sums in base
+   currency from the deals' FX snapshots.
+2. Empty workspaces get a friendly "not enough data" state — load the sample
+   pack (below) to see every chart filled.
+
+### 2. Forecast & goals (C17, §19.6)
+
+1. **Reports → Forecast**: bars per close month — weighted (Σ value×stage
+   probability), committed (stages ≥70%), won to date — with the **goal** as
+   a dashed line and the gap-to-goal computed. Click a month for the deal
+   drill-down.
+2. **Reports → Goals**: set a monthly won-revenue target for the **whole
+   team** (drives the forecast line) or **per rep** (fills the leaderboard
+   progress bar). Target 0 removes a goal. Manager+ writes.
+
+### 3. CSV import (C14) — Manager and above
+
+1. **CRM → Import**: pick contacts/companies/leads → drop a CSV (or paste
+   text) → column mapping is **suggested from the headers** (Pipedrive/
+   HubSpot-style names recognised) → pick the duplicate strategy (skip /
+   update / create; match on person email, company domain+name) → **dry run**
+   shows create/update/skip/error counts + first 50 rows, writing nothing →
+   run it.
+2. **Undo (24h)**: every import is listed under Recent imports — Undo
+   retracts exactly what the batch created (soft-delete), never touching
+   pre-existing records. Beta cap: 10,000 rows/file.
+
+### 4. Merge & dedupe (C15) + offboarding (§19.7)
+
+1. **CRM → Data hygiene**: the finder lists candidate pairs (same email /
+   same domain / similar company name with legal suffixes ignored). Review →
+   pick the survivor → merge. Every reference moves (deals, participants,
+   activities, emails, sequence enrollments, leads); the loser is
+   soft-deleted with a `merged_into_id` tombstone; `crm.contact.merged` /
+   `crm.company.merged` publish for webhooks.
+2. **Offboarding — reassign work**: pick From/To members, see the live count
+   of open deals/activities/leads, apply. Completed work keeps its history.
+   Do this before deactivating a member.
+
+### 5. Sample data (C22)
+
+On an empty CRM Overview: **Load sample data** seeds a small labelled pack
+(companies, contacts, deals across stages, activities, leads, a template) so
+every screen has something to show; **Remove sample data** deletes exactly
+those records and nothing else.
+
+### Known beta limits (honest list)
+
+- Import: CSV only (no XLSX), 10k rows, one object type per file.
+- Merge finder: exact email/domain + normalized-name matching (no trigram
+  fuzzy matching yet).
+- Reports window: 7–365 days, single pipeline at a time.
+- UI language: English only in this beta; i18n is scaffolded for post-beta.
 
 ---
 

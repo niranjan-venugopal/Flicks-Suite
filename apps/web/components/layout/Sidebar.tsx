@@ -79,8 +79,11 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/crm/templates', label: 'Email settings' },
           { href: '/crm/forms', label: 'Web forms' },
           { href: '/crm/automation', label: 'Automation' },
+          { href: '/crm/reports', label: 'Reports' },
           { href: '/crm/contacts', label: 'Contacts' },
           { href: '/crm/companies', label: 'Companies' },
+          { href: '/crm/import', label: 'Import' },
+          { href: '/crm/merge', label: 'Data hygiene' },
         ],
       },
       {
@@ -374,11 +377,18 @@ export function Sidebar() {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   // Collapsible rail (prototype shell-v3: 248px ↔ 72px). Persisted locally.
+  // §19.9 mobile pass: narrow viewports auto-collapse to the icon rail so
+  // content keeps the width; the manual toggle still wins on desktop.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
-    if (typeof window !== 'undefined' && localStorage.getItem('sidebar-collapsed') === '1') {
-      setCollapsed(true)
+    if (typeof window === 'undefined') return
+    const apply = () => {
+      if (window.innerWidth < 900) setCollapsed(true)
+      else setCollapsed(localStorage.getItem('sidebar-collapsed') === '1')
     }
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
   }, [])
   const toggleCollapsed = (next: boolean) => {
     setCollapsed(next)

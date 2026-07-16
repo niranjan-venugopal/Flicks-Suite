@@ -46,6 +46,8 @@ export const directoryCompanies = pgTable(
     source: text('source'), // manual|import|form|api|invoicing_backfill
     last_activity_at: timestamp('last_activity_at', { withTimezone: true }),
     custom: jsonb('custom').notNull().default({}),
+    import_batch_id: uuid('import_batch_id'),
+    merged_into_id: uuid('merged_into_id'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
@@ -71,6 +73,8 @@ export const directoryPeople = pgTable(
     last_name: text('last_name'),
     // display_name is GENERATED ALWAYS in the DB — read-only here.
     display_name: text('display_name'),
+    import_batch_id: uuid('import_batch_id'),
+    merged_into_id: uuid('merged_into_id'),
     email: text('email'), // citext in DB
     secondary_emails: text('secondary_emails').array(),
     phone: text('phone'), // E.164
@@ -531,6 +535,7 @@ export const leads = pgTable(
     form_id: uuid('form_id'),
     utm: jsonb('utm').notNull().default({}),
     extra: jsonb('extra').notNull().default({}),
+    import_batch_id: uuid('import_batch_id'),
     converted_person_id: uuid('converted_person_id').references(() => directoryPeople.id, { onDelete: 'set null' }),
     converted_company_id: uuid('converted_company_id').references(() => directoryCompanies.id, { onDelete: 'set null' }),
     converted_deal_id: uuid('converted_deal_id').references(() => deals.id, { onDelete: 'set null' }),
@@ -615,3 +620,46 @@ export const workflowRuns = pgTable(
     index('idx_workflow_runs').on(t.tenant_id, t.created_at.desc()),
   ],
 );
+
+// ─── Reports/goals, import, sample data (§10, §19.6, C14/C22 / 0037) ─────────
+
+export const salesGoals = pgTable(
+  'sales_goals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }), // NULL = whole team
+    period: text('period').notNull(), // 'YYYY-MM'
+    target_base: numeric('target_base', { precision: 14, scale: 2 }).notNull(),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export const importBatches = pgTable(
+  'import_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+    object_type: text('object_type').notNull(), // people|companies|leads
+    file_name: text('file_name'),
+    rows_read: integer('rows_read').notNull().default(0),
+    rows_created: integer('rows_created').notNull().default(0),
+    rows_updated: integer('rows_updated').notNull().default(0),
+    rows_skipped: integer('rows_skipped').notNull().default(0),
+    errors: jsonb('errors').notNull().default([]), // [{row, error}] first 200
+    status: text('status').notNull().default('done'), // done|undone
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    undone_at: timestamp('undone_at', { withTimezone: true }),
+  },
+  (t) => [index('idx_import_batches').on(t.tenant_id, t.created_at.desc())],
+);
+
+export const samplePacks = pgTable('sample_packs', {
+  tenant_id: uuid('tenant_id').primaryKey().references(() => tenants.id, { onDelete: 'cascade' }),
+  record_ids: jsonb('record_ids').notNull().default({}), // {table: [ids]}
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

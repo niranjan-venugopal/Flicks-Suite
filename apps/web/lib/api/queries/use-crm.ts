@@ -907,3 +907,191 @@ export function useSetWorkflowActive() {
 export function useWorkflowRuns() {
   return useQuery({ queryKey: ['crm', 'workflow-runs'], queryFn: () => api.get<{ data: WorkflowRun[] }>('/api/v1/crm/workflow-runs') })
 }
+
+// ─── Reports & forecast & goals (§10, §19.6, C16/C17) ─────────────────────────
+export interface ReportsOverview {
+  pipeline: { id: string; name: string }
+  window_days: number
+  snapshot: Array<{ stage_id: string; stage: string; win_probability: number; count: number; raw: number; weighted: number; avg_days: number }>
+  funnel: Array<{ stage: string; count: number; pct: number }>
+  win_loss: {
+    by_source: Array<{ key: string; won: number; lost: number; win_rate: number; avg_size: number; avg_cycle_days: number | null }>
+    by_owner: Array<{ key: string; won: number; lost: number; win_rate: number; avg_size: number; avg_cycle_days: number | null }>
+    overall_win_rate: number
+  }
+  lost_reasons: Array<{ label: string; count: number }>
+  velocity: Array<{ month: string; value: number }>
+  leaderboard: Array<{ user_id: string; name: string; calls: number; meetings: number; tasks: number; emails: number; goal_target: number | null; goal_pct: number | null }>
+}
+
+export function useReportsOverview(days?: number) {
+  return useQuery({
+    queryKey: ['crm', 'reports', 'overview', days],
+    queryFn: () => api.get<{ data: ReportsOverview | null }>(`/api/v1/crm/reports/overview${days ? `?days=${days}` : ''}`),
+  })
+}
+
+export interface ForecastRow {
+  period: string
+  weighted: number
+  committed: number
+  won: number
+  goal: number | null
+  gap_to_goal: number | null
+  deals: Array<{ id: string; title: string; owner_name: string | null; value: number; probability: number }>
+}
+
+export function useForecastReport(months?: number) {
+  return useQuery({
+    queryKey: ['crm', 'reports', 'forecast', months],
+    queryFn: () => api.get<{ data: ForecastRow[] }>(`/api/v1/crm/reports/forecast${months ? `?months=${months}` : ''}`),
+  })
+}
+
+export interface SalesGoal {
+  id: string
+  user_id: string | null
+  user_name?: string | null
+  period: string
+  target_base: number
+}
+
+export function useGoals() {
+  return useQuery({ queryKey: ['crm', 'goals'], queryFn: () => api.get<{ data: SalesGoal[] }>('/api/v1/crm/goals') })
+}
+
+export function useSetGoal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { period: string; user_id?: string | null; target_base: number }) => api.post('/api/v1/crm/goals', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'goals'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'reports'] })
+    },
+  })
+}
+
+// ─── Import wizard (C14) ──────────────────────────────────────────────────────
+export interface ImportParseResult {
+  file_name: string | null
+  rows: number
+  headers: Array<{ column: string; suggested: string | null; samples: string[] }>
+  targets: string[]
+}
+
+export interface ImportDryRun {
+  rows_read: number
+  will_create: number
+  will_update: number
+  will_skip: number
+  errors: number
+  preview: Array<{ row: number; action: string; reason?: string; values: Record<string, string> }>
+}
+
+export interface ImportBatch {
+  id: string
+  object_type: string
+  file_name: string | null
+  rows_read: number
+  rows_created: number
+  rows_updated: number
+  rows_skipped: number
+  status: string
+  created_at: string
+}
+
+export function useImportParse() {
+  return useMutation({
+    mutationFn: (body: { object: string; csv: string; file_name?: string }) =>
+      api.post<{ data: ImportParseResult }>('/api/v1/crm/import/parse', body),
+  })
+}
+
+export function useImportDryRun() {
+  return useMutation({
+    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string }) =>
+      api.post<{ data: ImportDryRun }>('/api/v1/crm/import/dry-run', body),
+  })
+}
+
+export function useImportRun() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string }) =>
+      api.post<{ data: ImportBatch }>('/api/v1/crm/import/run', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm'] })
+    },
+  })
+}
+
+export function useImportBatches() {
+  return useQuery({ queryKey: ['crm', 'import-batches'], queryFn: () => api.get<{ data: ImportBatch[] }>('/api/v1/crm/import/batches') })
+}
+
+export function useImportUndo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/crm/import/${id}/undo`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm'] }),
+  })
+}
+
+// ─── Merge & dedupe (C15) + §19.7 reassign ────────────────────────────────────
+export interface MergeCandidate {
+  type: 'person' | 'company'
+  a: { id: string; name: string | null; email?: string | null; domain?: string | null }
+  b: { id: string; name: string | null; email?: string | null; domain?: string | null }
+  reason: string
+  confidence: number
+}
+
+export function useMergeCandidates() {
+  return useQuery({ queryKey: ['crm', 'merge-candidates'], queryFn: () => api.get<{ data: MergeCandidate[] }>('/api/v1/crm/merge/candidates') })
+}
+
+export function useMergePreview(type: string | null, winnerId?: string, loserId?: string) {
+  return useQuery({
+    queryKey: ['crm', 'merge-preview', type, winnerId, loserId],
+    queryFn: () => api.get<{ data: Record<string, number> }>(`/api/v1/crm/merge/preview?type=${type}&winner_id=${winnerId}&loser_id=${loserId}`),
+    enabled: !!type && !!winnerId && !!loserId,
+  })
+}
+
+export function useMerge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { type: 'person' | 'company'; winner_id: string; loser_id: string; patch?: Record<string, string> }) =>
+      api.post('/api/v1/crm/merge', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm'] }),
+  })
+}
+
+export function useReassignPreview(fromUserId: string | null) {
+  return useQuery({
+    queryKey: ['crm', 'reassign-preview', fromUserId],
+    queryFn: () => api.get<{ data: { open_deals: number; open_activities: number; active_leads: number } }>(`/api/v1/crm/reassign/preview?from_user_id=${fromUserId}`),
+    enabled: !!fromUserId,
+  })
+}
+
+export function useReassign() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { from_user_id: string; to_user_id: string }) => api.post<{ data: { deals: number; activities: number; leads: number } }>('/api/v1/crm/reassign', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm'] }),
+  })
+}
+
+// ─── Sample data toggle (C22) ─────────────────────────────────────────────────
+export function useSampleDataStatus() {
+  return useQuery({ queryKey: ['crm', 'sample-data'], queryFn: () => api.get<{ data: { loaded: boolean } }>('/api/v1/crm/sample-data') })
+}
+
+export function useSampleData() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (action: 'seed' | 'remove') => api.post(`/api/v1/crm/sample-data${action === 'remove' ? '/remove' : ''}`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm'] }),
+  })
+}

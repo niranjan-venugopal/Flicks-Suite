@@ -22,6 +22,11 @@ import { FormsService } from './forms.service';
 import { FormsController, PublicFormsController } from './forms.controller';
 import { WorkflowsService } from './workflows.service';
 import { CrmPublicService } from './public';
+import { ReportsService } from './reports.service';
+import { ReportsController } from './reports.controller';
+import { ImportService } from './import.service';
+import { MergeService } from './merge.service';
+import { SampleDataService } from './sample-data.service';
 import { WorkflowsController } from './workflows.controller';
 import { PipelinesService } from './pipelines.service';
 import { FxService } from './fx.service';
@@ -43,7 +48,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
   imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
-  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController, LeadsController, FormsController, PublicFormsController, WorkflowsController],
+  controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController, LeadsController, FormsController, PublicFormsController, WorkflowsController, ReportsController],
   providers: [
     DirectoryService,
     DealsService,
@@ -58,6 +63,10 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
     LeadsService,
     FormsService,
     WorkflowsService,
+    ReportsService,
+    ImportService,
+    MergeService,
+    SampleDataService,
     FxService,
     FxRefreshJob,
     CrmGateway,
