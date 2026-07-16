@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import {
   activities,
   dealPeople,
@@ -226,17 +226,26 @@ export class MergeService {
 
   // ─── Guards ──────────────────────────────────────────────────────────────────
 
+  // Both rows are locked FOR UPDATE in a deterministic (id-sorted) order so
+  // two opposing merges — mergePeople(A,B) ∥ mergePeople(B,A) — serialize on
+  // the same first lock instead of cross-tombstoning. Ordering the lock avoids
+  // a lock-order deadlock. Whichever merge commits first soft-deletes a row;
+  // the second then re-reads and fails the "both must exist" check.
   private async assertPeople(tx: Db, winnerId: string, loserId: string) {
     if (winnerId === loserId) throw new BadRequestException('Pick two different records');
     const rows = await tx.select({ id: directoryPeople.id }).from(directoryPeople)
-      .where(and(inArray(directoryPeople.id, [winnerId, loserId]), isNull(directoryPeople.deleted_at)));
+      .where(and(inArray(directoryPeople.id, [winnerId, loserId]), isNull(directoryPeople.deleted_at)))
+      .orderBy(asc(directoryPeople.id))
+      .for('update');
     if (rows.length !== 2) throw new NotFoundException('Both people must exist (and not be deleted)');
   }
 
   private async assertCompanies(tx: Db, winnerId: string, loserId: string) {
     if (winnerId === loserId) throw new BadRequestException('Pick two different records');
     const rows = await tx.select({ id: directoryCompanies.id }).from(directoryCompanies)
-      .where(and(inArray(directoryCompanies.id, [winnerId, loserId]), isNull(directoryCompanies.deleted_at)));
+      .where(and(inArray(directoryCompanies.id, [winnerId, loserId]), isNull(directoryCompanies.deleted_at)))
+      .orderBy(asc(directoryCompanies.id))
+      .for('update');
     if (rows.length !== 2) throw new NotFoundException('Both companies must exist (and not be deleted)');
   }
 }

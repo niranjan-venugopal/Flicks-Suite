@@ -43,6 +43,7 @@ class ClientEventDto {
 
   @IsOptional()
   @IsObject()
+  @Type(() => Object)
   properties?: Record<string, unknown>;
 }
 

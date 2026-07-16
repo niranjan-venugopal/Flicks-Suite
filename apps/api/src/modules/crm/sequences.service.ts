@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import {
   deals,
   directoryPeople,
@@ -244,7 +244,7 @@ export class SequencesService {
           await tx
             .update(sequenceEnrollments)
             .set({ next_send_at: new Date(now.getTime() + LEASE_MINUTES * 60_000), updated_at: now })
-            .where(sql`${sequenceEnrollments.id} IN ${sql.raw(`(${due.map((d) => `'${d.id}'`).join(',')})`)}`);
+            .where(inArray(sequenceEnrollments.id, due.map((d) => d.id)));
         }
         return due;
       });

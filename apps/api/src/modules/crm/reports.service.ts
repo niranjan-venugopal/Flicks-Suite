@@ -158,7 +158,7 @@ export class ReportsService {
 
       // Lost reasons distribution.
       const lostRows = decided.filter((d) => d.status === 'lost');
-      const reasons = await tx.select().from(lostReasons);
+      const reasons = await tx.select().from(lostReasons).where(eq(lostReasons.tenant_id, tenantId));
       const reasonName = new Map(reasons.map((r) => [r.id, r.label]));
       const lostByReason = new Map<string, number>();
       for (const d of lostRows) {
@@ -197,7 +197,7 @@ export class ReportsService {
         .select({ user_id: memberships.user_id, name: users.full_name })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.user_id))
-        .where(and(eq(memberships.status, 'active'), sql`${memberships.role} <> 'auditor'`));
+        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} <> 'auditor'`));
       const actRows = await tx
         .select({ assignee: activities.assignee_user_id, type: activities.type, n: sql<number>`count(*)::int` })
         .from(activities)
@@ -210,7 +210,7 @@ export class ReportsService {
         .groupBy(emailMessages.sender_user_id);
       const emailMap = new Map(emailRows.map((r) => [r.sender, r.n]));
       const thisMonth = monthKey(new Date());
-      const goals = await tx.select().from(salesGoals).where(eq(salesGoals.period, thisMonth));
+      const goals = await tx.select().from(salesGoals).where(and(eq(salesGoals.tenant_id, tenantId), eq(salesGoals.period, thisMonth)));
       const goalByUser = new Map(goals.filter((g) => g.user_id).map((g) => [g.user_id, Number(g.target_base)]));
       const wonThisMonth = await tx
         .select({ owner: deals.owner_user_id, total: sql<number>`coalesce(sum(${deals.value_base_amount}), 0)::float` })
@@ -278,7 +278,7 @@ export class ReportsService {
         .select({ won_at: deals.won_at, value: sql<number>`${deals.value_base_amount}::float` })
         .from(deals)
         .where(and(eq(deals.status, 'won'), gte(deals.won_at, horizonStart), lt(deals.won_at, horizonEnd), isNull(deals.deleted_at)));
-      const goals = await tx.select().from(salesGoals).where(isNull(salesGoals.user_id));
+      const goals = await tx.select().from(salesGoals).where(and(eq(salesGoals.tenant_id, tenantId), isNull(salesGoals.user_id)));
       const teamGoal = new Map(goals.map((g) => [g.period, Number(g.target_base)]));
 
       const rows = [];
@@ -319,7 +319,7 @@ export class ReportsService {
         .select({ goal: salesGoals, user_name: users.full_name })
         .from(salesGoals)
         .leftJoin(users, eq(users.id, salesGoals.user_id))
-        .where(period ? eq(salesGoals.period, period) : undefined)
+        .where(period ? and(eq(salesGoals.tenant_id, tenantId), eq(salesGoals.period, period)) : eq(salesGoals.tenant_id, tenantId))
         .orderBy(desc(salesGoals.period));
       return { data: rows.map((r) => ({ ...r.goal, target_base: Number(r.goal.target_base), user_name: r.user_name })) };
     });
@@ -334,6 +334,7 @@ export class ReportsService {
       async (tx) => {
         if (dto.user_id) await this.assertMember(tx, tenantId, dto.user_id);
         const where = and(
+          eq(salesGoals.tenant_id, tenantId),
           eq(salesGoals.period, dto.period),
           dto.user_id ? eq(salesGoals.user_id, dto.user_id) : isNull(salesGoals.user_id),
         );

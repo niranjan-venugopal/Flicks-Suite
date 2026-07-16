@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -43,8 +44,10 @@ class CreateSavedViewDto {
   @IsString() object_type!: string;
   @IsString() @MaxLength(80) name!: string;
   @IsOptional() @IsBoolean() is_shared?: boolean;
-  @IsOptional() @IsObject() filters?: Record<string, unknown>;
-  @IsOptional() @IsObject() sort?: Record<string, unknown>;
+  // @Type(() => Object): with enableImplicitConversion the pipe otherwise
+  // rewrites nested filter/sort values to []. Same fix as workflows/forms.
+  @IsOptional() @IsObject() @Type(() => Object) filters?: Record<string, unknown>;
+  @IsOptional() @IsObject() @Type(() => Object) sort?: Record<string, unknown>;
   @IsOptional() @IsArray() columns?: string[];
 }
 

@@ -268,7 +268,6 @@ export class WorkflowsService {
     };
 
     for (const action of (wf.actions as WorkflowAction[]) ?? []) {
-      this.logger.debug(`wf ${wf.id}: running action ${action.type}`);
       try {
         switch (action.type) {
           case 'create_activity': {
@@ -344,7 +343,6 @@ export class WorkflowsService {
       } catch (err) {
         steps.push({ label: this.actionLabel(action), status: 'error', error: (err instanceof Error ? err.message : String(err)).slice(0, 300) });
       }
-      this.logger.debug(`wf ${wf.id}: finished action ${action.type}`);
     }
     return steps;
   }

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import * as crypto from 'crypto';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, dbAdmin } from '@flicks/db';
 import {
   activities,
@@ -209,6 +209,24 @@ describe('Merge & dedupe (C15) + §19.7 reassignment', () => {
     expect(tomb!.deleted_at).not.toBeNull();
     expect(tomb!.merged_into_id).toBe(winner!.id);
     expect(eventsStub.publish).toHaveBeenCalledWith(expect.objectContaining({ name: 'crm.contact.merged' }), expect.anything());
+  });
+
+  it('opposing concurrent people-merges serialize instead of cross-tombstoning (M3 row lock)', async () => {
+    const email = `dbl-${rid()}@m.example`;
+    const [a] = await dbAdmin.insert(directoryPeople).values({ tenant_id: tenantA, first_name: 'AA', email }).returning();
+    const [b] = await dbAdmin.insert(directoryPeople).values({ tenant_id: tenantA, first_name: 'BB', email }).returning();
+    // A→B and B→A fired together: the FOR UPDATE lock lets one win and the
+    // other fail its "both must exist" check — never both tombstoned.
+    const results = await Promise.allSettled([
+      merge.mergePeople(tenantA, owner, a!.id, b!.id),
+      merge.mergePeople(tenantA, owner, b!.id, a!.id),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    const rows = await dbAdmin.select().from(directoryPeople).where(inArray(directoryPeople.id, [a!.id, b!.id]));
+    // Exactly one survivor (not deleted), one tombstone.
+    expect(rows.filter((r) => r.deleted_at === null)).toHaveLength(1);
+    expect(rows.filter((r) => r.merged_into_id !== null)).toHaveLength(1);
   });
 
   it('merges companies (people + deals move to the survivor)', async () => {

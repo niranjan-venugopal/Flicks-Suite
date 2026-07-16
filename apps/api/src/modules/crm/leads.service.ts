@@ -199,13 +199,22 @@ export class LeadsService {
       currency?: string;
     },
   ) {
-    // Step 1 — resolve/create directory records in one tenant tx.
+    // Step 1 — atomically CLAIM the lead, then resolve/create directory records
+    // in one tenant tx. The claim is a guarded status flip: only one concurrent
+    // convert can move it out of new/working, so a double-submit can't create
+    // two deals. If a later step fails we revert the claim to 'working'.
     const resolved = await this.db.withTenant(
       tenantId,
       async (tx) => {
-        const [lead] = await tx.select().from(leads).where(eq(leads.id, id)).limit(1);
-        if (!lead) throw new NotFoundException('Lead not found');
-        if (lead.status === 'converted' || lead.status === 'discarded') {
+        const [lead] = await tx
+          .update(leads)
+          .set({ status: 'converted', updated_at: new Date() })
+          .where(and(eq(leads.id, id), inArray(leads.status, ['new', 'working'])))
+          .returning();
+        if (!lead) {
+          // Either it doesn't exist, or it's already converted/discarded.
+          const [exists] = await tx.select({ id: leads.id }).from(leads).where(eq(leads.id, id)).limit(1);
+          if (!exists) throw new NotFoundException('Lead not found');
           throw new BadRequestException('This lead is already decided');
         }
 
@@ -260,45 +269,57 @@ export class LeadsService {
       userId,
     );
 
-    // Step 2 — deal via DealsService (FX snapshot, stage history, event).
-    const title = (dto.deal_title ?? '').trim()
-      || `${resolved.lead.company_name || resolved.lead.first_name} — new opportunity`;
-    const deal = await this.deals.create(tenantId, userId, {
-      title,
-      pipeline_id: dto.pipeline_id,
-      stage_id: dto.stage_id,
-      company_id: resolved.companyId ?? undefined,
-      primary_person_id: resolved.personId,
-      value_amount: dto.value_amount,
-      currency: dto.currency,
-      source: resolved.lead.source,
-    });
+    // Steps 2–3 run after the claim. If deal creation fails, revert the claim
+    // so the lead returns to 'working' instead of being stuck 'converted' with
+    // no deal.
+    try {
+      // Step 2 — deal via DealsService (FX snapshot, stage history, event).
+      const title = (dto.deal_title ?? '').trim()
+        || `${resolved.lead.company_name || resolved.lead.first_name} — new opportunity`;
+      const deal = await this.deals.create(tenantId, userId, {
+        title,
+        pipeline_id: dto.pipeline_id,
+        stage_id: dto.stage_id,
+        company_id: resolved.companyId ?? undefined,
+        primary_person_id: resolved.personId,
+        value_amount: dto.value_amount,
+        currency: dto.currency,
+        source: resolved.lead.source,
+      });
 
-    // Step 3 — flip the lead with back-links.
-    return this.db.withTenant(
-      tenantId,
-      async (tx) => {
-        const [row] = await tx
-          .update(leads)
-          .set({
-            status: 'converted',
-            owner_user_id: sql`coalesce(${leads.owner_user_id}, ${userId})`,
-            converted_person_id: resolved.personId,
-            converted_company_id: resolved.companyId,
-            converted_deal_id: deal.data.id,
-            updated_at: new Date(),
-          })
-          .where(eq(leads.id, id))
-          .returning();
-        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.convert', resourceType: 'lead', resourceId: id });
-        await this.domainEvents.publish(
-          { name: 'crm.lead.converted', tenantId, actorUserId: userId, payload: { lead_id: id, deal_id: deal.data.id, person_id: resolved.personId, company_id: resolved.companyId } },
-          tx,
-        );
-        return { data: { lead: row!, deal_id: deal.data.id, person_id: resolved.personId, company_id: resolved.companyId } };
-      },
-      userId,
-    );
+      // Step 3 — fill in the back-links (status is already 'converted' from the claim).
+      return await this.db.withTenant(
+        tenantId,
+        async (tx) => {
+          const [row] = await tx
+            .update(leads)
+            .set({
+              owner_user_id: sql`coalesce(${leads.owner_user_id}, ${userId})`,
+              converted_person_id: resolved.personId,
+              converted_company_id: resolved.companyId,
+              converted_deal_id: deal.data.id,
+              updated_at: new Date(),
+            })
+            .where(eq(leads.id, id))
+            .returning();
+          await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.convert', resourceType: 'lead', resourceId: id });
+          await this.domainEvents.publish(
+            { name: 'crm.lead.converted', tenantId, actorUserId: userId, payload: { lead_id: id, deal_id: deal.data.id, person_id: resolved.personId, company_id: resolved.companyId } },
+            tx,
+          );
+          return { data: { lead: row!, deal_id: deal.data.id, person_id: resolved.personId, company_id: resolved.companyId } };
+        },
+        userId,
+      );
+    } catch (err) {
+      // Release the claim so the lead can be converted again.
+      await this.db.withTenant(
+        tenantId,
+        (tx) => tx.update(leads).set({ status: 'working', updated_at: new Date() }).where(eq(leads.id, id)),
+        userId,
+      ).catch(() => undefined);
+      throw err;
+    }
   }
 
   /**

@@ -268,6 +268,10 @@ export class CrmEmailService {
   }
 
   // ─── Signature (§19.4) ────────────────────────────────────────────────────────
+  // The signature lives on the GLOBAL `users` table (no tenant_id column), keyed
+  // by the acting user. `userId` always comes from the authenticated session
+  // (never a request body), so these dbAdmin reads/writes only ever touch the
+  // caller's own row — no tenant predicate exists or is needed here.
 
   async getSignature(userId: string) {
     const [u] = await this.dbAdmin.select({ signature: users.email_signature_html }).from(users).where(eq(users.id, userId)).limit(1);

@@ -162,3 +162,27 @@ describe('Directory tenant isolation (PRD v5 §13)', () => {
     expect(rows.every((r) => r.tenant_id === tenantA)).toBe(true);
   });
 });
+
+describe('Directory inbound reference validation (H1 — FK bypasses RLS)', () => {
+  it('rejects a cross-tenant company_id on createPerson', async () => {
+    const bCo = await directory.createCompany(tenantB, userId, { name: `Ref-${rid()}`, domain: `ref-${rid()}.com` });
+    await expect(
+      directory.createPerson(tenantA, userId, { first_name: 'Cross', email: `cross-${rid()}@x.com`, company_id: bCo.data.id }),
+    ).rejects.toThrow(/company_id does not belong/i);
+  });
+
+  it('rejects a non-member owner_user_id on createPerson', async () => {
+    const stranger = crypto.randomUUID();
+    await expect(
+      directory.createPerson(tenantA, userId, { first_name: 'Owned', email: `owned-${rid()}@x.com`, owner_user_id: stranger }),
+    ).rejects.toThrow(/not an active member/i);
+  });
+
+  it('rejects a cross-tenant company_id on updatePerson', async () => {
+    const p = await directory.createPerson(tenantA, userId, { first_name: 'Upd', email: `upd-${rid()}@x.com` });
+    const bCo = await directory.createCompany(tenantB, userId, { name: `Ref2-${rid()}`, domain: `ref2-${rid()}.com` });
+    await expect(
+      directory.updatePerson(tenantA, userId, p.data.id, { company_id: bCo.data.id }),
+    ).rejects.toThrow(/company_id does not belong/i);
+  });
+});

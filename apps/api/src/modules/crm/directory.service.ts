@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, ilike, isNull, ne, or, sql } from 'drizzle-orm';
-import { directoryCompanies, directoryPeople } from '@flicks/db/schema';
+import { directoryCompanies, directoryPeople, memberships } from '@flicks/db/schema';
+import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
@@ -41,6 +42,44 @@ export class DirectoryService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
   ) {}
+
+  /**
+   * Validate inbound foreign-key references belong to THIS tenant before we
+   * write them onto a person/company. Postgres FK checks run as the table
+   * owner and bypass RLS, so a global-by-id FK (company_id, owner_user_id)
+   * would happily accept another tenant's row id — reachable via the public
+   * REST API. These lookups run under the tenant transaction (RLS-scoped),
+   * so a cross-tenant id resolves to nothing and is rejected. `owner_user_id`
+   * must be a live (non-deactivated) member. Mirrors DealsService.assertRefsInTenant.
+   */
+  private async assertRefsInTenant(
+    tx: Db,
+    tenantId: string,
+    refs: { company_id?: string | null; owner_user_id?: string | null },
+  ): Promise<void> {
+    if (refs.company_id) {
+      const [c] = await tx
+        .select({ id: directoryCompanies.id })
+        .from(directoryCompanies)
+        .where(and(eq(directoryCompanies.id, refs.company_id), isNull(directoryCompanies.deleted_at)))
+        .limit(1);
+      if (!c) throw new BadRequestException('company_id does not belong to this workspace');
+    }
+    if (refs.owner_user_id) {
+      const [m] = await tx
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.user_id, refs.owner_user_id),
+            ne(memberships.status, 'deactivated'),
+          ),
+        )
+        .limit(1);
+      if (!m) throw new BadRequestException('owner_user_id is not an active member of this workspace');
+    }
+  }
 
   // ─── Companies ──────────────────────────────────────────────────────────────
 
@@ -135,6 +174,7 @@ export class DirectoryService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.assertRefsInTenant(tx, tenantId, { owner_user_id: dto.owner_user_id ?? null });
         // Hard block: exact domain match (§3.3).
         if (domain) {
           const [dup] = await tx
@@ -220,6 +260,7 @@ export class DirectoryService {
           .where(and(eq(directoryCompanies.id, id), isNull(directoryCompanies.deleted_at)))
           .limit(1);
         if (!existing) throw new NotFoundException('Company not found');
+        await this.assertRefsInTenant(tx, tenantId, { owner_user_id: 'owner_user_id' in dto ? (dto.owner_user_id as string | null) : null });
 
         const patch: Record<string, unknown> = { ...dto, updated_by: userId, updated_at: new Date() };
         if ('domain' in dto) patch.domain = normalizeDomain(dto.domain as string);
@@ -337,6 +378,7 @@ export class DirectoryService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.assertRefsInTenant(tx, tenantId, { company_id: dto.company_id ?? null, owner_user_id: dto.owner_user_id ?? null });
         // Hard block: exact email match (§3.3).
         if (email) {
           const [dup] = await tx
@@ -397,6 +439,10 @@ export class DirectoryService {
           .where(and(eq(directoryPeople.id, id), isNull(directoryPeople.deleted_at)))
           .limit(1);
         if (!existing) throw new NotFoundException('Contact not found');
+        await this.assertRefsInTenant(tx, tenantId, {
+          company_id: 'company_id' in dto ? (dto.company_id as string | null) : null,
+          owner_user_id: 'owner_user_id' in dto ? (dto.owner_user_id as string | null) : null,
+        });
 
         const patch: Record<string, unknown> = { ...dto, updated_by: userId, updated_at: new Date() };
         if ('email' in dto) patch.email = (dto.email as string)?.trim().toLowerCase() || null;

@@ -1,5 +1,9 @@
 import 'dotenv/config';
+import 'reflect-metadata';
 import * as crypto from 'crypto';
+import { ValidationPipe } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsObject } from 'class-validator';
 import { eq } from 'drizzle-orm';
 import { db, dbAdmin } from '@flicks/db';
 import {
@@ -117,6 +121,32 @@ describe('Saved views (§9.2)', () => {
     expect(gone.data.deleted).toBe(true);
     const [row] = await dbAdmin.select().from(savedViews).where(eq(savedViews.id, v.data.id));
     expect(row).toBeUndefined();
+  });
+
+  it('nested filters/sort round-trip through create + list (B4 persistence)', async () => {
+    const filters = { stage_id: { op: 'in', value: ['a', 'b'] }, tags: ['x', 'y'], amount: { gte: 1000 } };
+    const sort = { field: 'value_base_amount', dir: 'desc' };
+    const v = await views.create(tenantA, userA, { object_type: 'deal', name: `Filtered ${Date.now()}`, filters, sort });
+    const [row] = await dbAdmin.select().from(savedViews).where(eq(savedViews.id, v.data.id));
+    expect(row!.filters).toEqual(filters); // nested arrays/objects intact (not mangled to [])
+    expect(row!.sort).toEqual(sort);
+  });
+});
+
+describe('ValidationPipe implicit-conversion (B4 — @Type(() => Object) on nested JSON)', () => {
+  // The saved-view filters/sort bug: with { transform, enableImplicitConversion }
+  // the pipe rewrites nested object/array values to [] UNLESS @Type(() => Object)
+  // is present. This locks in that the fix's mechanism holds for that shape.
+  class ViewLike {
+    @IsObject() @Type(() => Object) filters?: Record<string, unknown>;
+  }
+  it('preserves nested filter values instead of mangling them to []', async () => {
+    const pipe = new ValidationPipe({ transform: true, whitelist: true, transformOptions: { enableImplicitConversion: true } });
+    const out = (await pipe.transform(
+      { filters: { stage_id: { op: 'in', value: ['a', 'b'] }, tags: ['x'] } },
+      { type: 'body', metatype: ViewLike },
+    )) as ViewLike;
+    expect(out.filters).toEqual({ stage_id: { op: 'in', value: ['a', 'b'] }, tags: ['x'] });
   });
 });
 

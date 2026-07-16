@@ -21,8 +21,30 @@ import { LeadsService, scoreLead } from './leads.service';
 
 const STANDARD_FIELDS = new Set(['name', 'email', 'company', 'phone', 'note']);
 const MIN_FILL_MS = 3_000;
-const MAX_FORM_AGE_MS = 24 * 3600_000;
+const MAX_FORM_AGE_MS = 2 * 3600_000; // signed render token is valid 2h (shortened from 24h)
 const SUBMITS_PER_HOUR_PER_IP = 10;
+const SUBMITS_PER_DAY_PER_FORM = 500; // per-tenant/per-form daily cap on top of per-IP
+// Submission-body bounds (the public body is not a DTO, so enforce them here).
+const MAX_FIELDS = 40;
+const MAX_VALUE_LEN = 5_000;
+const MAX_TOTAL_LEN = 20_000;
+
+/** Coerce + bound the free-form submission values; rejects oversize payloads. */
+function boundValues(raw: Record<string, unknown> | undefined): Record<string, string> {
+  const entries = Object.entries(raw ?? {});
+  if (entries.length > MAX_FIELDS) throw new BadRequestException('Too many fields in the submission');
+  let total = 0;
+  const out: Record<string, string> = {};
+  for (const [k, v] of entries) {
+    if (typeof k !== 'string' || k.length > 100) continue;
+    const s = v == null ? '' : String(v);
+    if (s.length > MAX_VALUE_LEN) throw new BadRequestException(`Field "${k}" is too long`);
+    total += k.length + s.length;
+    if (total > MAX_TOTAL_LEN) throw new BadRequestException('Submission is too large');
+    out[k] = s;
+  }
+  return out;
+}
 
 export interface FormField {
   key: string;
@@ -179,7 +201,11 @@ export class FormsService {
     const [form] = await this.dbAdmin.select().from(webForms).where(eq(webForms.token, token)).limit(1);
     if (!form || !form.active) throw new NotFoundException('This form is not available');
 
-    // Rate limit before any work: 10/hr/IP across all forms.
+    // Bound the free-form body before any DB work (the submit body is public
+    // and not a DTO, so cap field count / value length / total size here).
+    const values = boundValues(body.values);
+
+    // Rate limit before any work: 10/hr/IP across all forms…
     const ipHash = createHash('sha256').update(ip || 'unknown').digest('hex');
     const [{ n }] = await this.dbAdmin
       .select({ n: sql<number>`count(*)::int` })
@@ -187,6 +213,14 @@ export class FormsService {
       .where(and(eq(formSubmissions.ip_hash, ipHash), gte(formSubmissions.created_at, new Date(Date.now() - 3600_000))));
     if (n! >= SUBMITS_PER_HOUR_PER_IP) {
       throw new BadRequestException({ code: 'RATE_LIMITED', message: 'Too many submissions — try again later' });
+    }
+    // …and a per-form daily cap so one form can't be flooded across many IPs.
+    const [{ d }] = await this.dbAdmin
+      .select({ d: sql<number>`count(*)::int` })
+      .from(formSubmissions)
+      .where(and(eq(formSubmissions.form_id, form.id), gte(formSubmissions.created_at, new Date(Date.now() - 24 * 3600_000))));
+    if (d! >= SUBMITS_PER_DAY_PER_FORM) {
+      throw new BadRequestException({ code: 'RATE_LIMITED', message: 'This form has reached its daily limit — try again later' });
     }
 
     // Spam gates — accept-and-drop so the page still shows success.
@@ -200,7 +234,6 @@ export class FormsService {
       return { data: { ok: true, message: form.success_message, redirect_url: form.redirect_url } };
     }
 
-    const values = body.values ?? {};
     const fields = form.fields as FormField[];
     for (const f of fields) {
       if (f.required && !(values[f.key] ?? '').trim()) {

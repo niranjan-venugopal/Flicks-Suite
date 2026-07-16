@@ -156,6 +156,24 @@ describe('Leads (§5.1/§5.3, C6)', () => {
     const [after] = await dbAdmin.select().from(leads).where(eq(leads.id, lead.data.id));
     expect(after!.status).toBe('discarded');
   });
+
+  it('concurrent convert of the same lead yields exactly ONE deal (M1 atomic claim)', async () => {
+    const lead = await leadsSvc.create(tenantA, owner, { first_name: 'Race', email: `race-${rid()}@x.example`, company_name: `RaceCo ${rid()}` });
+    // Fire two converts at once — the atomic claim must let only one win.
+    const results = await Promise.allSettled([
+      leadsSvc.convert(tenantA, owner, lead.data.id, { value_amount: 100, currency: 'INR' }),
+      leadsSvc.convert(tenantA, owner, lead.data.id, { value_amount: 100, currency: 'INR' }),
+    ]);
+    const ok = results.filter((r) => r.status === 'fulfilled');
+    const failed = results.filter((r) => r.status === 'rejected');
+    expect(ok).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    const [after] = await dbAdmin.select().from(leads).where(eq(leads.id, lead.data.id));
+    expect(after!.status).toBe('converted');
+    // Only ONE deal points back to this converted lead.
+    const dealsForLead = await dbAdmin.select().from(deals).where(and(eq(deals.tenant_id, tenantA), eq(deals.id, after!.converted_deal_id!)));
+    expect(dealsForLead).toHaveLength(1);
+  });
 });
 
 describe('Web forms (§5.2, C13)', () => {
