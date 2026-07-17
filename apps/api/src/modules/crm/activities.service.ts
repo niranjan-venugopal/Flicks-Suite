@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { activities, deals, directoryCompanies, directoryPeople, memberships, users } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
@@ -216,6 +216,10 @@ export class ActivitiesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Open buckets are the user's own queue (assignee = me); the completed
+        // bucket ALSO includes activities the user completed for teammates
+        // (completed_by = me) — e.g. closing a colleague's "Call within 1h"
+        // from the deal timeline — so done work never vanishes from their view.
         const rows = await tx
           .select({
             id: activities.id,
@@ -224,7 +228,10 @@ export class ActivitiesService {
             body: activities.body,
             due_at: activities.due_at,
             completed_at: activities.completed_at,
+            completed_by: activities.completed_by,
             outcome: activities.outcome,
+            assignee_user_id: activities.assignee_user_id,
+            assignee_name: users.full_name,
             deal_id: activities.deal_id,
             deal_title: deals.title,
             person_id: activities.person_id,
@@ -232,12 +239,18 @@ export class ActivitiesService {
           })
           .from(activities)
           .leftJoin(deals, eq(deals.id, activities.deal_id))
-          .where(and(eq(activities.assignee_user_id, userId), isNull(activities.deleted_at)))
+          .leftJoin(users, eq(users.id, activities.assignee_user_id))
+          .where(
+            and(
+              or(eq(activities.assignee_user_id, userId), eq(activities.completed_by, userId)),
+              isNull(activities.deleted_at),
+            ),
+          )
           .orderBy(asc(activities.due_at));
 
         const now = new Date();
         const endOfToday = new Date(now); endOfToday.setHours(23, 59, 59, 999);
-        const open = rows.filter((r) => !r.completed_at);
+        const open = rows.filter((r) => !r.completed_at && r.assignee_user_id === userId);
         const done = rows
           .filter((r) => r.completed_at)
           .sort((a, b) => new Date(b.completed_at!).getTime() - new Date(a.completed_at!).getTime())

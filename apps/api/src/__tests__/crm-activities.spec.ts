@@ -112,15 +112,21 @@ describe('Activity loop (§6)', () => {
     expect(mine.data.overdue.find((r) => r.subject === 'Overdue thing')!.deal_title).toBeTruthy();
   });
 
-  it('mine() is assignee-scoped: completing a teammate’s deal task lands in THEIR queue, not the completer’s (bug-report repro)', async () => {
+  it('mine(): open buckets are assignee-scoped; the completed bucket also carries work done FOR teammates (bug-report repro)', async () => {
     const { memberships } = await import('@flicks/db/schema');
     const [mate] = await dbAdmin.insert(users).values({ email: `mate-${rid()}@test.test`, full_name: 'Mate M', status: 'active' }).returning();
     await dbAdmin.insert(memberships).values({ tenant_id: tenantA, user_id: mate!.id, role: 'employee', status: 'active' });
     const due = new Date(Date.now() + 3600_000).toISOString();
 
-    // The reported flow: a task on the deal assigned to a teammate, completed
-    // by the CREATOR from the deal timeline.
+    // The reported flow: a task on the deal assigned to a teammate. While it's
+    // OPEN it sits only in the assignee's queue, never the creator's.
     const a = await service.create(tenantA, userId, { type: 'task', subject: 'Teammate follow-up', deal_id: dealA, due_at: due, assignee_user_id: mate!.id });
+    let mine = await service.mine(tenantA, userId);
+    expect([...mine.data.overdue, ...mine.data.today, ...mine.data.upcoming].some((r) => r.id === a.data.id)).toBe(false);
+    const theirsOpen = await service.mine(tenantA, mate!.id);
+    expect([...theirsOpen.data.overdue, ...theirsOpen.data.today, ...theirsOpen.data.upcoming].some((r) => r.id === a.data.id)).toBe(true);
+
+    // The CREATOR completes it from the deal timeline.
     await service.complete(tenantA, userId, a.data.id);
 
     // Completed on the deal timeline…
@@ -129,13 +135,16 @@ describe('Activity loop (§6)', () => {
     // …in the ASSIGNEE's recently-completed bucket…
     const theirs = await service.mine(tenantA, mate!.id);
     expect(theirs.data.completed.some((r) => r.id === a.data.id)).toBe(true);
-    // …and nowhere in the completer's queue: My Activities is assignee-scoped.
-    const mine = await service.mine(tenantA, userId);
-    expect(
-      [...mine.data.overdue, ...mine.data.today, ...mine.data.upcoming, ...mine.data.completed].some((r) => r.id === a.data.id),
-    ).toBe(false);
+    // …AND in the completer's completed bucket (done by me), labelled with the
+    // assignee so the UI can render "for Mate M" — but never in open buckets.
+    mine = await service.mine(tenantA, userId);
+    const doneByMe = mine.data.completed.find((r) => r.id === a.data.id);
+    expect(doneByMe).toBeDefined();
+    expect(doneByMe!.assignee_user_id).toBe(mate!.id);
+    expect(doneByMe!.assignee_name).toBe('Mate M');
+    expect([...mine.data.overdue, ...mine.data.today, ...mine.data.upcoming].some((r) => r.id === a.data.id)).toBe(false);
 
-    // Control: a self-assigned completed task DOES land in the creator's bucket.
+    // Control: a self-assigned completed task lands in the creator's bucket.
     const b = await service.create(tenantA, userId, { type: 'task', subject: 'My own follow-up', deal_id: dealA, due_at: due });
     await service.complete(tenantA, userId, b.data.id);
     const mine2 = await service.mine(tenantA, userId);

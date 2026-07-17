@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { EmptyState } from '@/components/crm/kit'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { useMyActivities, useDeleteActivity, type Activity } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -14,6 +15,7 @@ import { useMyActivities, useDeleteActivity, type Activity } from '@/lib/api/que
 
 export default function MyActivitiesPage() {
   const { data, isLoading } = useMyActivities()
+  const { currentUser } = useAuthStore()
   const del = useDeleteActivity()
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const completeLoop = useCompleteWithNext()
@@ -46,7 +48,7 @@ export default function MyActivitiesPage() {
           <Bucket label="Today" tone="blue" items={d?.today ?? []} onComplete={completeLoop.start} onDelete={(a) => del.mutate({ id: a.id, dealId: a.deal_id })} />
           <Bucket label="Upcoming" tone="" items={d?.upcoming ?? []} onComplete={completeLoop.start} onDelete={(a) => del.mutate({ id: a.id, dealId: a.deal_id })} />
           {(d?.completed.length ?? 0) > 0 && (
-            <Bucket label="Recently completed" tone="green" items={d!.completed} muted />
+            <Bucket label="Recently completed" tone="green" items={d!.completed} muted meId={currentUser?.id} />
           )}
         </>
       )}
@@ -57,13 +59,15 @@ export default function MyActivitiesPage() {
   )
 }
 
-function Bucket({ label, tone, items, onComplete, onDelete, muted }: {
+function Bucket({ label, tone, items, onComplete, onDelete, muted, meId }: {
   label: string
   tone: '' | 'blue' | 'coral' | 'green'
   items: Activity[]
   onComplete?: (a: Activity) => void
   onDelete?: (a: Activity) => void
   muted?: boolean
+  /** When set, rows whose assignee isn't me are labelled "for {assignee}". */
+  meId?: string
 }) {
   if (!items.length) return null
   return (
@@ -94,6 +98,9 @@ function Bucket({ label, tone, items, onComplete, onDelete, muted }: {
                     </Link>
                   )}
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: due.overdue ? 'var(--coral)' : 'var(--text-mute)' }}>{due.text}</span>
+                  {meId && a.assignee_user_id && a.assignee_user_id !== meId && a.assignee_name && (
+                    <Pill tone="blue">for {a.assignee_name}</Pill>
+                  )}
                 </div>
               </div>
               {onComplete && !a.completed_at && (

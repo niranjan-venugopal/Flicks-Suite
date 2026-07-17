@@ -7,6 +7,7 @@ import { Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
 import { EmptyState, fmtCur } from '@/components/crm/kit'
 import { ACT_META, dueLabel, useCompleteWithNext } from '@/components/crm/activity-widgets'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useBoard,
@@ -34,6 +35,7 @@ export default function CrmOverviewPage() {
   const forecast = useForecast()
   const board = useBoard()
   const mine = useMyActivities()
+  const { currentUser } = useAuthStore()
   const reps = useReps()
   const completeLoop = useCompleteWithNext()
 
@@ -156,7 +158,11 @@ export default function CrmOverviewPage() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.subject}</div>
                     <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 1 }}>
-                      {[a.deal_title, a.outcome?.replace(/_/g, ' ')].filter(Boolean).join(' · ') || M.label}
+                      {[
+                        a.assignee_user_id && a.assignee_user_id !== currentUser?.id && a.assignee_name ? `for ${a.assignee_name}` : null,
+                        a.deal_title,
+                        a.outcome?.replace(/_/g, ' '),
+                      ].filter(Boolean).join(' · ') || M.label}
                     </div>
                   </div>
                   <span className="t-caption" style={{ whiteSpace: 'nowrap' }}>{a.completed_at ? new Date(a.completed_at).toLocaleDateString() : ''}</span>

@@ -527,6 +527,7 @@ export interface Activity {
   body: string | null
   due_at: string | null
   completed_at: string | null
+  completed_by?: string | null
   outcome: string | null
   assignee_user_id?: string
   assignee_name?: string | null
