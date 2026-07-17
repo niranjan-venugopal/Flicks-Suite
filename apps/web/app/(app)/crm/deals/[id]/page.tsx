@@ -406,7 +406,9 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
     entries.push({
       icon: M.icon, color: M.color, act: true,
       title: a.type === 'note' ? a.subject : `${M.label} completed — ${a.subject}`,
-      meta: [a.outcome?.replace(/_/g, ' '), a.body].filter(Boolean).join(' · ') || (a.assignee_name ?? ''),
+      // Assignee always leads the meta: My Activities is an assignee-scoped
+      // queue, so whose task this was must be readable at a glance.
+      meta: [a.assignee_name, a.outcome?.replace(/_/g, ' '), a.body].filter(Boolean).join(' · '),
       when: new Date(a.completed_at!).toLocaleString(),
     })
   }

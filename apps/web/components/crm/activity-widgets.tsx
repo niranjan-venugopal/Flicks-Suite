@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { Btn, Icon, Modal } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
-import { useCreateActivity, useCompleteActivity, type Activity } from '@/lib/api/queries/use-crm'
+import { useAuthStore } from '@/lib/stores/auth.store'
+import { useCreateActivity, useCompleteActivity, useReps, type Activity } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
 // §6 activity widgets — schedule modal ("what's next?"
@@ -38,11 +39,28 @@ export function ScheduleActivityModal({ open, onClose, dealId, title = 'Schedule
 }) {
   const { toast } = useToast()
   const create = useCreateActivity()
+  const { currentUser } = useAuthStore()
+  const reps = useReps()
   const [type, setType] = useState<'task' | 'call' | 'meeting'>('call')
   const [subject, setSubject] = useState(defaultSubject ?? '')
   const [when, setWhen] = useState(defaultWhen())
+  // '' = me. Only activities assigned to you appear in YOUR My Activities
+  // queue, so ownership must be an explicit, visible choice here.
+  const [assignee, setAssignee] = useState('')
 
   if (!open) return null
+  const teammates = (reps.data?.data ?? []).filter((r) => r.user_id !== currentUser?.id)
+  // Ownership must never be sticky: the modal stays mounted between opens, so
+  // clear the assignee on EVERY close (backdrop, ✕, "No next step"), not just
+  // after a successful submit — otherwise the next "what's next?" open would
+  // silently default to the previously picked teammate.
+  const close = () => {
+    setAssignee('')
+    onClose()
+  }
+  // Guard against a selection that left the roster (deactivated member): fall
+  // back to Me rather than submitting an id the server will 400.
+  const chosen = teammates.find((r) => r.user_id === assignee)
   const submit = async () => {
     try {
       await create.mutateAsync({
@@ -50,19 +68,23 @@ export function ScheduleActivityModal({ open, onClose, dealId, title = 'Schedule
         subject: subject.trim(),
         due_at: new Date(when).toISOString(),
         ...(dealId ? { deal_id: dealId } : {}),
+        ...(chosen ? { assignee_user_id: chosen.user_id } : {}),
       })
-      toast({ title: 'Scheduled', description: 'The deal keeps moving.' })
+      toast({
+        title: 'Scheduled',
+        description: chosen ? `Assigned to ${chosen.name} — it lands in their My Activities queue.` : 'The deal keeps moving.',
+      })
       setSubject('')
-      onClose()
+      close()
     } catch (err) {
       toast({ title: 'Could not schedule', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
   }
 
   return (
-    <Modal open={open} onClose={onClose} width={430} title={title} sub={sub ?? 'Keep the deal moving: always know the next step'}
+    <Modal open={open} onClose={close} width={430} title={title} sub={sub ?? 'Keep the deal moving: always know the next step'}
       footer={<>
-        <Btn kind="ghost" onClick={onClose}>No next step</Btn>
+        <Btn kind="ghost" onClick={close}>No next step</Btn>
         <Btn kind="primary" icon={<Icon.check size={14} />} onClick={() => void submit()} disabled={!subject.trim() || create.isPending}>
           {create.isPending ? 'Scheduling…' : 'Schedule'}
         </Btn>
@@ -88,6 +110,18 @@ export function ScheduleActivityModal({ open, onClose, dealId, title = 'Schedule
           <input autoFocus className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Debrief after contract review" style={{ height: 38, width: '100%' }}
             onKeyDown={(e) => { if (e.key === 'Enter' && subject.trim()) void submit() }} />
         </div>
+        {teammates.length > 0 && (
+          <div style={{ gridColumn: '1/-1' }}>
+            <div className="label">Assign to</div>
+            <select className="input" value={assignee} onChange={(e) => setAssignee(e.target.value)} style={{ height: 38, width: '100%' }}>
+              <option value="">Me{currentUser?.name ? ` — ${currentUser.name}` : ''}</option>
+              {teammates.map((r) => <option key={r.user_id} value={r.user_id}>{r.name}</option>)}
+            </select>
+            <div className="t-caption" style={{ marginTop: 6 }}>
+              {chosen ? `Shows in ${chosen.name}’s My Activities queue; they get an in-app ping.` : 'Shows in your My Activities queue.'}
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   )

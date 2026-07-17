@@ -112,6 +112,39 @@ describe('Activity loop (§6)', () => {
     expect(mine.data.overdue.find((r) => r.subject === 'Overdue thing')!.deal_title).toBeTruthy();
   });
 
+  it('mine() is assignee-scoped: completing a teammate’s deal task lands in THEIR queue, not the completer’s (bug-report repro)', async () => {
+    const { memberships } = await import('@flicks/db/schema');
+    const [mate] = await dbAdmin.insert(users).values({ email: `mate-${rid()}@test.test`, full_name: 'Mate M', status: 'active' }).returning();
+    await dbAdmin.insert(memberships).values({ tenant_id: tenantA, user_id: mate!.id, role: 'employee', status: 'active' });
+    const due = new Date(Date.now() + 3600_000).toISOString();
+
+    // The reported flow: a task on the deal assigned to a teammate, completed
+    // by the CREATOR from the deal timeline.
+    const a = await service.create(tenantA, userId, { type: 'task', subject: 'Teammate follow-up', deal_id: dealA, due_at: due, assignee_user_id: mate!.id });
+    await service.complete(tenantA, userId, a.data.id);
+
+    // Completed on the deal timeline…
+    const dealList = await service.listForDeal(tenantA, dealA);
+    expect(dealList.data.some((r) => r.id === a.data.id && r.completed_at)).toBe(true);
+    // …in the ASSIGNEE's recently-completed bucket…
+    const theirs = await service.mine(tenantA, mate!.id);
+    expect(theirs.data.completed.some((r) => r.id === a.data.id)).toBe(true);
+    // …and nowhere in the completer's queue: My Activities is assignee-scoped.
+    const mine = await service.mine(tenantA, userId);
+    expect(
+      [...mine.data.overdue, ...mine.data.today, ...mine.data.upcoming, ...mine.data.completed].some((r) => r.id === a.data.id),
+    ).toBe(false);
+
+    // Control: a self-assigned completed task DOES land in the creator's bucket.
+    const b = await service.create(tenantA, userId, { type: 'task', subject: 'My own follow-up', deal_id: dealA, due_at: due });
+    await service.complete(tenantA, userId, b.data.id);
+    const mine2 = await service.mine(tenantA, userId);
+    expect(mine2.data.completed.some((r) => r.id === b.data.id)).toBe(true);
+
+    await dbAdmin.delete(activities).where(eq(activities.assignee_user_id, mate!.id));
+    await dbAdmin.delete(users).where(eq(users.id, mate!.id));
+  });
+
   it('pings the assignee when someone ELSE schedules for them — and DND swallows the ping (§6.3)', async () => {
     const [other] = await dbAdmin.insert(users).values({ email: `assignee-${rid()}@test.test`, full_name: 'Assignee A', status: 'active' }).returning();
     await dbAdmin.insert((await import('@flicks/db/schema')).memberships).values({ tenant_id: tenantA, user_id: other!.id, role: 'employee', status: 'active' });
