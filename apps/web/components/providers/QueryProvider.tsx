@@ -7,10 +7,11 @@ import { useState } from 'react'
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  // The devtools mount a floating button on every route. Hide it on the print
-  // view so it never lands in a rendered invoice PDF (InvoicePdfService renders
-  // /inv/:token/print through headless Chromium).
-  const isPrint = pathname?.includes('/print') ?? false
+  // The devtools mount a floating button on every route. Local development
+  // only — production builds must never ship the palm-tree button — and hidden
+  // on the print view so it never lands in a rendered invoice PDF
+  // (InvoicePdfService renders /inv/:token/print through headless Chromium).
+  const showDevtools = process.env.NODE_ENV === 'development' && !(pathname?.includes('/print') ?? false)
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -32,7 +33,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      {!isPrint && <ReactQueryDevtools initialIsOpen={false} />}
+      {showDevtools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   )
 }

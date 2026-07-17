@@ -39,6 +39,9 @@ const securityHeaders = [
 
 const config: NextConfig = {
   images: { domains: ['files.flickssuite.com'] },
+  // No floating "N" dev-tools badge, ever — production builds never include it,
+  // and hiding it in dev too keeps demo/screenshot sessions clean.
+  devIndicators: false,
   // Perf: rewrite barrel imports (icons, radix) to per-module paths so route
   // chunks only carry the icons/components they render — faster dev compiles
   // and smaller production bundles.

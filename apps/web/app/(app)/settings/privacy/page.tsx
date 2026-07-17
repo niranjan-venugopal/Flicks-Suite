@@ -6,6 +6,7 @@ import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import { ConsentRowsBlock } from '@/components/consent/ConsentPrefs'
+import { OrgDataLegal } from '@/components/consent/OrgDataLegal'
 import {
   useMyConsents,
   useRecordConsents,
@@ -188,6 +189,10 @@ export default function PrivacySettingsPage() {
           <span className="t-caption">Opens the existing deletion flow on your profile — unchanged</span>
         </div>
       </div>
+
+      {/* Org-level data & legal (export / DPA / sub-processors) — owner & admin
+          only; everyone else just sees their personal cards above. */}
+      {(currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN') && <OrgDataLegal />}
     </SettingsLayout>
   )
 }

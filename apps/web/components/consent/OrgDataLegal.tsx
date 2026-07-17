@@ -6,9 +6,10 @@ import { useToast } from '@/components/ui/use-toast'
 import { useRequestOrgExport } from '@/lib/api/queries/use-consent'
 
 /**
- * D17 — Org settings "Data & legal" block (PRD v4 §3.5). Appended to the
- * Organization · Financial settings page; everything above it is unchanged.
- * Owner/Admin only (the settings page itself is admin-gated).
+ * D17 — org-level "Data & legal" block (PRD v4 §3.5): org export, DPA,
+ * sub-processors. Lives on Settings → Privacy & data with the rest of the
+ * data/legal surface; that page is visible to every member, so the CALLER
+ * must gate this block to owner/admin (the export endpoint enforces it too).
  */
 export function OrgDataLegal() {
   const { toast } = useToast()
