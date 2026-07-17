@@ -1,16 +1,32 @@
 # Flicks Suite — Handoff Documents
 
-This folder collects the engineering handoff documentation for the Flicks Suite
-**Invoicing v3** module (built on the V1 HRMS foundation).
+This folder collects the engineering handoff documentation for Flicks Suite —
+the V1 HRMS foundation, the **Invoicing v3** module, the **PRD v4** platform
+work, and the **PRD v5 CRM** module.
 
 | Document | Purpose |
 |----------|---------|
-| [`PRD_v3_Completion_Handoff.md`](./PRD_v3_Completion_Handoff.md) | Where we are against the Invoicing **PRD v3** — sprint-by-sprint completion status, verification snapshot, what's deferred, how to run & verify. **Start here.** |
+| [`PRD_v5_Completion_Handoff.md`](./PRD_v5_Completion_Handoff.md) | **Start here.** Where we are against the CRM **PRD v5** and the MVP release — sprint map, post-gate hardening passes, parked/deferred items, ops checklist, how to run & verify. |
+| [`CRM_Launch_Actions.md`](./CRM_Launch_Actions.md) | User-side day-1 external actions for the CRM launch (OAuth verifications, DNS, Resend, keys). |
+| [`Testing_Guide_Sprints_24-31.md`](./Testing_Guide_Sprints_24-31.md) | The de-facto **PRD v5 spec** (§3–§19, screens C1–C22) plus manual + automated test scripts for CRM sprints 24–31 and every checkpoint. |
+| [`PRD_v3_Completion_Handoff.md`](./PRD_v3_Completion_Handoff.md) | Where we are against the Invoicing **PRD v3** — sprint-by-sprint completion status, verification snapshot, what's deferred, how to run & verify. |
 | [`Razorpay_Live_Payments_Handoff.md`](./Razorpay_Live_Payments_Handoff.md) | Go-live runbook for the one config-gated item: enabling Razorpay live payments (OAuth Connect) once Razorpay grants Technology-Partner access. |
 | [`Testing_Guide_Sprints_16-19.md`](./Testing_Guide_Sprints_16-19.md) | Manual + automated test scripts for the PRD v4 Sprints 16–19 (consent, media, presence, analytics) with SQL verification snippets. |
-| [`Testing_Guide_Sprints_20-23.md`](./Testing_Guide_Sprints_20-23.md) | Manual + automated test scripts for PRD v4 Sprints 20–21 (feedback + NPS, platform billing/trial/paywall, FAM coupons, tenant auto-debit mandates). |
+| [`Testing_Guide_Sprints_20-23.md`](./Testing_Guide_Sprints_20-23.md) | Manual + automated test scripts for PRD v4 Sprints 20–23 (feedback + NPS, platform billing/trial/paywall, FAM coupons, tenant auto-debit mandates). |
 
-## Quick status (as of 2026-07-11)
+## Quick status (as of 2026-07-17)
+
+- **PRD v5 CRM — ALL sprints (24–31) shipped on `main` through the beta gate,
+  plus five post-gate hardening/polish passes → MVP-release-ready.** Gate at
+  handoff: **359/359** API tests, RLS `leak_with_bogus_context = 0`, migrations
+  `0001 → 0038` idempotent, api + web typecheck/build clean, boundaries lint
+  clean. Email suite + Automation are parked behind feature flags by product
+  decision (code + tests intact). Details: `PRD_v5_Completion_Handoff.md`.
+- Remaining pre-user actions are **ops-side only** (deploy prod build, sync
+  migrations, rotate the build PAT, Resend/FX/Sentry config) — see §4 of the
+  v5 handoff.
+
+## Earlier status (as of 2026-07-11)
 
 - **PRD v4 — ALL sprints (16–23) are shipped on `main`** (16 trust/consent · 17 media ·
   18 presence · 19 analytics · 20 feedback+NPS · 21 platform billing ·
