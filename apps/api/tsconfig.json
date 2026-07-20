@@ -27,7 +27,8 @@
       "@flicks/shared": ["../../packages/shared/src/index.ts"],
       "@flicks/shared/types": ["../../packages/shared/src/types/index.ts"],
       "@flicks/shared/validators": ["../../packages/shared/src/validators/index.ts"],
-      "@flicks/shared/constants": ["../../packages/shared/src/constants/index.ts"]
+      "@flicks/shared/constants": ["../../packages/shared/src/constants/index.ts"],
+      "@flicks/shared/pm": ["../../packages/shared/src/pm/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

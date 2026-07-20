@@ -384,6 +384,27 @@ export const DOMAIN_EVENTS = [
   // Existing modules (Sprint 24 publishers)
   'invoice.created', 'invoice.sent', 'invoice.paid', 'invoice.quote_accepted',
   'member.deactivated',
+  // PM (PRD v6 Appendix A) — every event advances domain_events.sync_seq and
+  // therefore the FSE delta cursor; payloads are ids/enums/numbers only.
+  'pm.team.created', 'pm.team.updated', 'pm.team.membership_changed', 'pm.team.privacy_changed',
+  'pm.state.created', 'pm.state.updated',
+  'pm.label.created', 'pm.label.updated',
+  'pm.issue.created', 'pm.issue.updated', 'pm.issue.state_changed', 'pm.issue.priority_changed',
+  'pm.issue.assigned', 'pm.issue.estimated', 'pm.issue.ranked', 'pm.issue.labeled',
+  'pm.issue.related', 'pm.issue.subscribed', 'pm.issue.commented', 'pm.issue.reaction_added',
+  'pm.issue.sent_to_triage', 'pm.issue.triaged', 'pm.issue.snoozed',
+  'pm.issue.deleted', 'pm.issue.restored',
+  'pm.cycle.created', 'pm.cycle.started', 'pm.cycle.ended', 'pm.cycle.rollover_completed',
+  'pm.cycle.snapshot_taken',
+  'pm.project.created', 'pm.project.updated', 'pm.project.status_changed',
+  'pm.project.health_updated', 'pm.project.milestone_changed', 'pm.project.completed',
+  'pm.project.created_from_deal',
+  'pm.initiative.created', 'pm.initiative.updated',
+  'pm.template.saved',
+  'pm.view.saved', 'pm.view.favorited',
+  'pm.github.installed', 'pm.github.repo_mapped', 'pm.github.link_attached',
+  'pm.github.automation_fired',
+  'pm.import.completed',
 ] as const;
 export type DomainEventName = (typeof DOMAIN_EVENTS)[number];
 

@@ -6,9 +6,12 @@ import {
   timestamp,
   integer,
   smallint,
+  bigint,
   jsonb,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
 
 // ─── domain_events — transactional outbox (PRD v5 §2.2 / 0030) ────────────────
@@ -34,8 +37,20 @@ export const domainEvents = pgTable(
       .defaultNow(),
     dispatched_at: timestamp('dispatched_at', { withTimezone: true }),
     dispatch_attempts: smallint('dispatch_attempts').notNull().default(0),
+    // FSE (PRD v6 §3.2 / 0039): globally monotonic delta cursor. Assigned at
+    // INSERT via the domain_events_sync_seq sequence (declared as the default
+    // so inserts may omit it); per-tenant delta queries filter
+    // (tenant_id, sync_seq). Number mode is safe well past any realistic
+    // event volume (< 2^53).
+    sync_seq: bigint('sync_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('domain_events_sync_seq')`),
   },
-  (t) => [index('idx_de_tenant_name_time').on(t.tenant_id, t.event_name, t.occurred_at)],
+  (t) => [
+    index('idx_de_tenant_name_time').on(t.tenant_id, t.event_name, t.occurred_at),
+    uniqueIndex('uq_de_sync_seq').on(t.sync_seq),
+    index('idx_de_tenant_seq').on(t.tenant_id, t.sync_seq),
+  ],
 );
 
 // ─── api_keys — public API (PRD v5 §11 / 0030) ────────────────────────────────

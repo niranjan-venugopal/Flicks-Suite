@@ -1,0 +1,347 @@
+import { Inject, Injectable } from '@nestjs/common';
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import {
+  domainEvents,
+  pmTeams,
+  pmTeamMemberships,
+  pmWorkflowStates,
+  pmLabels,
+  pmIssues,
+  pmIssueLabels,
+  pmIssueRelations,
+  pmIssueSubscribers,
+} from '@flicks/db/schema';
+import type { Db, DbAdmin } from '@flicks/db';
+import type { PmSyncTable } from '@flicks/shared/pm';
+import { DB_SERVICE_ROLE } from '../../../core/database/database.module';
+import { DatabaseService } from '../../../core/database/database.service';
+import { PmVisibilityService } from './visibility.service';
+import { PmTeamsService } from '../teams.service';
+
+/**
+ * FSE server core (PRD v6 §3.3/§3.4).
+ *
+ * BOOTSTRAP — instant models for the visible workspace, streamed as NDJSON
+ * (issues ship WITHOUT description — the registry projection; description/
+ * comments/history are lazy). latest_seq is read BEFORE the snapshot queries:
+ * anything committed during the read is re-delivered by the first delta —
+ * snapshot deltas are idempotent, so overlap is harmless (never a gap).
+ *
+ * DELTA — the outbox is read via the SERVICE ROLE (the app role is INSERT-only
+ * on domain_events) but with explicit tenant + seq predicates (house rule),
+ * collecting the `sync` refs each pm.* publisher embeds in its payload. Rows
+ * are then RE-FETCHED under the normal RLS tenant transaction + visibility
+ * filter — the client only ever receives what it could read directly. Touched
+ * ids that the visible re-fetch does NOT return become tombstones (covers
+ * deletes AND visibility loss with one rule).
+ *
+ * Join tables (pm_issue_labels/_subscribers/_relations) sync as issue-scoped
+ * collections: the ref id is the ISSUE id and the delta ships the full current
+ * set for that issue (client replaces).
+ */
+
+interface SyncRef {
+  t: string;
+  id: string;
+}
+
+const ISSUE_SCOPED: ReadonlySet<string> = new Set([
+  'pm_issue_labels',
+  'pm_issue_subscribers',
+  'pm_issue_relations',
+]);
+
+@Injectable()
+export class PmSyncService {
+  constructor(
+    private readonly db: DatabaseService,
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+    private readonly visibility: PmVisibilityService,
+    private readonly teams: PmTeamsService,
+  ) {}
+
+  /** Global cursor head (indexed max). */
+  async latestSeq(): Promise<number> {
+    const [row] = await this.dbAdmin
+      .select({ max: sql<number>`coalesce(max(${domainEvents.sync_seq}), 0)` })
+      .from(domainEvents);
+    return Number(row?.max ?? 0);
+  }
+
+  /** Oldest retained seq (prune job advances this; 0 = full history present). */
+  async minSeqHorizon(): Promise<number> {
+    const [row] = await this.dbAdmin
+      .select({ min: sql<number>`coalesce(min(${domainEvents.sync_seq}), 0)` })
+      .from(domainEvents);
+    return Math.max(0, Number(row?.min ?? 0) - 1);
+  }
+
+  /** Bootstrap payload as NDJSON lines (§3.3). */
+  async bootstrap(tenantId: string, userId: string): Promise<string[]> {
+    await this.teams.ensureWorkspace(tenantId, userId);
+    const latestSeq = await this.latestSeq(); // BEFORE the snapshot reads
+    const horizon = await this.minSeqHorizon();
+
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+        const lines: string[] = [];
+        const push = (model: string, rows: unknown[]) =>
+          lines.push(JSON.stringify({ model, rows }));
+
+        const teams = visible.length
+          ? await tx
+              .select({
+                id: pmTeams.id, key: pmTeams.key, name: pmTeams.name, icon: pmTeams.icon,
+                color: pmTeams.color, is_private: pmTeams.is_private, timezone: pmTeams.timezone,
+                cycles_enabled: pmTeams.cycles_enabled, cycle_length_weeks: pmTeams.cycle_length_weeks,
+                cooldown_days: pmTeams.cooldown_days, cycle_start_dow: pmTeams.cycle_start_dow,
+                cycle_auto_add_started: pmTeams.cycle_auto_add_started,
+                upcoming_cycles: pmTeams.upcoming_cycles, estimate_scale: pmTeams.estimate_scale,
+                triage_enabled: pmTeams.triage_enabled, default_state_id: pmTeams.default_state_id,
+                created_at: pmTeams.created_at, deleted_at: pmTeams.deleted_at,
+              })
+              .from(pmTeams)
+              .where(and(eq(pmTeams.tenant_id, tenantId), inArray(pmTeams.id, visible)))
+          : [];
+        push('pm_teams', teams);
+
+        const memberships_ = visible.length
+          ? await tx
+              .select({
+                team_id: pmTeamMemberships.team_id, user_id: pmTeamMemberships.user_id,
+                is_lead: pmTeamMemberships.is_lead, joined_at: pmTeamMemberships.joined_at,
+              })
+              .from(pmTeamMemberships)
+              .where(and(eq(pmTeamMemberships.tenant_id, tenantId), inArray(pmTeamMemberships.team_id, visible)))
+          : [];
+        push('pm_team_memberships', memberships_);
+
+        const states = visible.length
+          ? await tx
+              .select({
+                id: pmWorkflowStates.id, team_id: pmWorkflowStates.team_id,
+                name: pmWorkflowStates.name, color: pmWorkflowStates.color,
+                category: pmWorkflowStates.category, position: pmWorkflowStates.position,
+                is_default_for_category: pmWorkflowStates.is_default_for_category,
+              })
+              .from(pmWorkflowStates)
+              .where(and(eq(pmWorkflowStates.tenant_id, tenantId), inArray(pmWorkflowStates.team_id, visible)))
+              .orderBy(asc(pmWorkflowStates.position))
+          : [];
+        push('pm_workflow_states', states);
+
+        const labels = await tx
+          .select({
+            id: pmLabels.id, team_id: pmLabels.team_id, name: pmLabels.name,
+            color: pmLabels.color, description: pmLabels.description,
+          })
+          .from(pmLabels)
+          .where(eq(pmLabels.tenant_id, tenantId));
+        push('pm_labels', labels.filter((l) => !l.team_id || visible.includes(l.team_id)));
+
+        push('pm_users_lite', await this.teams.usersLite(tenantId, userId));
+
+        // Issues: registry projection (NO description), most-recent 2000/team.
+        for (const teamId of visible) {
+          const rows = await tx
+            .select({
+              id: pmIssues.id, team_id: pmIssues.team_id, number: pmIssues.number,
+              title: pmIssues.title, state_id: pmIssues.state_id, priority: pmIssues.priority,
+              estimate: pmIssues.estimate, assignee_user_id: pmIssues.assignee_user_id,
+              creator_user_id: pmIssues.creator_user_id, parent_issue_id: pmIssues.parent_issue_id,
+              project_id: pmIssues.project_id, milestone_id: pmIssues.milestone_id,
+              cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
+              board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
+              source: pmIssues.source, triaged_at: pmIssues.triaged_at,
+              started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
+              canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
+              updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
+            })
+            .from(pmIssues)
+            .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.team_id, teamId), isNull(pmIssues.deleted_at)))
+            .orderBy(desc(pmIssues.updated_at))
+            .limit(2000);
+          if (rows.length) push('pm_issues', rows);
+
+          const issueIds = rows.map((r) => r.id);
+          if (issueIds.length) {
+            push(
+              'pm_issue_labels',
+              await tx
+                .select({ issue_id: pmIssueLabels.issue_id, label_id: pmIssueLabels.label_id })
+                .from(pmIssueLabels)
+                .where(and(eq(pmIssueLabels.tenant_id, tenantId), inArray(pmIssueLabels.issue_id, issueIds))),
+            );
+            push(
+              'pm_issue_subscribers',
+              await tx
+                .select({ issue_id: pmIssueSubscribers.issue_id, user_id: pmIssueSubscribers.user_id })
+                .from(pmIssueSubscribers)
+                .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), inArray(pmIssueSubscribers.issue_id, issueIds))),
+            );
+            push(
+              'pm_issue_relations',
+              await tx
+                .select({
+                  id: pmIssueRelations.id, issue_id: pmIssueRelations.issue_id,
+                  related_issue_id: pmIssueRelations.related_issue_id, type: pmIssueRelations.type,
+                })
+                .from(pmIssueRelations)
+                .where(and(eq(pmIssueRelations.tenant_id, tenantId), inArray(pmIssueRelations.issue_id, issueIds))),
+            );
+          }
+        }
+
+        lines.push(JSON.stringify({ latest_seq: latestSeq, min_seq_horizon: horizon }));
+        return lines;
+      },
+      userId,
+    );
+  }
+
+  /** Delta since a cursor (§3.4). Returns 410-shaped flag when past horizon. */
+  async delta(tenantId: string, userId: string, since: number) {
+    const horizon = await this.minSeqHorizon();
+    if (since < horizon) {
+      return { reBootstrap: true as const, latest_seq: await this.latestSeq() };
+    }
+
+    // 1. Collect touched refs from pm.* events past the cursor (service role;
+    //    explicit tenant + seq predicates — house rule).
+    const events = await this.dbAdmin
+      .select({ payload: domainEvents.payload, seq: domainEvents.sync_seq })
+      .from(domainEvents)
+      .where(
+        and(
+          eq(domainEvents.tenant_id, tenantId),
+          gt(domainEvents.sync_seq, since),
+          sql`${domainEvents.event_name} LIKE 'pm.%'`,
+        ),
+      )
+      .orderBy(asc(domainEvents.sync_seq))
+      .limit(5000);
+
+    const latestSeq = await this.latestSeq();
+    const touched = new Map<string, Set<string>>(); // table → ids
+    for (const ev of events) {
+      const refs = (ev.payload as { sync?: SyncRef[] })?.sync ?? [];
+      for (const ref of refs) {
+        if (!touched.has(ref.t)) touched.set(ref.t, new Set());
+        touched.get(ref.t)!.add(ref.id);
+      }
+    }
+
+    if (touched.size === 0) {
+      return { upserts: {}, tombstones: {}, latest_seq: latestSeq, min_seq_horizon: horizon };
+    }
+
+    // 2. Re-fetch current rows under RLS + visibility. Missing ⇒ tombstone.
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+        const upserts: Partial<Record<PmSyncTable, unknown[]>> = {};
+        const tombstones: Partial<Record<PmSyncTable, string[]>> = {};
+
+        const record = (table: PmSyncTable, wanted: Set<string>, rows: Array<{ id?: string; issue_id?: string }>) => {
+          if (rows.length) upserts[table] = rows;
+          const returned = new Set(rows.map((r) => (r.id ?? r.issue_id)!));
+          const missing = [...wanted].filter((id) => !returned.has(id));
+          if (missing.length) tombstones[table] = missing;
+        };
+
+        for (const [table, idSet] of touched) {
+          const ids = [...idSet];
+          switch (table as PmSyncTable) {
+            case 'pm_teams': {
+              const rows = visible.length
+                ? await tx.select().from(pmTeams).where(and(eq(pmTeams.tenant_id, tenantId), inArray(pmTeams.id, ids.filter((i) => visible.includes(i))), isNull(pmTeams.deleted_at)))
+                : [];
+              record('pm_teams', idSet, rows);
+              break;
+            }
+            case 'pm_team_memberships': {
+              // ref id = team id; ship the full roster for that team.
+              const teamIds = ids.filter((i) => visible.includes(i));
+              const rows = teamIds.length
+                ? await tx.select().from(pmTeamMemberships).where(and(eq(pmTeamMemberships.tenant_id, tenantId), inArray(pmTeamMemberships.team_id, teamIds)))
+                : [];
+              if (rows.length) upserts.pm_team_memberships = rows;
+              break;
+            }
+            case 'pm_workflow_states': {
+              const rows = await tx.select().from(pmWorkflowStates).where(and(eq(pmWorkflowStates.tenant_id, tenantId), inArray(pmWorkflowStates.id, ids)));
+              record('pm_workflow_states', idSet, rows.filter((r) => visible.includes(r.team_id)));
+              break;
+            }
+            case 'pm_labels': {
+              const rows = await tx.select().from(pmLabels).where(and(eq(pmLabels.tenant_id, tenantId), inArray(pmLabels.id, ids)));
+              record('pm_labels', idSet, rows.filter((r) => !r.team_id || visible.includes(r.team_id)));
+              break;
+            }
+            case 'pm_issues': {
+              const rows = await tx
+                .select({
+                  id: pmIssues.id, team_id: pmIssues.team_id, number: pmIssues.number,
+                  title: pmIssues.title, state_id: pmIssues.state_id, priority: pmIssues.priority,
+                  estimate: pmIssues.estimate, assignee_user_id: pmIssues.assignee_user_id,
+                  creator_user_id: pmIssues.creator_user_id, parent_issue_id: pmIssues.parent_issue_id,
+                  project_id: pmIssues.project_id, milestone_id: pmIssues.milestone_id,
+                  cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
+                  board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
+                  source: pmIssues.source, triaged_at: pmIssues.triaged_at,
+                  started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
+                  canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
+                  updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
+                  })
+                .from(pmIssues)
+                .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, ids), isNull(pmIssues.deleted_at)));
+              record('pm_issues', idSet, rows.filter((r) => visible.includes(r.team_id)));
+              break;
+            }
+            default: {
+              if (ISSUE_SCOPED.has(table)) {
+                // ref id = issue id; ship the issue's full current set (only
+                // for issues in visible teams).
+                const issueRows = await tx
+                  .select({ id: pmIssues.id, team_id: pmIssues.team_id })
+                  .from(pmIssues)
+                  .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, ids)));
+                const visibleIssueIds = issueRows.filter((r) => visible.includes(r.team_id)).map((r) => r.id);
+                if (!visibleIssueIds.length) break;
+                if (table === 'pm_issue_labels') {
+                  upserts.pm_issue_labels = await tx
+                    .select({ issue_id: pmIssueLabels.issue_id, label_id: pmIssueLabels.label_id })
+                    .from(pmIssueLabels)
+                    .where(and(eq(pmIssueLabels.tenant_id, tenantId), inArray(pmIssueLabels.issue_id, visibleIssueIds)));
+                } else if (table === 'pm_issue_subscribers') {
+                  upserts.pm_issue_subscribers = await tx
+                    .select({ issue_id: pmIssueSubscribers.issue_id, user_id: pmIssueSubscribers.user_id })
+                    .from(pmIssueSubscribers)
+                    .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), inArray(pmIssueSubscribers.issue_id, visibleIssueIds)));
+                } else if (table === 'pm_issue_relations') {
+                  upserts.pm_issue_relations = await tx
+                    .select({
+                      id: pmIssueRelations.id, issue_id: pmIssueRelations.issue_id,
+                      related_issue_id: pmIssueRelations.related_issue_id, type: pmIssueRelations.type,
+                    })
+                    .from(pmIssueRelations)
+                    .where(and(eq(pmIssueRelations.tenant_id, tenantId), inArray(pmIssueRelations.issue_id, visibleIssueIds)));
+                }
+                // Attach the scope ids so the client knows which issues' sets
+                // these collections replace (empty set ⇒ clear).
+                (upserts as Record<string, unknown>)[`${table}__scope`] = visibleIssueIds;
+              }
+              break;
+            }
+          }
+        }
+
+        return { upserts, tombstones, latest_seq: latestSeq, min_seq_horizon: horizon };
+      },
+      userId,
+    );
+  }
+}

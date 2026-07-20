@@ -24,6 +24,7 @@ import { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { MediaService } from '../media/media.service';
+import { FlagEvalService } from '../../core/flags/flag-eval.service';
 import {
   RequestOtpDto,
   VerifyOtpDto,
@@ -44,6 +45,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly mediaService: MediaService,
+    private readonly flagEval: FlagEvalService,
   ) {}
 
   @Public()
@@ -227,6 +229,9 @@ export class AuthController {
     const { avatarKey, ...rest } = raw as typeof raw & { avatarKey?: string | null };
     const me = {
       ...rest,
+      // PRD v6 — effective runtime flags for this tenant (pm_sync_engine
+      // kill-switch etc.); the web data-source facade reads this.
+      effectiveFlags: user.tenantId ? await this.flagEval.effectiveFlags(user.tenantId) : [],
       avatarUrl: await this.mediaService.servedUrl(avatarKey ?? null, raw.avatarUrl),
       currentMembership: raw.currentMembership
         ? {

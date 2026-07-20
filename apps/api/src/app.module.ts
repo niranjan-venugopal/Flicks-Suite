@@ -48,6 +48,8 @@ import { BillingModule } from './modules/billing/billing.module';
 import { DomainEventsModule } from './core/events/events.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { CrmModule } from './modules/crm/crm.module';
+import { FlagsModule } from './core/flags/flags.module';
+import { PmModule } from './modules/pm/pm.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
 
@@ -168,6 +170,9 @@ import { TrustJobs } from './jobs/trust.jobs';
     PublicApiModule,
     // PRD v5 §3+ — CRM (directory kernel in Sprint 25).
     CrmModule,
+    // PRD v6 — runtime feature-flag evaluation (kill-switch) + PM module.
+    FlagsModule,
+    PmModule,
   ],
   controllers: [HealthController],
   providers: [

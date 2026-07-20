@@ -72,6 +72,9 @@ interface VerifyAuthResponse {
 interface MeResponse extends ApiUser {
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
+  // PRD v6 — effective runtime flags for the current tenant (e.g.
+  // 'pm_sync_engine'); the PM data-source facade picks its transport off this.
+  effectiveFlags?: string[]
   // Set only when the current session is a FAM impersonation. The web
   // app shows the ImpersonationBanner whenever this is present.
   impersonatorUserId?: string
@@ -159,6 +162,15 @@ export function useCurrentUser() {
     retry: false,
     staleTime: 5 * 60 * 1000,
   })
+}
+
+/**
+ * Effective runtime flags from the cached /me (PRD v6). Subscribes to the
+ * same query the app layout keeps alive — no extra request (enabled: false).
+ */
+export function useEffectiveFlags(): { flags: string[]; loaded: boolean } {
+  const { data } = useQuery<MeResponse>({ queryKey: ['auth', 'me'], enabled: false })
+  return { flags: data?.effectiveFlags ?? [], loaded: data !== undefined }
 }
 
 export function useRequestOtp() {
