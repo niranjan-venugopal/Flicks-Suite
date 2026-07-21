@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DirectoryService } from './directory.service';
 import { DealsService } from './deals.service';
 import { LeadsService, type CreateLeadDto } from './leads.service';
+import { SavedViewsService } from './saved-views.service';
 
 /**
  * CRM public facade (PRD v5 §2.3) — the ONLY surface other modules (today:
@@ -15,6 +16,7 @@ export class CrmPublicService {
     private readonly directory: DirectoryService,
     private readonly deals: DealsService,
     private readonly leads: LeadsService,
+    private readonly savedViews: SavedViewsService,
   ) {}
 
   listPeople(tenantId: string, query: { q?: string; page?: number; limit?: number }) {
@@ -47,5 +49,23 @@ export class CrmPublicService {
 
   createLead(tenantId: string, actorUserId: string, dto: CreateLeadDto) {
     return this.leads.create(tenantId, actorUserId, dto);
+  }
+
+  // ─── Saved views (PRD v6 §9.4 — PM reuses the shared saved_views table) ────
+
+  listViews(tenantId: string, userId: string, objectType?: string) {
+    return this.savedViews.list(tenantId, userId, objectType);
+  }
+
+  createView(tenantId: string, userId: string, dto: Parameters<SavedViewsService['create']>[2]) {
+    return this.savedViews.create(tenantId, userId, dto);
+  }
+
+  updateView(tenantId: string, userId: string, id: string, dto: Record<string, unknown>) {
+    return this.savedViews.update(tenantId, userId, id, dto);
+  }
+
+  removeView(tenantId: string, userId: string, id: string) {
+    return this.savedViews.remove(tenantId, userId, id);
   }
 }

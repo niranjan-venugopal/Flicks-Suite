@@ -4,7 +4,9 @@ import { savedViews } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 
-const OBJECT_TYPES = ['deal', 'person', 'company', 'lead'] as const;
+// PM object types joined in PRD v6 §9.4 (migration 0044 extends the CHECK);
+// PM consumes this service through the crm public facade only.
+const OBJECT_TYPES = ['deal', 'person', 'company', 'lead', 'pm_issue', 'pm_project'] as const;
 
 /**
  * Saved views (PRD v5 §9.2) — a named filter/sort/column set on a list or board.

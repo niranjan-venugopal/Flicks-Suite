@@ -331,6 +331,93 @@ describe('Bootstrap + delta visibility (§3.3/§3.4/§16)', () => {
     expect(row!.deleted_at).toBeNull(); // restored
   });
 
+  it('rankBetween stays ordered under repeated same-gap inserts (rebalance-free)', async () => {
+    const { rankBetween } = await import('@flicks/shared/pm');
+    let lo: string | null = null;
+    const hi: string | null = null;
+    const ranks: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      const r: string = rankBetween(lo, hi);
+      ranks.push(r);
+      lo = r; // append pattern
+    }
+    for (let i = 1; i < ranks.length; i++) expect(ranks[i - 1]! < ranks[i]!).toBe(true);
+    // Squeeze 30 keys into ONE gap — worst case for fractional indexing.
+    let a: string | null = ranks[10]!;
+    const b: string | null = ranks[11]!;
+    for (let i = 0; i < 30; i++) {
+      const mid: string = rankBetween(a, b);
+      expect(a! < mid && mid < b!).toBe(true);
+      a = mid;
+    }
+  });
+
+  it('a batch with one bad item reports per-item statuses (partial failure)', async () => {
+    const good = crypto.randomUUID();
+    const res = await executor.execute(tenantId, ownerId, [
+      { clientMutationId: crypto.randomUUID(), op: 'issue.create' as const, id: good, fields: { team_id: teamId, title: 'Good one' } },
+      { clientMutationId: crypto.randomUUID(), op: 'issue.move_state' as const, id: crypto.randomUUID(), fields: { state_id: crypto.randomUUID() } },
+      { clientMutationId: crypto.randomUUID(), op: 'issue.set_priority' as const, id: good, fields: { priority: 3 } },
+    ]);
+    expect(res.results.map((r) => r.status)).toEqual(['applied', 'rejected', 'applied']);
+  });
+
+  it('move_team renumbers via the target counter and remaps the state by category', async () => {
+    const target = await teamsSvc.create(tenantId, ownerId, { key: 'OPS', name: 'Operations' });
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Migrating issue' })).data;
+    const moved = (await issuesSvc.moveTeam(tenantId, ownerId, issue.id, target.data.id)).data;
+    expect(moved.team_id).toBe(target.data.id);
+    expect(moved.number).toBe(1); // fresh counter
+    const [state] = await dbAdmin
+      .select()
+      .from((await import('@flicks/db/schema')).pmWorkflowStates)
+      .where(eq((await import('@flicks/db/schema')).pmWorkflowStates.id, moved.state_id));
+    expect(state!.team_id).toBe(target.data.id);
+    expect(state!.category).toBe('backlog'); // same category, target team's state
+  });
+
+  it('PM saved views + favorites round-trip through the crm facade (§9.4)', async () => {
+    const { SavedViewsService } = await import('../modules/crm/saved-views.service');
+    const { CrmPublicService } = await import('../modules/crm/public');
+    const { PmViewsService } = await import('../modules/pm/views.service');
+    const savedViewsSvc = new SavedViewsService(dbSvc, audit);
+    const crmPublic = new CrmPublicService(null as never, null as never, null as never, savedViewsSvc);
+    const viewsSvc = new PmViewsService(dbSvc, crmPublic, domainEventsSvc);
+
+    const created = await viewsSvc.create(tenantId, ownerId, {
+      object_type: 'pm_issue',
+      name: `Urgent unassigned ${crypto.randomBytes(3).toString('hex')}`,
+      filters: { prios: [1], assignee: 'unassigned' },
+    });
+    const viewId = (created.data as { id: string }).id;
+    await viewsSvc.setFavorite(tenantId, ownerId, viewId, true);
+    const list = await viewsSvc.list(tenantId, ownerId, 'pm_issue');
+    expect((list.data.views as Array<{ id: string }>).some((v) => v.id === viewId)).toBe(true);
+    expect(list.data.favorite_ids).toContain(viewId);
+    await viewsSvc.setFavorite(tenantId, ownerId, viewId, false);
+    const after = await viewsSvc.list(tenantId, ownerId, 'pm_issue');
+    expect(after.data.favorite_ids).not.toContain(viewId);
+    // Non-PM object types are refused at this surface.
+    await expect(viewsSvc.create(tenantId, ownerId, { object_type: 'deal', name: 'x' })).rejects.toThrow(/pm_issue/);
+  });
+
+  it('state + label management respects the lead gate (§16)', async () => {
+    // Employee (non-lead) is rejected; owner passes.
+    const [emp] = await dbAdmin
+      .insert(users)
+      .values({ email: `pm-emp-${rid()}@t.test`, full_name: 'Emp E', status: 'active' })
+      .returning();
+    await dbAdmin.insert(memberships).values({ tenant_id: tenantId, user_id: emp!.id, role: 'employee', status: 'active' });
+    await expect(
+      teamsSvc.upsertState(tenantId, emp!.id, 'employee', teamId, { name: 'QA', color: '#3E7BFA', category: 'started' }),
+    ).rejects.toThrow(/lead/i);
+    const created = await teamsSvc.upsertState(tenantId, ownerId, 'owner', teamId, { name: 'QA', color: '#3E7BFA', category: 'started' });
+    expect(created.data.category).toBe('started');
+    const label = await teamsSvc.upsertLabel(tenantId, ownerId, 'owner', { name: `feat-${rid()}`, color: '#27D280' });
+    expect(label.data.id).toBeTruthy();
+    await dbAdmin.delete(users).where(eq(users.id, emp!.id));
+  });
+
   it('a cursor past the horizon triggers RE_BOOTSTRAP', async () => {
     const horizon = await syncSvc.minSeqHorizon();
     if (horizon > 0) {

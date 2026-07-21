@@ -392,6 +392,24 @@ export class PmSyncEngine {
     }
   }
 
+  /** Board/backlog re-rank (fractional index computed by the caller). */
+  rankIssue(id: string, rankField: 'board_rank' | 'backlog_rank', rank: string): void {
+    const prev = this.store.patchIssue(id, { [rankField]: rank } as never)
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.rank',
+      id,
+      fields: { rank_field: rankField, rank },
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  /** Bulk apply a property to many issues in ONE queue burst (§9.4, cap 500). */
+  bulkApply(ids: string[], apply: (id: string) => void): void {
+    for (const id of ids.slice(0, 500)) apply(id)
+  }
+
   // ─── queue mechanics ──────────────────────────────────────────────────────
 
   private enqueue(m: PendingMutation): void {

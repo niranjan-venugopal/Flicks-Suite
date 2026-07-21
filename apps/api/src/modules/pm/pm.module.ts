@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
+import { CrmModule } from '../crm/crm.module';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
+import { PmViewsService } from './views.service';
 import { PmController } from './pm.controller';
 import { PmVisibilityService } from './sync/visibility.service';
 import { PmSyncService } from './sync/sync.service';
@@ -17,13 +19,14 @@ import { PmSyncController } from './sync/sync.controller';
  * `pm_sync_engine` FAM flag (kill-switch → the same UI on plain REST).
  */
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, CrmModule],
   controllers: [PmController, PmSyncController],
   providers: [
     PmGrantGuard,
     PmSyncGateway,
     PmTeamsService,
     PmIssuesService,
+    PmViewsService,
     PmVisibilityService,
     PmSyncService,
     PmMutationExecutor,

@@ -197,6 +197,10 @@ export class PmMutationExecutor {
         const res = await this.issues.restore(tenantId, userId, item.id);
         return { pm_issues: [res.data as unknown as Record<string, unknown>] };
       }
+      case 'issue.move_team': {
+        const res = await this.issues.moveTeam(tenantId, userId, item.id, f['team_id']);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
       case 'comment.create': {
         // item.id is the client-minted COMMENT id; issue in fields.
         await this.issues.createComment(tenantId, userId, f['issue_id'], {

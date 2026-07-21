@@ -76,6 +76,7 @@ export const PM_MUTATION_OPS = [
   'issue.unsubscribe',
   'issue.delete',
   'issue.restore',
+  'issue.move_team',
   'comment.create',
 ] as const;
 export type PmMutationOp = (typeof PM_MUTATION_OPS)[number];

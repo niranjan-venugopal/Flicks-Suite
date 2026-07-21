@@ -336,6 +336,81 @@ export const pmIssueHistory = pgTable(
   (t) => [index('idx_pm_history_issue').on(t.tenant_id, t.issue_id, t.created_at)],
 );
 
+// ─── Templates + view favorites (0044) ───────────────────────────────────────
+
+export const pmIssueTemplates = pgTable(
+  'pm_issue_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    team_id: uuid('team_id')
+      .notNull()
+      .references(() => pmTeams.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    title_pattern: text('title_pattern'),
+    description_md: text('description_md'),
+    default_priority: smallint('default_priority'),
+    default_estimate: numeric('default_estimate', { precision: 6, scale: 2 }),
+    default_state_id: uuid('default_state_id'),
+    default_label_ids: uuid('default_label_ids').array().notNull().default([]),
+    is_team_default: boolean('is_team_default').notNull().default(false),
+    schedule: text('schedule'), // reserved: recurring issues (v1.5)
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('pm_issue_templates_tenant_id_team_id_name_key').on(t.tenant_id, t.team_id, t.name)],
+);
+
+export const pmProjectTemplates = pgTable(
+  'pm_project_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description_md: text('description_md'),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('pm_project_templates_tenant_id_name_key').on(t.tenant_id, t.name)],
+);
+
+export const pmProjectTemplateItems = pgTable('pm_project_template_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenant_id: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  template_id: uuid('template_id')
+    .notNull()
+    .references(() => pmProjectTemplates.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  description_md: text('description_md'),
+  default_priority: smallint('default_priority'),
+  relative_due_days: integer('relative_due_days'),
+  position: smallint('position').notNull().default(0),
+});
+
+export const pmViewFavorites = pgTable(
+  'pm_view_favorites',
+  {
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    view_id: uuid('view_id').notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.user_id, t.view_id] }),
+    index('idx_pm_view_favorites_user').on(t.tenant_id, t.user_id),
+  ],
+);
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SyncMutation = typeof syncMutations.$inferSelect;

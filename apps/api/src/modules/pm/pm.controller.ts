@@ -19,6 +19,7 @@ import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
+import { PmViewsService } from './views.service';
 
 class CreateTeamDto {
   @IsString() @MaxLength(6) key!: string;
@@ -73,6 +74,7 @@ export class PmController {
   constructor(
     private readonly teams: PmTeamsService,
     private readonly issues: PmIssuesService,
+    private readonly views: PmViewsService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -155,5 +157,61 @@ export class PmController {
   @RequireGrant('pm', 'edit')
   rank(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: RankDto) {
     return this.issues.rank(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('issues/:id/move-team')
+  @RequireGrant('pm', 'edit')
+  moveTeam(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: { team_id: string }) {
+    return this.issues.moveTeam(user.tenantId, user.sub, id, dto.team_id);
+  }
+
+  // ─── Team settings: states + labels (§4.2/§4.3, lead-gated in service) ────
+
+  @Post('teams/:teamId/states')
+  @RequireGrant('pm', 'edit')
+  upsertState(
+    @CurrentUser() user: JwtPayload,
+    @Param('teamId') teamId: string,
+    @Body() dto: { id?: string; name: string; color: string; category?: string; position?: number },
+  ) {
+    return this.teams.upsertState(user.tenantId, user.sub, user.role, teamId, dto);
+  }
+
+  @Post('labels')
+  @RequireGrant('pm', 'edit')
+  upsertLabel(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: { id?: string; team_id?: string | null; name: string; color: string; description?: string },
+  ) {
+    return this.teams.upsertLabel(user.tenantId, user.sub, user.role, dto);
+  }
+
+  // ─── Saved views + favorites (§9.4) ───────────────────────────────────────
+
+  @Get('views')
+  @RequireGrant('pm', 'view')
+  listViews(@CurrentUser() user: JwtPayload, @Query('object_type') objectType?: string) {
+    return this.views.list(user.tenantId, user.sub, objectType ?? 'pm_issue');
+  }
+
+  @Post('views')
+  @RequireGrant('pm', 'edit')
+  createView(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: { object_type: string; name: string; is_shared?: boolean; filters?: Record<string, unknown>; sort?: Record<string, unknown> },
+  ) {
+    return this.views.create(user.tenantId, user.sub, dto);
+  }
+
+  @Post('views/:id/favorite')
+  @RequireGrant('pm', 'view')
+  favoriteView(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: { favorite: boolean }) {
+    return this.views.setFavorite(user.tenantId, user.sub, id, dto.favorite !== false);
+  }
+
+  @Post('views/:id/delete')
+  @RequireGrant('pm', 'edit')
+  deleteView(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.views.remove(user.tenantId, user.sub, id);
   }
 }

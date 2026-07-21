@@ -733,6 +733,72 @@ export class PmIssuesService {
     );
   }
 
+  /** Move to another team: renumbers via the target counter (§9.4 bulk key ⇧M). */
+  async moveTeam(tenantId: string, userId: string, id: string, targetTeamId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        if (issue.team_id === targetTeamId) return { data: issue };
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const target = await this.assertTeamAccess(tx, tenantId, userId, targetTeamId);
+
+        // Map the state by category into the target team's default for it.
+        const [currentState] = await tx
+          .select()
+          .from(pmWorkflowStates)
+          .where(eq(pmWorkflowStates.id, issue.state_id))
+          .limit(1);
+        const targetStates = await tx
+          .select()
+          .from(pmWorkflowStates)
+          .where(and(eq(pmWorkflowStates.team_id, targetTeamId), eq(pmWorkflowStates.category, currentState?.category ?? 'backlog')));
+        const targetState =
+          targetStates.find((s) => s.is_default_for_category) ?? targetStates[0] ?? null;
+        if (!targetState) throw new BadRequestException('target team lacks a matching state category');
+
+        const [counter] = await tx
+          .update(pmTeamCounters)
+          .set({ last_number: sql`${pmTeamCounters.last_number} + 1` })
+          .where(eq(pmTeamCounters.team_id, targetTeamId))
+          .returning({ last_number: pmTeamCounters.last_number });
+        if (!counter?.last_number) throw new BadRequestException('target team counter missing');
+
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({
+            team_id: targetTeamId,
+            number: counter.last_number,
+            state_id: targetState.id,
+            cycle_id: null, // cycles are per-team
+            updated_at: new Date(),
+          })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.writeHistory(tx, tenantId, id, userId, [
+          { field: 'team', from: issue.team_id, to: targetTeamId },
+        ]);
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              issue_id: id,
+              team_id: targetTeamId,
+              moved_from_team_id: issue.team_id,
+              sync: [{ t: 'pm_issues', id }],
+            },
+          },
+          tx,
+        );
+        void target;
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
   // ─── reads (REST / kill-switch path) ──────────────────────────────────────
 
   async list(

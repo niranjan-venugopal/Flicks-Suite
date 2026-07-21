@@ -245,6 +245,125 @@ export class PmTeamsService {
     );
   }
 
+  /** §16 — team settings need Owner/Admin OR team lead. */
+  private async assertSettingsAccess(tx: Db, tenantId: string, userId: string, teamId: string, role?: string) {
+    if (role === 'owner' || role === 'admin' || role === 'super_admin' || role === 'fam') return;
+    const [m] = await tx
+      .select({ is_lead: pmTeamMemberships.is_lead })
+      .from(pmTeamMemberships)
+      .where(and(eq(pmTeamMemberships.team_id, teamId), eq(pmTeamMemberships.user_id, userId)))
+      .limit(1);
+    if (!m?.is_lead) throw new BadRequestException('Team settings need Owner/Admin or the team lead');
+  }
+
+  /** Rename/recolor a state, or add one within a category (§4.2). */
+  async upsertState(
+    tenantId: string,
+    userId: string,
+    role: string,
+    teamId: string,
+    dto: { id?: string; name: string; color: string; category?: string; position?: number },
+  ) {
+    if (!dto.name?.trim() || !dto.color?.trim()) throw new BadRequestException('name and color are required');
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertSettingsAccess(tx, tenantId, userId, teamId, role);
+        let row;
+        if (dto.id) {
+          const [existing] = await tx
+            .select()
+            .from(pmWorkflowStates)
+            .where(and(eq(pmWorkflowStates.id, dto.id), eq(pmWorkflowStates.team_id, teamId)))
+            .limit(1);
+          if (!existing) throw new BadRequestException('state not found on this team');
+          [row] = await tx
+            .update(pmWorkflowStates)
+            .set({ name: dto.name.trim(), color: dto.color })
+            .where(eq(pmWorkflowStates.id, dto.id))
+            .returning();
+        } else {
+          if (!PM_STATE_CATEGORIES.includes((dto.category ?? '') as never)) {
+            throw new BadRequestException('category is required for a new state');
+          }
+          [row] = await tx
+            .insert(pmWorkflowStates)
+            .values({
+              tenant_id: tenantId,
+              team_id: teamId,
+              name: dto.name.trim(),
+              color: dto.color,
+              category: dto.category!,
+              position: dto.position ?? 99,
+            })
+            .returning();
+        }
+        await this.domainEvents.publish(
+          {
+            name: dto.id ? 'pm.state.updated' : 'pm.state.created',
+            tenantId,
+            actorUserId: userId,
+            payload: { state_id: row!.id, team_id: teamId, sync: [{ t: 'pm_workflow_states', id: row!.id }] },
+          },
+          tx,
+        );
+        return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  /** Workspace or team label create/update (§4.3). */
+  async upsertLabel(
+    tenantId: string,
+    userId: string,
+    role: string,
+    dto: { id?: string; team_id?: string | null; name: string; color: string; description?: string },
+  ) {
+    if (!dto.name?.trim() || !dto.color?.trim()) throw new BadRequestException('name and color are required');
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        // Workspace labels: Owner/Admin. Team labels: settings access.
+        if (dto.team_id) await this.assertSettingsAccess(tx, tenantId, userId, dto.team_id, role);
+        else if (!['owner', 'admin', 'super_admin', 'fam'].includes(role)) {
+          throw new BadRequestException('Workspace labels need Owner/Admin');
+        }
+        let row;
+        if (dto.id) {
+          [row] = await tx
+            .update(pmLabels)
+            .set({ name: dto.name.trim(), color: dto.color, description: dto.description ?? null })
+            .where(and(eq(pmLabels.id, dto.id), eq(pmLabels.tenant_id, tenantId)))
+            .returning();
+          if (!row) throw new BadRequestException('label not found');
+        } else {
+          [row] = await tx
+            .insert(pmLabels)
+            .values({
+              tenant_id: tenantId,
+              team_id: dto.team_id ?? null,
+              name: dto.name.trim(),
+              color: dto.color,
+              description: dto.description ?? null,
+            })
+            .returning();
+        }
+        await this.domainEvents.publish(
+          {
+            name: dto.id ? 'pm.label.updated' : 'pm.label.created',
+            tenantId,
+            actorUserId: userId,
+            payload: { label_id: row!.id, sync: [{ t: 'pm_labels', id: row!.id }] },
+          },
+          tx,
+        );
+        return { data: row! };
+      },
+      userId,
+    );
+  }
+
   /** users-lite roster for assignee pickers / avatar rendering (bootstrap model). */
   async usersLite(tenantId: string, userId: string) {
     return this.db.withTenant(
