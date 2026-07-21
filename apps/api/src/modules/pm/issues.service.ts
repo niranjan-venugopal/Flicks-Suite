@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmIssues,
   pmTeams,
@@ -8,6 +8,10 @@ import {
   pmWorkflowStates,
   pmIssueHistory,
   pmIssueSubscribers,
+  pmIssueLabels,
+  pmIssueRelations,
+  pmIssueComments,
+  pmLabels,
   memberships,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -431,6 +435,292 @@ export class PmIssuesService {
         await this.domainEvents.publish(
           {
             name: 'pm.issue.ranked',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  async setLabels(tenantId: string, userId: string, id: string, labelIds: string[]) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        // Validate labels: workspace labels or this team's.
+        if (labelIds.length) {
+          const rows = await tx
+            .select({ id: pmLabels.id, team_id: pmLabels.team_id })
+            .from(pmLabels)
+            .where(and(eq(pmLabels.tenant_id, tenantId), inArray(pmLabels.id, labelIds)));
+          const valid = new Set(rows.filter((l) => !l.team_id || l.team_id === issue.team_id).map((l) => l.id));
+          const bad = labelIds.find((l) => !valid.has(l));
+          if (bad) throw new BadRequestException('label does not belong to this workspace/team');
+        }
+        await tx.delete(pmIssueLabels).where(and(eq(pmIssueLabels.tenant_id, tenantId), eq(pmIssueLabels.issue_id, id)));
+        if (labelIds.length) {
+          await tx
+            .insert(pmIssueLabels)
+            .values(labelIds.map((l) => ({ tenant_id: tenantId, issue_id: id, label_id: l })))
+            .onConflictDoNothing();
+        }
+        await tx.update(pmIssues).set({ updated_at: new Date() }).where(eq(pmIssues.id, id));
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.labeled',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              issue_id: id,
+              team_id: issue.team_id,
+              sync: [{ t: 'pm_issues', id }, { t: 'pm_issue_labels', id }],
+            },
+          },
+          tx,
+        );
+        return { data: { issue_id: id, label_ids: labelIds } };
+      },
+      userId,
+    );
+  }
+
+  async relate(
+    tenantId: string,
+    userId: string,
+    id: string,
+    input: { related_issue_id: string; type: 'blocks' | 'duplicate_of' | 'relates_to' },
+  ) {
+    if (!['blocks', 'duplicate_of', 'relates_to'].includes(input.type)) {
+      throw new BadRequestException('invalid relation type');
+    }
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const related = await this.loadIssue(tx, tenantId, input.related_issue_id);
+        await this.assertTeamAccess(tx, tenantId, userId, related.team_id);
+        const [row] = await tx
+          .insert(pmIssueRelations)
+          .values({
+            tenant_id: tenantId,
+            issue_id: id,
+            related_issue_id: input.related_issue_id,
+            type: input.type,
+            created_by: userId,
+          })
+          .onConflictDoNothing()
+          .returning();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.related',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              issue_id: id,
+              related_issue_id: input.related_issue_id,
+              type: input.type,
+              sync: [{ t: 'pm_issue_relations', id }, { t: 'pm_issue_relations', id: input.related_issue_id }],
+            },
+          },
+          tx,
+        );
+        return { data: row ?? { issue_id: id } };
+      },
+      userId,
+    );
+  }
+
+  async unrelate(tenantId: string, userId: string, id: string, relatedIssueId: string, type: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        await tx
+          .delete(pmIssueRelations)
+          .where(
+            and(
+              eq(pmIssueRelations.tenant_id, tenantId),
+              eq(pmIssueRelations.issue_id, id),
+              eq(pmIssueRelations.related_issue_id, relatedIssueId),
+              eq(pmIssueRelations.type, type),
+            ),
+          );
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.related',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              issue_id: id,
+              related_issue_id: relatedIssueId,
+              removed: true,
+              sync: [{ t: 'pm_issue_relations', id }, { t: 'pm_issue_relations', id: relatedIssueId }],
+            },
+          },
+          tx,
+        );
+        return { data: { issue_id: id } };
+      },
+      userId,
+    );
+  }
+
+  async setSubscription(tenantId: string, userId: string, id: string, subscribed: boolean) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        if (subscribed) {
+          await tx
+            .insert(pmIssueSubscribers)
+            .values({ tenant_id: tenantId, issue_id: id, user_id: userId })
+            .onConflictDoNothing();
+        } else {
+          await tx
+            .delete(pmIssueSubscribers)
+            .where(
+              and(
+                eq(pmIssueSubscribers.tenant_id, tenantId),
+                eq(pmIssueSubscribers.issue_id, id),
+                eq(pmIssueSubscribers.user_id, userId),
+              ),
+            );
+        }
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.subscribed',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, subscribed, sync: [{ t: 'pm_issue_subscribers', id }] },
+          },
+          tx,
+        );
+        return { data: { issue_id: id, subscribed } };
+      },
+      userId,
+    );
+  }
+
+  async createComment(tenantId: string, userId: string, issueId: string, input: { id?: string; body: string; parent_comment_id?: string | null }) {
+    if (!input.body?.trim()) throw new BadRequestException('Comment body is required');
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, issueId);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        if (input.parent_comment_id) {
+          const [parent] = await tx
+            .select({ id: pmIssueComments.id, parent: pmIssueComments.parent_comment_id })
+            .from(pmIssueComments)
+            .where(and(eq(pmIssueComments.id, input.parent_comment_id), eq(pmIssueComments.issue_id, issueId)))
+            .limit(1);
+          if (!parent) throw new BadRequestException('parent comment not found on this issue');
+          if (parent.parent) throw new BadRequestException('threads are one level deep');
+        }
+        const [comment] = await tx
+          .insert(pmIssueComments)
+          .values({
+            ...(input.id ? { id: input.id } : {}),
+            tenant_id: tenantId,
+            issue_id: issueId,
+            author_user_id: userId,
+            parent_comment_id: input.parent_comment_id ?? null,
+            body: input.body,
+          })
+          .returning();
+        // Commenting subscribes the author (§11 auto-subscribe).
+        await tx
+          .insert(pmIssueSubscribers)
+          .values({ tenant_id: tenantId, issue_id: issueId, user_id: userId })
+          .onConflictDoNothing();
+        await tx.update(pmIssues).set({ updated_at: new Date() }).where(eq(pmIssues.id, issueId));
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.commented',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              issue_id: issueId,
+              comment_id: comment!.id,
+              sync: [{ t: 'pm_issues', id: issueId }, { t: 'pm_issue_subscribers', id: issueId }],
+            },
+          },
+          tx,
+        );
+        return { data: comment! };
+      },
+      userId,
+    );
+  }
+
+  async softDelete(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ deleted_at: new Date(), updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.issue.delete',
+          resourceType: 'pm_issue',
+          resourceId: id,
+        });
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.deleted',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  async restore(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [issue] = await tx
+          .select()
+          .from(pmIssues)
+          .where(and(eq(pmIssues.id, id), eq(pmIssues.tenant_id, tenantId)))
+          .limit(1);
+        if (!issue) throw new NotFoundException('Issue not found');
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ deleted_at: null, updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.issue.restore',
+          resourceType: 'pm_issue',
+          resourceId: id,
+        });
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.restored',
             tenantId,
             actorUserId: userId,
             payload: { issue_id: id, team_id: issue.team_id, sync: [{ t: 'pm_issues', id }] },

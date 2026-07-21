@@ -133,8 +133,20 @@ export class PmStore {
     runInAction(() => {
       for (const id of ids) {
         if (table === 'pm_issues') this.issues.delete(id)
-        else if (table === 'pm_teams') this.teams.delete(id)
-        else if (table === 'pm_workflow_states') this.states.delete(id)
+        else if (table === 'pm_teams') {
+          // Losing a team (deleted OR visibility revoked, §16) purges every
+          // team-scoped row locally — a revoked member keeps nothing.
+          this.teams.delete(id)
+          this.memberships.delete(id)
+          for (const [sid, s] of this.states) if (s.team_id === id) this.states.delete(sid)
+          for (const [iid, i] of this.issues) {
+            if (i.team_id === id) {
+              this.issues.delete(iid)
+              this.issueLabels.delete(iid)
+              this.issueSubscribers.delete(iid)
+            }
+          }
+        } else if (table === 'pm_workflow_states') this.states.delete(id)
         else if (table === 'pm_labels') this.labels.delete(id)
       }
     })

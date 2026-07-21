@@ -30,6 +30,7 @@ import { CurrentUser } from '../../../core/auth/decorators/current-user.decorato
 import type { JwtPayload } from '@flicks/shared/types';
 import { PmSyncService } from './sync.service';
 import { PmMutationExecutor } from './mutation-executor.service';
+import { PmSyncThrottleGuard } from './sync-throttle.guard';
 import { FlagEvalService } from '../../../core/flags/flag-eval.service';
 
 class MutationItemDto {
@@ -96,10 +97,11 @@ export class PmSyncController {
 
   @Post('mutate')
   @RequireGrant('pm', 'edit')
-  @Throttle({ medium: { ttl: 60_000, limit: 240 } }) // request-level; per-item guard lands Sprint 33
+  @UseGuards(PmSyncThrottleGuard) // 120 items/min/user (§16.2), counted per item
+  @Throttle({ medium: { ttl: 60_000, limit: 240 } }) // request-level backstop
   @ApiOperation({ summary: 'FSE mutate — optimistic batch, idempotent, validated (§3.5)' })
   async mutate(@CurrentUser() user: JwtPayload, @Body() dto: MutateDto) {
     await this.assertEngineOn(user.tenantId);
-    return this.executor.execute(user.tenantId, user.sub, dto.items as never);
+    return this.executor.execute(user.tenantId, user.sub, dto.items as never, user.role);
   }
 }

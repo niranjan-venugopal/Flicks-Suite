@@ -62,6 +62,7 @@ import { LeaveAccrualJob } from './jobs/leave-accrual.job';
 import { InvoicingJobs } from './jobs/invoicing.jobs';
 import { CrmJobs } from './jobs/crm.jobs';
 import { TrustJobs } from './jobs/trust.jobs';
+import { PmJobs } from './jobs/pm.jobs';
 
 @Module({
   imports: [
@@ -199,6 +200,7 @@ import { TrustJobs } from './jobs/trust.jobs';
     InvoicingJobs,
     CrmJobs,
     TrustJobs,
+    PmJobs,
   ],
 })
 export class AppModule {

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import * as crypto from 'crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db, dbAdmin } from '@flicks/db';
 import {
   tenants,
@@ -10,6 +10,7 @@ import {
   pmTeamMemberships,
   pmIssues,
   pmIssueHistory,
+  pmLabels,
   domainEvents,
   syncMutations,
 } from '@flicks/db/schema';
@@ -215,6 +216,129 @@ describe('Bootstrap + delta visibility (§3.3/§3.4/§16)', () => {
       expect(outsiderDelta.tombstones.pm_issues ?? []).toContain(secretIssueId);
     } else {
       throw new Error('unexpected re-bootstrap');
+    }
+  });
+
+  it('membership revoke → next delta tombstones the private team for that user (§16)', async () => {
+    // Add the outsider to the private team, let them see it once…
+    await dbAdmin.insert(pmTeamMemberships).values({
+      team_id: privateTeamId,
+      tenant_id: tenantId,
+      user_id: outsiderId,
+      is_lead: false,
+    });
+    const seen = await syncSvc.bootstrap(tenantId, outsiderId);
+    expect(seen.join('\n')).toContain(privateTeamId);
+
+    const before = await syncSvc.latestSeq();
+    // …then revoke and publish the membership-changed event (team-scoped ref).
+    await dbAdmin
+      .delete(pmTeamMemberships)
+      .where(and(eq(pmTeamMemberships.team_id, privateTeamId), eq(pmTeamMemberships.user_id, outsiderId)));
+    await domainEventsSvc.publish({
+      name: 'pm.team.membership_changed',
+      tenantId,
+      actorUserId: ownerId,
+      payload: { team_id: privateTeamId, sync: [{ t: 'pm_teams', id: privateTeamId }] },
+    });
+
+    const delta = await syncSvc.delta(tenantId, outsiderId, before);
+    if (!('upserts' in delta)) throw new Error('unexpected re-bootstrap');
+    expect(delta.tombstones.pm_teams ?? []).toContain(privateTeamId);
+    // The member still sees it as an upsert.
+    const ownerDelta = await syncSvc.delta(tenantId, ownerId, before);
+    if (!('upserts' in ownerDelta)) throw new Error('unexpected re-bootstrap');
+    expect(ownerDelta.upserts.pm_teams?.some((r) => (r as { id: string }).id === privateTeamId)).toBe(true);
+  });
+
+  it('auditor mutations are rejected wholesale (§16)', async () => {
+    const res = await executor.execute(
+      tenantId,
+      ownerId,
+      [{ clientMutationId: crypto.randomUUID(), op: 'issue.create' as const, id: crypto.randomUUID(), fields: { team_id: teamId, title: 'Auditor try' } }],
+      'auditor',
+    );
+    expect(res.results.every((r) => r.status === 'rejected')).toBe(true);
+    expect(res.results[0]!.errorCode).toContain('read-only');
+  });
+
+  it('a 20-mutation batch replays exactly-once (offline replay contract)', async () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.create' as const,
+      id: crypto.randomUUID(),
+      fields: { team_id: teamId, title: `Replay batch ${i}` },
+    }));
+    const first = await executor.execute(tenantId, ownerId, items);
+    expect(first.results.filter((r) => r.status === 'applied')).toHaveLength(20);
+    const second = await executor.execute(tenantId, ownerId, items);
+    expect(second.results.filter((r) => r.status === 'duplicate')).toHaveLength(20);
+    const rows = await dbAdmin
+      .select({ id: pmIssues.id })
+      .from(pmIssues)
+      .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, items.map((i) => i.id))));
+    expect(rows).toHaveLength(20);
+  });
+
+  it('two clients converge to identical state after interleaved batches', async () => {
+    const issueId = crypto.randomUUID();
+    await executor.execute(tenantId, ownerId, [
+      { clientMutationId: crypto.randomUUID(), op: 'issue.create' as const, id: issueId, fields: { team_id: teamId, title: 'Converge me' } },
+    ]);
+    const start = await syncSvc.latestSeq();
+
+    // Interleaved concurrent edits (priority vs assign) — commit order unknown.
+    await Promise.all([
+      executor.execute(tenantId, ownerId, [
+        { clientMutationId: crypto.randomUUID(), op: 'issue.set_priority' as const, id: issueId, fields: { priority: 2 } },
+      ]),
+      executor.execute(tenantId, ownerId, [
+        { clientMutationId: crypto.randomUUID(), op: 'issue.assign' as const, id: issueId, fields: { assignee_user_id: outsiderId } },
+      ]),
+    ]);
+
+    // Both simulated clients pull their own deltas → identical final row.
+    const applyDelta = async () => {
+      const d = await syncSvc.delta(tenantId, ownerId, start);
+      if (!('upserts' in d)) throw new Error('re-bootstrap');
+      return d.upserts.pm_issues?.find((r) => (r as { id: string }).id === issueId) as Record<string, unknown>;
+    };
+    const clientA = await applyDelta();
+    const clientB = await applyDelta();
+    expect(clientA).toBeDefined();
+    expect(clientA.priority).toBe(2);
+    expect(clientA.assignee_user_id).toBe(outsiderId);
+    expect(clientB).toEqual(clientA);
+  });
+
+  it('full op set: labels, comment, delete, restore round-trip through the executor', async () => {
+    const issueId = crypto.randomUUID();
+    const [labelRow] = await dbAdmin
+      .insert(pmLabels)
+      .values({ tenant_id: tenantId, name: `bug-${crypto.randomBytes(3).toString('hex')}`, color: '#F8786B' })
+      .returning();
+    const commentId = crypto.randomUUID();
+
+    const res = await executor.execute(tenantId, ownerId, [
+      { clientMutationId: crypto.randomUUID(), op: 'issue.create' as const, id: issueId, fields: { team_id: teamId, title: 'Full ops' } },
+      { clientMutationId: crypto.randomUUID(), op: 'issue.set_labels' as const, id: issueId, fields: { label_ids: [labelRow!.id] } },
+      { clientMutationId: crypto.randomUUID(), op: 'comment.create' as const, id: commentId, fields: { issue_id: issueId, body: 'First comment' } },
+      { clientMutationId: crypto.randomUUID(), op: 'issue.delete' as const, id: issueId },
+      { clientMutationId: crypto.randomUUID(), op: 'issue.restore' as const, id: issueId },
+    ]);
+    expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied', 'applied']);
+    const [row] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, issueId));
+    expect(row!.deleted_at).toBeNull(); // restored
+  });
+
+  it('a cursor past the horizon triggers RE_BOOTSTRAP', async () => {
+    const horizon = await syncSvc.minSeqHorizon();
+    if (horizon > 0) {
+      const res = await syncSvc.delta(tenantId, ownerId, horizon - 1);
+      expect('reBootstrap' in res && res.reBootstrap).toBe(true);
+    } else {
+      // Fresh DB retains everything — horizon 0 means no cursor can be stale.
+      expect(horizon).toBe(0);
     }
   });
 

@@ -8,6 +8,7 @@ import { PmController } from './pm.controller';
 import { PmVisibilityService } from './sync/visibility.service';
 import { PmSyncService } from './sync/sync.service';
 import { PmMutationExecutor } from './sync/mutation-executor.service';
+import { PmSyncThrottleGuard } from './sync/sync-throttle.guard';
 import { PmSyncController } from './sync/sync.controller';
 
 /**
@@ -26,6 +27,7 @@ import { PmSyncController } from './sync/sync.controller';
     PmVisibilityService,
     PmSyncService,
     PmMutationExecutor,
+    PmSyncThrottleGuard,
   ],
   exports: [PmTeamsService, PmIssuesService],
 })

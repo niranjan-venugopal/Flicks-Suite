@@ -43,6 +43,10 @@ export class PmSyncEngine {
   private pulling = false
   private destroyed = false
 
+  /** Undo/redo (§3.7): last 50 local actions; entries emit NORMAL mutations. */
+  private undoStack: Array<{ undo: () => void; redo: () => void }> = []
+  private redoStack: Array<{ undo: () => void; redo: () => void }> = []
+
   onReject: ((message: string) => void) | null = null
 
   constructor(
@@ -175,6 +179,30 @@ export class PmSyncEngine {
     socket.on('connect', () => void this.pullDelta())
   }
 
+  // ─── undo / redo ──────────────────────────────────────────────────────────
+
+  private pushUndo(entry: { undo: () => void; redo: () => void }): void {
+    this.undoStack.push(entry)
+    if (this.undoStack.length > 50) this.undoStack.shift()
+    this.redoStack = [] // a fresh action invalidates the redo branch
+  }
+
+  undo(): boolean {
+    const entry = this.undoStack.pop()
+    if (!entry) return false
+    entry.undo()
+    this.redoStack.push(entry)
+    return true
+  }
+
+  redo(): boolean {
+    const entry = this.redoStack.pop()
+    if (!entry) return false
+    entry.redo()
+    this.undoStack.push(entry)
+    return true
+  }
+
   // ─── optimistic mutations ─────────────────────────────────────────────────
 
   /** Create an issue locally (instant) and queue the server mutation. */
@@ -245,10 +273,49 @@ export class PmSyncEngine {
       inverse: { table: 'pm_issues', id, row: null }, // rollback = remove
       enqueuedAt: Date.now(),
     })
+    this.pushUndo({
+      undo: () => this.deleteIssue(id, { recordUndo: false }),
+      redo: () => this.restoreDeletedIssue(id, { recordUndo: false }),
+    })
     return id
   }
 
-  updateIssue(id: string, fields: { title?: string; description?: string; due_date?: string | null; estimate?: string | null }): void {
+  deleteIssue(id: string, opts: { recordUndo?: boolean } = {}): void {
+    const prev = this.store.issues.get(id)
+    if (!prev) return
+    const snapshot = { ...prev }
+    this.store.patchIssue(id, { deleted_at: new Date().toISOString() })
+    this.store.removeIssue(id)
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.delete',
+      id,
+      inverse: { table: 'pm_issues', id, row: snapshot as unknown as Record<string, unknown> },
+      enqueuedAt: Date.now(),
+    })
+    if (opts.recordUndo !== false) {
+      this.pushUndo({
+        undo: () => this.restoreDeletedIssue(id, { recordUndo: false }),
+        redo: () => this.deleteIssue(id, { recordUndo: false }),
+      })
+    }
+  }
+
+  restoreDeletedIssue(id: string, _opts: { recordUndo?: boolean } = {}): void {
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.restore',
+      id,
+      enqueuedAt: Date.now(),
+    })
+    // Row re-appears via the authoritative response / delta.
+  }
+
+  updateIssue(
+    id: string,
+    fields: { title?: string; description?: string; due_date?: string | null; estimate?: string | null },
+    opts: { recordUndo?: boolean } = {},
+  ): void {
     const prev = this.store.patchIssue(id, { ...(fields as Partial<PmIssueRow>), updated_at: new Date().toISOString() })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
@@ -258,9 +325,17 @@ export class PmSyncEngine {
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
+    if (opts.recordUndo !== false && prev) {
+      const inverseFields: Record<string, unknown> = {}
+      for (const k of Object.keys(fields)) inverseFields[k] = (prev as unknown as Record<string, unknown>)[k]
+      this.pushUndo({
+        undo: () => this.updateIssue(id, inverseFields as never, { recordUndo: false }),
+        redo: () => this.updateIssue(id, fields, { recordUndo: false }),
+      })
+    }
   }
 
-  moveIssueState(id: string, stateId: string): void {
+  moveIssueState(id: string, stateId: string, opts: { recordUndo?: boolean } = {}): void {
     const prev = this.store.patchIssue(id, { state_id: stateId, updated_at: new Date().toISOString() })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
@@ -270,9 +345,16 @@ export class PmSyncEngine {
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
+    if (opts.recordUndo !== false && prev) {
+      const prevStateId = prev.state_id
+      this.pushUndo({
+        undo: () => this.moveIssueState(id, prevStateId, { recordUndo: false }),
+        redo: () => this.moveIssueState(id, stateId, { recordUndo: false }),
+      })
+    }
   }
 
-  setIssuePriority(id: string, priority: number): void {
+  setIssuePriority(id: string, priority: number, opts: { recordUndo?: boolean } = {}): void {
     const prev = this.store.patchIssue(id, { priority })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
@@ -282,9 +364,16 @@ export class PmSyncEngine {
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
+    if (opts.recordUndo !== false && prev) {
+      const prevPriority = prev.priority
+      this.pushUndo({
+        undo: () => this.setIssuePriority(id, prevPriority, { recordUndo: false }),
+        redo: () => this.setIssuePriority(id, priority, { recordUndo: false }),
+      })
+    }
   }
 
-  assignIssue(id: string, assigneeUserId: string | null): void {
+  assignIssue(id: string, assigneeUserId: string | null, opts: { recordUndo?: boolean } = {}): void {
     const prev = this.store.patchIssue(id, { assignee_user_id: assigneeUserId })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
@@ -294,6 +383,13 @@ export class PmSyncEngine {
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
+    if (opts.recordUndo !== false && prev) {
+      const prevAssignee = prev.assignee_user_id
+      this.pushUndo({
+        undo: () => this.assignIssue(id, prevAssignee, { recordUndo: false }),
+        redo: () => this.assignIssue(id, assigneeUserId, { recordUndo: false }),
+      })
+    }
   }
 
   // ─── queue mechanics ──────────────────────────────────────────────────────
@@ -309,6 +405,24 @@ export class PmSyncEngine {
   async flushQueue(): Promise<void> {
     if (this.flushing || this.destroyed || this.queue.length === 0) return
     if (typeof navigator !== 'undefined' && !navigator.onLine) return
+    // Multi-tab: serialize flushes across tabs of the same (tenant, user) so
+    // two tabs never race the same idb-persisted queue (duplicates would be
+    // idempotent no-ops server-side, but the lock keeps it clean and cheap).
+    if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+      await navigator.locks.request(
+        `fs-pm-flush-${this.tenantId}-${this.userId}`,
+        { ifAvailable: true },
+        async (lock) => {
+          if (lock) await this.flushQueueInner()
+        },
+      )
+      return
+    }
+    await this.flushQueueInner()
+  }
+
+  private async flushQueueInner(): Promise<void> {
+    if (this.flushing || this.destroyed || this.queue.length === 0) return
     this.flushing = true
     const batch = this.queue.slice(0, 50)
     try {

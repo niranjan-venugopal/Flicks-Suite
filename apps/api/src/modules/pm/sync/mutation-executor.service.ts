@@ -29,10 +29,28 @@ export class PmMutationExecutor {
     private readonly gateway: PmSyncGateway,
   ) {}
 
-  async execute(tenantId: string, userId: string, items: PmMutationItem[]): Promise<{
+  async execute(
+    tenantId: string,
+    userId: string,
+    items: PmMutationItem[],
+    role?: string,
+  ): Promise<{
     results: PmMutationResultItem[];
     latest_seq: number;
   }> {
+    // §16 — auditors NEVER mutate, regardless of any grant row. Rejected
+    // before touching the ledger so replays stay cheap.
+    if (role === 'auditor') {
+      return {
+        results: items.map((i) => ({
+          clientMutationId: i.clientMutationId,
+          status: 'rejected' as const,
+          errorCode: 'E403:auditor seats are read-only',
+        })),
+        latest_seq: await this.sync.latestSeq(),
+      };
+    }
+
     const results: PmMutationResultItem[] = [];
     let anyApplied = false;
 
@@ -148,8 +166,48 @@ export class PmMutationExecutor {
         });
         return { pm_issues: [res.data as unknown as Record<string, unknown>] };
       }
+      case 'issue.set_labels': {
+        await this.issues.setLabels(tenantId, userId, item.id, (f['label_ids'] as string[]) ?? []);
+        return {};
+      }
+      case 'issue.relate': {
+        await this.issues.relate(tenantId, userId, item.id, {
+          related_issue_id: f['related_issue_id'],
+          type: f['type'],
+        });
+        return {};
+      }
+      case 'issue.unrelate': {
+        await this.issues.unrelate(tenantId, userId, item.id, f['related_issue_id'], f['type']);
+        return {};
+      }
+      case 'issue.subscribe': {
+        await this.issues.setSubscription(tenantId, userId, item.id, true);
+        return {};
+      }
+      case 'issue.unsubscribe': {
+        await this.issues.setSubscription(tenantId, userId, item.id, false);
+        return {};
+      }
+      case 'issue.delete': {
+        const res = await this.issues.softDelete(tenantId, userId, item.id);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'issue.restore': {
+        const res = await this.issues.restore(tenantId, userId, item.id);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'comment.create': {
+        // item.id is the client-minted COMMENT id; issue in fields.
+        await this.issues.createComment(tenantId, userId, f['issue_id'], {
+          id: item.id,
+          body: f['body'],
+          parent_comment_id: f['parent_comment_id'] ?? null,
+        });
+        return {};
+      }
       default:
-        throw new HttpException(`Unsupported op ${item.op} (ships in Sprint 33)`, 400);
+        throw new HttpException(`Unsupported op ${item.op}`, 400);
     }
   }
 }
