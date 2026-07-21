@@ -1,0 +1,363 @@
+'use client'
+
+import { use, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { observer } from 'mobx-react-lite'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
+import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
+import { api } from '@/lib/api/client'
+import { usePm } from '@/lib/pm/PmProvider'
+import { useHotkeys } from '@/lib/pm/hotkeys'
+import type { PmIssueRow } from '@/lib/pm/types'
+
+// ─────────────────────────────────────────────────────────
+// P7 Issue detail — two-pane: doc (title + description + activity/comments)
+// + properties rail (state/priority/assignee/estimate/due), sub-issues,
+// relations, sync-pending badge. Description/comments/history are LAZY
+// (fetched here, cached by react-query) — never shipped in bootstrap.
+// ─────────────────────────────────────────────────────────
+
+interface DetailResponse {
+  data: {
+    issue: PmIssueRow & { description: string | null }
+    comments: Array<{ id: string; body: string; author_user_id: string | null; parent_comment_id: string | null; created_at: string }>
+    history: Array<{ id: string; field: string; from_value: string | null; to_value: string | null; actor_user_id: string | null; created_at: string }>
+    sub_issues: Array<{ id: string; number: number; title: string; state_id: string; priority: number; completed_at: string | null }>
+    relations: Array<{ id: string; issue_id: string; related_issue_id: string; type: string }>
+    subscriber_ids: string[]
+  }
+}
+
+export default function IssueDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  return <IssueDetail id={id} />
+}
+
+const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
+  const { mode, engine } = usePm()
+  const router = useRouter()
+  const qc = useQueryClient()
+
+  const detail = useQuery({
+    queryKey: ['pm', 'issue-detail', id],
+    queryFn: () => api.get<DetailResponse>(`/api/v1/pm/issues/${id}/detail`),
+  })
+  const d = detail.data?.data
+
+  // Live row from the engine graph when syncing (instant property updates).
+  const liveRow = mode === 'sync' && engine ? engine.store.issues.get(id) : null
+  const issue = liveRow ?? d?.issue ?? null
+  const store = engine?.store
+
+  const [editingDesc, setEditingDesc] = useState(false)
+  const [desc, setDesc] = useState('')
+  const [comment, setComment] = useState('')
+  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | null>(null)
+
+  useEffect(() => {
+    if (d?.issue.description != null && !editingDesc) setDesc(d.issue.description)
+  }, [d?.issue.description, editingDesc])
+
+  const restMove = useMutation({
+    mutationFn: (state_id: string) => api.post(`/api/v1/pm/issues/${id}/move-state`, { state_id }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+  })
+  const restAssign = useMutation({
+    mutationFn: (assignee_user_id: string | null) => api.post(`/api/v1/pm/issues/${id}/assign`, { assignee_user_id }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+  })
+  const restPriority = useMutation({
+    mutationFn: (priority: number) => api.post(`/api/v1/pm/issues/${id}/priority`, { priority }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+  })
+  const restUpdate = useMutation({
+    mutationFn: (fields: Record<string, unknown>) => api.patch(`/api/v1/pm/issues/${id}`, fields),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+  })
+  const postComment = useMutation({
+    mutationFn: (body: string) => api.post(`/api/v1/pm/issues/${id}/comments`, { body }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }); setComment('') },
+  })
+
+  const doMove = (stateId: string) => (engine ? engine.moveIssueState(id, stateId) : restMove.mutate(stateId))
+  const doAssign = (uid: string | null) => (engine ? engine.assignIssue(id, uid) : restAssign.mutate(uid))
+  const doPriority = (p: number) => (engine ? engine.setIssuePriority(id, p) : restPriority.mutate(p))
+  const saveDesc = () => {
+    if (engine) engine.updateIssue(id, { description: desc })
+    else restUpdate.mutate({ description: desc })
+    setEditingDesc(false)
+    setTimeout(() => qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }), 600)
+  }
+
+  useHotkeys({
+    escape: () => { if (menu) setMenu(null); else router.push('/pm/issues') },
+    ...Object.fromEntries([0, 1, 2, 3, 4].map((p) => [String(p), () => doPriority(p)])),
+  })
+
+  if (detail.isLoading || !issue) {
+    return (
+      <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
+        <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
+      </div>
+    )
+  }
+
+  const team = store?.teams.get(issue.team_id)
+  const states = store ? store.statesForTeam(issue.team_id) : []
+  const state = states.find((s) => s.id === issue.state_id)
+  const users = store ? [...store.users.values()] : []
+  const assignee = issue.assignee_user_id ? users.find((u) => u.id === issue.assignee_user_id) : null
+  const doneChildren = (d?.sub_issues ?? []).filter((s) => s.completed_at).length
+
+  return (
+    <div style={{ padding: '22px 26px 64px', maxWidth: 1120, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <Btn kind="ghost" size="sm" icon={<Icon.chevL size={13} />} onClick={() => router.push('/pm/issues')}>
+          {team?.key ?? 'Issues'}
+        </Btn>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
+          {team?.key}-{issue.number}
+        </span>
+        {(issue as PmIssueRow)._pending && <PendingDot />}
+        <span style={{ flex: 1 }} />
+        <Btn kind="ghost" size="sm" onClick={() => { void navigator.clipboard.writeText(`${team?.key}-${issue.number}`) }}>
+          Copy ID <Kbd style={{ marginLeft: 5 }}>⌘⇧.</Kbd>
+        </Btn>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20, alignItems: 'start' }}>
+        {/* ── Doc pane ── */}
+        <div>
+          <h1 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.3, marginBottom: 14 }}>
+            {issue.title}
+          </h1>
+
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            {editingDesc ? (
+              <>
+                <textarea
+                  autoFocus
+                  className="input"
+                  value={desc}
+                  onChange={(e) => setDesc(e.target.value)}
+                  placeholder="Describe the task — markdown supported"
+                  style={{ width: '100%', minHeight: 140, resize: 'vertical', fontSize: 12.5, lineHeight: 1.6, padding: 10 }}
+                  onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveDesc() }}
+                />
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+                  <Btn kind="ghost" size="sm" onClick={() => { setEditingDesc(false); setDesc(d?.issue.description ?? '') }}>Cancel</Btn>
+                  <Btn kind="primary" size="sm" onClick={saveDesc}>Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>⌘↵</Kbd></Btn>
+                </div>
+              </>
+            ) : (
+              <div onClick={() => setEditingDesc(true)} style={{ cursor: 'text', minHeight: 40 }}>
+                {desc ? (
+                  <div style={{ fontSize: 12.5, lineHeight: 1.65, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{desc}</div>
+                ) : (
+                  <div className="t-mute" style={{ fontSize: 12 }}>Add a description…</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Sub-issues */}
+          {(d?.sub_issues.length ?? 0) > 0 && (
+            <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+                <span className="t-caption">Sub-issues</span>
+                <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>
+                  {doneChildren}/{d!.sub_issues.length}
+                </span>
+              </div>
+              {d!.sub_issues.map((s, i) => (
+                <div key={s.id} onClick={() => router.push(`/pm/issues/${s.id}`)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, height: 32, padding: '0 14px', cursor: 'pointer', borderBottom: i < d!.sub_issues.length - 1 ? '1px solid var(--bord)' : 'none' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{team?.key}-{s.number}</span>
+                  <PriorityGlyph p={s.priority} size={12} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: s.completed_at ? 'line-through' : 'none', opacity: s.completed_at ? 0.6 : 1 }}>{s.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Relations */}
+          {(d?.relations.length ?? 0) > 0 && (
+            <div className="card" style={{ padding: '10px 14px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="t-caption">Relations</span>
+              {d!.relations.map((r) => {
+                const otherId = r.issue_id === id ? r.related_issue_id : r.issue_id
+                const other = store?.issues.get(otherId)
+                const label = r.issue_id === id ? r.type.replace(/_/g, ' ') : r.type === 'blocks' ? 'blocked by' : r.type.replace(/_/g, ' ')
+                return (
+                  <button key={r.id} onClick={() => router.push(`/pm/issues/${otherId}`)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 7, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-2)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>
+                    <span style={{ color: r.type === 'blocks' ? 'var(--coral)' : 'var(--text-faint)' }}>{label}</span>
+                    {team?.key}-{other?.number ?? '…'}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Comments + activity */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+              <span className="t-caption">Activity</span>
+            </div>
+            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {(d?.history ?? []).slice(0, 8).reverse().map((h) => (
+                <div key={h.id} style={{ display: 'flex', gap: 8, padding: '7px 14px', fontSize: 11, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text-2)' }}>{users.find((u) => u.id === h.actor_user_id)?.name ?? '—'}</span>
+                  <span>set {h.field}: {h.from_value ?? '—'} → <b style={{ color: 'var(--text-2)' }}>{h.to_value ?? '—'}</b></span>
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(h.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+              ))}
+              {(d?.comments ?? []).map((c) => (
+                <div key={c.id} style={{ display: 'flex', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--bord)', marginLeft: c.parent_comment_id ? 26 : 0 }}>
+                  <MiniAv name={users.find((u) => u.id === c.author_user_id)?.name ?? '?'} size={22} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{users.find((u) => u.id === c.author_user_id)?.name ?? '—'}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(c.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                    </div>
+                    <div style={{ fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginTop: 3 }}>{c.body}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 9, padding: 12 }}>
+              <input
+                className="input"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && comment.trim()) postComment.mutate(comment.trim()) }}
+                placeholder="Leave a comment… (⌘↵ to send)"
+                style={{ flex: 1, height: 36 }}
+              />
+              <Btn kind="secondary" size="sm" disabled={!comment.trim() || postComment.isPending} onClick={() => postComment.mutate(comment.trim())}>
+                Comment
+              </Btn>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Properties rail ── */}
+        <div className="card" style={{ padding: 12, position: 'sticky', top: 80 }}>
+          <RailRow label="State" onClick={() => setMenu(menu === 'state' ? null : 'state')}>
+            {state ? <><StateGlyph cat={state.category} size={13} /> <span>{state.name}</span></> : '—'}
+          </RailRow>
+          {menu === 'state' && (
+            <RailMenu>
+              {states.map((s) => (
+                <button key={s.id} onClick={() => { doMove(s.id); setMenu(null) }} style={railMenuRow(s.id === issue.state_id)}>
+                  <StateGlyph cat={s.category} size={12} /> {s.name}
+                </button>
+              ))}
+            </RailMenu>
+          )}
+          <RailRow label="Priority" onClick={() => setMenu(menu === 'priority' ? null : 'priority')}>
+            <PriorityGlyph p={issue.priority} size={13} /> <span>{PM_PRIORITY_LABEL[issue.priority]}</span>
+          </RailRow>
+          {menu === 'priority' && (
+            <RailMenu>
+              {[0, 1, 2, 3, 4].map((p) => (
+                <button key={p} onClick={() => { doPriority(p); setMenu(null) }} style={railMenuRow(p === issue.priority)}>
+                  <PriorityGlyph p={p} size={12} /> {PM_PRIORITY_LABEL[p]}
+                </button>
+              ))}
+            </RailMenu>
+          )}
+          <RailRow label="Assignee" onClick={() => setMenu(menu === 'assignee' ? null : 'assignee')}>
+            {assignee?.name ? <><MiniAv name={assignee.name} size={16} /> <span>{assignee.name}</span></> : <span className="t-mute">Unassigned</span>}
+          </RailRow>
+          {menu === 'assignee' && (
+            <RailMenu>
+              <button onClick={() => { doAssign(null); setMenu(null) }} style={railMenuRow(!issue.assignee_user_id)}>Unassigned</button>
+              {users.map((u) => (
+                <button key={u.id} onClick={() => { doAssign(u.id); setMenu(null) }} style={railMenuRow(u.id === issue.assignee_user_id)}>
+                  <MiniAv name={u.name ?? '?'} size={15} /> {u.name}
+                </button>
+              ))}
+            </RailMenu>
+          )}
+          <RailRow label="Estimate">
+            <input
+              className="input"
+              defaultValue={issue.estimate ? String(Number(issue.estimate)) : ''}
+              placeholder="—"
+              onBlur={(e) => {
+                const v = e.target.value.trim()
+                if (engine) engine.updateIssue(id, { estimate: v || null })
+                else restUpdate.mutate({ estimate: v || null })
+              }}
+              style={{ height: 26, width: 70, fontSize: 11.5 }}
+            />
+          </RailRow>
+          <RailRow label="Due">
+            <input
+              className="input"
+              type="date"
+              defaultValue={issue.due_date ?? ''}
+              onChange={(e) => {
+                if (engine) engine.updateIssue(id, { due_date: e.target.value || null })
+                else restUpdate.mutate({ due_date: e.target.value || null })
+              }}
+              style={{ height: 26, width: 130, fontSize: 11.5 }}
+            />
+          </RailRow>
+          <div style={{ borderTop: '1px solid var(--bord)', marginTop: 10, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <span className="t-caption">Subscribers</span>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {(d?.subscriber_ids ?? []).map((uid) => (
+                <MiniAv key={uid} name={users.find((u) => u.id === uid)?.name ?? '?'} size={18} />
+              ))}
+            </div>
+          </div>
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', fontWeight: 700 }}>
+              Created {new Date(issue.created_at).toLocaleDateString()} · updated {new Date(issue.updated_at).toLocaleDateString()}
+            </span>
+            {issue.source !== 'manual' && <Pill>{issue.source}</Pill>}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+function RailRow({ label, children, onClick }: { label: string; children: React.ReactNode; onClick?: () => void }) {
+  return (
+    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 6px', borderRadius: 8, cursor: onClick ? 'pointer' : 'default', position: 'relative' }}
+      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.background = 'var(--surf-1)' }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+      <span style={{ width: 74, fontSize: 10.5, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>{label}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700 }}>{children}</span>
+    </div>
+  )
+}
+
+function RailMenu({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ margin: '2px 0 6px 80px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: 220, overflowY: 'auto' }}>
+      {children}
+    </div>
+  )
+}
+
+function railMenuRow(active: boolean): React.CSSProperties {
+  return {
+    width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+    borderRadius: 7, background: active ? 'var(--surf-2)' : 'transparent', border: 'none',
+    cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
+  }
+}
+
+function MiniAv({ name, size = 18 }: { name: string; size?: number }) {
+  return (
+    <span style={{ width: size, height: size, borderRadius: '50%', background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em', flexShrink: 0 }}>
+      {initials(name)}
+    </span>
+  )
+}

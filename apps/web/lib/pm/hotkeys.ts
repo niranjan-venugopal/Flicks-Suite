@@ -29,6 +29,17 @@ function comboOf(e: KeyboardEvent): string {
   return parts.join('+')
 }
 
+// G-then chord state shared across surfaces: PmGlobalKeys marks `g`; any
+// surface whose single-letter binding collides with a chord target (e.g. `i`)
+// checks recentG() and yields to navigation.
+let lastG = 0
+export function markG(): void {
+  lastG = Date.now()
+}
+export function recentG(): boolean {
+  return Date.now() - lastG < 900
+}
+
 export function useHotkeys(
   map: Record<string, HotkeyHandler>,
   opts: { allowInInput?: string[]; enabled?: boolean } = {},

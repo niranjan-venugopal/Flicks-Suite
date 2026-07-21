@@ -517,6 +517,25 @@ export class PmIssuesService {
           })
           .onConflictDoNothing()
           .returning();
+
+        // §5.1 duplicate-close: marking A duplicate_of B moves A to the team's
+        // Duplicate (canceled) state and stamps canceled_at.
+        if (input.type === 'duplicate_of') {
+          const teamStates = await tx
+            .select()
+            .from(pmWorkflowStates)
+            .where(and(eq(pmWorkflowStates.team_id, issue.team_id), eq(pmWorkflowStates.category, 'canceled')));
+          const dupState = teamStates.find((s) => s.name === 'Duplicate') ?? teamStates[0];
+          if (dupState && issue.state_id !== dupState.id) {
+            await tx
+              .update(pmIssues)
+              .set({ state_id: dupState.id, canceled_at: new Date(), updated_at: new Date() })
+              .where(eq(pmIssues.id, id));
+            await this.writeHistory(tx, tenantId, id, userId, [
+              { field: 'state', from: issue.state_id, to: dupState.name },
+            ]);
+          }
+        }
         await this.domainEvents.publish(
           {
             name: 'pm.issue.related',
@@ -526,7 +545,11 @@ export class PmIssuesService {
               issue_id: id,
               related_issue_id: input.related_issue_id,
               type: input.type,
-              sync: [{ t: 'pm_issue_relations', id }, { t: 'pm_issue_relations', id: input.related_issue_id }],
+              sync: [
+                { t: 'pm_issue_relations', id },
+                { t: 'pm_issue_relations', id: input.related_issue_id },
+                { t: 'pm_issues', id }, // duplicate-close may have moved state
+              ],
             },
           },
           tx,
@@ -610,7 +633,66 @@ export class PmIssuesService {
     );
   }
 
-  async createComment(tenantId: string, userId: string, issueId: string, input: { id?: string; body: string; parent_comment_id?: string | null }) {
+  /** Lazy-loaded detail (§3.3): description + comments + history + children + relations. */
+  async detail(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const [comments, history, children, relations, subscribers] = await Promise.all([
+          tx
+            .select({
+              id: pmIssueComments.id,
+              body: pmIssueComments.body,
+              author_user_id: pmIssueComments.author_user_id,
+              parent_comment_id: pmIssueComments.parent_comment_id,
+              edited_at: pmIssueComments.edited_at,
+              created_at: pmIssueComments.created_at,
+            })
+            .from(pmIssueComments)
+            .where(and(eq(pmIssueComments.tenant_id, tenantId), eq(pmIssueComments.issue_id, id), isNull(pmIssueComments.deleted_at)))
+            .orderBy(asc(pmIssueComments.created_at)),
+          tx
+            .select()
+            .from(pmIssueHistory)
+            .where(and(eq(pmIssueHistory.tenant_id, tenantId), eq(pmIssueHistory.issue_id, id)))
+            .orderBy(desc(pmIssueHistory.created_at))
+            .limit(50),
+          tx
+            .select({
+              id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+              state_id: pmIssues.state_id, priority: pmIssues.priority,
+              assignee_user_id: pmIssues.assignee_user_id, completed_at: pmIssues.completed_at,
+            })
+            .from(pmIssues)
+            .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.parent_issue_id, id), isNull(pmIssues.deleted_at)))
+            .orderBy(asc(pmIssues.number)),
+          tx
+            .select()
+            .from(pmIssueRelations)
+            .where(and(eq(pmIssueRelations.tenant_id, tenantId), sql`(${pmIssueRelations.issue_id} = ${id} OR ${pmIssueRelations.related_issue_id} = ${id})`)),
+          tx
+            .select({ user_id: pmIssueSubscribers.user_id })
+            .from(pmIssueSubscribers)
+            .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), eq(pmIssueSubscribers.issue_id, id))),
+        ]);
+        return {
+          data: {
+            issue,
+            comments,
+            history,
+            sub_issues: children,
+            relations,
+            subscriber_ids: subscribers.map((s) => s.user_id),
+          },
+        };
+      },
+      userId,
+    );
+  }
+
+  async createComment(tenantId: string, userId: string, issueId: string, input: { id?: string; body: string; parent_comment_id?: string | null; mentioned_user_ids?: string[] }) {
     if (!input.body?.trim()) throw new BadRequestException('Comment body is required');
     return this.db.withTenant(
       tenantId,
@@ -637,10 +719,25 @@ export class PmIssuesService {
             body: input.body,
           })
           .returning();
-        // Commenting subscribes the author (§11 auto-subscribe).
+        // Commenting subscribes the author; @mentions subscribe the mentioned
+        // members (§11 auto-subscribe — validated against active memberships).
+        const subscriberIds = [userId];
+        if (input.mentioned_user_ids?.length) {
+          const valid = await tx
+            .select({ user_id: memberships.user_id })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, tenantId),
+                inArray(memberships.user_id, input.mentioned_user_ids),
+                eq(memberships.status, 'active'),
+              ),
+            );
+          subscriberIds.push(...valid.map((v) => v.user_id));
+        }
         await tx
           .insert(pmIssueSubscribers)
-          .values({ tenant_id: tenantId, issue_id: issueId, user_id: userId })
+          .values([...new Set(subscriberIds)].map((u) => ({ tenant_id: tenantId, issue_id: issueId, user_id: u })))
           .onConflictDoNothing();
         await tx.update(pmIssues).set({ updated_at: new Date() }).where(eq(pmIssues.id, issueId));
         await this.domainEvents.publish(

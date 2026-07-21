@@ -20,6 +20,7 @@ import type { JwtPayload } from '@flicks/shared/types';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmViewsService } from './views.service';
+import { PmSearchService } from './search.service';
 
 class CreateTeamDto {
   @IsString() @MaxLength(6) key!: string;
@@ -75,6 +76,7 @@ export class PmController {
     private readonly teams: PmTeamsService,
     private readonly issues: PmIssuesService,
     private readonly views: PmViewsService,
+    private readonly search_: PmSearchService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -121,6 +123,38 @@ export class PmController {
   @RequireGrant('pm', 'view')
   getIssue(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.issues.get(user.tenantId, user.sub, id);
+  }
+
+  @Get('issues/:id/detail')
+  @RequireGrant('pm', 'view')
+  issueDetail(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.issues.detail(user.tenantId, user.sub, id);
+  }
+
+  @Post('issues/:id/comments')
+  @RequireGrant('pm', 'edit')
+  createComment(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: { body: string; parent_comment_id?: string | null; mentioned_user_ids?: string[] },
+  ) {
+    return this.issues.createComment(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('issues/:id/relate')
+  @RequireGrant('pm', 'edit')
+  relate(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: { related_issue_id: string; type: 'blocks' | 'duplicate_of' | 'relates_to' },
+  ) {
+    return this.issues.relate(user.tenantId, user.sub, id, dto);
+  }
+
+  @Get('search')
+  @RequireGrant('pm', 'view')
+  search(@CurrentUser() user: JwtPayload, @Query('q') q?: string) {
+    return this.search_.search(user.tenantId, user.sub, q ?? '');
   }
 
   @Post('issues')

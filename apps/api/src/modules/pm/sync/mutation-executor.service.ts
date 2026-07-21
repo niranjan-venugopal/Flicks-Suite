@@ -207,6 +207,7 @@ export class PmMutationExecutor {
           id: item.id,
           body: f['body'],
           parent_comment_id: f['parent_comment_id'] ?? null,
+          mentioned_user_ids: f['mentioned_user_ids'] ?? [],
         });
         return {};
       }

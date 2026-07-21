@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
@@ -53,6 +54,7 @@ export default function PmIssuesPage() {
 const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSyncEngine }) {
   const store = engine.store
   const qc = useQueryClient()
+  const router = useRouter()
   const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
   const [groupBy, setGroupBy] = useState<'state' | 'priority' | 'assignee'>('state')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
@@ -157,6 +159,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
     arrowup: () => setFocusIdx((i) => Math.max(0, i - 1)),
     x: () => { if (focused) toggleSel(focused.id, focusIdx) },
     'shift+x': () => { if (focused) toggleSel(focused.id, focusIdx, true) },
+    enter: () => { if (focused) router.push(`/pm/issues/${focused.id}`) },
     escape: () => { setMenu(null); setBulkMenu(null); setComposerOpen(false); setSel(new Set()); setFocusIdx(-1) },
     'mod+z': (e) => { e.preventDefault(); engine.undo() },
     'mod+shift+z': (e) => { e.preventDefault(); engine.redo() },
@@ -291,6 +294,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
                     last={i === g.rows.length - 1}
                     focused={focused?.id === issue.id}
                     selected={sel.has(issue.id)}
+                    onOpen={() => router.push(`/pm/issues/${issue.id}`)}
                     onFocus={() => setFocusIdx(flat.findIndex((f) => f.id === issue.id))}
                     onToggleSel={(range) => toggleSel(issue.id, flat.findIndex((f) => f.id === issue.id), range)}
                     menu={menu?.issueId === issue.id ? menu.kind : null}
@@ -425,7 +429,7 @@ function MiniAv({ name, size = 18 }: { name: string; size?: number }) {
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
-const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onToggleSel, menu, openMenu, closeMenu, states }: {
+const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onOpen, onToggleSel, menu, openMenu, closeMenu, states }: {
   issue: PmIssueRow
   state: PmStateRow
   teamKey: string
@@ -434,6 +438,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
   focused: boolean
   selected: boolean
   onFocus: () => void
+  onOpen: () => void
   onToggleSel: (range: boolean) => void
   menu: 'state' | 'assignee' | null
   openMenu: (kind: 'state' | 'assignee') => void
@@ -447,6 +452,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
   return (
     <div
       onClick={(e) => { if (e.shiftKey) onToggleSel(true); else onFocus() }}
+      onDoubleClick={onOpen}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px',
         cursor: 'pointer', position: 'relative',

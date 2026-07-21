@@ -10,7 +10,9 @@ import {
   pmTeamMemberships,
   pmIssues,
   pmIssueHistory,
+  pmIssueSubscribers,
   pmLabels,
+  pmWorkflowStates,
   domainEvents,
   syncMutations,
 } from '@flicks/db/schema';
@@ -438,5 +440,89 @@ describe('Bootstrap + delta visibility (§3.3/§3.4/§16)', () => {
     if (!('upserts' in delta)) throw new Error('unexpected re-bootstrap');
     expect(delta.tombstones.pm_issues ?? []).toContain(issue.id);
     expect(delta.latest_seq).toBeGreaterThan(before);
+  });
+});
+
+describe('Sprint 35 — search, detail, mentions, duplicate-close (§5.2, §10, §13)', () => {
+  it('search: issue-key prefix, FTS full word, trigram partial word — private teams excluded', async () => {
+    const { PmSearchService } = await import('../modules/pm/search.service');
+    const searchSvc = new PmSearchService(dbSvc, visibility);
+    const [team] = await dbAdmin.select().from(pmTeams).where(eq(pmTeams.id, teamId));
+    const pub = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Authentication flow hardening' })).data;
+    const priv = (await issuesSvc.create(tenantId, ownerId, { team_id: privateTeamId, title: 'Authentication secret rotation' })).data;
+
+    // 1. Key prefix — "KEY-N" resolves directly.
+    const byKey = (await searchSvc.search(tenantId, ownerId, `${team!.key}-${pub.number}`)).data.issues;
+    expect(byKey.some((i) => i.id === pub.id && i.match === 'key')).toBe(true);
+
+    // 2. FTS — full word via websearch semantics.
+    const byWord = (await searchSvc.search(tenantId, ownerId, 'authentication')).data.issues;
+    expect(byWord.some((i) => i.id === pub.id)).toBe(true);
+
+    // 3. Trigram/substring — partial words with NO FTS prefix match still hit,
+    //    including the short-query-vs-long-title case ("auth").
+    for (const partial of ['authen', 'auth']) {
+      const byPartial = (await searchSvc.search(tenantId, ownerId, partial)).data.issues;
+      expect(byPartial.some((i) => i.id === pub.id && i.match === 'trigram')).toBe(true);
+    }
+
+    // §16 — the outsider NEVER sees the private-team issue, on any path.
+    for (const q of ['authentication', 'authen', `SEC-${priv.number}`]) {
+      const hits = (await searchSvc.search(tenantId, outsiderId, q)).data.issues;
+      expect(hits.some((i) => i.id === priv.id)).toBe(false);
+    }
+    // Owner (member) DOES see it — the filter is visibility, not blanket.
+    const ownerHits = (await searchSvc.search(tenantId, ownerId, 'authentication')).data.issues;
+    expect(ownerHits.some((i) => i.id === priv.id)).toBe(true);
+  });
+
+  it('comment @mention subscribes the mentioned member; unknown ids are ignored (§10)', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Mention target' })).data;
+    await issuesSvc.createComment(tenantId, ownerId, issue.id, {
+      body: 'Looping in @tester',
+      mentioned_user_ids: [outsiderId, crypto.randomUUID()], // second id is not a member
+    });
+    const subs = await dbAdmin
+      .select()
+      .from(pmIssueSubscribers)
+      .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), eq(pmIssueSubscribers.issue_id, issue.id)));
+    const ids = subs.map((s) => s.user_id);
+    expect(ids).toContain(ownerId); // creator auto-subscribe
+    expect(ids).toContain(outsiderId); // mention subscribe
+    expect(ids).toHaveLength(2); // the bogus mention was dropped, not inserted
+  });
+
+  it('duplicate-close: relate duplicate_of moves the issue to Duplicate and stamps canceled_at (§5.1)', async () => {
+    const dupe = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Dupe report' })).data;
+    const canonical = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Canonical report' })).data;
+    await issuesSvc.relate(tenantId, ownerId, dupe.id, { related_issue_id: canonical.id, type: 'duplicate_of' });
+    const [after] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, dupe.id));
+    expect(after!.canceled_at).not.toBeNull();
+    const [state] = await dbAdmin.select().from(pmWorkflowStates).where(eq(pmWorkflowStates.id, after!.state_id));
+    expect(state!.category).toBe('canceled');
+    // The canonical issue is untouched.
+    const [canon] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, canonical.id));
+    expect(canon!.canceled_at).toBeNull();
+  });
+
+  it('detail returns the lazy bundle: comments, history, sub-issues, relations, subscribers (§3.3)', async () => {
+    const parent = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Detail parent' })).data;
+    const child = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Detail child', parent_issue_id: parent.id })).data;
+    const other = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'Detail blocker' })).data;
+    await issuesSvc.relate(tenantId, ownerId, other.id, { related_issue_id: parent.id, type: 'blocks' });
+    await issuesSvc.createComment(tenantId, ownerId, parent.id, { body: 'A detail comment' });
+    await issuesSvc.setPriority(tenantId, ownerId, parent.id, 2); // history entries come from mutations, not create
+
+    const detail = (await issuesSvc.detail(tenantId, ownerId, parent.id)).data;
+    expect(detail.issue.id).toBe(parent.id);
+    expect(detail.comments.map((c) => c.body)).toContain('A detail comment');
+    expect(detail.sub_issues.map((c: { id: string }) => c.id)).toContain(child.id);
+    expect(detail.relations.some((r) => r.issue_id === other.id && r.type === 'blocks')).toBe(true);
+    expect(detail.subscriber_ids).toContain(ownerId);
+    expect(detail.history.length).toBeGreaterThan(0); // create writes history
+
+    // §16 — an outsider cannot fetch detail for a private-team issue.
+    const priv = (await issuesSvc.create(tenantId, ownerId, { team_id: privateTeamId, title: 'Private detail' })).data;
+    await expect(issuesSvc.detail(tenantId, outsiderId, priv.id)).rejects.toThrow();
   });
 });

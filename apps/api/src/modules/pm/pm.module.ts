@@ -6,6 +6,7 @@ import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmViewsService } from './views.service';
+import { PmSearchService } from './search.service';
 import { PmController } from './pm.controller';
 import { PmVisibilityService } from './sync/visibility.service';
 import { PmSyncService } from './sync/sync.service';
@@ -27,6 +28,7 @@ import { PmSyncController } from './sync/sync.controller';
     PmTeamsService,
     PmIssuesService,
     PmViewsService,
+    PmSearchService,
     PmVisibilityService,
     PmSyncService,
     PmMutationExecutor,

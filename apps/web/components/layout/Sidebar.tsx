@@ -114,6 +114,7 @@ const ADMIN_NAV: NavSection[] = [
         // PRD v6 (shell-pm.jsx). Surfaces expand sprint by sprint — Sprint 33
         // ships the team issue list on the sync engine.
         children: [
+          { href: '/pm/my', label: 'My Issues' },
           { href: '/pm/issues', label: 'Issues' },
         ],
       },
@@ -171,7 +172,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/issues', label: 'Issues' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }] },
     ],
   },
   {
@@ -204,7 +205,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/issues', label: 'Issues' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }] },
     ],
   },
   {
