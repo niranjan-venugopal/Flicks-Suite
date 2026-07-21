@@ -80,6 +80,11 @@ export class PmTeamsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Concurrent first hits (StrictMode double-mount, two tabs) race the
+        // check-then-seed and the loser dies on pm_teams_tenant_id_key_key —
+        // a tx-scoped advisory lock serializes seeders per tenant so the
+        // loser re-checks after the winner commits.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`pm_seed:${tenantId}`}))`);
         const [existing] = await tx
           .select({ id: pmTeams.id })
           .from(pmTeams)

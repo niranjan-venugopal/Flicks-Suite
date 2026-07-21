@@ -91,6 +91,31 @@ afterAll(async () => {
 });
 
 describe('Workspace seeding (§4, AC-ZERO)', () => {
+  it('concurrent first bootstraps seed exactly ONE team (StrictMode race)', async () => {
+    const [t] = await dbAdmin
+      .insert(tenants)
+      .values({ name: `Race Co ${rid()}`, slug: `pmrace-${rid()}-${Date.now()}`, status: 'active', currency: 'INR' })
+      .returning();
+    const [u] = await dbAdmin.insert(users).values({ email: `pm-race-${rid()}@t.test`, full_name: 'Racer', status: 'active' }).returning();
+    await dbAdmin.insert(memberships).values({ tenant_id: t!.id, user_id: u!.id, role: 'owner', status: 'active' });
+    try {
+      // Both used to pass the existence check and the loser died on the
+      // pm_teams_tenant_id_key_key unique — the advisory lock serializes them.
+      const results = await Promise.all([
+        teamsSvc.ensureWorkspace(t!.id, u!.id),
+        teamsSvc.ensureWorkspace(t!.id, u!.id),
+        teamsSvc.ensureWorkspace(t!.id, u!.id),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1); // one seeder, two no-ops
+      const rows = await dbAdmin.select().from(pmTeams).where(eq(pmTeams.tenant_id, t!.id));
+      expect(rows).toHaveLength(1);
+    } finally {
+      await dbAdmin.delete(domainEvents).where(eq(domainEvents.tenant_id, t!.id));
+      await dbAdmin.delete(tenants).where(eq(tenants.id, t!.id));
+      await dbAdmin.delete(users).where(eq(users.id, u!.id));
+    }
+  });
+
   it('seeded one team from the company name with 8 states, counter and members', async () => {
     const [team] = await dbAdmin.select().from(pmTeams).where(eq(pmTeams.id, teamId));
     expect(team!.key).toMatch(/^[A-Z0-9]{2,6}$/);
