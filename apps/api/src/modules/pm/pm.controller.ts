@@ -20,6 +20,7 @@ import type { JwtPayload } from '@flicks/shared/types';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
+import { PmCyclesService } from './cycles.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 
@@ -126,6 +127,31 @@ class UpdateInitiativeDto {
 class SetInitiativeProjectsDto {
   @IsUUID(undefined, { each: true }) project_ids!: string[];
 }
+class UpdateTeamConfigDto {
+  @IsOptional() @IsString() @MaxLength(120) name?: string;
+  @IsOptional() @IsString() color?: string;
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsBoolean() cycles_enabled?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(6) @Type(() => Number) cycle_length_weeks?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(7) @Type(() => Number) cooldown_days?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(6) @Type(() => Number) cycle_start_dow?: number;
+  @IsOptional() @IsBoolean() cycle_auto_add_started?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(4) @Type(() => Number) upcoming_cycles?: number;
+  @IsOptional() @IsBoolean() triage_enabled?: boolean;
+}
+class SetIssueCycleDto {
+  @IsOptional() @IsUUID() cycle_id?: string | null;
+}
+class TriageAcceptDto {
+  @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
+  @IsOptional() @IsUUID() assignee_user_id?: string | null;
+}
+class TriageDeclineDto {
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+class SnoozeDto {
+  @IsOptional() @IsString() until?: string | null;
+}
 
 /**
  * PM conventional REST (PRD v6 §19) — the kill-switch path. Same domain
@@ -140,6 +166,7 @@ export class PmController {
     private readonly teams: PmTeamsService,
     private readonly issues: PmIssuesService,
     private readonly projects: PmProjectsService,
+    private readonly cycles: PmCyclesService,
     private readonly views: PmViewsService,
     private readonly search_: PmSearchService,
   ) {}
@@ -159,6 +186,13 @@ export class PmController {
   @ApiOperation({ summary: 'Create a team (Owner/Admin/Manager — §16 matrix)' })
   createTeam(@CurrentUser() user: JwtPayload, @Body() dto: CreateTeamDto) {
     return this.teams.create(user.tenantId, user.sub, dto);
+  }
+
+  @Patch('teams/:id')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Team + cycle config (Owner/Admin or team lead)' })
+  updateTeam(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateTeamConfigDto) {
+    return this.teams.updateConfig(user.tenantId, user.sub, user.role, id, dto);
   }
 
   @Get('users')
@@ -418,5 +452,44 @@ export class PmController {
   @RequireGrant('pm', 'edit')
   setInitiativeProjects(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetInitiativeProjectsDto) {
     return this.projects.setInitiativeProjects(user.tenantId, user.sub, user.role, id, dto.project_ids);
+  }
+
+  // ─── Cycles (§7) + triage (§8) ────────────────────────────────────────────
+
+  @Get('teams/:teamId/cycles')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Cycles + active snapshots + stats (velocity/completion/creep)' })
+  teamCycles(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string) {
+    return this.cycles.teamCycles(user.tenantId, user.sub, teamId);
+  }
+
+  @Post('issues/:id/cycle')
+  @RequireGrant('pm', 'edit')
+  setIssueCycle(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetIssueCycleDto) {
+    return this.issues.setCycle(user.tenantId, user.sub, id, { cycle_id: dto.cycle_id ?? null });
+  }
+
+  @Post('issues/:id/send-to-triage')
+  @RequireGrant('pm', 'edit')
+  sendToTriage(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.issues.sendToTriage(user.tenantId, user.sub, id);
+  }
+
+  @Post('issues/:id/triage-accept')
+  @RequireGrant('pm', 'edit')
+  triageAccept(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: TriageAcceptDto) {
+    return this.issues.triageAccept(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('issues/:id/triage-decline')
+  @RequireGrant('pm', 'edit')
+  triageDecline(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: TriageDeclineDto) {
+    return this.issues.triageDecline(user.tenantId, user.sub, id, dto.reason ?? null);
+  }
+
+  @Post('issues/:id/snooze')
+  @RequireGrant('pm', 'edit')
+  snoozeIssue(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SnoozeDto) {
+    return this.issues.snooze(user.tenantId, user.sub, id, dto.until ?? null);
   }
 }

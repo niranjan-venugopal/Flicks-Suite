@@ -29,6 +29,8 @@ const COMMANDS: Command[] = [
   { id: 'nav.projects', label: 'Go to Projects', hint: 'G then P', run: (r) => r.push('/pm/projects') },
   { id: 'nav.timeline', label: 'Go to Timeline', run: (r) => r.push('/pm/timeline') },
   { id: 'nav.roadmap', label: 'Go to Roadmap', hint: 'G then R', run: (r) => r.push('/pm/roadmap') },
+  { id: 'nav.triage', label: 'Go to Triage', hint: 'G then T', run: (r) => r.push('/pm/triage') },
+  { id: 'nav.cycle', label: 'Go to Cycle', hint: 'G then C', run: (r) => r.push('/pm/cycle') },
   { id: 'create.issue', label: 'Create issue…', hint: 'C', run: (r) => r.push('/pm/issues?create=1') },
 ]
 
@@ -39,6 +41,10 @@ export const KEYMAP: Array<{ keys: string; label: string; section: string }> = [
   { keys: 'G then B', label: 'Go to Issues (backlog/list)', section: 'Navigate' },
   { keys: 'G then P', label: 'Go to Projects', section: 'Navigate' },
   { keys: 'G then R', label: 'Go to Roadmap', section: 'Navigate' },
+  { keys: 'G then T', label: 'Go to Triage', section: 'Navigate' },
+  { keys: 'G then C', label: 'Go to Cycle', section: 'Navigate' },
+  { keys: '⇧T', label: 'Send to triage', section: 'Select & edit' },
+  { keys: '⇧↵ · ⇧⌫ · Z · M', label: 'Triage: accept · decline · snooze · merge', section: 'Select & edit' },
   { keys: 'J / K or ↑ ↓', label: 'Move selection', section: 'Navigate' },
   { keys: 'Enter', label: 'Open selected issue', section: 'Navigate' },
   { keys: 'Esc', label: 'Back / clear selection', section: 'Navigate' },
@@ -78,6 +84,8 @@ export function PmGlobalKeys() {
     b: () => { if (recentG()) router.push('/pm/issues') },
     p: () => { if (recentG()) router.push('/pm/projects') },
     r: () => { if (recentG()) router.push('/pm/roadmap') },
+    t: () => { if (recentG()) router.push('/pm/triage') },
+    c: () => { if (recentG()) router.push('/pm/cycle') },
   })
 
   return (

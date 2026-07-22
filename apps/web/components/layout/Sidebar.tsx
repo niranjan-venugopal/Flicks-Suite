@@ -116,6 +116,8 @@ const ADMIN_NAV: NavSection[] = [
         children: [
           { href: '/pm/my', label: 'My Issues' },
           { href: '/pm/issues', label: 'Issues' },
+          { href: '/pm/triage', label: 'Triage' },
+          { href: '/pm/cycle', label: 'Cycle' },
           { href: '/pm/projects', label: 'Projects' },
           { href: '/pm/timeline', label: 'Timeline' },
           { href: '/pm/roadmap', label: 'Roadmap' },
@@ -175,7 +177,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
     ],
   },
   {
@@ -208,7 +210,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
     ],
   },
   {

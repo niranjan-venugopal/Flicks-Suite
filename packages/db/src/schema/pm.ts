@@ -185,7 +185,8 @@ export const pmIssues = pgTable(
     parent_issue_id: uuid('parent_issue_id'), // self-FK in SQL
     project_id: uuid('project_id'), // FK added in 0042
     milestone_id: uuid('milestone_id'),
-    cycle_id: uuid('cycle_id'),
+    cycle_id: uuid('cycle_id'), // FK added in 0043
+    snoozed_until: timestamp('snoozed_until', { withTimezone: true }), // triage Z (0043)
     due_date: date('due_date'),
     board_rank: text('board_rank').notNull(), // fractional index (LexoRank-lite)
     backlog_rank: text('backlog_rank').notNull(),
@@ -545,6 +546,49 @@ export const pmInitiativeProjects = pgTable(
   (t) => [primaryKey({ columns: [t.initiative_id, t.project_id] })],
 );
 
+// ─── Cycles + snapshots (0043) ───────────────────────────────────────────────
+
+export const pmCycles = pgTable(
+  'pm_cycles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    team_id: uuid('team_id')
+      .notNull()
+      .references(() => pmTeams.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    starts_at: timestamp('starts_at', { withTimezone: true }).notNull(),
+    ends_at: timestamp('ends_at', { withTimezone: true }).notNull(),
+    cooldown_ends_at: timestamp('cooldown_ends_at', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('upcoming'), // upcoming|active|completed
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('pm_cycles_team_id_number_key').on(t.team_id, t.number),
+    index('idx_pm_cycles_team').on(t.tenant_id, t.team_id, t.starts_at),
+  ],
+);
+
+export const pmCycleSnapshots = pgTable(
+  'pm_cycle_snapshots',
+  {
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    cycle_id: uuid('cycle_id')
+      .notNull()
+      .references(() => pmCycles.id, { onDelete: 'cascade' }),
+    snapshot_date: date('snapshot_date').notNull(),
+    scope_points: numeric('scope_points', { precision: 10, scale: 2 }).notNull().default('0'),
+    started_points: numeric('started_points', { precision: 10, scale: 2 }).notNull().default('0'),
+    completed_points: numeric('completed_points', { precision: 10, scale: 2 }).notNull().default('0'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.cycle_id, t.snapshot_date] })],
+);
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SyncMutation = typeof syncMutations.$inferSelect;
@@ -562,3 +606,5 @@ export type NewPmProject = typeof pmProjects.$inferInsert;
 export type PmProjectMilestone = typeof pmProjectMilestones.$inferSelect;
 export type PmProjectUpdate = typeof pmProjectUpdates.$inferSelect;
 export type PmInitiative = typeof pmInitiatives.$inferSelect;
+export type PmCycle = typeof pmCycles.$inferSelect;
+export type PmCycleSnapshot = typeof pmCycleSnapshots.$inferSelect;

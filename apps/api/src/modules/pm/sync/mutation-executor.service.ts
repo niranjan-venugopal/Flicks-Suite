@@ -276,6 +276,29 @@ export class PmMutationExecutor {
         const res = await this.projects.updateInitiative(tenantId, userId, role ?? 'employee', item.id, f);
         return { pm_initiatives: [res.data as unknown as Record<string, unknown>] };
       }
+      case 'issue.set_cycle': {
+        const res = await this.issues.setCycle(tenantId, userId, item.id, { cycle_id: f['cycle_id'] ?? null });
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'issue.send_to_triage': {
+        const res = await this.issues.sendToTriage(tenantId, userId, item.id);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'issue.triage_accept': {
+        const res = await this.issues.triageAccept(tenantId, userId, item.id, {
+          priority: f['priority'] !== undefined ? Number(f['priority']) : undefined,
+          assignee_user_id: f['assignee_user_id'],
+        });
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'issue.triage_decline': {
+        const res = await this.issues.triageDecline(tenantId, userId, item.id, f['reason'] ?? null);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'issue.snooze': {
+        const res = await this.issues.snooze(tenantId, userId, item.id, f['until'] ?? null);
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
       case 'initiative.set_projects': {
         await this.projects.setInitiativeProjects(tenantId, userId, role ?? 'employee', item.id, (f['project_ids'] as string[]) ?? []);
         return {};

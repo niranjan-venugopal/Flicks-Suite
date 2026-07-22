@@ -6,6 +6,7 @@ import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../core/database/database.module';
 import { runsWorkloads } from '../core/worker/worker-mode';
 import { NotificationsService } from '../modules/notifications/notifications.service';
+import { PmCyclesService } from '../modules/pm/cycles.service';
 
 const EVENT_RETENTION_DAYS = 90; // §3.7 — dispatched outbox rows
 const MUTATION_RETENTION_DAYS = 30; // §3.2 — idempotency ledger
@@ -24,7 +25,22 @@ export class PmJobs {
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly notifications: NotificationsService,
+    private readonly cycles: PmCyclesService,
   ) {}
+
+  /** §7.1 — hourly, tz-aware via stored team-midnight boundaries. */
+  @Cron('7 * * * *', { name: 'pm-cycle-sweep', timeZone: 'UTC' })
+  async cycleSweep(): Promise<void> {
+    if (!runsWorkloads()) return;
+    try {
+      const r = await this.cycles.runCycleSweep(new Date());
+      if (r.created || r.activated || r.ended || r.snapshots) {
+        this.logger.log(`pm-cycle-sweep: +${r.created} created, ${r.activated} activated, ${r.ended} ended, ${r.snapshots} snapshots`);
+      }
+    } catch (err) {
+      this.logger.error(`pm-cycle-sweep failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'pm-sync-prune', timeZone: 'UTC' })
   async pruneSyncData(): Promise<void> {

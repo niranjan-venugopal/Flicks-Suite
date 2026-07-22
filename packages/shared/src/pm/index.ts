@@ -61,7 +61,7 @@ export const PM_SYNC_TABLES = {
     'id', 'team_id', 'number', 'title', 'state_id', 'priority', 'estimate',
     'assignee_user_id', 'creator_user_id', 'parent_issue_id', 'project_id',
     'milestone_id', 'cycle_id', 'due_date', 'board_rank', 'backlog_rank',
-    'source', 'triaged_at', 'started_at', 'completed_at', 'canceled_at',
+    'source', 'triaged_at', 'snoozed_until', 'started_at', 'completed_at', 'canceled_at',
     'created_at', 'updated_at', 'deleted_at',
   ],
   pm_issue_labels: ['issue_id', 'label_id'],
@@ -83,6 +83,8 @@ export const PM_SYNC_TABLES = {
     'created_at', 'updated_at', 'deleted_at',
   ],
   pm_initiative_projects: ['initiative_id', 'project_id', 'position'],
+  // Cycles (0043). Bootstrap ships current ± upcoming per team.
+  pm_cycles: ['id', 'team_id', 'number', 'starts_at', 'ends_at', 'cooldown_ends_at', 'status', 'created_at'],
 } as const;
 export type PmSyncTable = keyof typeof PM_SYNC_TABLES;
 export const PM_SYNC_TABLE_NAMES = Object.keys(PM_SYNC_TABLES) as PmSyncTable[];
@@ -122,6 +124,12 @@ export const PM_MUTATION_OPS = [
   'initiative.create',
   'initiative.update',
   'initiative.set_projects', // {project_ids: uuid[]}
+  // Cycles + triage (§7/§8)
+  'issue.set_cycle',        // {cycle_id: uuid|null}
+  'issue.send_to_triage',   // Shift+T
+  'issue.triage_accept',    // {priority?, assignee_user_id?} → default state + triaged_at
+  'issue.triage_decline',   // {reason?} → Canceled
+  'issue.snooze',           // {until: iso|null}
 ] as const;
 export type PmMutationOp = (typeof PM_MUTATION_OPS)[number];
 

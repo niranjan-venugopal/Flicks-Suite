@@ -133,5 +133,70 @@ timeline/roadmap, cycles + Autopilot, triage).**
 
 ---
 
-*(CP3 — after Sprint 37 · CP4 — after Sprint 39 · CP5/beta gate — after
-Sprint 41. Sections are appended as each pair lands.)*
+## CHECKPOINT 3 — after Sprints 36–37 (the planning layer)
+
+**What shipped:** Sprint 36 — projects with milestones, health updates and
+computed progress (migration 0042), initiatives, timeline (drag-to-re-date
+bars, milestone diamonds), roadmap (initiative lanes), weekly staleness
+nudger. Sprint 37 — cycles with the hourly tz-aware scheduler + Autopilot
+rollover + daily snapshots (migration 0043), cycle page with burn columns +
+velocity/creep, triage conveyor, Shift+T, snooze.
+
+### 1. Projects (§6)
+1. **Projects** (sidebar or `G then P`) → **New project**: name, lead,
+   target date, pick your team → lands on the project page.
+2. Add 2–3 **milestones** (+ Add · name + date · ⏎). A milestone past its
+   date shows amber.
+3. Post a **health update** (pick "At risk", write a line, Post update) →
+   the chip flips project-wide (list, page, timeline color). The rail notes
+   the staleness nudger: leads get an Inbox nudge after 7 quiet days.
+4. Open an issue → properties rail → **Project** → pick your project. Back
+   on the project page: the issue is listed and progress counts it
+   (estimate points; unestimated issues weigh 1).
+
+### 2. Timeline + roadmap (§9.3)
+1. **Timeline** → your project renders as a health-colored bar from start
+   to target with milestone diamonds; the blue line is today. Drag either
+   END of the bar → dates change (check the project page after).
+2. Toggle **By team / By initiative** and Month/Quarter zoom.
+3. **Roadmap** → **New initiative** (Manager+), then "+ Add projects to
+   this lane" → your project's bar appears inside the lane.
+
+### 3. Cycles + Autopilot (§7)
+1. **Cycle** (or `G then C`) → if cycles are off, **Enable cycles** — the
+   hourly scheduler creates upcoming cycles at your team-timezone midnight
+   boundary (verified by fake-clock tests down to the Berlin-midnight case).
+2. With an active cycle: header shows progress %, **velocity** (3-cycle
+   rolling), **creep +N%** (scope added after start); the burn columns are
+   the daily snapshots; previous cycles list on the right.
+3. Move an issue to **In Progress** while it's outside any cycle → it
+   auto-joins the active cycle (§7.1 auto-add) — watch "In this cycle"
+   count up.
+4. Autopilot itself is time-driven; the fake-clock suite proves: urgent/
+   high roll to the next cycle, medium/low return to backlog with ONE
+   Cycle Review digest to the lead + assignees, cooldown blocks the next
+   activation, and the cooldown banner renders.
+
+### 4. Triage (§8)
+1. On the issues list, focus a row (`J`) and press **⇧T** → sent to Triage.
+2. **Triage** (or `G then T`): the conveyor is keyboard-only — `↑↓` move,
+   `0–4` priority, `A` assignee, **⇧↵ Accept** (→ default backlog state,
+   stamps triaged_at), **⇧⌫ Decline** (reason optional → Canceled),
+   `Z` snooze 1d/3d/1w (hides until due), `M` merge-as-duplicate (type the
+   issue key, e.g. DC-3 — links + moves to Duplicate).
+3. Entry rules beyond ⇧T: issues created by non-team-members in a public
+   team land in Triage automatically (tested), as will API-intake issues.
+
+### 5. Automated (verify green)
+`cd apps/api && pnpm jest pm-sync` → 36 tests, incl. Sprint 37's fake-clock
+block: cycle auto-creation at Berlin-midnight boundaries, activation,
+Autopilot P1-rolls/P3-returns with an exactly-once digest, cooldown
+blocking, hand-computed velocity, and the full triage lifecycle.
+
+**Confirm CP3 to start Sprints 38–39 (Inbox + digesting + notification
+matrix + timesheet linkage, then the GitHub integration).**
+
+---
+
+*(CP4 — after Sprint 39 · CP5/beta gate — after Sprint 41. Sections are
+appended as each pair lands.)*

@@ -1,5 +1,6 @@
 import { makeAutoObservable, observable, runInAction } from 'mobx'
 import type {
+  PmCycleRow,
   PmInitiativeRow,
   PmIssueRow,
   PmLabelRow,
@@ -39,6 +40,7 @@ export class PmStore {
   projectMembers = observable.map<string, string[]>()
   /** initiative_id → ordered project ids */
   initiativeProjects = observable.map<string, string[]>()
+  cycles = observable.map<string, PmCycleRow>()
 
   cursor = 0
   hydrated = false
@@ -62,6 +64,7 @@ export class PmStore {
       projectTeams: false,
       projectMembers: false,
       initiativeProjects: false,
+      cycles: false,
     })
   }
 
@@ -186,6 +189,9 @@ export class PmStore {
             if (!list.includes(r.user_id)) this.projectMembers.set(r.project_id, [...list, r.user_id])
             break
           }
+          case 'pm_cycles':
+            this.cycles.set(row.id as string, row as unknown as PmCycleRow)
+            break
           case 'pm_initiative_projects': {
             const r = row as { initiative_id: string; project_id: string }
             const list = this.initiativeProjects.get(r.initiative_id) ?? []
@@ -267,6 +273,7 @@ export class PmStore {
           }
         } else if (table === 'pm_project_milestones') this.milestones.delete(id)
         else if (table === 'pm_project_updates') this.projectUpdates.delete(id)
+        else if (table === 'pm_cycles') this.cycles.delete(id)
         else if (table === 'pm_initiatives') {
           this.initiatives.delete(id)
           this.initiativeProjects.delete(id)
@@ -321,6 +328,23 @@ export class PmStore {
     })
   }
 
+  activeCycleForTeam(teamId: string): PmCycleRow | null {
+    for (const c of this.cycles.values()) if (c.team_id === teamId && c.status === 'active') return c
+    return null
+  }
+
+  /** Triage conveyor rows: triage-category state, not snoozed (§8). */
+  triageIssuesForTeam(teamId: string): PmIssueRow[] {
+    const now = new Date().toISOString()
+    return [...this.issues.values()]
+      .filter((i) => {
+        if (i.team_id !== teamId || i.deleted_at) return false
+        if (i.snoozed_until && i.snoozed_until > now) return false
+        return this.states.get(i.state_id)?.category === 'triage'
+      })
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
+  }
+
   /** Optimistic project patch; returns the pre-image for undo/rollback. */
   patchProject(id: string, patch: Partial<PmProjectRow>): PmProjectRow | null {
     const prev = this.projects.get(id) ?? null
@@ -348,6 +372,7 @@ export class PmStore {
       this.projectTeams.clear()
       this.projectMembers.clear()
       this.initiativeProjects.clear()
+      this.cycles.clear()
       this.cursor = 0
       this.hydrated = false
     })

@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { CrmModule } from '../crm/crm.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
+import { PmCyclesService } from './cycles.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 import { PmController } from './pm.controller';
@@ -21,7 +23,7 @@ import { PmSyncController } from './sync/sync.controller';
  * `pm_sync_engine` FAM flag (kill-switch → the same UI on plain REST).
  */
 @Module({
-  imports: [AuditModule, CrmModule],
+  imports: [AuditModule, CrmModule, NotificationsModule],
   controllers: [PmController, PmSyncController],
   providers: [
     PmGrantGuard,
@@ -29,6 +31,7 @@ import { PmSyncController } from './sync/sync.controller';
     PmTeamsService,
     PmIssuesService,
     PmProjectsService,
+    PmCyclesService,
     PmViewsService,
     PmSearchService,
     PmVisibilityService,
@@ -36,6 +39,6 @@ import { PmSyncController } from './sync/sync.controller';
     PmMutationExecutor,
     PmSyncThrottleGuard,
   ],
-  exports: [PmTeamsService, PmIssuesService, PmProjectsService],
+  exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService],
 })
 export class PmModule {}

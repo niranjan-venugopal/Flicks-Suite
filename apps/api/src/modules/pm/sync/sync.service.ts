@@ -17,6 +17,7 @@ import {
   pmProjectUpdates,
   pmInitiatives,
   pmInitiativeProjects,
+  pmCycles,
 } from '@flicks/db/schema';
 import type { Db, DbAdmin } from '@flicks/db';
 import type { PmSyncTable } from '@flicks/shared/pm';
@@ -183,6 +184,7 @@ export class PmSyncService {
               cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
               board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
               source: pmIssues.source, triaged_at: pmIssues.triaged_at,
+              snoozed_until: pmIssues.snoozed_until,
               started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
               canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
               updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
@@ -293,6 +295,21 @@ export class PmSyncService {
             .where(eq(pmInitiativeProjects.tenant_id, tenantId)),
         );
 
+        // Cycles (§7): current + upcoming + recent history for visible teams.
+        if (visible.length) {
+          const cutoff = new Date(Date.now() - 60 * 86_400_000);
+          const cycles = await tx
+            .select({
+              id: pmCycles.id, team_id: pmCycles.team_id, number: pmCycles.number,
+              starts_at: pmCycles.starts_at, ends_at: pmCycles.ends_at,
+              cooldown_ends_at: pmCycles.cooldown_ends_at, status: pmCycles.status,
+              created_at: pmCycles.created_at,
+            })
+            .from(pmCycles)
+            .where(and(eq(pmCycles.tenant_id, tenantId), inArray(pmCycles.team_id, visible)));
+          push('pm_cycles', cycles.filter((c) => c.status !== 'completed' || c.ends_at > cutoff));
+        }
+
         lines.push(JSON.stringify({ latest_seq: latestSeq, min_seq_horizon: horizon }));
         return lines;
       },
@@ -391,6 +408,7 @@ export class PmSyncService {
                   cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
                   board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
                   source: pmIssues.source, triaged_at: pmIssues.triaged_at,
+                  snoozed_until: pmIssues.snoozed_until,
                   started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
                   canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
                   updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
@@ -398,6 +416,19 @@ export class PmSyncService {
                 .from(pmIssues)
                 .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, ids), isNull(pmIssues.deleted_at)));
               record('pm_issues', idSet, rows.filter((r) => visible.includes(r.team_id)));
+              break;
+            }
+            case 'pm_cycles': {
+              const rows = await tx
+                .select({
+                  id: pmCycles.id, team_id: pmCycles.team_id, number: pmCycles.number,
+                  starts_at: pmCycles.starts_at, ends_at: pmCycles.ends_at,
+                  cooldown_ends_at: pmCycles.cooldown_ends_at, status: pmCycles.status,
+                  created_at: pmCycles.created_at,
+                })
+                .from(pmCycles)
+                .where(and(eq(pmCycles.tenant_id, tenantId), inArray(pmCycles.id, ids)));
+              record('pm_cycles', idSet, rows.filter((r) => visible.includes(r.team_id)));
               break;
             }
             case 'pm_projects': {

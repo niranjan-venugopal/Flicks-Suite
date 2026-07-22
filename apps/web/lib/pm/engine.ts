@@ -273,6 +273,7 @@ export class PmSyncEngine {
       backlog_rank: rankBetween(lastBacklog, null),
       source: 'manual',
       triaged_at: null,
+      snoozed_until: null,
       started_at: null,
       completed_at: null,
       canceled_at: null,
@@ -443,6 +444,111 @@ export class PmSyncEngine {
       op: 'issue.set_project',
       id,
       fields: { project_id: projectId, ...(milestoneId !== undefined ? { milestone_id: milestoneId } : {}) },
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  relateIssues(id: string, relatedIssueId: string, type: 'blocks' | 'duplicate_of' | 'relates_to'): void {
+    // duplicate_of also moves the issue to the Duplicate state server-side —
+    // optimistically mirror the state hop so the conveyor clears instantly.
+    if (type === 'duplicate_of') {
+      const issue = this.store.issues.get(id)
+      const dup = issue
+        ? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'canceled' && s.name === 'Duplicate')
+          ?? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'canceled')
+        : null
+      if (dup) this.store.patchIssue(id, { state_id: dup.id, canceled_at: new Date().toISOString() })
+    }
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.relate',
+      id,
+      fields: { related_issue_id: relatedIssueId, type },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  setIssueCycle(id: string, cycleId: string | null): void {
+    const prev = this.store.patchIssue(id, { cycle_id: cycleId, updated_at: new Date().toISOString() })
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.set_cycle',
+      id,
+      fields: { cycle_id: cycleId },
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  /** Shift+T (§8). Optimistically moves to the team's triage state. */
+  sendToTriage(id: string): void {
+    const issue = this.store.issues.get(id)
+    const triage = issue
+      ? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'triage')
+      : null
+    const prev = triage
+      ? this.store.patchIssue(id, { state_id: triage.id, triaged_at: null, updated_at: new Date().toISOString() })
+      : null
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.send_to_triage',
+      id,
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  triageAccept(id: string, opts: { priority?: number; assignee_user_id?: string | null } = {}): void {
+    const issue = this.store.issues.get(id)
+    const team = issue ? this.store.teams.get(issue.team_id) : null
+    const target = team?.default_state_id
+      ?? (issue ? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'backlog')?.id : null)
+    const prev = target
+      ? this.store.patchIssue(id, {
+          state_id: target,
+          triaged_at: new Date().toISOString(),
+          snoozed_until: null,
+          ...(opts.priority !== undefined ? { priority: opts.priority } : {}),
+          ...(opts.assignee_user_id !== undefined ? { assignee_user_id: opts.assignee_user_id } : {}),
+          updated_at: new Date().toISOString(),
+        })
+      : null
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.triage_accept',
+      id,
+      fields: { ...opts },
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  triageDecline(id: string, reason?: string): void {
+    const issue = this.store.issues.get(id)
+    const canceled = issue
+      ? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'canceled')
+      : null
+    const prev = canceled
+      ? this.store.patchIssue(id, { state_id: canceled.id, canceled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      : null
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.triage_decline',
+      id,
+      fields: reason ? { reason } : {},
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  snoozeIssue(id: string, until: string | null): void {
+    const prev = this.store.patchIssue(id, { snoozed_until: until, updated_at: new Date().toISOString() })
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.snooze',
+      id,
+      fields: { until },
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
@@ -753,6 +859,7 @@ export class PmSyncEngine {
       pm_initiative_projects: [...s.initiativeProjects.entries()].flatMap(([initId, projectIds]) =>
         projectIds.map((projectId, i) => ({ key: `${initId}:${projectId}`, row: { initiative_id: initId, project_id: projectId, position: i } })),
       ),
+      pm_cycles: [...s.cycles.entries()].map(([key, row]) => ({ key, row })),
     })
   }
 }

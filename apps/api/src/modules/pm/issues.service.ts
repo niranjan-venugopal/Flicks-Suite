@@ -14,6 +14,7 @@ import {
   pmLabels,
   pmProjects,
   pmProjectMilestones,
+  pmCycles,
   memberships,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -139,7 +140,25 @@ export class PmIssuesService {
       async (tx) => {
         const team = await this.assertTeamAccess(tx, tenantId, userId, input.team_id);
 
+        // §8 triage entry rule: an issue created by a NON-member in a public
+        // team (or API-intake sources) lands in Triage — the intake gate.
         let stateId = input.state_id ?? team.default_state_id;
+        if (!input.state_id && team.triage_enabled) {
+          const [member] = await tx
+            .select({ user_id: pmTeamMemberships.user_id })
+            .from(pmTeamMemberships)
+            .where(and(eq(pmTeamMemberships.team_id, team.id), eq(pmTeamMemberships.user_id, userId)))
+            .limit(1);
+          const intakeSource = input.source === 'api' || input.source === 'intake';
+          if (!member || intakeSource) {
+            const [triageState] = await tx
+              .select({ id: pmWorkflowStates.id })
+              .from(pmWorkflowStates)
+              .where(and(eq(pmWorkflowStates.team_id, team.id), eq(pmWorkflowStates.category, 'triage')))
+              .limit(1);
+            if (triageState) stateId = triageState.id;
+          }
+        }
         if (stateId) {
           const [st] = await tx
             .select()
@@ -295,11 +314,31 @@ export class PmIssuesService {
           .where(eq(pmWorkflowStates.id, issue.state_id))
           .limit(1);
 
+        // §7.1 auto-add-started: moving to a started state OUTSIDE any cycle
+        // joins the team's active cycle automatically (when enabled).
+        let autoCycleId: string | null = null;
+        if (next.category === 'started' && !issue.cycle_id) {
+          const [team] = await tx
+            .select({ cycles_enabled: pmTeams.cycles_enabled, cycle_auto_add_started: pmTeams.cycle_auto_add_started })
+            .from(pmTeams)
+            .where(eq(pmTeams.id, issue.team_id))
+            .limit(1);
+          if (team?.cycles_enabled && team.cycle_auto_add_started) {
+            const [active] = await tx
+              .select({ id: pmCycles.id })
+              .from(pmCycles)
+              .where(and(eq(pmCycles.team_id, issue.team_id), eq(pmCycles.status, 'active')))
+              .limit(1);
+            autoCycleId = active?.id ?? null;
+          }
+        }
+
         const [updated] = await tx
           .update(pmIssues)
           .set({
             state_id: next.id,
             updated_at: new Date(),
+            ...(autoCycleId ? { cycle_id: autoCycleId } : {}),
             ...this.lifecycleStamps(next.category, prev?.category),
           })
           .where(eq(pmIssues.id, id))
@@ -440,6 +479,181 @@ export class PmIssuesService {
             tenantId,
             actorUserId: userId,
             payload: { issue_id: id, team_id: issue.team_id, sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  /** §7 — attach/detach an issue to a cycle (bulk key C). */
+  async setCycle(tenantId: string, userId: string, id: string, input: { cycle_id: string | null }) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        if (input.cycle_id) {
+          const [cycle] = await tx
+            .select({ id: pmCycles.id, status: pmCycles.status })
+            .from(pmCycles)
+            .where(and(eq(pmCycles.id, input.cycle_id), eq(pmCycles.tenant_id, tenantId), eq(pmCycles.team_id, issue.team_id)))
+            .limit(1);
+          if (!cycle) throw new BadRequestException('cycle_id does not belong to this team');
+          if (cycle.status === 'completed') throw new BadRequestException('cycle already completed');
+        }
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ cycle_id: input.cycle_id, updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.writeHistory(tx, tenantId, id, userId, [{ field: 'cycle', from: issue.cycle_id, to: input.cycle_id }]);
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, cycle_id: input.cycle_id, sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  // ─── triage (§8) ──────────────────────────────────────────────────────────
+
+  /** Shift+T — send to the team's Triage state (clears lifecycle stamps). */
+  async sendToTriage(tenantId: string, userId: string, id: string) {
+    const issue = await this.db.withTenant(tenantId, (tx) => this.loadIssue(tx, tenantId, id), userId);
+    const triageState = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [st] = await tx
+          .select({ id: pmWorkflowStates.id })
+          .from(pmWorkflowStates)
+          .where(and(eq(pmWorkflowStates.team_id, issue.team_id), eq(pmWorkflowStates.category, 'triage')))
+          .limit(1);
+        if (!st) throw new BadRequestException('Team has no triage state');
+        return st;
+      },
+      userId,
+    );
+    const res = await this.moveState(tenantId, userId, id, triageState.id);
+    // AI/automation hook (§8) — separate from the in-tx state_changed event.
+    await this.domainEvents
+      .publish({ name: 'pm.issue.sent_to_triage', tenantId, actorUserId: userId, payload: { issue_id: id, team_id: issue.team_id } })
+      .catch(() => undefined);
+    return res;
+  }
+
+  /** Shift+Enter — Accept: team default (backlog) state + triaged_at stamp. */
+  async triageAccept(
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts: { priority?: number; assignee_user_id?: string | null } = {},
+  ) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        let targetStateId = team.default_state_id;
+        if (!targetStateId) {
+          const [backlog] = await tx
+            .select({ id: pmWorkflowStates.id })
+            .from(pmWorkflowStates)
+            .where(and(eq(pmWorkflowStates.team_id, team.id), inArray(pmWorkflowStates.category, ['backlog', 'unstarted'])))
+            .orderBy(asc(pmWorkflowStates.position))
+            .limit(1);
+          targetStateId = backlog?.id ?? issue.state_id;
+        }
+        const patch: Record<string, unknown> = {
+          state_id: targetStateId,
+          triaged_at: new Date(),
+          snoozed_until: null,
+          updated_at: new Date(),
+        };
+        if (opts.priority !== undefined) patch.priority = opts.priority;
+        if (opts.assignee_user_id !== undefined) patch.assignee_user_id = opts.assignee_user_id;
+        const [updated] = await tx.update(pmIssues).set(patch).where(eq(pmIssues.id, id)).returning();
+        await this.writeHistory(tx, tenantId, id, userId, [{ field: 'triage', from: 'triage', to: 'accepted' }]);
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.triaged',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, action: 'accept', sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  /** Shift+Backspace — Decline: Canceled state, optional reason in history. */
+  async triageDecline(tenantId: string, userId: string, id: string, reason?: string | null) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const [canceled] = await tx
+          .select({ id: pmWorkflowStates.id, name: pmWorkflowStates.name })
+          .from(pmWorkflowStates)
+          .where(and(eq(pmWorkflowStates.team_id, issue.team_id), eq(pmWorkflowStates.category, 'canceled')))
+          .orderBy(asc(pmWorkflowStates.position))
+          .limit(1);
+        if (!canceled) throw new BadRequestException('Team has no canceled state');
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ state_id: canceled.id, canceled_at: new Date(), snoozed_until: null, updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.writeHistory(tx, tenantId, id, userId, [
+          { field: 'triage', from: 'triage', to: reason?.trim() ? `declined: ${reason.trim().slice(0, 200)}` : 'declined' },
+        ]);
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.triaged',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, action: 'decline', sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  /** Z — snooze: hidden from the conveyor until `until` (1d/3d/1w). */
+  async snooze(tenantId: string, userId: string, id: string, until: string | null) {
+    if (until && Number.isNaN(Date.parse(until))) throw new BadRequestException('invalid snooze date');
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ snoozed_until: until ? new Date(until) : null, updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.snoozed',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, until, sync: [{ t: 'pm_issues', id }] },
           },
           tx,
         );

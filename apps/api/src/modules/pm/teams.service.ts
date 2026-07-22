@@ -261,6 +261,71 @@ export class PmTeamsService {
     if (!m?.is_lead) throw new BadRequestException('Team settings need Owner/Admin or the team lead');
   }
 
+  /** §7.1 cycle config + team basics (Owner/Admin or team lead — §16). */
+  async updateConfig(
+    tenantId: string,
+    userId: string,
+    role: string,
+    teamId: string,
+    patch: {
+      name?: string;
+      color?: string;
+      timezone?: string;
+      cycles_enabled?: boolean;
+      cycle_length_weeks?: number;
+      cooldown_days?: number;
+      cycle_start_dow?: number;
+      cycle_auto_add_started?: boolean;
+      upcoming_cycles?: number;
+      triage_enabled?: boolean;
+    },
+  ) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertSettingsAccess(tx, tenantId, userId, teamId, role);
+        const clean: Record<string, unknown> = {};
+        if (patch.name !== undefined && patch.name.trim()) clean.name = patch.name.trim();
+        if (patch.color !== undefined) clean.color = patch.color;
+        if (patch.timezone !== undefined) clean.timezone = patch.timezone;
+        if (patch.cycles_enabled !== undefined) clean.cycles_enabled = patch.cycles_enabled;
+        if (patch.cycle_length_weeks !== undefined) {
+          if (patch.cycle_length_weeks < 1 || patch.cycle_length_weeks > 6) throw new BadRequestException('cycle_length_weeks 1–6');
+          clean.cycle_length_weeks = patch.cycle_length_weeks;
+        }
+        if (patch.cooldown_days !== undefined) {
+          if (patch.cooldown_days < 0 || patch.cooldown_days > 7) throw new BadRequestException('cooldown_days 0–7');
+          clean.cooldown_days = patch.cooldown_days;
+        }
+        if (patch.cycle_start_dow !== undefined) {
+          if (patch.cycle_start_dow < 0 || patch.cycle_start_dow > 6) throw new BadRequestException('cycle_start_dow 0–6');
+          clean.cycle_start_dow = patch.cycle_start_dow;
+        }
+        if (patch.cycle_auto_add_started !== undefined) clean.cycle_auto_add_started = patch.cycle_auto_add_started;
+        if (patch.upcoming_cycles !== undefined) clean.upcoming_cycles = Math.min(Math.max(patch.upcoming_cycles, 1), 4);
+        if (patch.triage_enabled !== undefined) clean.triage_enabled = patch.triage_enabled;
+        if (!Object.keys(clean).length) throw new BadRequestException('empty patch');
+        const [team] = await tx
+          .update(pmTeams)
+          .set(clean)
+          .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId)))
+          .returning();
+        if (!team) throw new BadRequestException('team not found');
+        await this.domainEvents.publish(
+          {
+            name: 'pm.team.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { team_id: teamId, sync: [{ t: 'pm_teams', id: teamId }] },
+          },
+          tx,
+        );
+        return { data: team };
+      },
+      userId,
+    );
+  }
+
   /** Rename/recolor a state, or add one within a category (§4.2). */
   async upsertState(
     tenantId: string,

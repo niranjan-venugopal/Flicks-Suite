@@ -9,7 +9,7 @@ import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@
 import { PmBoard } from '@/components/pm/board'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
-import { useHotkeys } from '@/lib/pm/hotkeys'
+import { recentG, useHotkeys } from '@/lib/pm/hotkeys'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
 
@@ -152,7 +152,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
   }
 
   useHotkeys({
-    c: (e) => { e.preventDefault(); setComposerOpen(true) },
+    c: (e) => { if (recentG()) return; e.preventDefault(); setComposerOpen(true) }, // yields to G-then-C
     j: () => setFocusIdx((i) => Math.min(flat.length - 1, i + 1)),
     k: () => setFocusIdx((i) => Math.max(0, i - 1)),
     arrowdown: () => setFocusIdx((i) => Math.min(flat.length - 1, i + 1)),
@@ -175,6 +175,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
       else if (focused) setMenu({ kind: 'assignee', issueId: focused.id })
     },
     i: () => engine.bulkApply(targets, (id) => engine.assignIssue(id, me)),
+    'shift+t': (e) => { e.preventDefault(); engine.bulkApply(targets, (id) => engine.sendToTriage(id)) },
   })
 
   if (!store.hydrated) {

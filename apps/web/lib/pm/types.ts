@@ -72,6 +72,7 @@ export interface PmIssueRow {
   backlog_rank: string
   source: string
   triaged_at: string | null
+  snoozed_until: string | null
   started_at: string | null
   completed_at: string | null
   canceled_at: string | null
@@ -129,6 +130,17 @@ export interface PmInitiativeRow {
   created_at: string
   updated_at: string
   deleted_at: string | null
+}
+
+export interface PmCycleRow {
+  id: string
+  team_id: string
+  number: number
+  starts_at: string
+  ends_at: string
+  cooldown_ends_at: string
+  status: 'upcoming' | 'active' | 'completed'
+  created_at: string
 }
 
 export interface PendingMutation {

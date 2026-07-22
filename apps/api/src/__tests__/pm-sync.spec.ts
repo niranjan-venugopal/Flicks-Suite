@@ -11,6 +11,8 @@ import {
   pmIssues,
   pmIssueHistory,
   pmIssueSubscribers,
+  pmCycles,
+  pmCycleSnapshots,
   pmLabels,
   pmWorkflowStates,
   domainEvents,
@@ -648,5 +650,158 @@ describe('Sprint 36 — projects, milestones, updates, initiatives (§6, §9.3)'
     for (const t of ['pm_projects', 'pm_project_teams', 'pm_project_milestones', 'pm_project_updates', 'pm_initiatives', 'pm_initiative_projects']) {
       expect(tables.has(t)).toBe(true);
     }
+  });
+});
+
+describe('Sprint 37 — cycles, Autopilot, snapshots, triage (§7/§8, fake-clock)', () => {
+  const notifStub = { createInAppNotification: jest.fn().mockResolvedValue(undefined) };
+  const cyclesSvc = new (require('../modules/pm/cycles.service').PmCyclesService)(
+    dbSvc, dbAdmin as never, domainEventsSvc, notifStub as never, visibility,
+  );
+  let cycTeamId: string;
+
+  beforeAll(async () => {
+    const t = await teamsSvc.create(tenantId, ownerId, { key: 'CYC', name: 'Cycle Team' });
+    cycTeamId = t.data.id;
+    await teamsSvc.updateConfig(tenantId, ownerId, 'owner', cycTeamId, {
+      cycles_enabled: true, cycle_length_weeks: 2, cooldown_days: 2, cycle_start_dow: 1,
+      timezone: 'Europe/Berlin', upcoming_cycles: 2,
+    });
+  });
+
+  it('sweep creates upcoming cycles at Berlin-midnight boundaries and activates on time', async () => {
+    const t0 = new Date('2026-07-01T10:00:00Z'); // a Wednesday
+    const r1 = await cyclesSvc.runCycleSweep(t0);
+    expect(r1.created).toBeGreaterThanOrEqual(3); // want+1 windows
+    const rows = await dbAdmin.select().from(pmCycles).where(eq(pmCycles.team_id, cycTeamId));
+    expect(rows.map((c) => c.number).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    // §17: boundary at BERLIN midnight — July = CEST (UTC+2) → 22:00 UTC.
+    const first = rows.find((c) => c.number === 1)!;
+    expect(first.starts_at.getUTCHours()).toBe(22);
+    expect(first.starts_at.getUTCDay()).toBe(0); // Sunday 22:00 UTC = Monday 00:00 Berlin
+    // Not yet started → still upcoming.
+    expect(first.status).toBe('upcoming');
+    // Advance past starts_at → activation.
+    const r2 = await cyclesSvc.runCycleSweep(new Date(first.starts_at.getTime() + 3_600_000));
+    expect(r2.activated).toBe(1);
+    const [active] = await dbAdmin.select().from(pmCycles).where(and(eq(pmCycles.team_id, cycTeamId), eq(pmCycles.status, 'active')));
+    expect(active!.number).toBe(1);
+    // Snapshot taken for the active cycle on that local day; idempotent re-run.
+    const r3 = await cyclesSvc.runCycleSweep(new Date(first.starts_at.getTime() + 2 * 3_600_000));
+    expect(r3.snapshots).toBe(0); // same Berlin day — already snapped by r2
+  });
+
+  it('auto-add-started: starting an issue outside a cycle joins the active one (§7.1)', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: cycTeamId, title: 'Auto-add me', estimate: 3 })).data;
+    expect(issue.cycle_id).toBeNull();
+    const started = (await teamsSvc.list(tenantId, ownerId)).data.states.find((s) => s.team_id === cycTeamId && s.category === 'started')!;
+    const moved = (await issuesSvc.moveState(tenantId, ownerId, issue.id, started.id)).data;
+    expect(moved.cycle_id).not.toBeNull();
+  });
+
+  it('Autopilot: P1 rolls to the next cycle, P3 returns to backlog, digest EXACTLY once (§7.1)', async () => {
+    const [active] = await dbAdmin.select().from(pmCycles).where(and(eq(pmCycles.team_id, cycTeamId), eq(pmCycles.status, 'active')));
+    const p1 = (await issuesSvc.create(tenantId, ownerId, { team_id: cycTeamId, title: 'Urgent leftover', priority: 1, assignee_user_id: ownerId })).data;
+    const p3 = (await issuesSvc.create(tenantId, ownerId, { team_id: cycTeamId, title: 'Medium leftover', priority: 3, assignee_user_id: outsiderId })).data;
+    await issuesSvc.setCycle(tenantId, ownerId, p1.id, { cycle_id: active!.id });
+    await issuesSvc.setCycle(tenantId, ownerId, p3.id, { cycle_id: active!.id });
+
+    notifStub.createInAppNotification.mockClear();
+    const afterEnd = new Date(active!.ends_at.getTime() + 3_600_000);
+    await cyclesSvc.runCycleSweep(afterEnd);
+    await cyclesSvc.runCycleSweep(afterEnd); // repeat — must be a no-op
+
+    const [p1After] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, p1.id));
+    const [p3After] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, p3.id));
+    const [nextCycle] = await dbAdmin.select().from(pmCycles).where(and(eq(pmCycles.team_id, cycTeamId), eq(pmCycles.number, active!.number + 1)));
+    expect(p1After!.cycle_id).toBe(nextCycle!.id); // urgent rolled forward
+    expect(p3After!.cycle_id).toBeNull(); // medium returned to backlog
+    // Digest went to lead + assignees of RETURNED issues, exactly once each.
+    const digestCalls = notifStub.createInAppNotification.mock.calls.filter((c) => c[1] === 'pm.cycle.review');
+    expect(digestCalls.length).toBeGreaterThanOrEqual(1);
+    const recipients = digestCalls.map((c) => c[0]);
+    expect(new Set(recipients).size).toBe(recipients.length); // no double sends
+    expect(recipients).toContain(outsiderId); // returned issue's assignee
+  });
+
+  it('cooldown blocks activation until cooldown_ends_at (§7.2)', async () => {
+    const cycles = await dbAdmin.select().from(pmCycles).where(eq(pmCycles.team_id, cycTeamId));
+    const ended = cycles.find((c) => c.status === 'completed')!;
+    const next = cycles.find((c) => c.number === ended.number + 1)!;
+    // Inside the cooldown window (and force next to look startable).
+    const inCooldown = new Date(ended.ends_at.getTime() + 3_600_000);
+    await dbAdmin.update(pmCycles).set({ starts_at: inCooldown }).where(eq(pmCycles.id, next.id));
+    await cyclesSvc.runCycleSweep(new Date(inCooldown.getTime() + 60_000));
+    const [stillUpcoming] = await dbAdmin.select().from(pmCycles).where(eq(pmCycles.id, next.id));
+    expect(stillUpcoming!.status).toBe('upcoming'); // §7.2 — blocked
+    // After the cooldown passes → activates.
+    await cyclesSvc.runCycleSweep(new Date(ended.cooldown_ends_at.getTime() + 60_000));
+    const [nowActive] = await dbAdmin.select().from(pmCycles).where(eq(pmCycles.id, next.id));
+    expect(nowActive!.status).toBe('active');
+  });
+
+  it('velocity matches hand-computed completed points (§7.3)', async () => {
+    // Fabricate three completed cycles with known final snapshots.
+    const mk = async (number: number, completed: number) => {
+      const month = String(number - 100).padStart(2, '0'); // 101→01, 102→02, 103→03
+      const [c] = await dbAdmin.insert(pmCycles).values({
+        tenant_id: tenantId, team_id: cycTeamId, number,
+        starts_at: new Date(`2026-${month}-01T00:00:00Z`), ends_at: new Date(`2026-${month}-14T00:00:00Z`),
+        cooldown_ends_at: new Date(`2026-${month}-16T00:00:00Z`), status: 'completed',
+      }).returning();
+      await dbAdmin.insert(pmCycleSnapshots).values({
+        tenant_id: tenantId, cycle_id: c!.id, snapshot_date: `2026-${month}-14`,
+        scope_points: '24', started_points: '2', completed_points: String(completed),
+      });
+    };
+    await mk(101, 17);
+    await mk(102, 19);
+    await mk(103, 22);
+    const res = await cyclesSvc.teamCycles(tenantId, ownerId, cycTeamId);
+    // Last 3 completed by number desc = 103, 102, 101 → mean 19.3.
+    expect(res.data.stats.velocity).toBeCloseTo((22 + 19 + 17) / 3, 1);
+  });
+
+  it('triage: entry rule, accept, decline, snooze, send-to-triage (§8)', async () => {
+    // Entry rule — a NON-member creating in a public team lands in Triage.
+    const t = await teamsSvc.create(tenantId, ownerId, { key: 'INT', name: 'Intake' });
+    const intTeamId = t.data.id;
+    await dbAdmin
+      .delete(pmTeamMemberships)
+      .where(and(eq(pmTeamMemberships.team_id, intTeamId), eq(pmTeamMemberships.user_id, outsiderId)));
+    const intake = (await issuesSvc.create(tenantId, outsiderId, { team_id: intTeamId, title: 'From a non-member' })).data;
+    const states = (await teamsSvc.list(tenantId, ownerId)).data.states.filter((s) => s.team_id === intTeamId);
+    const stateCat = (id: string) => states.find((s) => s.id === id)?.category;
+    expect(stateCat(intake.state_id)).toBe('triage');
+    // A member's create still goes to backlog.
+    const member = (await issuesSvc.create(tenantId, ownerId, { team_id: intTeamId, title: 'From a member' })).data;
+    expect(stateCat(member.state_id)).toBe('backlog');
+
+    // Snooze hides until due (server just stamps; conveyor filters client-side).
+    const until = new Date(Date.now() + 86_400_000).toISOString();
+    const snoozed = (await issuesSvc.snooze(tenantId, ownerId, intake.id, until)).data;
+    expect(snoozed.snoozed_until).not.toBeNull();
+
+    // Accept → default backlog state + triaged_at + snooze cleared.
+    const accepted = (await issuesSvc.triageAccept(tenantId, ownerId, intake.id, { priority: 2 })).data;
+    expect(accepted.triaged_at).not.toBeNull();
+    expect(accepted.snoozed_until).toBeNull();
+    expect(accepted.priority).toBe(2);
+    expect(stateCat(accepted.state_id)).toBe('backlog');
+
+    // Send back to triage clears the stamps (§5.2).
+    const back = (await issuesSvc.sendToTriage(tenantId, ownerId, intake.id)).data;
+    expect(stateCat(back.state_id)).toBe('triage');
+    expect(back.triaged_at).toBeNull();
+
+    // Decline → canceled + canceled_at; reason lands in history.
+    const declined = (await issuesSvc.triageDecline(tenantId, ownerId, intake.id, 'duplicate of roadmap work')).data;
+    expect(stateCat(declined.state_id)).toBe('canceled');
+    expect(declined.canceled_at).not.toBeNull();
+    const history = await dbAdmin
+      .select()
+      .from(pmIssueHistory)
+      .where(and(eq(pmIssueHistory.issue_id, intake.id), eq(pmIssueHistory.field, 'triage')));
+    expect(history.some((h) => (h.to_value ?? '').includes('declined: duplicate of roadmap work'))).toBe(true);
   });
 });

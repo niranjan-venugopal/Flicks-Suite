@@ -8,9 +8,9 @@ import type { PendingMutation } from './types'
  * re-bootstraps (worst case is a refresh, never corruption).
  */
 
-// v2: projects layer stores (Sprint 36). The upgrade callback creates any
-// missing store, so v1 → v2 upgrades in place without data loss.
-const VERSION = 2
+// v2: projects layer stores (Sprint 36) · v3: cycles (Sprint 37). The
+// upgrade callback creates any missing store, so upgrades happen in place.
+const VERSION = 3
 const TABLE_STORES = [
   'pm_teams',
   'pm_team_memberships',
@@ -27,6 +27,7 @@ const TABLE_STORES = [
   'pm_project_updates',
   'pm_initiatives',
   'pm_initiative_projects',
+  'pm_cycles',
 ] as const
 
 export type PmDb = IDBPDatabase
