@@ -22,6 +22,7 @@ import { DomainEventsService } from '../core/events/domain-events.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PmTeamsService } from '../modules/pm/teams.service';
 import { PmIssuesService } from '../modules/pm/issues.service';
+import { PmProjectsService } from '../modules/pm/projects.service';
 import { PmVisibilityService } from '../modules/pm/sync/visibility.service';
 import { PmSyncService } from '../modules/pm/sync/sync.service';
 import { PmMutationExecutor } from '../modules/pm/sync/mutation-executor.service';
@@ -42,8 +43,9 @@ const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc);
 const visibility = new PmVisibilityService(dbSvc);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
+const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const gatewayStub = { emitSeq: jest.fn() };
-const executor = new PmMutationExecutor(dbSvc, issuesSvc, syncSvc, gatewayStub as never);
+const executor = new PmMutationExecutor(dbSvc, issuesSvc, projectsSvc, syncSvc, gatewayStub as never);
 
 let tenantId: string;
 let ownerId: string;
@@ -549,5 +551,102 @@ describe('Sprint 35 — search, detail, mentions, duplicate-close (§5.2, §10, 
     // §16 — an outsider cannot fetch detail for a private-team issue.
     const priv = (await issuesSvc.create(tenantId, ownerId, { team_id: privateTeamId, title: 'Private detail' })).data;
     await expect(issuesSvc.detail(tenantId, outsiderId, priv.id)).rejects.toThrow();
+  });
+});
+
+describe('Sprint 36 — projects, milestones, updates, initiatives (§6, §9.3)', () => {
+  it('progress = estimate points with per-issue fallback 1; canceled excluded (§6.1)', async () => {
+    const project = (await projectsSvc.create(tenantId, ownerId, { name: 'Progress math', team_ids: [teamId] })).data;
+    const mk = async (title: string, estimate: number | null) =>
+      (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title, estimate })).data;
+    const a = await mk('P-a', 5); // will complete
+    const b = await mk('P-b', 3); // will start
+    const c = await mk('P-c', null); // weight 1, backlog
+    const d = await mk('P-d', 8); // will cancel — excluded entirely
+    for (const i of [a, b, c, d]) await issuesSvc.setProject(tenantId, ownerId, i.id, { project_id: project.id });
+    const states = (await teamsSvc.list(tenantId, ownerId)).data.states.filter((s) => s.team_id === teamId);
+    const done = states.find((s) => s.category === 'completed')!;
+    const started = states.find((s) => s.category === 'started')!;
+    const canceled = states.find((s) => s.category === 'canceled')!;
+    await issuesSvc.moveState(tenantId, ownerId, a.id, done.id);
+    await issuesSvc.moveState(tenantId, ownerId, b.id, started.id);
+    await issuesSvc.moveState(tenantId, ownerId, d.id, canceled.id);
+    const detail = (await projectsSvc.detail(tenantId, ownerId, project.id)).data;
+    expect(detail.progress).toEqual({ scope: 9, started: 3, done: 5 }); // 5+3+1, canceled 8 gone
+  });
+
+  it('latest health wins: postUpdate denormalizes onto the project (§6.3)', async () => {
+    const project = (await projectsSvc.create(tenantId, ownerId, { name: 'Health log', team_ids: [teamId] })).data;
+    await projectsSvc.postUpdate(tenantId, ownerId, project.id, { health: 'at_risk', body_md: 'Migration slower than planned.' });
+    await projectsSvc.postUpdate(tenantId, ownerId, project.id, { health: 'on_track', body_md: 'Unblocked — SSO fix landed.' });
+    const [row] = await dbAdmin.select().from((await import('@flicks/db/schema')).pmProjects)
+      .where(eq((await import('@flicks/db/schema')).pmProjects.id, project.id));
+    expect(row!.health).toBe('on_track');
+    const detail = (await projectsSvc.detail(tenantId, ownerId, project.id)).data;
+    expect(detail.updates).toHaveLength(2);
+    expect(detail.updates[0]!.health).toBe('on_track'); // newest first
+  });
+
+  it('milestones keep position order; delete nulls issue pointers via FK (§6.2)', async () => {
+    const project = (await projectsSvc.create(tenantId, ownerId, { name: 'MS order', team_ids: [teamId] })).data;
+    const m2 = (await projectsSvc.createMilestone(tenantId, ownerId, { project_id: project.id, name: 'UAT', position: 2 })).data;
+    const m1 = (await projectsSvc.createMilestone(tenantId, ownerId, { project_id: project.id, name: 'Kickoff', position: 1 })).data;
+    const detail = (await projectsSvc.detail(tenantId, ownerId, project.id)).data;
+    expect(detail.milestones.map((m) => m.name)).toEqual(['Kickoff', 'UAT']);
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: teamId, title: 'On milestone' })).data;
+    await issuesSvc.setProject(tenantId, ownerId, issue.id, { project_id: project.id, milestone_id: m1.id });
+    await projectsSvc.deleteMilestone(tenantId, ownerId, m1.id);
+    const [after] = await dbAdmin.select().from(pmIssues).where(eq(pmIssues.id, issue.id));
+    expect(after!.milestone_id).toBeNull();
+    expect(after!.project_id).toBe(project.id); // project link survives
+    void m2;
+  });
+
+  it('multi-team visibility: private-only projects are invisible to non-members (§16)', async () => {
+    const pub = (await projectsSvc.create(tenantId, ownerId, { name: 'Public project', team_ids: [teamId] })).data;
+    const priv = (await projectsSvc.create(tenantId, ownerId, { name: 'Secret project', team_ids: [privateTeamId] })).data;
+    const both = (await projectsSvc.create(tenantId, ownerId, { name: 'Spanning project', team_ids: [teamId, privateTeamId] })).data;
+    const outsiderList = (await projectsSvc.list(tenantId, outsiderId)).data;
+    const ids = outsiderList.projects.map((p) => p.id);
+    expect(ids).toContain(pub.id);
+    expect(ids).not.toContain(priv.id); // ONLY private team → hidden
+    expect(ids).toContain(both.id); // spans a visible team → visible
+    await expect(projectsSvc.detail(tenantId, outsiderId, priv.id)).rejects.toThrow();
+    // Delta path: private-only project rows never reach the outsider.
+    const before = await syncSvc.latestSeq();
+    await projectsSvc.postUpdate(tenantId, ownerId, priv.id, { health: 'off_track', body_md: 'secret' });
+    const delta = await syncSvc.delta(tenantId, outsiderId, before);
+    if (!('upserts' in delta)) throw new Error('unexpected re-bootstrap');
+    const projRows = (delta.upserts.pm_projects ?? []) as Array<{ id: string }>;
+    expect(projRows.some((r) => r.id === priv.id)).toBe(false);
+    const updRows = (delta.upserts.pm_project_updates ?? []) as Array<{ project_id: string }>;
+    expect(updRows.some((r) => r.project_id === priv.id)).toBe(false);
+  });
+
+  it('initiatives: role gate + project set round-trip through the executor', async () => {
+    // Employee cannot create initiatives (§16 matrix).
+    const empRes = await executor.execute(tenantId, outsiderId, [
+      { clientMutationId: crypto.randomUUID(), op: 'initiative.create' as const, id: crypto.randomUUID(), fields: { name: 'Nope' } },
+    ], 'employee');
+    expect(empRes.results[0]!.status).toBe('rejected');
+    // Owner path: create initiative + project + link them via executor ops.
+    const initId = crypto.randomUUID();
+    const projId = crypto.randomUUID();
+    const res = await executor.execute(tenantId, ownerId, [
+      { clientMutationId: crypto.randomUUID(), op: 'initiative.create' as const, id: initId, fields: { name: 'Q3 · Reliability', target_quarter: 'Q3 2026' } },
+      { clientMutationId: crypto.randomUUID(), op: 'project.create' as const, id: projId, fields: { name: 'Exec-made project', team_ids: [teamId] } },
+      { clientMutationId: crypto.randomUUID(), op: 'initiative.set_projects' as const, id: initId, fields: { project_ids: [projId] } },
+      { clientMutationId: crypto.randomUUID(), op: 'project.post_update' as const, id: projId, fields: { health: 'on_track', body_md: 'Exec update' } },
+    ], 'owner');
+    expect(res.results.map((r) => r.status)).toEqual(['applied', 'applied', 'applied', 'applied']);
+    const list = (await projectsSvc.listInitiatives(tenantId, ownerId)).data;
+    expect(list.projects[initId]).toEqual([projId]);
+    // Bootstrap now carries the projects layer.
+    const lines = await syncSvc.bootstrap(tenantId, ownerId);
+    const models = lines.map((l) => JSON.parse(l)).filter((o) => 'model' in o);
+    const tables = new Set(models.map((m) => m.model));
+    for (const t of ['pm_projects', 'pm_project_teams', 'pm_project_milestones', 'pm_project_updates', 'pm_initiatives', 'pm_initiative_projects']) {
+      expect(tables.has(t)).toBe(true);
+    }
   });
 });

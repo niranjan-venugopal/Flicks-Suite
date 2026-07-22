@@ -4,6 +4,7 @@ import { syncMutations } from '@flicks/db/schema';
 import type { PmMutationItem, PmMutationResultItem, PmSyncTable } from '@flicks/shared/pm';
 import { DatabaseService } from '../../../core/database/database.service';
 import { PmIssuesService } from '../issues.service';
+import { PmProjectsService } from '../projects.service';
 import { PmSyncGateway } from '../../../gateways/pm-sync.gateway';
 import { PmSyncService } from './sync.service';
 
@@ -25,6 +26,7 @@ export class PmMutationExecutor {
   constructor(
     private readonly db: DatabaseService,
     private readonly issues: PmIssuesService,
+    private readonly projects: PmProjectsService,
     private readonly sync: PmSyncService,
     private readonly gateway: PmSyncGateway,
   ) {}
@@ -82,7 +84,7 @@ export class PmMutationExecutor {
       }
 
       try {
-        const rows = await this.applyOp(tenantId, userId, item);
+        const rows = await this.applyOp(tenantId, userId, item, role);
         await this.ledger(tenantId, userId, item.clientMutationId, 'applied', null);
         results.push({ clientMutationId: item.clientMutationId, status: 'applied', rows });
         anyApplied = true;
@@ -136,6 +138,7 @@ export class PmMutationExecutor {
     tenantId: string,
     userId: string,
     item: PmMutationItem,
+    role?: string,
   ): Promise<Partial<Record<PmSyncTable, Record<string, unknown>[]>>> {
     const f = (item.fields ?? {}) as Record<string, never>;
     switch (item.op) {
@@ -209,6 +212,72 @@ export class PmMutationExecutor {
           parent_comment_id: f['parent_comment_id'] ?? null,
           mentioned_user_ids: f['mentioned_user_ids'] ?? [],
         });
+        return {};
+      }
+      case 'issue.set_project': {
+        const res = await this.issues.setProject(tenantId, userId, item.id, {
+          project_id: f['project_id'] ?? null,
+          milestone_id: f['milestone_id'],
+        });
+        return { pm_issues: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'project.create': {
+        const res = await this.projects.create(tenantId, userId, { ...(f as object), id: item.id } as never);
+        return { pm_projects: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'project.update': {
+        const res = await this.projects.update(tenantId, userId, item.id, f);
+        return { pm_projects: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'project.set_teams': {
+        await this.projects.setTeams(tenantId, userId, item.id, (f['team_ids'] as string[]) ?? []);
+        return {};
+      }
+      case 'project.post_update': {
+        // item.id is the PROJECT id; the update row id may ride in fields.
+        await this.projects.postUpdate(tenantId, userId, item.id, {
+          id: f['update_id'],
+          health: f['health'],
+          body_md: f['body_md'],
+        });
+        return {};
+      }
+      case 'project.delete': {
+        await this.projects.softDelete(tenantId, userId, item.id);
+        return {};
+      }
+      case 'project.restore': {
+        const res = await this.projects.restore(tenantId, userId, item.id);
+        return { pm_projects: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'milestone.create': {
+        const res = await this.projects.createMilestone(tenantId, userId, {
+          id: item.id,
+          project_id: f['project_id'],
+          name: f['name'],
+          target_date: f['target_date'] ?? null,
+          position: f['position'],
+        });
+        return { pm_project_milestones: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'milestone.update': {
+        const res = await this.projects.updateMilestone(tenantId, userId, item.id, f);
+        return { pm_project_milestones: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'milestone.delete': {
+        await this.projects.deleteMilestone(tenantId, userId, item.id);
+        return {};
+      }
+      case 'initiative.create': {
+        const res = await this.projects.createInitiative(tenantId, userId, role ?? 'employee', { ...(f as object), id: item.id } as never);
+        return { pm_initiatives: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'initiative.update': {
+        const res = await this.projects.updateInitiative(tenantId, userId, role ?? 'employee', item.id, f);
+        return { pm_initiatives: [res.data as unknown as Record<string, unknown>] };
+      }
+      case 'initiative.set_projects': {
+        await this.projects.setInitiativeProjects(tenantId, userId, role ?? 'employee', item.id, (f['project_ids'] as string[]) ?? []);
         return {};
       }
       default:

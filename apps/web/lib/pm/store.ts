@@ -1,10 +1,14 @@
 import { makeAutoObservable, observable, runInAction } from 'mobx'
 import type {
+  PmInitiativeRow,
   PmIssueRow,
   PmLabelRow,
   PmMembershipRow,
+  PmMilestoneRow,
+  PmProjectRow,
   PmStateRow,
   PmTeamRow,
+  PmUpdateRow,
   PmUserLite,
 } from './types'
 
@@ -25,6 +29,16 @@ export class PmStore {
   /** issue_id → label ids / subscriber user ids */
   issueLabels = observable.map<string, string[]>()
   issueSubscribers = observable.map<string, string[]>()
+  // Projects layer (§6)
+  projects = observable.map<string, PmProjectRow>()
+  milestones = observable.map<string, PmMilestoneRow>()
+  projectUpdates = observable.map<string, PmUpdateRow>()
+  initiatives = observable.map<string, PmInitiativeRow>()
+  /** project_id → team ids / member user ids */
+  projectTeams = observable.map<string, string[]>()
+  projectMembers = observable.map<string, string[]>()
+  /** initiative_id → ordered project ids */
+  initiativeProjects = observable.map<string, string[]>()
 
   cursor = 0
   hydrated = false
@@ -41,6 +55,13 @@ export class PmStore {
       memberships: false,
       issueLabels: false,
       issueSubscribers: false,
+      projects: false,
+      milestones: false,
+      projectUpdates: false,
+      initiatives: false,
+      projectTeams: false,
+      projectMembers: false,
+      initiativeProjects: false,
     })
   }
 
@@ -58,6 +79,41 @@ export class PmStore {
 
   issuesForTeam(teamId: string): PmIssueRow[] {
     return [...this.issues.values()].filter((i) => i.team_id === teamId && !i.deleted_at)
+  }
+
+  projectList(): PmProjectRow[] {
+    return [...this.projects.values()].filter((p) => !p.deleted_at)
+  }
+
+  milestonesForProject(projectId: string): PmMilestoneRow[] {
+    return [...this.milestones.values()]
+      .filter((m) => m.project_id === projectId)
+      .sort((a, b) => a.position - b.position || (a.created_at < b.created_at ? -1 : 1))
+  }
+
+  updatesForProject(projectId: string): PmUpdateRow[] {
+    return [...this.projectUpdates.values()]
+      .filter((u) => u.project_id === projectId)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+  }
+
+  /**
+   * §6.1 — computed progress: scope/started/done by estimate points, per-issue
+   * fallback weight 1 (degrades to count). Canceled issues excluded. Same
+   * formula the server uses for REST responses.
+   */
+  projectProgress(projectId: string): { scope: number; started: number; done: number } {
+    const out = { scope: 0, started: 0, done: 0 }
+    for (const i of this.issues.values()) {
+      if (i.project_id !== projectId || i.deleted_at) continue
+      const cat = this.states.get(i.state_id)?.category
+      if (cat === 'canceled') continue
+      const w = i.estimate != null ? Number(i.estimate) : 1
+      out.scope += w
+      if (cat === 'completed') out.done += w
+      else if (cat === 'started') out.started += w
+    }
+    return out
   }
 
   // ─── writes (engine only) ─────────────────────────────────────────────────
@@ -103,6 +159,39 @@ export class PmStore {
             if (!list.includes(r.user_id)) this.issueSubscribers.set(r.issue_id, [...list, r.user_id])
             break
           }
+          case 'pm_projects': {
+            const incoming = row as unknown as PmProjectRow
+            const existing = this.projects.get(incoming.id)
+            this.projects.set(incoming.id, { ...existing, ...incoming, _pending: false })
+            break
+          }
+          case 'pm_project_milestones':
+            this.milestones.set(row.id as string, row as unknown as PmMilestoneRow)
+            break
+          case 'pm_project_updates':
+            this.projectUpdates.set(row.id as string, row as unknown as PmUpdateRow)
+            break
+          case 'pm_initiatives':
+            this.initiatives.set(row.id as string, row as unknown as PmInitiativeRow)
+            break
+          case 'pm_project_teams': {
+            const r = row as { project_id: string; team_id: string }
+            const list = this.projectTeams.get(r.project_id) ?? []
+            if (!list.includes(r.team_id)) this.projectTeams.set(r.project_id, [...list, r.team_id])
+            break
+          }
+          case 'pm_project_members': {
+            const r = row as { project_id: string; user_id: string }
+            const list = this.projectMembers.get(r.project_id) ?? []
+            if (!list.includes(r.user_id)) this.projectMembers.set(r.project_id, [...list, r.user_id])
+            break
+          }
+          case 'pm_initiative_projects': {
+            const r = row as { initiative_id: string; project_id: string }
+            const list = this.initiativeProjects.get(r.initiative_id) ?? []
+            if (!list.includes(r.project_id)) this.initiativeProjects.set(r.initiative_id, [...list, r.project_id])
+            break
+          }
           default:
             break
         }
@@ -124,6 +213,24 @@ export class PmStore {
         for (const r of rows as Array<{ issue_id: string; user_id: string }>) {
           const list = this.issueSubscribers.get(r.issue_id) ?? []
           this.issueSubscribers.set(r.issue_id, [...list, r.user_id])
+        }
+      } else if (table === 'pm_project_teams') {
+        for (const id of scopeIssueIds) this.projectTeams.set(id, [])
+        for (const r of rows as Array<{ project_id: string; team_id: string }>) {
+          const list = this.projectTeams.get(r.project_id) ?? []
+          this.projectTeams.set(r.project_id, [...list, r.team_id])
+        }
+      } else if (table === 'pm_project_members') {
+        for (const id of scopeIssueIds) this.projectMembers.set(id, [])
+        for (const r of rows as Array<{ project_id: string; user_id: string }>) {
+          const list = this.projectMembers.get(r.project_id) ?? []
+          this.projectMembers.set(r.project_id, [...list, r.user_id])
+        }
+      } else if (table === 'pm_initiative_projects') {
+        for (const id of scopeIssueIds) this.initiativeProjects.set(id, [])
+        for (const r of rows as Array<{ initiative_id: string; project_id: string }>) {
+          const list = this.initiativeProjects.get(r.initiative_id) ?? []
+          this.initiativeProjects.set(r.initiative_id, [...list, r.project_id])
         }
       }
     })
@@ -148,6 +255,22 @@ export class PmStore {
           }
         } else if (table === 'pm_workflow_states') this.states.delete(id)
         else if (table === 'pm_labels') this.labels.delete(id)
+        else if (table === 'pm_projects') {
+          // Losing a project (deleted OR visibility lost) purges its scoped rows.
+          this.projects.delete(id)
+          this.projectTeams.delete(id)
+          this.projectMembers.delete(id)
+          for (const [mid, m] of this.milestones) if (m.project_id === id) this.milestones.delete(mid)
+          for (const [uid, u] of this.projectUpdates) if (u.project_id === id) this.projectUpdates.delete(uid)
+          for (const [iid, list] of this.initiativeProjects) {
+            if (list.includes(id)) this.initiativeProjects.set(iid, list.filter((p) => p !== id))
+          }
+        } else if (table === 'pm_project_milestones') this.milestones.delete(id)
+        else if (table === 'pm_project_updates') this.projectUpdates.delete(id)
+        else if (table === 'pm_initiatives') {
+          this.initiatives.delete(id)
+          this.initiativeProjects.delete(id)
+        }
       }
     })
   }
@@ -198,6 +321,16 @@ export class PmStore {
     })
   }
 
+  /** Optimistic project patch; returns the pre-image for undo/rollback. */
+  patchProject(id: string, patch: Partial<PmProjectRow>): PmProjectRow | null {
+    const prev = this.projects.get(id) ?? null
+    runInAction(() => {
+      const base = this.projects.get(id)
+      if (base) this.projects.set(id, { ...base, ...patch, _pending: true })
+    })
+    return prev ? { ...prev } : null
+  }
+
   clearAll() {
     runInAction(() => {
       this.teams.clear()
@@ -208,6 +341,13 @@ export class PmStore {
       this.memberships.clear()
       this.issueLabels.clear()
       this.issueSubscribers.clear()
+      this.projects.clear()
+      this.milestones.clear()
+      this.projectUpdates.clear()
+      this.initiatives.clear()
+      this.projectTeams.clear()
+      this.projectMembers.clear()
+      this.initiativeProjects.clear()
       this.cursor = 0
       this.hydrated = false
     })

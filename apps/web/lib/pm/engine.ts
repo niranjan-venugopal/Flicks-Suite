@@ -3,7 +3,7 @@ import { rankBetween } from '@flicks/shared/pm'
 import { api } from '@/lib/api/client'
 import { PmStore } from './store'
 import { openPmDb, destroyPmDb, loadSnapshot, persistTables, persistPending, type PmDb } from './idb'
-import type { PendingMutation, PmIssueRow } from './types'
+import type { PendingMutation, PmIssueRow, PmProjectRow, PmUpdateRow } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 const FLUSH_DEBOUNCE_MS = 250
@@ -432,6 +432,208 @@ export class PmSyncEngine {
     for (const id of ids.slice(0, 500)) apply(id)
   }
 
+  setIssueProject(id: string, projectId: string | null, milestoneId?: string | null): void {
+    const prev = this.store.patchIssue(id, {
+      project_id: projectId,
+      milestone_id: projectId ? (milestoneId !== undefined ? milestoneId : this.store.issues.get(id)?.milestone_id ?? null) : null,
+      updated_at: new Date().toISOString(),
+    })
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.set_project',
+      id,
+      fields: { project_id: projectId, ...(milestoneId !== undefined ? { milestone_id: milestoneId } : {}) },
+      inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  // ─── projects layer (§6) ──────────────────────────────────────────────────
+
+  createProject(input: {
+    name: string
+    icon?: string | null
+    summary?: string | null
+    status?: PmProjectRow['status']
+    lead_user_id?: string | null
+    start_date?: string | null
+    target_date?: string | null
+    team_ids?: string[]
+  }): string {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    const row: PmProjectRow = {
+      id,
+      name: input.name,
+      summary: input.summary ?? null,
+      icon: input.icon ?? null,
+      color: null,
+      status: input.status ?? 'planned',
+      health: 'on_track',
+      lead_user_id: input.lead_user_id ?? this.userId,
+      start_date: input.start_date ?? null,
+      target_date: input.target_date ?? null,
+      deal_id: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    }
+    this.store.applyRows('pm_projects', [{ ...row, _pending: true } as unknown as Record<string, unknown>])
+    if (input.team_ids?.length) {
+      this.store.replaceScopedCollections(
+        'pm_project_teams',
+        [id],
+        input.team_ids.map((team_id) => ({ project_id: id, team_id })),
+      )
+    }
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'project.create',
+      id,
+      fields: { ...input },
+      inverse: { table: 'pm_projects', id, row: null },
+      enqueuedAt: Date.now(),
+    })
+    return id
+  }
+
+  updateProject(
+    id: string,
+    fields: Partial<Pick<PmProjectRow, 'name' | 'summary' | 'icon' | 'color' | 'status' | 'lead_user_id' | 'start_date' | 'target_date'>>,
+  ): void {
+    const prev = this.store.patchProject(id, { ...fields, updated_at: new Date().toISOString() })
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'project.update',
+      id,
+      fields,
+      inverse: { table: 'pm_projects', id, row: prev as unknown as Record<string, unknown> | null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  setProjectTeams(id: string, teamIds: string[]): void {
+    this.store.replaceScopedCollections(
+      'pm_project_teams',
+      [id],
+      teamIds.map((team_id) => ({ project_id: id, team_id })),
+    )
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'project.set_teams',
+      id,
+      fields: { team_ids: teamIds },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  /** §6.3 — post a health update; latest health denormalizes locally too. */
+  postProjectUpdate(projectId: string, health: PmUpdateRow['health'], bodyMd: string): string {
+    const updateId = crypto.randomUUID()
+    this.store.applyRows('pm_project_updates', [{
+      id: updateId,
+      project_id: projectId,
+      health,
+      body_md: bodyMd,
+      author_user_id: this.userId,
+      created_at: new Date().toISOString(),
+    }])
+    this.store.patchProject(projectId, { health })
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'project.post_update',
+      id: projectId,
+      fields: { update_id: updateId, health, body_md: bodyMd },
+      enqueuedAt: Date.now(),
+    })
+    return updateId
+  }
+
+  deleteProject(id: string): void {
+    const prev = this.store.projects.get(id)
+    this.store.applyTombstones('pm_projects', [id])
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'project.delete',
+      id,
+      inverse: { table: 'pm_projects', id, row: prev ? ({ ...prev } as unknown as Record<string, unknown>) : null },
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  createMilestone(projectId: string, name: string, targetDate?: string | null): string {
+    const id = crypto.randomUUID()
+    const position = this.store.milestonesForProject(projectId).length
+    this.store.applyRows('pm_project_milestones', [{
+      id, project_id: projectId, name, target_date: targetDate ?? null, position,
+      created_at: new Date().toISOString(),
+    }])
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'milestone.create',
+      id,
+      fields: { project_id: projectId, name, target_date: targetDate ?? null, position },
+      enqueuedAt: Date.now(),
+    })
+    return id
+  }
+
+  updateMilestone(id: string, fields: { name?: string; target_date?: string | null; position?: number }): void {
+    const prev = this.store.milestones.get(id)
+    if (prev) this.store.applyRows('pm_project_milestones', [{ ...prev, ...fields } as unknown as Record<string, unknown>])
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'milestone.update',
+      id,
+      fields,
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  deleteMilestone(id: string): void {
+    this.store.applyTombstones('pm_project_milestones', [id])
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'milestone.delete',
+      id,
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  createInitiative(input: { name: string; description?: string | null; target_quarter?: string | null }): string {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    this.store.applyRows('pm_initiatives', [{
+      id, name: input.name, description: input.description ?? null, status: 'active',
+      owner_user_id: this.userId, target_quarter: input.target_quarter ?? null,
+      created_at: now, updated_at: now, deleted_at: null,
+    }])
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'initiative.create',
+      id,
+      fields: { ...input },
+      enqueuedAt: Date.now(),
+    })
+    return id
+  }
+
+  setInitiativeProjects(id: string, projectIds: string[]): void {
+    this.store.replaceScopedCollections(
+      'pm_initiative_projects',
+      [id],
+      projectIds.map((project_id, i) => ({ initiative_id: id, project_id, position: i })),
+    )
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'initiative.set_projects',
+      id,
+      fields: { project_ids: projectIds },
+      enqueuedAt: Date.now(),
+    })
+  }
+
   // ─── queue mechanics ──────────────────────────────────────────────────────
 
   private enqueue(m: PendingMutation): void {
@@ -483,7 +685,10 @@ export class PmSyncEngine {
         } else {
           // Rejected: roll back exactly this item's optimistic patch.
           if (item.inverse) {
-            if (item.inverse.row === null) this.store.removeIssue(item.inverse.id)
+            if (item.inverse.table === 'pm_projects') {
+              if (item.inverse.row === null) this.store.applyTombstones('pm_projects', [item.inverse.id])
+              else this.store.applyRows('pm_projects', [item.inverse.row])
+            } else if (item.inverse.row === null) this.store.removeIssue(item.inverse.id)
             else this.store.restoreIssue(item.inverse.row as unknown as PmIssueRow)
           }
           this.onReject?.(result.errorCode ?? 'Change rejected by the server')
@@ -534,6 +739,19 @@ export class PmSyncEngine {
       ),
       pm_issue_subscribers: [...s.issueSubscribers.entries()].flatMap(([issueId, userIds]) =>
         userIds.map((userId) => ({ key: `${issueId}:${userId}`, row: { issue_id: issueId, user_id: userId } })),
+      ),
+      pm_projects: [...s.projects.entries()].map(([key, row]) => ({ key, row: { ...row, _pending: undefined } })),
+      pm_project_milestones: [...s.milestones.entries()].map(([key, row]) => ({ key, row })),
+      pm_project_updates: [...s.projectUpdates.entries()].map(([key, row]) => ({ key, row })),
+      pm_initiatives: [...s.initiatives.entries()].map(([key, row]) => ({ key, row })),
+      pm_project_teams: [...s.projectTeams.entries()].flatMap(([projectId, teamIds]) =>
+        teamIds.map((teamId) => ({ key: `${projectId}:${teamId}`, row: { project_id: projectId, team_id: teamId } })),
+      ),
+      pm_project_members: [...s.projectMembers.entries()].flatMap(([projectId, userIds]) =>
+        userIds.map((userId) => ({ key: `${projectId}:${userId}`, row: { project_id: projectId, user_id: userId } })),
+      ),
+      pm_initiative_projects: [...s.initiativeProjects.entries()].flatMap(([initId, projectIds]) =>
+        projectIds.map((projectId, i) => ({ key: `${initId}:${projectId}`, row: { initiative_id: initId, project_id: projectId, position: i } })),
       ),
     })
   }

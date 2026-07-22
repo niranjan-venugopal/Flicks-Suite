@@ -19,6 +19,7 @@ import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
+import { PmProjectsService } from './projects.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 
@@ -63,6 +64,69 @@ class RankDto {
   @IsString() @MaxLength(64) rank!: string;
 }
 
+class CreateProjectDto {
+  @IsString() @MaxLength(200) name!: string;
+  @IsOptional() @IsString() @MaxLength(300) summary?: string;
+  @IsOptional() @IsString() description_md?: string;
+  @IsOptional() @IsString() @MaxLength(16) icon?: string;
+  @IsOptional() @IsString() @MaxLength(16) color?: string;
+  @IsOptional() @IsIn(['backlog', 'planned', 'in_progress', 'paused', 'completed', 'canceled']) status?: string;
+  @IsOptional() @IsUUID() lead_user_id?: string;
+  @IsOptional() @IsString() start_date?: string;
+  @IsOptional() @IsString() target_date?: string;
+  @IsOptional() @IsUUID(undefined, { each: true }) team_ids?: string[];
+  @IsOptional() @IsUUID() deal_id?: string;
+}
+class UpdateProjectDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(300) summary?: string | null;
+  @IsOptional() @IsString() description_md?: string | null;
+  @IsOptional() @IsString() @MaxLength(16) icon?: string | null;
+  @IsOptional() @IsString() @MaxLength(16) color?: string | null;
+  @IsOptional() @IsIn(['backlog', 'planned', 'in_progress', 'paused', 'completed', 'canceled']) status?: string;
+  @IsOptional() @IsUUID() lead_user_id?: string | null;
+  @IsOptional() start_date?: string | null;
+  @IsOptional() target_date?: string | null;
+}
+class SetProjectTeamsDto {
+  @IsUUID(undefined, { each: true }) team_ids!: string[];
+}
+class PostUpdateDto {
+  @IsIn(['on_track', 'at_risk', 'off_track']) health!: string;
+  @IsString() @MaxLength(4000) body_md!: string;
+}
+class CreateMilestoneDto {
+  @IsUUID() project_id!: string;
+  @IsString() @MaxLength(200) name!: string;
+  @IsOptional() target_date?: string | null;
+  @IsOptional() @IsInt() @Type(() => Number) position?: number;
+}
+class UpdateMilestoneDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() target_date?: string | null;
+  @IsOptional() @IsInt() @Type(() => Number) position?: number;
+}
+class SetIssueProjectDto {
+  @IsOptional() @IsUUID() project_id?: string | null;
+  @IsOptional() @IsUUID() milestone_id?: string | null;
+}
+class CreateInitiativeDto {
+  @IsString() @MaxLength(200) name!: string;
+  @IsOptional() @IsString() @MaxLength(1000) description?: string;
+  @IsOptional() @IsUUID() owner_user_id?: string;
+  @IsOptional() @IsString() @MaxLength(16) target_quarter?: string;
+}
+class UpdateInitiativeDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(1000) description?: string | null;
+  @IsOptional() @IsIn(['active', 'completed', 'paused']) status?: string;
+  @IsOptional() @IsUUID() owner_user_id?: string | null;
+  @IsOptional() @IsString() @MaxLength(16) target_quarter?: string | null;
+}
+class SetInitiativeProjectsDto {
+  @IsUUID(undefined, { each: true }) project_ids!: string[];
+}
+
 /**
  * PM conventional REST (PRD v6 §19) — the kill-switch path. Same domain
  * services as the sync mutation-executor; when the FSE flag is off the web
@@ -75,6 +139,7 @@ export class PmController {
   constructor(
     private readonly teams: PmTeamsService,
     private readonly issues: PmIssuesService,
+    private readonly projects: PmProjectsService,
     private readonly views: PmViewsService,
     private readonly search_: PmSearchService,
   ) {}
@@ -247,5 +312,111 @@ export class PmController {
   @RequireGrant('pm', 'edit')
   deleteView(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.views.remove(user.tenantId, user.sub, id);
+  }
+
+  // ─── Projects + milestones + updates (§6) ─────────────────────────────────
+
+  @Get('projects')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Visible projects + team links + computed progress' })
+  listProjects(@CurrentUser() user: JwtPayload) {
+    return this.projects.list(user.tenantId, user.sub);
+  }
+
+  @Get('projects/:id/detail')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Lazy detail: description, milestones, updates, issues, members' })
+  projectDetail(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.detail(user.tenantId, user.sub, id);
+  }
+
+  @Post('projects')
+  @RequireGrant('pm', 'edit')
+  createProject(@CurrentUser() user: JwtPayload, @Body() dto: CreateProjectDto) {
+    return this.projects.create(user.tenantId, user.sub, dto);
+  }
+
+  @Patch('projects/:id')
+  @RequireGrant('pm', 'edit')
+  updateProject(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateProjectDto) {
+    return this.projects.update(user.tenantId, user.sub, id, dto as Record<string, unknown>);
+  }
+
+  @Post('projects/:id/teams')
+  @RequireGrant('pm', 'edit')
+  setProjectTeams(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetProjectTeamsDto) {
+    return this.projects.setTeams(user.tenantId, user.sub, id, dto.team_ids);
+  }
+
+  @Post('projects/:id/updates')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Post a health update (§6.3) — latest health denormalizes' })
+  postProjectUpdate(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: PostUpdateDto) {
+    return this.projects.postUpdate(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('projects/:id/delete')
+  @RequireGrant('pm', 'edit')
+  deleteProject(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.softDelete(user.tenantId, user.sub, id);
+  }
+
+  @Post('projects/:id/restore')
+  @RequireGrant('pm', 'edit')
+  restoreProject(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.restore(user.tenantId, user.sub, id);
+  }
+
+  @Post('milestones')
+  @RequireGrant('pm', 'edit')
+  createMilestone(@CurrentUser() user: JwtPayload, @Body() dto: CreateMilestoneDto) {
+    return this.projects.createMilestone(user.tenantId, user.sub, dto);
+  }
+
+  @Patch('milestones/:id')
+  @RequireGrant('pm', 'edit')
+  updateMilestone(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateMilestoneDto) {
+    return this.projects.updateMilestone(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('milestones/:id/delete')
+  @RequireGrant('pm', 'edit')
+  deleteMilestone(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.deleteMilestone(user.tenantId, user.sub, id);
+  }
+
+  @Post('issues/:id/project')
+  @RequireGrant('pm', 'edit')
+  setIssueProject(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetIssueProjectDto) {
+    return this.issues.setProject(user.tenantId, user.sub, id, {
+      project_id: dto.project_id ?? null,
+      milestone_id: dto.milestone_id,
+    });
+  }
+
+  // ─── Initiatives (§6.4 — Manager+) ────────────────────────────────────────
+
+  @Get('initiatives')
+  @RequireGrant('pm', 'view')
+  listInitiatives(@CurrentUser() user: JwtPayload) {
+    return this.projects.listInitiatives(user.tenantId, user.sub);
+  }
+
+  @Post('initiatives')
+  @RequireGrant('pm', 'edit')
+  createInitiative(@CurrentUser() user: JwtPayload, @Body() dto: CreateInitiativeDto) {
+    return this.projects.createInitiative(user.tenantId, user.sub, user.role, dto);
+  }
+
+  @Patch('initiatives/:id')
+  @RequireGrant('pm', 'edit')
+  updateInitiative(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: UpdateInitiativeDto) {
+    return this.projects.updateInitiative(user.tenantId, user.sub, user.role, id, dto);
+  }
+
+  @Post('initiatives/:id/projects')
+  @RequireGrant('pm', 'edit')
+  setInitiativeProjects(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetInitiativeProjectsDto) {
+    return this.projects.setInitiativeProjects(user.tenantId, user.sub, user.role, id, dto.project_ids);
   }
 }

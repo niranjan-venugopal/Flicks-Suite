@@ -5,6 +5,7 @@ import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
+import { PmProjectsService } from './projects.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 import { PmController } from './pm.controller';
@@ -27,6 +28,7 @@ import { PmSyncController } from './sync/sync.controller';
     PmSyncGateway,
     PmTeamsService,
     PmIssuesService,
+    PmProjectsService,
     PmViewsService,
     PmSearchService,
     PmVisibilityService,
@@ -34,6 +36,6 @@ import { PmSyncController } from './sync/sync.controller';
     PmMutationExecutor,
     PmSyncThrottleGuard,
   ],
-  exports: [PmTeamsService, PmIssuesService],
+  exports: [PmTeamsService, PmIssuesService, PmProjectsService],
 })
 export class PmModule {}

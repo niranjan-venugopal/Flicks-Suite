@@ -411,6 +411,140 @@ export const pmViewFavorites = pgTable(
   ],
 );
 
+// ─── Projects, milestones, updates, initiatives (0042) ───────────────────────
+
+export const pmProjects = pgTable(
+  'pm_projects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    summary: text('summary'),
+    description_md: text('description_md'), // lazy-loaded (not in sync projection)
+    icon: text('icon'),
+    color: text('color'),
+    status: text('status').notNull().default('planned'), // backlog|planned|in_progress|paused|completed|canceled
+    health: text('health').notNull().default('on_track'), // denormalized latest; pm_project_updates is the log
+    lead_user_id: uuid('lead_user_id').references(() => users.id, { onDelete: 'set null' }),
+    start_date: date('start_date'),
+    target_date: date('target_date'),
+    deal_id: uuid('deal_id'), // CRM back-link (§15.2); no FK — module boundary
+    completed_at: timestamp('completed_at', { withTimezone: true }),
+    created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [index('idx_pm_projects_deal').on(t.tenant_id, t.deal_id)],
+);
+
+export const pmProjectTeams = pgTable(
+  'pm_project_teams',
+  {
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => pmProjects.id, { onDelete: 'cascade' }),
+    team_id: uuid('team_id')
+      .notNull()
+      .references(() => pmTeams.id, { onDelete: 'cascade' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.project_id, t.team_id] }),
+    index('idx_pm_project_teams_team').on(t.tenant_id, t.team_id),
+  ],
+);
+
+export const pmProjectMembers = pgTable(
+  'pm_project_members',
+  {
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => pmProjects.id, { onDelete: 'cascade' }),
+    user_id: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.project_id, t.user_id] })],
+);
+
+export const pmProjectMilestones = pgTable(
+  'pm_project_milestones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => pmProjects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    target_date: date('target_date'),
+    position: smallint('position').notNull().default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_pm_milestones_project').on(t.tenant_id, t.project_id)],
+);
+
+export const pmProjectUpdates = pgTable(
+  'pm_project_updates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => pmProjects.id, { onDelete: 'cascade' }),
+    health: text('health').notNull(), // on_track|at_risk|off_track
+    body_md: text('body_md').notNull(),
+    author_user_id: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('idx_pm_updates_project').on(t.tenant_id, t.project_id, t.created_at)],
+);
+
+export const pmInitiatives = pgTable('pm_initiatives', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenant_id: uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  description: text('description'),
+  status: text('status').notNull().default('active'), // active|completed|paused
+  owner_user_id: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
+  target_quarter: text('target_quarter'), // 'Q3 2026'
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
+});
+
+export const pmInitiativeProjects = pgTable(
+  'pm_initiative_projects',
+  {
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    initiative_id: uuid('initiative_id')
+      .notNull()
+      .references(() => pmInitiatives.id, { onDelete: 'cascade' }),
+    project_id: uuid('project_id')
+      .notNull()
+      .references(() => pmProjects.id, { onDelete: 'cascade' }),
+    position: smallint('position').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.initiative_id, t.project_id] })],
+);
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SyncMutation = typeof syncMutations.$inferSelect;
@@ -423,3 +557,8 @@ export type PmIssue = typeof pmIssues.$inferSelect;
 export type NewPmIssue = typeof pmIssues.$inferInsert;
 export type PmIssueComment = typeof pmIssueComments.$inferSelect;
 export type PmIssueHistoryRow = typeof pmIssueHistory.$inferSelect;
+export type PmProject = typeof pmProjects.$inferSelect;
+export type NewPmProject = typeof pmProjects.$inferInsert;
+export type PmProjectMilestone = typeof pmProjectMilestones.$inferSelect;
+export type PmProjectUpdate = typeof pmProjectUpdates.$inferSelect;
+export type PmInitiative = typeof pmInitiatives.$inferSelect;

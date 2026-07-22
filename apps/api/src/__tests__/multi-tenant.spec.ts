@@ -610,6 +610,11 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
       amount: '100.00',
       currency: 'INR',
     }) },
+    // PM projects layer (0042)
+    { label: 'pm_projects', table: schema.pmProjects, values: () => ({ tenant_id: tenantA.id, name: `Iso Project ${rid()}` }) },
+    { label: 'pm_initiatives', table: schema.pmInitiatives, values: () => ({ tenant_id: tenantA.id, name: `Iso Init ${rid()}` }) },
+    { label: 'pm_project_milestones', table: schema.pmProjectMilestones, values: () => ({ tenant_id: tenantA.id, project_id: seedPmProjectA(), name: `Iso MS ${rid()}` }) },
+    { label: 'pm_project_updates', table: schema.pmProjectUpdates, values: () => ({ tenant_id: tenantA.id, project_id: seedPmProjectA(), health: 'on_track', body_md: 'Iso update' }) },
   ];
 
   // Lazily-seeded invoice_subscription for the charge-attempts case (FK).
@@ -617,6 +622,12 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
   function seedSubscriptionA(): string {
     if (!subAId) throw new Error('subscription fixture not seeded');
     return subAId;
+  }
+  // Lazily-seeded pm_project for the milestone/update cases (FK).
+  let pmProjectAId: string | null = null;
+  function seedPmProjectA(): string {
+    if (!pmProjectAId) throw new Error('pm project fixture not seeded');
+    return pmProjectAId;
   }
   beforeAll(async () => {
     const [cust] = await idbAdmin.insert(schema.customers).values({
@@ -628,6 +639,10 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
       billing_period: 'monthly', start_date: new Date().toISOString().slice(0, 10),
     }).returning();
     subAId = sub!.id;
+    const [proj] = await idbAdmin.insert(schema.pmProjects).values({
+      tenant_id: tenantA.id, name: `Iso Fixture Project ${rid()}`,
+    }).returning();
+    pmProjectAId = proj!.id;
   });
 
   cases.forEach(({ label, table, values }) => {

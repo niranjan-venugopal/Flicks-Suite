@@ -53,7 +53,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const [editingDesc, setEditingDesc] = useState(false)
   const [desc, setDesc] = useState('')
   const [comment, setComment] = useState('')
-  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | null>(null)
+  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | null>(null)
 
   useEffect(() => {
     if (d?.issue.description != null && !editingDesc) setDesc(d.issue.description)
@@ -80,9 +80,19 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }); setComment('') },
   })
 
+  const restProject = useMutation({
+    mutationFn: (projectId: string | null) => api.post(`/api/v1/pm/issues/${id}/project`, { project_id: projectId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+  })
+  const projectsQ = useQuery({
+    queryKey: ['pm', 'projects'],
+    queryFn: () => api.get<{ data: { projects: Array<{ id: string; name: string; icon: string | null }> } }>('/api/v1/pm/projects'),
+    enabled: !engine,
+  })
   const doMove = (stateId: string) => (engine ? engine.moveIssueState(id, stateId) : restMove.mutate(stateId))
   const doAssign = (uid: string | null) => (engine ? engine.assignIssue(id, uid) : restAssign.mutate(uid))
   const doPriority = (p: number) => (engine ? engine.setIssuePriority(id, p) : restPriority.mutate(p))
+  const doProject = (pid: string | null) => (engine ? engine.setIssueProject(id, pid) : restProject.mutate(pid))
   const saveDesc = () => {
     if (engine) engine.updateIssue(id, { description: desc })
     else restUpdate.mutate({ description: desc })
@@ -278,6 +288,24 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               {users.map((u) => (
                 <button key={u.id} onClick={() => { doAssign(u.id); setMenu(null) }} style={railMenuRow(u.id === issue.assignee_user_id)}>
                   <MiniAv name={u.name ?? '?'} size={15} /> {u.name}
+                </button>
+              ))}
+            </RailMenu>
+          )}
+          <RailRow label="Project" onClick={() => setMenu(menu === 'project' ? null : 'project')}>
+            {(() => {
+              const proj = engine
+                ? (issue.project_id ? engine.store.projects.get(issue.project_id) : null)
+                : (projectsQ.data?.data.projects ?? []).find((x) => x.id === issue.project_id) ?? null
+              return proj ? <><span style={{ fontSize: 12 }}>{proj.icon ?? '🎯'}</span> <span>{proj.name}</span></> : <span className="t-mute">None</span>
+            })()}
+          </RailRow>
+          {menu === 'project' && (
+            <RailMenu>
+              <button onClick={() => { doProject(null); setMenu(null) }} style={railMenuRow(!issue.project_id)}>No project</button>
+              {(engine ? engine.store.projectList() : projectsQ.data?.data.projects ?? []).map((pr) => (
+                <button key={pr.id} onClick={() => { doProject(pr.id); setMenu(null) }} style={railMenuRow(pr.id === issue.project_id)}>
+                  <span style={{ fontSize: 12 }}>{pr.icon ?? '🎯'}</span> {pr.name}
                 </button>
               ))}
             </RailMenu>

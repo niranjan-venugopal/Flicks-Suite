@@ -12,6 +12,8 @@ import {
   pmIssueRelations,
   pmIssueComments,
   pmLabels,
+  pmProjects,
+  pmProjectMilestones,
   memberships,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -438,6 +440,60 @@ export class PmIssuesService {
             tenantId,
             actorUserId: userId,
             payload: { issue_id: id, team_id: issue.team_id, sync: [{ t: 'pm_issues', id }] },
+          },
+          tx,
+        );
+        return { data: updated! };
+      },
+      userId,
+    );
+  }
+
+  /** §6 — attach/detach an issue to a project (+optional milestone). */
+  async setProject(
+    tenantId: string,
+    userId: string,
+    id: string,
+    input: { project_id: string | null; milestone_id?: string | null },
+  ) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        let milestoneId: string | null = input.milestone_id === undefined ? issue.milestone_id : input.milestone_id;
+        if (input.project_id) {
+          const [project] = await tx
+            .select({ id: pmProjects.id })
+            .from(pmProjects)
+            .where(and(eq(pmProjects.id, input.project_id), eq(pmProjects.tenant_id, tenantId), isNull(pmProjects.deleted_at)))
+            .limit(1);
+          if (!project) throw new BadRequestException('project_id does not belong to this workspace');
+          if (milestoneId) {
+            const [ms] = await tx
+              .select({ id: pmProjectMilestones.id })
+              .from(pmProjectMilestones)
+              .where(and(eq(pmProjectMilestones.id, milestoneId), eq(pmProjectMilestones.tenant_id, tenantId), eq(pmProjectMilestones.project_id, input.project_id)))
+              .limit(1);
+            if (!ms) throw new BadRequestException('milestone_id does not belong to this project');
+          }
+        } else {
+          milestoneId = null; // no project ⇒ no milestone
+        }
+        const [updated] = await tx
+          .update(pmIssues)
+          .set({ project_id: input.project_id, milestone_id: milestoneId, updated_at: new Date() })
+          .where(eq(pmIssues.id, id))
+          .returning();
+        await this.writeHistory(tx, tenantId, id, userId, [
+          { field: 'project', from: issue.project_id, to: input.project_id },
+        ]);
+        await this.domainEvents.publish(
+          {
+            name: 'pm.issue.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { issue_id: id, team_id: issue.team_id, project_id: input.project_id, sync: [{ t: 'pm_issues', id }] },
           },
           tx,
         );

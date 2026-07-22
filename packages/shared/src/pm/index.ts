@@ -24,6 +24,20 @@ export type PmEstimateScale = (typeof PM_ESTIMATE_SCALES)[number];
 export const PM_ISSUE_SOURCES = ['manual', 'import', 'api', 'github', 'intake', 'deal'] as const;
 export const PM_RELATION_TYPES = ['blocks', 'duplicate_of', 'relates_to'] as const;
 
+/** Project lifecycle + health (§6.1/§6.3). */
+export const PM_PROJECT_STATUSES = [
+  'backlog',
+  'planned',
+  'in_progress',
+  'paused',
+  'completed',
+  'canceled',
+] as const;
+export type PmProjectStatus = (typeof PM_PROJECT_STATUSES)[number];
+export const PM_PROJECT_HEALTH = ['on_track', 'at_risk', 'off_track'] as const;
+export type PmProjectHealth = (typeof PM_PROJECT_HEALTH)[number];
+export const PM_INITIATIVE_STATUSES = ['active', 'completed', 'paused'] as const;
+
 /**
  * Sync-table registry (§3.3/§3.4): the ONLY tables the FSE ships to clients,
  * with the columns each row snapshot carries. `pm_issues` deliberately omits
@@ -53,6 +67,22 @@ export const PM_SYNC_TABLES = {
   pm_issue_labels: ['issue_id', 'label_id'],
   pm_issue_relations: ['id', 'issue_id', 'related_issue_id', 'type'],
   pm_issue_subscribers: ['issue_id', 'user_id'],
+  // Projects layer (0042). pm_projects omits description_md (lazy, like issues).
+  pm_projects: [
+    'id', 'name', 'summary', 'icon', 'color', 'status', 'health', 'lead_user_id',
+    'start_date', 'target_date', 'deal_id', 'completed_at', 'created_at',
+    'updated_at', 'deleted_at',
+  ],
+  pm_project_teams: ['project_id', 'team_id'],
+  pm_project_members: ['project_id', 'user_id'],
+  pm_project_milestones: ['id', 'project_id', 'name', 'target_date', 'position', 'created_at'],
+  // Updates: bootstrap ships the latest 10 per project; deltas upsert per row.
+  pm_project_updates: ['id', 'project_id', 'health', 'body_md', 'author_user_id', 'created_at'],
+  pm_initiatives: [
+    'id', 'name', 'description', 'status', 'owner_user_id', 'target_quarter',
+    'created_at', 'updated_at', 'deleted_at',
+  ],
+  pm_initiative_projects: ['initiative_id', 'project_id', 'position'],
 } as const;
 export type PmSyncTable = keyof typeof PM_SYNC_TABLES;
 export const PM_SYNC_TABLE_NAMES = Object.keys(PM_SYNC_TABLES) as PmSyncTable[];
@@ -77,7 +107,21 @@ export const PM_MUTATION_OPS = [
   'issue.delete',
   'issue.restore',
   'issue.move_team',
+  'issue.set_project',     // {project_id: uuid|null, milestone_id?: uuid|null}
   'comment.create',
+  // Projects layer (§6)
+  'project.create',
+  'project.update',        // name/summary/icon/color/status/dates/lead via fields
+  'project.set_teams',     // {team_ids: uuid[]}
+  'project.post_update',   // {health, body_md} → pm_project_updates + denormalized health
+  'project.delete',
+  'project.restore',
+  'milestone.create',      // {project_id, name, target_date?, position?}
+  'milestone.update',
+  'milestone.delete',
+  'initiative.create',
+  'initiative.update',
+  'initiative.set_projects', // {project_ids: uuid[]}
 ] as const;
 export type PmMutationOp = (typeof PM_MUTATION_OPS)[number];
 

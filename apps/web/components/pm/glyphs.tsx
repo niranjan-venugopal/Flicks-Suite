@@ -111,3 +111,50 @@ export function PendingDot({ title = 'Syncing — not yet confirmed' }: { title?
     />
   )
 }
+
+// ─── Projects layer (§6, P11–P14) ────────────────────────────────────────────
+
+export const PM_HEALTH: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  on_track: { label: 'On track', color: 'var(--green)', bg: 'rgba(39,210,128,.1)', border: 'rgba(39,210,128,.35)' },
+  at_risk: { label: 'At risk', color: 'var(--yellow)', bg: 'rgba(254,216,0,.09)', border: 'rgba(254,216,0,.35)' },
+  off_track: { label: 'Off track', color: 'var(--coral)', bg: 'rgba(248,120,107,.1)', border: 'rgba(248,120,107,.35)' },
+}
+
+export function HealthChip({ h, small }: { h: string; small?: boolean }) {
+  const s = PM_HEALTH[h] ?? PM_HEALTH.on_track!
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5, padding: small ? '0 7px' : '2px 9px',
+      height: small ? 16 : undefined, borderRadius: 99, background: s.bg, border: `1px solid ${s.border}`,
+      fontSize: small ? 9 : 10, fontWeight: 800, color: s.color, whiteSpace: 'nowrap', flexShrink: 0,
+    }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: s.color }} />
+      {s.label}
+    </span>
+  )
+}
+
+/** Stacked done/started progress bar (P11): green done, translucent-yellow started. */
+export function PmProgressBar({ scope, started, done, h = 6 }: { scope: number; started: number; done: number; h?: number }) {
+  const total = Math.max(scope, 1)
+  return (
+    <div style={{ width: '100%', height: h, borderRadius: 99, background: 'var(--surf-2)', overflow: 'hidden', display: 'flex' }}>
+      <div style={{ width: `${(done / total) * 100}%`, background: 'var(--green)' }} />
+      <div style={{ width: `${(started / total) * 100}%`, background: 'rgba(254,216,0,.55)' }} />
+    </div>
+  )
+}
+
+export const PM_PROJECT_STATUS_LABEL: Record<string, string> = {
+  backlog: 'Backlog', planned: 'Planned', in_progress: 'In progress',
+  paused: 'Paused', completed: 'Completed', canceled: 'Canceled',
+}
+
+/** Milestone diamond (P11/P12) — no proto icon for this shape. */
+export function DiamondGlyph({ size = 11, color = 'var(--text-faint)' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
+      <rect x="2.6" y="2.6" width="6.8" height="6.8" rx="1.2" transform="rotate(45 6 6)" fill={color} />
+    </svg>
+  )
+}

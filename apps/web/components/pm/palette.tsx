@@ -26,6 +26,9 @@ interface Command {
 const COMMANDS: Command[] = [
   { id: 'nav.issues', label: 'Go to Issues', hint: 'G then B', run: (r) => r.push('/pm/issues') },
   { id: 'nav.my', label: 'Go to My Issues', hint: 'G then I', run: (r) => r.push('/pm/my') },
+  { id: 'nav.projects', label: 'Go to Projects', hint: 'G then P', run: (r) => r.push('/pm/projects') },
+  { id: 'nav.timeline', label: 'Go to Timeline', run: (r) => r.push('/pm/timeline') },
+  { id: 'nav.roadmap', label: 'Go to Roadmap', hint: 'G then R', run: (r) => r.push('/pm/roadmap') },
   { id: 'create.issue', label: 'Create issue…', hint: 'C', run: (r) => r.push('/pm/issues?create=1') },
 ]
 
@@ -34,6 +37,8 @@ export const KEYMAP: Array<{ keys: string; label: string; section: string }> = [
   { keys: '⌘K or /', label: 'Command palette / search', section: 'Navigate' },
   { keys: 'G then I', label: 'Go to My Issues', section: 'Navigate' },
   { keys: 'G then B', label: 'Go to Issues (backlog/list)', section: 'Navigate' },
+  { keys: 'G then P', label: 'Go to Projects', section: 'Navigate' },
+  { keys: 'G then R', label: 'Go to Roadmap', section: 'Navigate' },
   { keys: 'J / K or ↑ ↓', label: 'Move selection', section: 'Navigate' },
   { keys: 'Enter', label: 'Open selected issue', section: 'Navigate' },
   { keys: 'Esc', label: 'Back / clear selection', section: 'Navigate' },
@@ -71,6 +76,8 @@ export function PmGlobalKeys() {
     g: () => markG(),
     i: () => { if (recentG()) router.push('/pm/my') },
     b: () => { if (recentG()) router.push('/pm/issues') },
+    p: () => { if (recentG()) router.push('/pm/projects') },
+    r: () => { if (recentG()) router.push('/pm/roadmap') },
   })
 
   return (

@@ -82,6 +82,55 @@ export interface PmIssueRow {
   _pending?: boolean
 }
 
+export interface PmProjectRow {
+  id: string
+  name: string
+  summary: string | null
+  icon: string | null
+  color: string | null
+  status: 'backlog' | 'planned' | 'in_progress' | 'paused' | 'completed' | 'canceled'
+  health: 'on_track' | 'at_risk' | 'off_track'
+  lead_user_id: string | null
+  start_date: string | null
+  target_date: string | null
+  deal_id: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+  _pending?: boolean
+}
+
+export interface PmMilestoneRow {
+  id: string
+  project_id: string
+  name: string
+  target_date: string | null
+  position: number
+  created_at: string
+}
+
+export interface PmUpdateRow {
+  id: string
+  project_id: string
+  health: 'on_track' | 'at_risk' | 'off_track'
+  body_md: string
+  author_user_id: string | null
+  created_at: string
+}
+
+export interface PmInitiativeRow {
+  id: string
+  name: string
+  description: string | null
+  status: 'active' | 'completed' | 'paused'
+  owner_user_id: string | null
+  target_quarter: string | null
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}
+
 export interface PendingMutation {
   clientMutationId: string
   op: string

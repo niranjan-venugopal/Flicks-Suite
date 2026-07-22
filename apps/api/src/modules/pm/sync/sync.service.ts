@@ -10,6 +10,13 @@ import {
   pmIssueLabels,
   pmIssueRelations,
   pmIssueSubscribers,
+  pmProjects,
+  pmProjectTeams,
+  pmProjectMembers,
+  pmProjectMilestones,
+  pmProjectUpdates,
+  pmInitiatives,
+  pmInitiativeProjects,
 } from '@flicks/db/schema';
 import type { Db, DbAdmin } from '@flicks/db';
 import type { PmSyncTable } from '@flicks/shared/pm';
@@ -50,6 +57,27 @@ const ISSUE_SCOPED: ReadonlySet<string> = new Set([
   'pm_issue_subscribers',
   'pm_issue_relations',
 ]);
+
+// Project-scoped collections: ref id = PROJECT id, full set replaces (§3.4).
+const PROJECT_SCOPED: ReadonlySet<string> = new Set(['pm_project_teams', 'pm_project_members']);
+
+const PM_PROJECT_PROJECTION = {
+  id: pmProjects.id,
+  name: pmProjects.name,
+  summary: pmProjects.summary,
+  icon: pmProjects.icon,
+  color: pmProjects.color,
+  status: pmProjects.status,
+  health: pmProjects.health,
+  lead_user_id: pmProjects.lead_user_id,
+  start_date: pmProjects.start_date,
+  target_date: pmProjects.target_date,
+  deal_id: pmProjects.deal_id,
+  completed_at: pmProjects.completed_at,
+  created_at: pmProjects.created_at,
+  updated_at: pmProjects.updated_at,
+  deleted_at: pmProjects.deleted_at,
+};
 
 @Injectable()
 export class PmSyncService {
@@ -194,6 +222,77 @@ export class PmSyncService {
           }
         }
 
+        // Projects layer (§6): projects/milestones/initiatives are instant
+        // models; project-update BODIES ride along (small text, latest 10/project).
+        const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+        if (visibleProjects.length) {
+          push(
+            'pm_projects',
+            await tx
+              .select(PM_PROJECT_PROJECTION)
+              .from(pmProjects)
+              .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, visibleProjects), isNull(pmProjects.deleted_at))),
+          );
+          push(
+            'pm_project_teams',
+            await tx
+              .select({ project_id: pmProjectTeams.project_id, team_id: pmProjectTeams.team_id })
+              .from(pmProjectTeams)
+              .where(and(eq(pmProjectTeams.tenant_id, tenantId), inArray(pmProjectTeams.project_id, visibleProjects))),
+          );
+          push(
+            'pm_project_members',
+            await tx
+              .select({ project_id: pmProjectMembers.project_id, user_id: pmProjectMembers.user_id })
+              .from(pmProjectMembers)
+              .where(and(eq(pmProjectMembers.tenant_id, tenantId), inArray(pmProjectMembers.project_id, visibleProjects))),
+          );
+          push(
+            'pm_project_milestones',
+            await tx
+              .select({
+                id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
+                name: pmProjectMilestones.name, target_date: pmProjectMilestones.target_date,
+                position: pmProjectMilestones.position, created_at: pmProjectMilestones.created_at,
+              })
+              .from(pmProjectMilestones)
+              .where(and(eq(pmProjectMilestones.tenant_id, tenantId), inArray(pmProjectMilestones.project_id, visibleProjects))),
+          );
+          const updates = await tx.execute(sql`
+            SELECT id, project_id, health, body_md, author_user_id, created_at FROM (
+              SELECT id, project_id, health, body_md, author_user_id, created_at,
+                     row_number() OVER (PARTITION BY project_id ORDER BY created_at DESC) AS rn
+              FROM pm_project_updates
+              WHERE tenant_id = ${tenantId}
+                AND project_id IN (${sql.join(visibleProjects.map((p) => sql`${p}`), sql`, `)})
+            ) ranked WHERE rn <= 10
+          `);
+          push('pm_project_updates', updates as unknown as unknown[]);
+        }
+        const initiatives = await tx
+          .select()
+          .from(pmInitiatives)
+          .where(and(eq(pmInitiatives.tenant_id, tenantId), isNull(pmInitiatives.deleted_at)));
+        push(
+          'pm_initiatives',
+          initiatives.map((i) => ({
+            id: i.id, name: i.name, description: i.description, status: i.status,
+            owner_user_id: i.owner_user_id, target_quarter: i.target_quarter,
+            created_at: i.created_at, updated_at: i.updated_at, deleted_at: i.deleted_at,
+          })),
+        );
+        push(
+          'pm_initiative_projects',
+          await tx
+            .select({
+              initiative_id: pmInitiativeProjects.initiative_id,
+              project_id: pmInitiativeProjects.project_id,
+              position: pmInitiativeProjects.position,
+            })
+            .from(pmInitiativeProjects)
+            .where(eq(pmInitiativeProjects.tenant_id, tenantId)),
+        );
+
         lines.push(JSON.stringify({ latest_seq: latestSeq, min_seq_horizon: horizon }));
         return lines;
       },
@@ -301,7 +400,88 @@ export class PmSyncService {
               record('pm_issues', idSet, rows.filter((r) => visible.includes(r.team_id)));
               break;
             }
+            case 'pm_projects': {
+              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const rows = await tx
+                .select(PM_PROJECT_PROJECTION)
+                .from(pmProjects)
+                .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, ids), isNull(pmProjects.deleted_at)));
+              record('pm_projects', idSet, rows.filter((r) => visibleProjects.includes(r.id)));
+              break;
+            }
+            case 'pm_project_milestones': {
+              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const rows = await tx
+                .select({
+                  id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
+                  name: pmProjectMilestones.name, target_date: pmProjectMilestones.target_date,
+                  position: pmProjectMilestones.position, created_at: pmProjectMilestones.created_at,
+                })
+                .from(pmProjectMilestones)
+                .where(and(eq(pmProjectMilestones.tenant_id, tenantId), inArray(pmProjectMilestones.id, ids)));
+              record('pm_project_milestones', idSet, rows.filter((r) => visibleProjects.includes(r.project_id)));
+              break;
+            }
+            case 'pm_project_updates': {
+              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const rows = await tx
+                .select({
+                  id: pmProjectUpdates.id, project_id: pmProjectUpdates.project_id,
+                  health: pmProjectUpdates.health, body_md: pmProjectUpdates.body_md,
+                  author_user_id: pmProjectUpdates.author_user_id, created_at: pmProjectUpdates.created_at,
+                })
+                .from(pmProjectUpdates)
+                .where(and(eq(pmProjectUpdates.tenant_id, tenantId), inArray(pmProjectUpdates.id, ids)));
+              record('pm_project_updates', idSet, rows.filter((r) => visibleProjects.includes(r.project_id)));
+              break;
+            }
+            case 'pm_initiatives': {
+              const rows = await tx
+                .select({
+                  id: pmInitiatives.id, name: pmInitiatives.name, description: pmInitiatives.description,
+                  status: pmInitiatives.status, owner_user_id: pmInitiatives.owner_user_id,
+                  target_quarter: pmInitiatives.target_quarter, created_at: pmInitiatives.created_at,
+                  updated_at: pmInitiatives.updated_at, deleted_at: pmInitiatives.deleted_at,
+                })
+                .from(pmInitiatives)
+                .where(and(eq(pmInitiatives.tenant_id, tenantId), inArray(pmInitiatives.id, ids), isNull(pmInitiatives.deleted_at)));
+              record('pm_initiatives', idSet, rows);
+              break;
+            }
+            case 'pm_initiative_projects': {
+              // ref id = INITIATIVE id; ship the full ordered set + scope.
+              const rows = await tx
+                .select({
+                  initiative_id: pmInitiativeProjects.initiative_id,
+                  project_id: pmInitiativeProjects.project_id,
+                  position: pmInitiativeProjects.position,
+                })
+                .from(pmInitiativeProjects)
+                .where(and(eq(pmInitiativeProjects.tenant_id, tenantId), inArray(pmInitiativeProjects.initiative_id, ids)));
+              upserts.pm_initiative_projects = rows;
+              (upserts as Record<string, unknown>)['pm_initiative_projects__scope'] = ids;
+              break;
+            }
             default: {
+              if (PROJECT_SCOPED.has(table)) {
+                // ref id = PROJECT id; full current set for visible projects.
+                const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+                const scopeIds = ids.filter((i) => visibleProjects.includes(i));
+                if (!scopeIds.length) break;
+                if (table === 'pm_project_teams') {
+                  upserts.pm_project_teams = await tx
+                    .select({ project_id: pmProjectTeams.project_id, team_id: pmProjectTeams.team_id })
+                    .from(pmProjectTeams)
+                    .where(and(eq(pmProjectTeams.tenant_id, tenantId), inArray(pmProjectTeams.project_id, scopeIds)));
+                } else if (table === 'pm_project_members') {
+                  upserts.pm_project_members = await tx
+                    .select({ project_id: pmProjectMembers.project_id, user_id: pmProjectMembers.user_id })
+                    .from(pmProjectMembers)
+                    .where(and(eq(pmProjectMembers.tenant_id, tenantId), inArray(pmProjectMembers.project_id, scopeIds)));
+                }
+                (upserts as Record<string, unknown>)[`${table}__scope`] = scopeIds;
+                break;
+              }
               if (ISSUE_SCOPED.has(table)) {
                 // ref id = issue id; ship the issue's full current set (only
                 // for issues in visible teams).
