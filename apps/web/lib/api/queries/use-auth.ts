@@ -165,12 +165,15 @@ export function useCurrentUser() {
 }
 
 /**
- * Effective runtime flags from the cached /me (PRD v6). Subscribes to the
- * same query the app layout keeps alive — no extra request (enabled: false).
+ * Effective runtime flags from /me (PRD v6). Rides useCurrentUser — same
+ * queryKey + queryFn as the app layout, so it dedupes against the layout's
+ * fetch (staleTime 5m) instead of observing the cache with enabled:false,
+ * which errors ("No queryFn was passed") whenever the entry isn't already
+ * there (hard navigation, cache clear/GC) and left consumers stuck loading.
  */
-export function useEffectiveFlags(): { flags: string[]; loaded: boolean } {
-  const { data } = useQuery<MeResponse>({ queryKey: ['auth', 'me'], enabled: false })
-  return { flags: data?.effectiveFlags ?? [], loaded: data !== undefined }
+export function useEffectiveFlags(): { flags: string[]; loaded: boolean; failed: boolean } {
+  const { data, isError } = useCurrentUser()
+  return { flags: data?.effectiveFlags ?? [], loaded: data !== undefined, failed: isError }
 }
 
 export function useRequestOtp() {

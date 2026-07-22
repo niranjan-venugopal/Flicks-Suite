@@ -29,17 +29,24 @@ export function usePm(): PmContextValue {
 
 export function PmProvider({ children }: { children: React.ReactNode }) {
   const { currentUser } = useAuthStore()
-  const { flags, loaded } = useEffectiveFlags()
+  const { flags, loaded, failed } = useEffectiveFlags()
   const { toast } = useToast()
   const [value, setValue] = useState<PmContextValue>({ mode: 'loading', engine: null })
   const engineRef = useRef<PmSyncEngine | null>(null)
 
   const tenantId = currentUser?.tenantId
   const userId = currentUser?.id
+  // Flags unreadable (retry:false /me hiccup) → REST, the kill-switch-honest
+  // default — never park the user on an infinite loading state.
   const syncOn = flags.includes('pm_sync_engine')
 
   useEffect(() => {
-    if (!tenantId || !userId || !loaded) return
+    if (!tenantId || !userId) return
+    if (!loaded && failed) {
+      setValue({ mode: 'rest', engine: null })
+      return
+    }
+    if (!loaded) return
     if (!syncOn) {
       engineRef.current?.destroy()
       engineRef.current = null
@@ -66,7 +73,7 @@ export function PmProvider({ children }: { children: React.ReactNode }) {
       engineRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, userId, syncOn, loaded])
+  }, [tenantId, userId, syncOn, loaded, failed])
 
   return <PmContext.Provider value={value}>{children}</PmContext.Provider>
 }
