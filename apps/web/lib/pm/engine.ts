@@ -58,7 +58,19 @@ export class PmSyncEngine {
 
   async start(): Promise<void> {
     this.db = await openPmDb(this.tenantId, this.userId)
-    const snapshot = this.db ? await loadSnapshot(this.db) : null
+    let snapshot = this.db ? await loadSnapshot(this.db) : null
+    // Disposable-cache doctrine (§3.8): bootstrap always yields ≥1 team, so a
+    // snapshot without teams is poisoned (e.g. persisted during a failed
+    // session) — and delta can never repair it because the cursor is already
+    // past the seeding events. Discard and cold-boot instead of rendering an
+    // empty workspace forever.
+    if (snapshot && (snapshot.tables.pm_teams ?? []).length === 0) {
+      this.db?.close()
+      this.db = null
+      await destroyPmDb(this.tenantId, this.userId)
+      this.db = await openPmDb(this.tenantId, this.userId)
+      snapshot = null
+    }
     if (snapshot) {
       // WARM boot: render from the local cache instantly, then catch up.
       for (const [table, rows] of Object.entries(snapshot.tables)) {
@@ -72,6 +84,9 @@ export class PmSyncEngine {
       void this.flushQueue()
     } else {
       await this.bootstrap()
+      // Server-side bootstrap self-seeds the workspace; zero teams here means
+      // something is genuinely wrong — surface REST fallback, not a spinner.
+      if (this.store.teams.size === 0) throw new Error('BOOTSTRAP_EMPTY')
     }
     this.connectSocket()
     this.pollTimer = setInterval(() => void this.pullDelta(), POLL_FALLBACK_MS)
@@ -88,6 +103,11 @@ export class PmSyncEngine {
     if (this.pollTimer) clearInterval(this.pollTimer)
     if (this.flushTimer) clearTimeout(this.flushTimer)
     if (this.persistTimer) clearTimeout(this.persistTimer)
+    // Close the IDB connection: a leaked handle blocks any later
+    // deleteDatabase (reset/poison recovery) and lets a dead engine's
+    // late persists race the live one's.
+    this.db?.close()
+    this.db = null
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.handleOnline)
       window.removeEventListener('offline', this.handleOffline)
@@ -99,6 +119,8 @@ export class PmSyncEngine {
     this.queue = []
     this.store.clearAll()
     this.store.setPendingCount(0)
+    this.db?.close() // deleteDatabase blocks while our own connection is open
+    this.db = null
     await destroyPmDb(this.tenantId, this.userId)
     this.db = await openPmDb(this.tenantId, this.userId)
     await this.bootstrap()
@@ -485,7 +507,10 @@ export class PmSyncEngine {
   // ─── persistence ─────────────────────────────────────────────────────────
 
   private schedulePersist(): void {
-    if (!this.db || this.persistTimer) return
+    // The destroyed guard matters: a StrictMode-killed engine whose in-flight
+    // bootstrap/delta resolves later must never persist its store over the
+    // live engine's snapshot.
+    if (!this.db || this.destroyed || this.persistTimer) return
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null
       void this.persistNow()
@@ -493,7 +518,7 @@ export class PmSyncEngine {
   }
 
   private async persistNow(): Promise<void> {
-    if (!this.db) return
+    if (!this.db || this.destroyed) return
     const s = this.store
     await persistTables(this.db, s.cursor, {
       pm_teams: [...s.teams.entries()].map(([key, row]) => ({ key, row })),

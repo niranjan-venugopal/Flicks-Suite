@@ -87,28 +87,47 @@ export async function persistTables(
   cursor: number,
   tables: Partial<Record<(typeof TABLE_STORES)[number], Array<{ key: string; row: unknown }>>>,
 ): Promise<void> {
+  let abort: (() => void) | null = null
   try {
     const names = Object.keys(tables) as Array<(typeof TABLE_STORES)[number]>
     const tx = db.transaction(['meta', ...names], 'readwrite')
+    abort = () => tx.abort()
     void tx.objectStore('meta').put(cursor, 'cursor')
     for (const name of names) {
       const store = tx.objectStore(name)
       void store.clear()
-      for (const { key, row } of tables[name]!) void store.put(row, key)
+      // Rows come out of MobX observable maps — structured clone throws
+      // DataCloneError on proxies, so snapshot to plain JSON first.
+      for (const { key, row } of tables[name]!) void store.put(JSON.parse(JSON.stringify(row)), key)
     }
     await tx.done
+    abort = null
   } catch {
-    /* persistence is best-effort; memory stays authoritative locally */
+    // Best-effort — but NEVER half-commit: without the abort, the queued
+    // cursor-put + clears still committed and left a poisoned snapshot
+    // (cursor advanced over empty tables) that a warm boot can't repair.
+    try {
+      abort?.()
+    } catch {
+      /* already finished */
+    }
   }
 }
 
 export async function persistPending(db: PmDb, pending: PendingMutation[]): Promise<void> {
+  let abort: (() => void) | null = null
   try {
     const tx = db.transaction('pending', 'readwrite')
+    abort = () => tx.abort()
     void tx.objectStore('pending').clear()
-    for (const p of pending) void tx.objectStore('pending').put(p)
+    for (const p of pending) void tx.objectStore('pending').put(JSON.parse(JSON.stringify(p)))
     await tx.done
+    abort = null
   } catch {
-    /* best-effort */
+    try {
+      abort?.()
+    } catch {
+      /* already finished */
+    }
   }
 }
