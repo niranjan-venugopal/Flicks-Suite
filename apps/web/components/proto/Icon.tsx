@@ -128,6 +128,9 @@ export const Icon = {
   file: makeIcon(<><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6" /></>),
   userPlus: makeIcon(<><circle cx="9" cy="8" r="4" /><path d="M2 21c0-4 3.5-7 7-7 1.5 0 2.9.4 4 1.2" /><path d="M18 14v6M15 17h6" /></>),
   switchH: makeIcon(<><path d="M8 3L4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" /></>),
+  // PRD v6 P9/P16 — git glyphs (prototype pm-shared.jsx)
+  gitPr: makeIcon(<><circle cx="6" cy="6" r="2.6" /><circle cx="6" cy="18" r="2.6" /><circle cx="18" cy="18" r="2.6" /><path d="M6 8.6v6.8M13 6h2a3 3 0 013 3v6.4" /><path d="M15.4 3.6L13 6l2.4 2.4" /></>),
+  gitBranch: makeIcon(<><circle cx="6" cy="6" r="2.6" /><circle cx="6" cy="18" r="2.6" /><circle cx="18" cy="6" r="2.6" /><path d="M6 8.6v6.8M18 8.6c0 4-4 5.4-8 5.4" /></>),
 } as const
 
 export type IconKey = keyof typeof Icon

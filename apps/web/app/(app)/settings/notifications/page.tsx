@@ -7,11 +7,12 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   useNotificationPreferences,
   useUpdateNotificationPreference,
-  useUpdateEmailDigest,
   type NotificationEvent,
 } from '@/lib/api/queries/use-notifications'
 
-// Human labels + grouping for the preference-managed events (PRD §9.3 + v6 §11).
+// Human labels + grouping for the HRMS preference-managed events (PRD §9.3).
+// CRM events have no UI here; PM events live in the P10 page under
+// Projects → Settings → Notifications (/pm/settings/notifications).
 const EVENT_META: Partial<Record<
   NotificationEvent,
   { group: string; title: string; desc: string }
@@ -24,30 +25,13 @@ const EVENT_META: Partial<Record<
   regularization_reviewed: { group: 'Attendance', title: 'Regularization reviewed', desc: 'Your regularization was reviewed' },
   onboarding_submitted: { group: 'People', title: 'Onboarding submitted', desc: 'A hire finished self-onboarding' },
   onboarding_reviewed: { group: 'People', title: 'Onboarding reviewed', desc: 'Your onboarding was approved / sent back' },
-  crm_activity: { group: 'CRM', title: 'Activity assigned to me', desc: 'A call, task or meeting lands in your queue' },
-  crm_digest: { group: 'CRM', title: 'Morning digest', desc: 'Overdue + today summary at 8am' },
-  // PM (P10 matrix rows)
-  pm_assigned: { group: 'Projects', title: 'Assigned to me', desc: 'An issue was put in your hands' },
-  pm_mention: { group: 'Projects', title: 'Mentioned', desc: 'Someone @-mentioned you in a comment' },
-  pm_comment: { group: 'Projects', title: 'Comment on subscribed', desc: 'New comment on an issue you follow' },
-  pm_status: { group: 'Projects', title: 'Status → completed / canceled', desc: 'A followed issue reached a final state' },
-  pm_cycle_digest: { group: 'Projects', title: 'Cycle review digest', desc: 'What rolled over and what returned at cycle end' },
-  pm_project_nudge: { group: 'Projects', title: 'Project update nudge', desc: 'Your project has no health update in 7 days' },
-  pm_github: { group: 'Projects', title: 'GitHub state change on my issues', desc: 'Branch / PR / merge walked your issue' },
 }
 
-const GROUP_ORDER = ['Projects', 'Leave', 'Timesheet', 'Attendance', 'People', 'CRM']
-
-const DIGEST_OPTIONS = [
-  { id: 'urgent' as const, label: '5-min urgent only', desc: 'Only unread mentions + assignments email' },
-  { id: 'hourly' as const, label: 'Hourly digest', desc: 'Everything else folds every hour' },
-  { id: 'daily' as const, label: 'Daily digest', desc: 'One fold at 8am your time' },
-]
+const GROUP_ORDER = ['Leave', 'Timesheet', 'Attendance', 'People']
 
 export default function NotificationsSettingsPage() {
   const { data, isLoading } = useNotificationPreferences()
   const update = useUpdateNotificationPreference()
-  const updateDigest = useUpdateEmailDigest()
   const { toast } = useToast()
 
   const toggle = async (
@@ -156,42 +140,6 @@ export default function NotificationsSettingsPage() {
                 </div>
               )
             })}
-
-            {/* Email digest cadence (P10) */}
-            <div style={{ borderTop: '1px solid var(--bord)', paddingTop: 14, marginTop: 4 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-faint)', padding: '0 6px 8px' }}>
-                Email digest frequency
-              </div>
-              <div style={{ display: 'flex', gap: 8, padding: '0 6px', flexWrap: 'wrap' }}>
-                {DIGEST_OPTIONS.map((o) => {
-                  const active = (data.emailDigest ?? 'daily') === o.id
-                  return (
-                    <button
-                      key={o.id}
-                      onClick={async () => {
-                        try {
-                          await updateDigest.mutateAsync(o.id)
-                        } catch (e) {
-                          toast({ title: 'Could not save', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
-                        }
-                      }}
-                      style={{
-                        flex: '1 1 150px', textAlign: 'left', padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
-                        background: active ? 'rgba(62,123,250,.12)' : 'var(--surf-1)',
-                        border: `1px solid ${active ? 'var(--blue)' : 'var(--bord)'}`,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 800, color: active ? 'var(--blue)' : 'var(--text-1)' }}>{o.label}</div>
-                      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>{o.desc}</div>
-                    </button>
-                  )
-                })}
-              </div>
-              <p style={{ fontSize: 11, color: 'var(--text-mute)', padding: '10px 6px 0' }}>
-                Mentions and assignments email after 5 minutes only if still unread in-app — reading in-app cancels the pending email.
-                Do not disturb (your presence) mutes toasts automatically; the Inbox still accrues.
-              </p>
-            </div>
 
             <p style={{ fontSize: 11.5, color: 'var(--text-mute)', marginTop: 4, padding: '0 6px' }}>
               WhatsApp and SMS channels are on the roadmap. Changes save instantly.

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuthStore, type UserRole } from '@/lib/stores/auth.store'
 import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
+import { useUnreadNotifications } from '@/lib/api/queries/use-notifications'
 import { useMyCompanies, type ModuleGrant } from '@/lib/api/queries/use-members'
 import { CompanySwitcher } from '@/components/invoicing/CompanySwitcher'
 import { Icon, LogoMark } from '@/components/proto'
@@ -122,6 +123,7 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/pm/projects', label: 'Projects' },
           { href: '/pm/timeline', label: 'Timeline' },
           { href: '/pm/roadmap', label: 'Roadmap' },
+          { href: '/pm/settings/notifications', label: 'Settings' },
         ],
       },
       {
@@ -178,7 +180,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/notifications', label: 'Settings' }] },
     ],
   },
   {
@@ -211,7 +213,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/notifications', label: 'Settings' }] },
     ],
   },
   {
@@ -391,6 +393,11 @@ export function Sidebar() {
     role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER'
   const overview = useAdminOverview()
   const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
+
+  // PM Inbox badge (P9 — the prototype sidebar carries the unread count).
+  // Rides the bell's unread query cache; counts pm.* rows in the window.
+  const unread = useUnreadNotifications()
+  const pmInboxCount = (unread.data?.items ?? []).filter((n) => n.type.startsWith('pm.')).length
 
   // Determine which item is active and which parent group to auto-open.
   const activeId = useMemo(() => {
@@ -593,6 +600,7 @@ export function Sidebar() {
                     ? pendingCount
                     : undefined
                 }
+                pmInboxBadge={pmInboxCount > 0 ? pmInboxCount : undefined}
               />
             ))}
           </div>
@@ -612,6 +620,7 @@ function NavRow({
   openGroups,
   setOpenGroups,
   approvalsBadge,
+  pmInboxBadge,
   collapsed = false,
   onExpand,
 }: {
@@ -620,6 +629,7 @@ function NavRow({
   openGroups: Record<string, boolean>
   setOpenGroups: (fn: (g: Record<string, boolean>) => Record<string, boolean>) => void
   approvalsBadge?: number
+  pmInboxBadge?: number
   collapsed?: boolean
   onExpand?: () => void
 }) {
@@ -741,6 +751,7 @@ function NavRow({
         >
           {item.children!.map((c) => {
             const cActive = activeId === `${item.id}>${c.href}`
+            const cBadge = c.href === '/pm/inbox' ? pmInboxBadge : c.badge
             return (
               <Link
                 key={c.href}
@@ -763,7 +774,7 @@ function NavRow({
                 }}
               >
                 <span style={{ flex: 1 }}>{c.label}</span>
-                {c.badge !== undefined && c.badge > 0 && (
+                {cBadge !== undefined && cBadge > 0 && (
                   <span
                     style={{
                       minWidth: 16,
@@ -779,7 +790,7 @@ function NavRow({
                       justifyContent: 'center',
                     }}
                   >
-                    {c.badge}
+                    {cBadge}
                   </span>
                 )}
               </Link>

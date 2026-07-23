@@ -43,7 +43,7 @@ const KIND_IC: Record<Kind, typeof Icon.bell> = {
   cycle: Icon.refresh,
   digest: Icon.layers,
   done: Icon.check,
-  github: Icon.link,
+  github: Icon.gitPr,
   other: Icon.bell,
 }
 
@@ -163,7 +163,7 @@ export default function PmInboxPage() {
           </div>
           {kind === 'digest' && (
             <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)', marginTop: 1 }}>
-              category digest — expandable
+              weekly category digest — expandable
             </div>
           )}
         </div>
@@ -297,12 +297,6 @@ export default function PmInboxPage() {
         </div>
       )}
 
-      <div style={{ marginTop: 12, display: 'flex', gap: 14, justifyContent: 'center' }}>
-        <KbdHint k="J/K" label="move" />
-        <KbdHint k="⏎" label="open" />
-        <KbdHint k="E" label="archive" />
-        <KbdHint k="Z" label="snooze" />
-      </div>
     </div>
   )
 }
