@@ -11,6 +11,9 @@ export interface NotificationItem {
   linkUrl: string | null
   readAt: string | null
   createdAt: string
+  archivedAt: string | null
+  snoozedUntil: string | null
+  groupCount: number
 }
 
 export interface UnreadResponse {
@@ -80,6 +83,46 @@ export function useMarkAllRead() {
   })
 }
 
+// ─── Inbox (PRD v6 §11 / P9) ───────────────────────────────────────────────────
+
+export interface InboxResponse {
+  items: NotificationItem[]
+  snoozed: NotificationItem[]
+}
+
+export function useInbox(scope: 'pm' | 'all' = 'pm') {
+  return useQuery({
+    queryKey: ['notifications', 'inbox', scope],
+    queryFn: () => api.get<InboxResponse>(`/api/v1/notifications/inbox?scope=${scope}`),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
+    staleTime: 5_000,
+  })
+}
+
+export function useArchiveNotification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.patch<void>(`/api/v1/notifications/${id}/archive`, undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+}
+
+export function useSnoozeNotification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, until }: { id: string; until: string }) =>
+      api.patch<void>(`/api/v1/notifications/${id}/snooze`, { until }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] })
+    },
+  })
+}
+
 // ─── Preferences (PRD §9.3) ────────────────────────────────────────────────────
 
 export type NotificationEvent =
@@ -91,6 +134,15 @@ export type NotificationEvent =
   | 'regularization_reviewed'
   | 'onboarding_submitted'
   | 'onboarding_reviewed'
+  | 'crm_activity'
+  | 'crm_digest'
+  | 'pm_assigned'
+  | 'pm_mention'
+  | 'pm_comment'
+  | 'pm_status'
+  | 'pm_cycle_digest'
+  | 'pm_project_nudge'
+  | 'pm_github'
 
 export interface PreferenceRow {
   event: NotificationEvent
@@ -100,6 +152,18 @@ export interface PreferenceRow {
 
 export interface PreferencesResponse {
   events: PreferenceRow[]
+  emailDigest?: 'urgent' | 'hourly' | 'daily'
+}
+
+export function useUpdateEmailDigest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (frequency: 'urgent' | 'hourly' | 'daily') =>
+      api.put('/api/v1/notifications/preferences/email-digest', { frequency }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications', 'preferences'] })
+    },
+  })
 }
 
 export function useNotificationPreferences() {

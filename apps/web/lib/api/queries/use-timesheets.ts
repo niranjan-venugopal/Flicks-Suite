@@ -30,6 +30,8 @@ export interface TimesheetEntryRow {
   category: string
   isBillable: boolean
   description: string | null
+  projectId: string | null
+  taskId: string | null
 }
 
 export interface BulkSaveEntriesPayload {
@@ -40,6 +42,8 @@ export interface BulkSaveEntriesPayload {
     category: string
     isBillable?: boolean
     description?: string
+    projectId?: string
+    taskId?: string
   }>
 }
 

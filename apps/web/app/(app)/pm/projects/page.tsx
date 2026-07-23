@@ -220,7 +220,7 @@ function RestProjects() {
 
 // ─── Appendix B sample data (one-click, removable) ───────────────────────────
 
-export function SampleDataButton({ onAfterChange }: { onAfterChange?: () => void }) {
+function SampleDataButton({ onAfterChange }: { onAfterChange?: () => void }) {
   const qc = useQueryClient()
   const status = useQuery({
     queryKey: ['pm', 'sample-data'],

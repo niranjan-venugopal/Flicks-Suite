@@ -22,6 +22,7 @@ import { rankBetween } from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * PM issues (PRD v6 §5) — ONE service, TWO transports. The REST controller
@@ -60,7 +61,38 @@ export class PmIssuesService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  /**
+   * Inbox fan-out (§11): best-effort, never blocks or fails the mutation.
+   * One group key per issue so repeat activity bumps a single inbox row.
+   */
+  private notifyInbox(
+    tenantId: string,
+    issueId: string,
+    userIds: Array<string | null | undefined>,
+    type: string,
+    message: string,
+  ) {
+    const unique = [...new Set(userIds.filter((u): u is string => !!u))];
+    for (const uid of unique) {
+      void this.notifications
+        .createInAppNotification(uid, type, message, `/pm/issues/${issueId}`, tenantId, {
+          groupKey: `pm.issue:${issueId}`,
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  /** Subscriber ids for an issue (fan-out audience), inside the caller's tx. */
+  private async subscriberIds(tx: Db, issueId: string): Promise<string[]> {
+    const rows = await tx
+      .select({ user_id: pmIssueSubscribers.user_id })
+      .from(pmIssueSubscribers)
+      .where(eq(pmIssueSubscribers.issue_id, issueId));
+    return rows.map((r) => r.user_id);
+  }
 
   // ─── helpers (run inside the caller's tenant tx) ──────────────────────────
 
@@ -299,7 +331,7 @@ export class PmIssuesService {
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id);
-        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [next] = await tx
           .select()
           .from(pmWorkflowStates)
@@ -361,6 +393,17 @@ export class PmIssuesService {
           },
           tx,
         );
+        // §11: subscribers hear when a followed issue completes or cancels.
+        if (next.category === 'completed' || next.category === 'canceled') {
+          const subs = await this.subscriberIds(tx, id);
+          this.notifyInbox(
+            tenantId,
+            id,
+            subs.filter((u) => u !== userId),
+            'pm.issue.status',
+            `${team.key}-${issue.number} moved to ${next.name} — ${issue.title}`,
+          );
+        }
         return { data: updated! };
       },
       userId,
@@ -405,7 +448,7 @@ export class PmIssuesService {
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id);
-        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         if (assigneeUserId) {
           const [m] = await tx
             .select({ user_id: memberships.user_id })
@@ -448,6 +491,15 @@ export class PmIssuesService {
           },
           tx,
         );
+        if (assigneeUserId && assigneeUserId !== userId) {
+          this.notifyInbox(
+            tenantId,
+            id,
+            [assigneeUserId],
+            'pm.issue.assigned',
+            `${team.key}-${issue.number} assigned to you — ${issue.title}`,
+          );
+        }
         return { data: updated! };
       },
       userId,
@@ -968,7 +1020,10 @@ export class PmIssuesService {
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, issueId);
-        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        // Fan-out audience = people ALREADY following, captured before this
+        // comment's auto-subscribes (mentioned users get the mention notice).
+        const preSubs = await this.subscriberIds(tx, issueId);
         if (input.parent_comment_id) {
           const [parent] = await tx
             .select({ id: pmIssueComments.id, parent: pmIssueComments.parent_comment_id })
@@ -992,6 +1047,7 @@ export class PmIssuesService {
         // Commenting subscribes the author; @mentions subscribe the mentioned
         // members (§11 auto-subscribe — validated against active memberships).
         const subscriberIds = [userId];
+        let mentionedIds: string[] = [];
         if (input.mentioned_user_ids?.length) {
           const valid = await tx
             .select({ user_id: memberships.user_id })
@@ -1003,7 +1059,8 @@ export class PmIssuesService {
                 eq(memberships.status, 'active'),
               ),
             );
-          subscriberIds.push(...valid.map((v) => v.user_id));
+          mentionedIds = valid.map((v) => v.user_id);
+          subscriberIds.push(...mentionedIds);
         }
         await tx
           .insert(pmIssueSubscribers)
@@ -1022,6 +1079,22 @@ export class PmIssuesService {
             },
           },
           tx,
+        );
+        // §11 fan-out: mentions beat the ambient comment notice.
+        const mentioned = mentionedIds.filter((u) => u !== userId);
+        this.notifyInbox(
+          tenantId,
+          issueId,
+          mentioned,
+          'pm.issue.mention',
+          `${team.key}-${issue.number} you were mentioned — ${issue.title}`,
+        );
+        this.notifyInbox(
+          tenantId,
+          issueId,
+          preSubs.filter((u) => u !== userId && !mentioned.includes(u)),
+          'pm.issue.comment',
+          `${team.key}-${issue.number} new comment — ${issue.title}`,
         );
         return { data: comment! };
       },
@@ -1171,7 +1244,7 @@ export class PmIssuesService {
   async list(
     tenantId: string,
     userId: string,
-    query: { team_id?: string; page?: number; limit?: number },
+    query: { team_id?: string; project_id?: string; page?: number; limit?: number },
   ) {
     return this.db.withTenant(
       tenantId,
@@ -1179,6 +1252,7 @@ export class PmIssuesService {
         const page = Math.max(1, query.page ?? 1);
         const limit = Math.min(200, Math.max(1, query.limit ?? 100));
         const where = [eq(pmIssues.tenant_id, tenantId), isNull(pmIssues.deleted_at)];
+        if (query.project_id) where.push(eq(pmIssues.project_id, query.project_id));
         if (query.team_id) {
           await this.assertTeamAccess(tx, tenantId, userId, query.team_id);
           where.push(eq(pmIssues.team_id, query.team_id));

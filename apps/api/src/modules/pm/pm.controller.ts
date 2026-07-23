@@ -210,11 +210,13 @@ export class PmController {
   listIssues(
     @CurrentUser() user: JwtPayload,
     @Query('team_id') teamId?: string,
+    @Query('project_id') projectId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.issues.list(user.tenantId, user.sub, {
       team_id: teamId,
+      project_id: projectId,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

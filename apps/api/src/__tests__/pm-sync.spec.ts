@@ -15,9 +15,15 @@ import {
   pmCycleSnapshots,
   pmLabels,
   pmWorkflowStates,
+  pmProjects,
   domainEvents,
   syncMutations,
+  notifications,
+  notificationPreferences,
 } from '@flicks/db/schema';
+import { ConfigService } from '@nestjs/config';
+import { NotificationsService } from '../modules/notifications/notifications.service';
+import { PmJobs } from '../jobs/pm.jobs';
 import { DatabaseService } from '../core/database/database.service';
 import { AuditService } from '../modules/audit/audit.service';
 import { DomainEventsService } from '../core/events/domain-events.service';
@@ -42,7 +48,15 @@ const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
-const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc);
+// REAL NotificationsService — Sprint 38 asserts on actual inbox rows
+// (collapse, preferences, sweeps). Emails are spied per-test, never sent.
+const notificationsSvc = new NotificationsService(
+  db as never,
+  dbAdmin as never,
+  new ConfigService(),
+  emitter,
+);
+const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
 const visibility = new PmVisibilityService(dbSvc);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
@@ -844,5 +858,205 @@ describe('Sprint 37 — cycles, Autopilot, snapshots, triage (§7/§8, fake-cloc
       .from(pmIssueHistory)
       .where(and(eq(pmIssueHistory.issue_id, intake.id), eq(pmIssueHistory.field, 'triage')));
     expect(history.some((h) => (h.to_value ?? '').includes('declined: duplicate of roadmap work'))).toBe(true);
+  });
+});
+
+describe('Sprint 38 — Inbox, digesting, timesheet linkage (§11, §15.3)', () => {
+  const cyclesStub = { runCycleSweep: jest.fn() };
+  const pmJobs = new PmJobs(dbAdmin as never, notificationsSvc, cyclesStub as never);
+  let inbTeamId: string;
+
+  const rowsFor = (userId: string) =>
+    dbAdmin.select().from(notifications).where(eq(notifications.user_id, userId));
+
+  // notifyInbox is fire-and-forget — wait until the row lands (or timeout).
+  const settle = async (pred: () => Promise<boolean>) => {
+    for (let i = 0; i < 40; i++) {
+      if (await pred()) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
+  beforeAll(async () => {
+    const t = await teamsSvc.create(tenantId, ownerId, { key: 'INB', name: 'Inbox Team' });
+    inbTeamId = t.data.id;
+  });
+
+  beforeEach(async () => {
+    await dbAdmin.delete(notifications).where(inArray(notifications.user_id, [ownerId, outsiderId]));
+    await dbAdmin
+      .delete(notificationPreferences)
+      .where(inArray(notificationPreferences.user_id, [ownerId, outsiderId]));
+  });
+
+  it('assignment notifies the assignee (never the actor) with a per-issue group key', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Wire the webhooks' })).data;
+    await issuesSvc.assign(tenantId, ownerId, issue.id, outsiderId);
+    await settle(async () => (await rowsFor(outsiderId)).length > 0);
+    const rows = await rowsFor(outsiderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.type).toBe('pm.issue.assigned');
+    expect(rows[0]!.group_key).toBe(`pm.issue:${issue.id}`);
+    expect(rows[0]!.message).toContain('assigned to you');
+
+    // Self-assign → silence.
+    const mine = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Mine alone' })).data;
+    await issuesSvc.assign(tenantId, ownerId, mine.id, ownerId);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await rowsFor(ownerId)).toHaveLength(0);
+  });
+
+  it('repeat activity collapses into ONE unread row with a climbing count (§11.3)', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Collapse target' })).data;
+    await issuesSvc.assign(tenantId, ownerId, issue.id, outsiderId); // subscribes outsider
+    await settle(async () => (await rowsFor(outsiderId)).length === 1);
+
+    await issuesSvc.createComment(tenantId, ownerId, issue.id, { body: 'first pass done' });
+    await settle(async () => (await rowsFor(outsiderId)).some((r) => r.group_count >= 2));
+    await issuesSvc.createComment(tenantId, ownerId, issue.id, { body: 'second pass done' });
+    await settle(async () => (await rowsFor(outsiderId)).some((r) => r.group_count >= 3));
+
+    const rows = await rowsFor(outsiderId);
+    expect(rows).toHaveLength(1); // one row per issue, not three
+    expect(rows[0]!.group_count).toBe(3);
+    expect(rows[0]!.type).toBe('pm.issue.comment'); // newest event wins the row
+    expect(rows[0]!.read_at).toBeNull();
+
+    // A READ row is history — the next event opens a fresh row.
+    await notificationsSvc.markRead(rows[0]!.id, outsiderId);
+    await issuesSvc.createComment(tenantId, ownerId, issue.id, { body: 'third pass' });
+    await settle(async () => (await rowsFor(outsiderId)).length === 2);
+    const after = await rowsFor(outsiderId);
+    expect(after.filter((r) => r.read_at === null)).toHaveLength(1);
+  });
+
+  it('mention beats the ambient comment notice; in-app preference suppresses (§11.2)', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Mention me' })).data;
+    await issuesSvc.createComment(tenantId, ownerId, issue.id, {
+      body: 'ping @outsider',
+      mentioned_user_ids: [outsiderId],
+    });
+    await settle(async () => (await rowsFor(outsiderId)).length > 0);
+    const rows = await rowsFor(outsiderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.type).toBe('pm.issue.mention');
+
+    // Turn OFF pm_comment in-app for outsider → ambient comment stays silent.
+    await notificationsSvc.setPreference(outsiderId, 'pm_comment', 'in_app', false);
+    await notificationsSvc.markRead(rows[0]!.id, outsiderId);
+    const other = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Quiet one' })).data;
+    await issuesSvc.assign(tenantId, ownerId, other.id, outsiderId);
+    await settle(async () => (await rowsFor(outsiderId)).some((r) => r.type === 'pm.issue.assigned'));
+    const before = (await rowsFor(outsiderId)).length;
+    await issuesSvc.createComment(tenantId, ownerId, other.id, { body: 'ambient noise' });
+    await new Promise((r) => setTimeout(r, 400));
+    expect((await rowsFor(outsiderId)).length).toBe(before); // no new row, no bump
+  });
+
+  it('urgent email: 5-min unread-only, exactly once; reading first cancels it (§11.4)', async () => {
+    const sendSpy = jest.spyOn(notificationsSvc, 'sendEmail').mockResolvedValue(true);
+    try {
+      const a = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Email me' })).data;
+      const b = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Read first' })).data;
+      await issuesSvc.assign(tenantId, ownerId, a.id, outsiderId);
+      await issuesSvc.assign(tenantId, ownerId, b.id, outsiderId);
+      await settle(async () => (await rowsFor(outsiderId)).length === 2);
+      const rows = await rowsFor(outsiderId);
+      const readOne = rows.find((r) => r.group_key === `pm.issue:${b.id}`)!;
+      await notificationsSvc.markRead(readOne.id, outsiderId);
+
+      // Not due yet (created "now", sweep at now) → nothing sends.
+      expect(await pmJobs.runUrgentEmailSweep(new Date())).toBe(0);
+
+      const later = new Date(Date.now() + 6 * 60_000);
+      const sent = await pmJobs.runUrgentEmailSweep(later);
+      expect(sent).toBe(1); // only the UNREAD one
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      expect(sendSpy.mock.calls[0]![0]).toBe('pm-inbox-urgent');
+
+      // Exactly once — the second sweep is a no-op.
+      expect(await pmJobs.runUrgentEmailSweep(later)).toBe(0);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it('digest fold: hourly sends now, daily waits for 8am in the user tz (§11.4)', async () => {
+    const sendSpy = jest.spyOn(notificationsSvc, 'sendEmail').mockResolvedValue(true);
+    try {
+      const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Fold me' })).data;
+      await issuesSvc.assign(tenantId, ownerId, issue.id, outsiderId);
+      await settle(async () => (await rowsFor(outsiderId)).length === 1);
+      // Make it an AMBIENT row (comment), which the digest folds — and opt
+      // the user IN to comment emails (the P10 default is in-app only).
+      await dbAdmin
+        .update(notifications)
+        .set({ type: 'pm.issue.comment' })
+        .where(eq(notifications.user_id, outsiderId));
+      await notificationsSvc.setPreference(outsiderId, 'pm_comment', 'email', true);
+
+      await notificationsSvc.setEmailDigestFreq(outsiderId, 'daily');
+      // Default test-user tz is Asia/Kolkata; pick an instant that is NOT 8am IST.
+      const notEight = new Date('2026-07-01T12:00:00Z'); // 17:30 IST
+      expect(await pmJobs.runInboxDigestSweep(notEight)).toBe(0);
+
+      await notificationsSvc.setEmailDigestFreq(outsiderId, 'hourly');
+      const sent = await pmJobs.runInboxDigestSweep(new Date());
+      expect(sent).toBe(1);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+      expect(sendSpy.mock.calls[0]![0]).toBe('pm-inbox-digest');
+
+      // Folded exactly once.
+      expect(await pmJobs.runInboxDigestSweep(new Date())).toBe(0);
+
+      // 'urgent' users never get a fold.
+      await notificationsSvc.setEmailDigestFreq(outsiderId, 'urgent');
+      await dbAdmin.update(notifications).set({ emailed_at: null }).where(eq(notifications.user_id, outsiderId));
+      expect(await pmJobs.runInboxDigestSweep(new Date())).toBe(0);
+    } finally {
+      sendSpy.mockRestore();
+    }
+  });
+
+  it('snooze hides until due, archive removes; getInbox and getUnread agree (§11.5)', async () => {
+    const issue = (await issuesSvc.create(tenantId, ownerId, { team_id: inbTeamId, title: 'Snooze me' })).data;
+    await issuesSvc.assign(tenantId, ownerId, issue.id, outsiderId);
+    await settle(async () => (await rowsFor(outsiderId)).length === 1);
+    const [row] = await rowsFor(outsiderId);
+
+    await notificationsSvc.snooze(row!.id, outsiderId, new Date(Date.now() + 3_600_000));
+    let inbox = await notificationsSvc.getInbox(outsiderId, { scope: 'pm' });
+    expect(inbox.items).toHaveLength(0);
+    expect(inbox.snoozed).toHaveLength(1);
+    expect((await notificationsSvc.getUnread(outsiderId)).total).toBe(0);
+
+    // Snooze elapses → the row reappears.
+    await dbAdmin
+      .update(notifications)
+      .set({ snoozed_until: new Date(Date.now() - 60_000) })
+      .where(eq(notifications.id, row!.id));
+    inbox = await notificationsSvc.getInbox(outsiderId, { scope: 'pm' });
+    expect(inbox.items).toHaveLength(1);
+    expect((await notificationsSvc.getUnread(outsiderId)).total).toBe(1);
+
+    await notificationsSvc.archive(row!.id, outsiderId);
+    inbox = await notificationsSvc.getInbox(outsiderId, { scope: 'pm' });
+    expect(inbox.items).toHaveLength(0);
+    expect((await notificationsSvc.getUnread(outsiderId)).total).toBe(0);
+    const [archived] = await rowsFor(outsiderId);
+    expect(archived!.archived_at).not.toBeNull();
+    expect(archived!.read_at).not.toBeNull(); // archive implies read
+  });
+
+  it('timesheet ↔ PM FKs are attached AND validated (0045 §15.3)', async () => {
+    const [projectFk] = await dbAdmin.execute(
+      sql`SELECT convalidated FROM pg_constraint WHERE conname = 'timesheet_entries_project_id_fkey'`,
+    );
+    const [taskFk] = await dbAdmin.execute(
+      sql`SELECT convalidated FROM pg_constraint WHERE conname = 'timesheet_entries_task_id_fkey'`,
+    );
+    expect(projectFk?.convalidated).toBe(true);
+    expect(taskFk?.convalidated).toBe(true);
   });
 });

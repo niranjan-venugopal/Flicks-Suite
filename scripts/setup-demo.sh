@@ -1939,6 +1939,45 @@ BEGIN
 END
 $pmseed$;
 INSERT INTO tenant_module_toggles (tenant_id, module, enabled) SELECT id, 'pm', true FROM tenants ON CONFLICT (tenant_id, module) DO NOTHING;
+
+-- ─── PM Inbox sample rows (Sprint 38, §11/P9) ────────────────────────────────
+-- A few pm.* notifications for the demo owner so the Inbox has something to
+-- show before real activity happens. Guarded: only when the notifications
+-- table has the 0045 columns, the PM pack is loaded, and nothing was seeded.
+DO $pminbox$
+DECLARE
+  v_owner uuid := '22222222-2222-2222-2222-222222222220';
+  v_tenant uuid := '11111111-1111-1111-1111-111111111111';
+  v_iss1 uuid; v_iss2 uuid;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'notifications' AND column_name = 'group_key'
+  ) THEN
+    RAISE NOTICE 'PM inbox sample skipped — run pnpm sync:supabase first (0045).';
+    RETURN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pm_sample_packs WHERE tenant_id = v_tenant) THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM notifications WHERE user_id = v_owner AND type LIKE 'pm.%') THEN RETURN; END IF;
+
+  SELECT id INTO v_iss1 FROM pm_issues WHERE tenant_id = v_tenant AND title LIKE '%(sample)%' ORDER BY number DESC LIMIT 1;
+  SELECT id INTO v_iss2 FROM pm_issues WHERE tenant_id = v_tenant AND title LIKE '%(sample)%' ORDER BY number ASC LIMIT 1;
+  IF v_iss1 IS NULL THEN RETURN; END IF;
+
+  INSERT INTO notifications (tenant_id, user_id, type, message, link_url, group_key, group_count, created_at)
+  VALUES
+    (v_tenant, v_owner, 'pm.issue.mention',
+     (SELECT t.key || '-' || i.number || ' you were mentioned — ' || i.title FROM pm_issues i JOIN pm_teams t ON t.id = i.team_id WHERE i.id = v_iss1),
+     '/pm/issues/' || v_iss1, 'pm.issue:' || v_iss1, 3, NOW() - interval '25 minutes'),
+    (v_tenant, v_owner, 'pm.issue.assigned',
+     (SELECT t.key || '-' || i.number || ' assigned to you — ' || i.title FROM pm_issues i JOIN pm_teams t ON t.id = i.team_id WHERE i.id = v_iss2),
+     '/pm/issues/' || v_iss2, 'pm.issue:' || v_iss2, 1, NOW() - interval '2 hours'),
+    (v_tenant, v_owner, 'pm.cycle.review',
+     'Cycle review — 2 issues rolled forward, 2 returned to backlog (sample)',
+     '/pm/cycle', NULL, 1, NOW() - interval '1 day');
+  RAISE NOTICE 'PM inbox sample rows seeded for the demo owner.';
+END
+$pminbox$;
 SQL
 
 echo "  • PRD v4: ToS consent ledgered for all personas (no interstitial on demo logins),"

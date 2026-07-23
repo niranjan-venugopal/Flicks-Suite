@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn } from 'class-validator';
+import { IsBoolean, IsIn, IsISO8601 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import {
   NOTIFICATION_EVENTS,
@@ -18,4 +18,16 @@ export class UpdateNotificationPreferenceDto {
   @ApiProperty()
   @IsBoolean()
   enabled: boolean;
+}
+
+export class UpdateEmailDigestDto {
+  @ApiProperty({ enum: ['urgent', 'hourly', 'daily'] })
+  @IsIn(['urgent', 'hourly', 'daily'])
+  frequency: 'urgent' | 'hourly' | 'daily';
+}
+
+export class SnoozeNotificationDto {
+  @ApiProperty({ description: 'Future ISO timestamp to hide the row until' })
+  @IsISO8601()
+  until: string;
 }

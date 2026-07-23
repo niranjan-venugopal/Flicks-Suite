@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
+import { api } from '@/lib/api/client'
 import {
   useMyCurrentTimesheet,
   useSubmitTimesheet,
@@ -37,7 +39,61 @@ const isBillableCategory = (value: string) =>
 
 interface RowState {
   category: string
+  projectId: string | null // §15.3 — PM project the hours count against
+  taskId: string | null //          and optionally a specific issue
   hours: number[] // index 0=Mon ... 6=Sun
+}
+
+// ─── PM linkage (§15.3): self-gating — when the PM module is off (or the
+// user has no access) the projects query 403s and the pickers never render.
+function usePmProjectOptions() {
+  return useQuery({
+    queryKey: ['pm', 'projects', 'timesheet-picker'],
+    queryFn: () =>
+      api.get<{ data: { projects: Array<{ id: string; name: string; status: string }> } }>(
+        '/api/v1/pm/projects',
+      ),
+    retry: false,
+    staleTime: 300_000,
+  })
+}
+
+function TaskSelect({
+  projectId,
+  taskId,
+  disabled,
+  onChange,
+}: {
+  projectId: string
+  taskId: string | null
+  disabled: boolean
+  onChange: (taskId: string | null) => void
+}) {
+  const issues = useQuery({
+    queryKey: ['pm', 'issues', 'timesheet-picker', projectId],
+    queryFn: () =>
+      api.get<{ data: Array<{ id: string; title: string; number: number }> }>(
+        `/api/v1/pm/issues?project_id=${projectId}&limit=200`,
+      ),
+    retry: false,
+    staleTime: 120_000,
+  })
+  const list = issues.data?.data ?? []
+  return (
+    <select
+      className="input"
+      value={taskId ?? ''}
+      onChange={(e) => onChange(e.target.value || null)}
+      disabled={disabled}
+      style={{ height: 28, fontSize: 11, fontWeight: 700, padding: '0 8px', color: taskId ? undefined : 'var(--text-mute)' }}
+    >
+      <option value="">No task</option>
+      {taskId && !list.some((i) => i.id === taskId) ? <option value={taskId}>Linked task</option> : null}
+      {list.map((i) => (
+        <option key={i.id} value={i.id}>{i.title}</option>
+      ))}
+    </select>
+  )
 }
 
 function startOfWeekMon(d = new Date()): Date {
@@ -75,6 +131,12 @@ export default function TimesheetsPage() {
   const submit = useSubmitTimesheet()
   const copyPrevious = usePreviousWeekCategories()
   const role = useAuthStore((s) => s.currentUser?.role)
+  const pmProjects = usePmProjectOptions()
+  const pmProjectRows = useMemo(
+    () => (pmProjects.data?.data?.projects ?? []).filter((p) => p.status !== 'completed' && p.status !== 'canceled'),
+    [pmProjects.data],
+  )
+  const pmOn = pmProjectRows.length > 0
   // Categories are workspace-level; per PRD §8 only admins curate them. Employees
   // pick from what's already configured but cannot add new rows themselves.
   const canManageCategories =
@@ -102,18 +164,26 @@ export default function TimesheetsPage() {
 
   useEffect(() => {
     if (!entries.data) return
-    const byCategory = new Map<string, number[]>()
+    // One grid row per (category, project, task) combination (§15.3).
+    const byKey = new Map<string, RowState>()
     for (const e of entries.data.entries) {
-      if (!byCategory.has(e.category)) byCategory.set(e.category, Array(7).fill(0))
-      const arr = byCategory.get(e.category)!
+      const key = `${e.category}|${e.projectId ?? ''}|${e.taskId ?? ''}`
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          category: e.category,
+          projectId: e.projectId ?? null,
+          taskId: e.taskId ?? null,
+          hours: Array(7).fill(0),
+        })
+      }
       const idx = weekDays.findIndex((d) => toISO(d) === e.entryDate)
-      if (idx >= 0) arr[idx] = e.hours
+      if (idx >= 0) byKey.get(key)!.hours[idx] = e.hours
     }
-    const next: RowState[] = []
-    for (const [category, hours] of byCategory) next.push({ category, hours })
+    const next: RowState[] = [...byKey.values()]
+    const usedCategories = new Set(next.map((r) => r.category))
     for (const c of CATEGORY_DEFAULTS) {
       if (next.length >= CATEGORY_DEFAULTS.length) break
-      if (!byCategory.has(c)) next.push({ category: c, hours: Array(7).fill(0) })
+      if (!usedCategories.has(c)) next.push({ category: c, projectId: null, taskId: null, hours: Array(7).fill(0) })
     }
     setRows(next)
   }, [entries.data, weekDays])
@@ -134,11 +204,18 @@ export default function TimesheetsPage() {
   const updateCategory = (rowIdx: number, name: string) => {
     setRows((prev) => prev.map((r, i) => (i === rowIdx ? { ...r, category: name } : r)))
   }
+  const updateProject = (rowIdx: number, projectId: string | null) => {
+    // Changing project clears the task — tasks belong to a project.
+    setRows((prev) => prev.map((r, i) => (i === rowIdx ? { ...r, projectId, taskId: null } : r)))
+  }
+  const updateTask = (rowIdx: number, taskId: string | null) => {
+    setRows((prev) => prev.map((r, i) => (i === rowIdx ? { ...r, taskId } : r)))
+  }
   const addRow = () => {
     if (!canManageCategories) return
     const used = new Set(rows.map((r) => r.category))
     const next = CATEGORY_OPTIONS.find((c) => !used.has(c.value))?.value ?? 'other'
-    setRows((prev) => [...prev, { category: next, hours: Array(7).fill(0) }])
+    setRows((prev) => [...prev, { category: next, projectId: null, taskId: null, hours: Array(7).fill(0) }])
   }
 
   const handleSave = async () => {
@@ -154,6 +231,8 @@ export default function TimesheetsPage() {
                   hours: h,
                   category: r.category,
                   isBillable: isBillableCategory(r.category),
+                  ...(r.projectId ? { projectId: r.projectId } : {}),
+                  ...(r.taskId ? { taskId: r.taskId } : {}),
                 },
               ]
             : [],
@@ -187,7 +266,7 @@ export default function TimesheetsPage() {
         const have = new Set(prev.map((r) => r.category))
         const added = categories
           .filter((c) => !have.has(c))
-          .map((category) => ({ category, hours: Array(7).fill(0) as number[] }))
+          .map((category) => ({ category, projectId: null, taskId: null, hours: Array(7).fill(0) as number[] }))
         return [...prev, ...added]
       })
       toast({ title: 'Copied last week', description: `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} brought forward.` })
@@ -383,28 +462,56 @@ export default function TimesheetsPage() {
                           <div
                             style={{
                               width: 6,
-                              height: 24,
+                              height: pmOn ? 56 : 24,
                               borderRadius: 3,
                               background: billable ? 'var(--blue)' : 'var(--purple)',
                             }}
                           />
-                          <select
-                            className="input"
-                            value={r.category}
-                            onChange={(e) => updateCategory(ri, e.target.value)}
-                            style={{ height: 34, fontSize: 12.5, fontWeight: 800, padding: '0 10px' }}
-                            disabled={!isEditable}
-                          >
-                            {CATEGORY_OPTIONS.find((c) => c.value === r.category) ? null : (
-                              <option value={r.category}>{r.category}</option>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                            <select
+                              className="input"
+                              value={r.category}
+                              onChange={(e) => updateCategory(ri, e.target.value)}
+                              style={{ height: 34, fontSize: 12.5, fontWeight: 800, padding: '0 10px' }}
+                              disabled={!isEditable}
+                            >
+                              {CATEGORY_OPTIONS.find((c) => c.value === r.category) ? null : (
+                                <option value={r.category}>{r.category}</option>
+                              )}
+                              {CATEGORY_OPTIONS.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                  {c.label}
+                                  {c.billable ? ' · billable' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {pmOn && (
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                <select
+                                  className="input"
+                                  value={r.projectId ?? ''}
+                                  onChange={(e) => updateProject(ri, e.target.value || null)}
+                                  disabled={!isEditable}
+                                  style={{ height: 28, fontSize: 11, fontWeight: 700, padding: '0 8px', flex: 1, minWidth: 0, color: r.projectId ? undefined : 'var(--text-mute)' }}
+                                >
+                                  <option value="">No project</option>
+                                  {pmProjectRows.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                                {r.projectId && (
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <TaskSelect
+                                      projectId={r.projectId}
+                                      taskId={r.taskId}
+                                      disabled={!isEditable}
+                                      onChange={(t) => updateTask(ri, t)}
+                                    />
+                                  </div>
+                                )}
+                              </div>
                             )}
-                            {CATEGORY_OPTIONS.map((c) => (
-                              <option key={c.value} value={c.value}>
-                                {c.label}
-                                {c.billable ? ' · billable' : ''}
-                              </option>
-                            ))}
-                          </select>
+                          </div>
                         </div>
                       </td>
                       {r.hours.map((h, di) => (

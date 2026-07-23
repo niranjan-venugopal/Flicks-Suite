@@ -6,6 +6,7 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { tenants, users } from './platform';
@@ -24,6 +25,14 @@ export const notifications = pgTable(
     message: text('message').notNull(),
     link_url: text('link_url'),
     read_at: timestamp('read_at', { withTimezone: true }),
+    // Inbox lifecycle (0045): archived rows leave the inbox but stay queryable;
+    // snoozed rows hide until due; group_key collapses repeats of the same
+    // subject (e.g. one row per issue, bumped on each new comment).
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+    snoozed_until: timestamp('snoozed_until', { withTimezone: true }),
+    group_key: text('group_key'),
+    group_count: integer('group_count').notNull().default(1),
+    emailed_at: timestamp('emailed_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -32,6 +41,7 @@ export const notifications = pgTable(
     index('notifications_user_read_idx').on(t.user_id, t.read_at),
     index('notifications_user_created_idx').on(t.user_id, t.created_at),
     index('notifications_tenant_id_idx').on(t.tenant_id),
+    index('notifications_user_group_idx').on(t.user_id, t.group_key),
   ],
 );
 

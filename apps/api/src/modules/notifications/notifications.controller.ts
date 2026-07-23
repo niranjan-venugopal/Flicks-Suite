@@ -18,7 +18,12 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
-import { UpdateNotificationPreferenceDto } from './notifications.dto';
+import {
+  UpdateNotificationPreferenceDto,
+  UpdateEmailDigestDto,
+  SnoozeNotificationDto,
+} from './notifications.dto';
+import { BadRequestException } from '@nestjs/common';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 
@@ -81,6 +86,55 @@ export class NotificationsController {
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     });
+  }
+
+  @Get('inbox')
+  @ApiOperation({ summary: 'Inbox view: active + snoozed rows (PRD v6 §11/P9)' })
+  @ApiQuery({ name: 'scope', required: false, enum: ['pm', 'all'] })
+  async getInbox(
+    @CurrentUser() user: JwtPayload,
+    @Query('scope') scope?: 'pm' | 'all',
+  ) {
+    return this.notificationsService.getInbox(user.sub, {
+      scope: scope === 'pm' ? 'pm' : 'all',
+    });
+  }
+
+  @Put('preferences/email-digest')
+  @ApiOperation({ summary: 'Set email digest cadence (urgent | hourly | daily)' })
+  async setEmailDigest(
+    @Body() dto: UpdateEmailDigestDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    await this.notificationsService.setEmailDigestFreq(user.sub, dto.frequency);
+    return { emailDigest: dto.frequency };
+  }
+
+  @Patch(':id/archive')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Archive a notification (E in the Inbox)' })
+  @ApiResponse({ status: 204, description: 'Archived' })
+  async archive(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    await this.notificationsService.archive(id, user.sub);
+  }
+
+  @Patch(':id/snooze')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Snooze a notification until a future instant (Z)' })
+  @ApiResponse({ status: 204, description: 'Snoozed' })
+  async snooze(
+    @Param('id') id: string,
+    @Body() dto: SnoozeNotificationDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<void> {
+    const until = new Date(dto.until);
+    if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) {
+      throw new BadRequestException('until must be a future ISO timestamp');
+    }
+    await this.notificationsService.snooze(id, user.sub, until);
   }
 
   @Patch(':id/read')

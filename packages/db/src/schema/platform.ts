@@ -129,6 +129,9 @@ export const users = pgTable(
     timezone: text('timezone').notNull().default('Asia/Kolkata'),
     // §19.4 — appended to CRM composed email.
     email_signature_html: text('email_signature_html'),
+    // PM Inbox (0045): email cadence for inbox-style notifications —
+    // 'urgent' (5-min unread mention/assignment emails only) | 'hourly' | 'daily'.
+    notification_email_digest: text('notification_email_digest').notNull().default('daily'),
     is_platform_admin: boolean('is_platform_admin').notNull().default(false),
     // FAM (platform-admin) second factor. Base32 TOTP secret, set at enrolment.
     // FAM logins are gated on this being non-null (PRD §11.6).

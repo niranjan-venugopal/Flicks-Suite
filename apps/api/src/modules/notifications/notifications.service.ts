@@ -2,7 +2,7 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { notifications, notificationPreferences } from '@flicks/db/schema';
+import { notifications, notificationPreferences, users } from '@flicks/db/schema';
 import type { Notification } from '@flicks/db/schema';
 import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
@@ -23,6 +23,14 @@ export const NOTIFICATION_EVENTS = [
   // CRM (PRD v5 §6.3) — assignment pings + the morning digest.
   'crm_activity',
   'crm_digest',
+  // PM Inbox (PRD v6 §11) — the P10 matrix rows.
+  'pm_assigned',
+  'pm_mention',
+  'pm_comment',
+  'pm_status',
+  'pm_cycle_digest',
+  'pm_project_nudge',
+  'pm_github',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 export type NotificationChannel = 'in_app' | 'email';
@@ -43,6 +51,15 @@ const PREFERENCE_DEFAULTS: Record<
   // CRM (§6.3/§6.4): pings default on in-app; email flavours join Sprint 29.
   crm_activity: { in_app: true, email: false },
   crm_digest: { in_app: true, email: false },
+  // PM (§11.2 defaults): urgent things may email; ambient activity is in-app
+  // only. Email cadence is further shaped by users.notification_email_digest.
+  pm_assigned: { in_app: true, email: true },
+  pm_mention: { in_app: true, email: true },
+  pm_comment: { in_app: true, email: false },
+  pm_status: { in_app: true, email: false },
+  pm_cycle_digest: { in_app: true, email: true },
+  pm_project_nudge: { in_app: true, email: false },
+  pm_github: { in_app: true, email: false },
 };
 
 // Map the free-form in-app `type` string (e.g. 'timesheet.approve',
@@ -60,7 +77,22 @@ function eventForInAppType(type: string): NotificationEvent | null {
   if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
   if (type.startsWith('crm.digest')) return 'crm_digest';
   if (type.startsWith('crm.')) return 'crm_activity';
+  // PM (PRD v6 §11) — specific-first, then a safe pm.* fallback so a new PM
+  // type is at least gated by the ambient-comment preference, never ungated.
+  if (type === 'pm.issue.assigned') return 'pm_assigned';
+  if (type === 'pm.issue.mention') return 'pm_mention';
+  if (type === 'pm.issue.status') return 'pm_status';
+  if (type.startsWith('pm.cycle.')) return 'pm_cycle_digest';
+  if (type === 'pm.project.stale') return 'pm_project_nudge';
+  if (type.startsWith('pm.github.')) return 'pm_github';
+  if (type.startsWith('pm.digest')) return 'pm_comment';
+  if (type.startsWith('pm.')) return 'pm_comment';
   return null;
+}
+
+/** Preference event for the email flavour of an inbox row (sweep-time gate). */
+export function emailEventForInAppType(type: string): NotificationEvent | null {
+  return eventForInAppType(type);
 }
 
 // API shape returned to the client. Snake → camel.
@@ -72,6 +104,9 @@ export interface InAppNotification {
   linkUrl: string | null;
   readAt: string | null;
   createdAt: string;
+  archivedAt: string | null;
+  snoozedUntil: string | null;
+  groupCount: number;
 }
 
 function toDto(row: Notification): InAppNotification {
@@ -83,6 +118,9 @@ function toDto(row: Notification): InAppNotification {
     linkUrl: row.link_url,
     readAt: row.read_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
+    archivedAt: row.archived_at?.toISOString() ?? null,
+    snoozedUntil: row.snoozed_until?.toISOString() ?? null,
+    groupCount: row.group_count ?? 1,
   };
 }
 
@@ -130,7 +168,10 @@ type EmailTemplate =
   | 'data-export-ready'
   | 'account-deletion-confirmation'
   // Platform
-  | 'impersonation-started';
+  | 'impersonation-started'
+  // PM Inbox (PRD v6 §11)
+  | 'pm-inbox-urgent'
+  | 'pm-inbox-digest';
 
 @Injectable()
 export class NotificationsService {
@@ -607,6 +648,50 @@ export class NotificationsService {
         };
       }
 
+      case 'pm-inbox-urgent': {
+        const { line, linkUrl } = props as { line: string; linkUrl: string };
+        return {
+          subject: `${this.esc(line)} — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">You're needed on an issue</h2>
+              <p>${this.esc(line)}</p>
+              <p style="margin: 24px 0;">
+                <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}${this.esc(linkUrl)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open in ${appName}</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">Sent because this was still unread after 5 minutes. Reading it in-app first cancels the email. Tune this under Settings → Notifications.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'pm-inbox-digest': {
+        const { count, lines, inboxUrl, cadence } = props as {
+          count: number;
+          lines: string[];
+          inboxUrl: string;
+          cadence: string;
+        };
+        const items = (lines ?? [])
+          .slice(0, 10)
+          .map((l) => `<li style="margin: 6px 0;">${this.esc(l)}</li>`)
+          .join('');
+        return {
+          subject: `${String(count)} update${Number(count) === 1 ? '' : 's'} in your Projects inbox — ${appName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Your ${this.esc(cadence)} Projects digest</h2>
+              <p>${String(count)} unread update${Number(count) === 1 ? '' : 's'} since your last look:</p>
+              <ul style="padding-left: 18px; color: #333;">${items}</ul>
+              <p style="margin: 24px 0;">
+                <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}${this.esc(inboxUrl)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open Inbox</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 32px;">Only unread items are folded in — reading in-app removes them. Change the cadence under Settings → Notifications.</p>
+            </div>
+          `,
+        };
+      }
+
       case 'impersonation-started': {
         const { targetName, reason, endsAt } = props as {
           targetName: string;
@@ -979,20 +1064,24 @@ export class NotificationsService {
 
   /** The full preference matrix for a user, merging stored rows over defaults. */
   async getPreferences(userId: string) {
-    const stored = await this.dbAdmin
-      .select({
-        event: notificationPreferences.event_type,
-        channel: notificationPreferences.channel,
-        enabled: notificationPreferences.enabled,
-      })
-      .from(notificationPreferences)
-      .where(eq(notificationPreferences.user_id, userId));
+    const [stored, emailDigest] = await Promise.all([
+      this.dbAdmin
+        .select({
+          event: notificationPreferences.event_type,
+          channel: notificationPreferences.channel,
+          enabled: notificationPreferences.enabled,
+        })
+        .from(notificationPreferences)
+        .where(eq(notificationPreferences.user_id, userId)),
+      this.getEmailDigestFreq(userId),
+    ]);
 
     const overrides = new Map(
       stored.map((s) => [`${s.event}:${s.channel}`, s.enabled]),
     );
 
     return {
+      emailDigest,
       events: NOTIFICATION_EVENTS.map((event) => ({
         event,
         inApp:
@@ -1030,6 +1119,7 @@ export class NotificationsService {
     message: string,
     linkUrl?: string | null,
     tenantId?: string | null,
+    opts?: { groupKey?: string },
   ): Promise<void> {
     // Respect the user's in-app preference for preference-managed events.
     // Unmapped types (security/critical, e.g. impersonation) always deliver.
@@ -1044,12 +1134,51 @@ export class NotificationsService {
       }
     }
 
+    // §11.3 collapse: repeats of the same subject (group_key) bump the ONE
+    // live inbox row — newest message wins, count climbs, snooze clears —
+    // instead of stacking. Archived/read rows are history; those get a fresh
+    // row so "done" items don't silently reopen with an old timestamp.
+    if (opts?.groupKey) {
+      const bumped = await this.dbAdmin
+        .update(notifications)
+        .set({
+          type,
+          message,
+          link_url: linkUrl ?? null,
+          created_at: new Date(),
+          snoozed_until: null,
+          emailed_at: null,
+          group_count: sql`${notifications.group_count} + 1`,
+        })
+        .where(
+          and(
+            eq(notifications.user_id, userId),
+            eq(notifications.group_key, opts.groupKey),
+            isNull(notifications.read_at),
+            isNull(notifications.archived_at),
+          ),
+        )
+        .returning({ id: notifications.id });
+      if (bumped.length > 0) {
+        this.eventEmitter.emit('notification.created', {
+          userId,
+          type,
+          message,
+          linkUrl,
+          tenantId,
+          createdAt: new Date(),
+        });
+        return;
+      }
+    }
+
     await this.dbAdmin.insert(notifications).values({
       user_id: userId,
       type,
       message,
       link_url: linkUrl ?? null,
       tenant_id: tenantId ?? null,
+      group_key: opts?.groupKey ?? null,
     });
 
     // Emit event for the future WebSocket bridge; current bell uses polling.
@@ -1070,29 +1199,122 @@ export class NotificationsService {
     limit = 10,
   ): Promise<{ items: InAppNotification[]; total: number }> {
     const safeLimit = Math.max(1, Math.min(limit, 50));
+    // Archived rows are done; snoozed rows are hidden until due (0045).
+    const unreadVisible = and(
+      eq(notifications.user_id, userId),
+      isNull(notifications.read_at),
+      isNull(notifications.archived_at),
+      sql`(${notifications.snoozed_until} IS NULL OR ${notifications.snoozed_until} <= now())`,
+    );
     const [rows, [{ n }]] = await Promise.all([
+      this.dbAdmin
+        .select()
+        .from(notifications)
+        .where(unreadVisible)
+        .orderBy(desc(notifications.created_at))
+        .limit(safeLimit),
+      this.dbAdmin
+        .select({ n: sql<number>`COUNT(*)::int` })
+        .from(notifications)
+        .where(unreadVisible),
+    ]);
+    return { items: rows.map(toDto), total: Number(n ?? 0) };
+  }
+
+  /**
+   * The PM Inbox view (P9): active rows (unarchived, snooze elapsed) plus the
+   * snoozed-for-later section. `scope: 'pm'` narrows to pm.* types so the PM
+   * shell's Inbox stays about issues while the bell stays app-wide.
+   */
+  async getInbox(
+    userId: string,
+    opts: { scope?: 'pm' | 'all'; limit?: number } = {},
+  ): Promise<{ items: InAppNotification[]; snoozed: InAppNotification[] }> {
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
+    const scopeCond =
+      opts.scope === 'pm' ? sql`${notifications.type} LIKE 'pm.%'` : sql`true`;
+    const [items, snoozed] = await Promise.all([
       this.dbAdmin
         .select()
         .from(notifications)
         .where(
           and(
             eq(notifications.user_id, userId),
-            isNull(notifications.read_at),
+            isNull(notifications.archived_at),
+            sql`(${notifications.snoozed_until} IS NULL OR ${notifications.snoozed_until} <= now())`,
+            scopeCond,
           ),
         )
         .orderBy(desc(notifications.created_at))
-        .limit(safeLimit),
+        .limit(limit),
       this.dbAdmin
-        .select({ n: sql<number>`COUNT(*)::int` })
+        .select()
         .from(notifications)
         .where(
           and(
             eq(notifications.user_id, userId),
-            isNull(notifications.read_at),
+            isNull(notifications.archived_at),
+            sql`${notifications.snoozed_until} > now()`,
+            scopeCond,
           ),
-        ),
+        )
+        .orderBy(desc(notifications.created_at))
+        .limit(limit),
     ]);
-    return { items: rows.map(toDto), total: Number(n ?? 0) };
+    return { items: items.map(toDto), snoozed: snoozed.map(toDto) };
+  }
+
+  /** Archive = done. Archiving also marks read (it left the inbox on purpose). */
+  async archive(notificationId: string, userId: string): Promise<void> {
+    await this.dbAdmin
+      .update(notifications)
+      .set({ archived_at: new Date(), read_at: sql`COALESCE(${notifications.read_at}, now())` })
+      .where(
+        and(
+          eq(notifications.id, notificationId),
+          eq(notifications.user_id, userId),
+          isNull(notifications.archived_at),
+        ),
+      );
+  }
+
+  /** Snooze until a future instant; the row hides from inbox + bell until due. */
+  async snooze(
+    notificationId: string,
+    userId: string,
+    until: Date,
+  ): Promise<void> {
+    await this.dbAdmin
+      .update(notifications)
+      .set({ snoozed_until: until })
+      .where(
+        and(
+          eq(notifications.id, notificationId),
+          eq(notifications.user_id, userId),
+          isNull(notifications.archived_at),
+        ),
+      );
+  }
+
+  /** The user's email digest cadence (P10 segmented control). */
+  async getEmailDigestFreq(userId: string): Promise<'urgent' | 'hourly' | 'daily'> {
+    const [row] = await this.dbAdmin
+      .select({ freq: users.notification_email_digest })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const f = row?.freq;
+    return f === 'urgent' || f === 'hourly' ? f : 'daily';
+  }
+
+  async setEmailDigestFreq(
+    userId: string,
+    freq: 'urgent' | 'hourly' | 'daily',
+  ): Promise<void> {
+    await this.dbAdmin
+      .update(users)
+      .set({ notification_email_digest: freq })
+      .where(eq(users.id, userId));
   }
 
   async listAll(
