@@ -350,9 +350,13 @@ export class PmCyclesService {
     return true;
   }
 
-  /** Latest Cycle Review (P13 digest card) from the rollover event. */
+  /**
+   * Latest Cycle Review (P13 digest card) from rollover events. Walks the
+   * most recent few and returns the first whose cycle + issues still resolve
+   * — stale reviews (e.g. removed sample cycles) never blank the card.
+   */
   private async lastReview(tx: Db, tenantId: string, teamId: string) {
-    const [ev] = await this.dbAdmin
+    const events = await this.dbAdmin
       .select({ payload: domainEvents.payload })
       .from(domainEvents)
       .where(and(
@@ -361,21 +365,31 @@ export class PmCyclesService {
         sql`${domainEvents.payload}->>'team_id' = ${teamId}`,
       ))
       .orderBy(desc(domainEvents.occurred_at))
-      .limit(1);
-    if (!ev) return null;
-    const p = ev.payload as { number?: number; moved_ids?: string[]; returned_ids?: string[] };
-    const allIds = [...(p.moved_ids ?? []), ...(p.returned_ids ?? [])];
-    if (!allIds.length) return { number: p.number ?? null, moved: [], returned: [] };
-    const rows = await tx
-      .select({ id: pmIssues.id, number: pmIssues.number, title: pmIssues.title, priority: pmIssues.priority })
-      .from(pmIssues)
-      .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, allIds), isNull(pmIssues.deleted_at)));
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    return {
-      number: p.number ?? null,
-      moved: (p.moved_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
-      returned: (p.returned_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
-    };
+      .limit(5);
+    for (const ev of events) {
+      const p = ev.payload as { cycle_id?: string; number?: number; moved_ids?: string[]; returned_ids?: string[] };
+      if (!p.cycle_id) continue;
+      const [cycle] = await tx
+        .select({ id: pmCycles.id })
+        .from(pmCycles)
+        .where(and(eq(pmCycles.tenant_id, tenantId), eq(pmCycles.id, p.cycle_id)))
+        .limit(1);
+      if (!cycle) continue;
+      const allIds = [...(p.moved_ids ?? []), ...(p.returned_ids ?? [])];
+      if (!allIds.length) continue;
+      const rows = await tx
+        .select({ id: pmIssues.id, number: pmIssues.number, title: pmIssues.title, priority: pmIssues.priority })
+        .from(pmIssues)
+        .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, allIds), isNull(pmIssues.deleted_at)));
+      if (!rows.length) continue;
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      return {
+        number: p.number ?? null,
+        moved: (p.moved_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
+        returned: (p.returned_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
+      };
+    }
+    return null;
   }
 
   private async publishCycleEvent(tenantId: string, name: string, cycleId: string, extra: Record<string, unknown>) {

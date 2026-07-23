@@ -1647,6 +1647,224 @@ BEGIN
 END
 $crmseed$;
 INSERT INTO tenant_module_toggles (tenant_id, module, enabled) SELECT id, 'crm', true FROM tenants ON CONFLICT (tenant_id, module) DO NOTHING;
+
+-- ─── PM (PRD v6): workspace + Appendix B sample pack for Demo Co ─────────────
+-- Seeds the PM team (if the app never opened), enables cycles + triage, and
+-- loads the SAME pack the in-app "Load sample data" button creates: 24 issues
+-- across states/priorities, 2 projects (milestones + health updates), 2
+-- initiatives, a completed cycle WITH a Cycle Review, an active cycle
+-- mid-flight with daily snapshots, and 3 issues in Triage. Ledgered in
+-- pm_sample_packs so the in-app "Remove sample data" button removes exactly
+-- this. Skips cleanly (with a notice) if PM migrations haven't been applied.
+DO $pmseed$
+DECLARE
+  v_tenant uuid := '11111111-1111-1111-1111-111111111111';
+  v_owner uuid;
+  v_team uuid; v_counter int;
+  v_state_triage uuid; v_state_backlog uuid; v_state_todo uuid;
+  v_state_started uuid; v_state_review uuid; v_state_done uuid; v_state_canceled uuid;
+  v_lbl_bug uuid; v_lbl_feature uuid; v_lbl_perf uuid;
+  v_p1 uuid; v_p2 uuid; v_init1 uuid; v_init2 uuid;
+  v_cycle_done uuid; v_cycle_active uuid; v_maxnum int;
+  v_members uuid[]; v_issue uuid; v_state uuid; v_assignee uuid;
+  v_issue_ids uuid[] := '{}'; v_ms_ids uuid[] := '{}'; v_upd_ids uuid[] := '{}';
+  v_moved uuid[] := '{}'; v_returned uuid[] := '{}';
+  v_ms1 uuid[] := '{}';
+  r RECORD; i int := 0; d int;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pm_sample_packs') THEN
+    RAISE NOTICE 'PM tables missing — run `pnpm sync:supabase` first, then re-run setup-demo.sh for PM sample data.';
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pm_sample_packs WHERE tenant_id = v_tenant) THEN
+    RAISE NOTICE 'PM sample pack already loaded — skipping (remove via the Projects page button to re-seed).';
+    RETURN;
+  END IF;
+
+  SELECT user_id INTO v_owner FROM memberships WHERE tenant_id = v_tenant AND role = 'owner' AND status = 'active' LIMIT 1;
+  SELECT array_agg(user_id) INTO v_members FROM memberships WHERE tenant_id = v_tenant AND status = 'active';
+  IF v_owner IS NULL THEN RETURN; END IF;
+
+  -- Workspace (mirrors PmTeamsService.ensureWorkspace) if the app never ran.
+  SELECT id INTO v_team FROM pm_teams WHERE tenant_id = v_tenant AND deleted_at IS NULL ORDER BY created_at LIMIT 1;
+  IF v_team IS NULL THEN
+    INSERT INTO pm_teams (tenant_id, key, name, color, is_private, cycles_enabled, triage_enabled, cooldown_days)
+    VALUES (v_tenant, 'DC', 'Demo Co', '#3E7BFA', false, true, true, 2) RETURNING id INTO v_team;
+    INSERT INTO pm_workflow_states (tenant_id, team_id, name, color, category, position, is_default_for_category) VALUES
+      (v_tenant, v_team, 'Triage', '#9B7BFA', 'triage', 0, true),
+      (v_tenant, v_team, 'Backlog', '#5C6477', 'backlog', 1, true),
+      (v_tenant, v_team, 'Todo', '#A8B0C2', 'unstarted', 2, true),
+      (v_tenant, v_team, 'In Progress', '#FED800', 'started', 3, true),
+      (v_tenant, v_team, 'In Review', '#3E7BFA', 'started', 4, false),
+      (v_tenant, v_team, 'Done', '#27D280', 'completed', 5, true),
+      (v_tenant, v_team, 'Canceled', '#5C6477', 'canceled', 6, true),
+      (v_tenant, v_team, 'Duplicate', '#5C6477', 'canceled', 7, false);
+    UPDATE pm_teams SET default_state_id = (SELECT id FROM pm_workflow_states WHERE team_id = v_team AND category = 'backlog' LIMIT 1) WHERE id = v_team;
+    INSERT INTO pm_team_counters (team_id, tenant_id, last_number) VALUES (v_team, v_tenant, 0) ON CONFLICT DO NOTHING;
+    INSERT INTO pm_team_memberships (team_id, tenant_id, user_id, is_lead)
+      SELECT v_team, v_tenant, m.user_id, (m.user_id = v_owner)
+      FROM memberships m WHERE m.tenant_id = v_tenant AND m.status = 'active' AND m.role <> 'auditor'
+    ON CONFLICT DO NOTHING;
+  ELSE
+    UPDATE pm_teams SET cycles_enabled = true, triage_enabled = true, cooldown_days = 2 WHERE id = v_team;
+  END IF;
+
+  SELECT id INTO v_state_triage   FROM pm_workflow_states WHERE team_id = v_team AND category = 'triage'   ORDER BY position LIMIT 1;
+  SELECT id INTO v_state_backlog  FROM pm_workflow_states WHERE team_id = v_team AND category = 'backlog'  ORDER BY position LIMIT 1;
+  SELECT id INTO v_state_todo     FROM pm_workflow_states WHERE team_id = v_team AND category = 'unstarted' ORDER BY position LIMIT 1;
+  SELECT id INTO v_state_started  FROM pm_workflow_states WHERE team_id = v_team AND category = 'started'  ORDER BY position LIMIT 1;
+  SELECT id INTO v_state_review   FROM pm_workflow_states WHERE team_id = v_team AND category = 'started'  ORDER BY position DESC LIMIT 1;
+  SELECT id INTO v_state_done     FROM pm_workflow_states WHERE team_id = v_team AND category = 'completed' ORDER BY position LIMIT 1;
+  SELECT id INTO v_state_canceled FROM pm_workflow_states WHERE team_id = v_team AND category = 'canceled' ORDER BY position LIMIT 1;
+
+  -- Labels.
+  INSERT INTO pm_labels (tenant_id, name, color) VALUES (v_tenant, 'Bug (sample)', '#F8786B') RETURNING id INTO v_lbl_bug;
+  INSERT INTO pm_labels (tenant_id, name, color) VALUES (v_tenant, 'Feature (sample)', '#3E7BFA') RETURNING id INTO v_lbl_feature;
+  INSERT INTO pm_labels (tenant_id, name, color) VALUES (v_tenant, 'Perf (sample)', '#FED800') RETURNING id INTO v_lbl_perf;
+
+  -- Projects + milestones + health updates.
+  INSERT INTO pm_projects (tenant_id, name, icon, status, health, lead_user_id, start_date, target_date, created_by)
+  VALUES (v_tenant, 'TechCorp onboarding (sample)', '🤝', 'in_progress', 'at_risk', v_owner,
+          (NOW() - interval '28 days')::date, (NOW() + interval '17 days')::date, v_owner) RETURNING id INTO v_p1;
+  INSERT INTO pm_projects (tenant_id, name, icon, status, health, lead_user_id, start_date, target_date, created_by)
+  VALUES (v_tenant, 'Sync engine GA (sample)', '⚡', 'in_progress', 'on_track', v_owner,
+          (NOW() - interval '40 days')::date, (NOW() + interval '28 days')::date, v_owner) RETURNING id INTO v_p2;
+  INSERT INTO pm_project_teams (tenant_id, project_id, team_id) VALUES (v_tenant, v_p1, v_team), (v_tenant, v_p2, v_team);
+  FOR r IN SELECT * FROM (VALUES
+    ('Kickoff', -26, 0), ('Requirements', -18, 1), ('Setup & migration', -1, 2), ('UAT', 8, 3), ('Go-live', 17, 4)
+  ) AS m(n, dd, pos) LOOP
+    INSERT INTO pm_project_milestones (tenant_id, project_id, name, target_date, position)
+    VALUES (v_tenant, v_p1, r.n, (NOW() + (r.dd || ' days')::interval)::date, r.pos) RETURNING id INTO v_issue;
+    v_ms_ids := v_ms_ids || v_issue; v_ms1 := v_ms1 || v_issue;
+  END LOOP;
+  FOR r IN SELECT * FROM (VALUES
+    ('Spike gate', -35, 0), ('Bootstrap + delta', -12, 1), ('Offline queue', 4, 2)
+  ) AS m(n, dd, pos) LOOP
+    INSERT INTO pm_project_milestones (tenant_id, project_id, name, target_date, position)
+    VALUES (v_tenant, v_p2, r.n, (NOW() + (r.dd || ' days')::interval)::date, r.pos) RETURNING id INTO v_issue;
+    v_ms_ids := v_ms_ids || v_issue;
+  END LOOP;
+  INSERT INTO pm_project_updates (tenant_id, project_id, health, body_md, author_user_id, created_at) VALUES
+    (v_tenant, v_p1, 'at_risk', 'Data migration slower than planned — the SSO bug blocks UAT start. Mitigation: pairing on the redirect fix this cycle.', v_owner, NOW() - interval '2 days'),
+    (v_tenant, v_p1, 'on_track', 'Kickoff + requirements signed off. Setup starts Monday.', v_owner, NOW() - interval '12 days'),
+    (v_tenant, v_p2, 'on_track', 'Two-client convergence suite green. Warm render at 420ms on the 10k reference workspace.', v_owner, NOW() - interval '5 days');
+  SELECT array_agg(id) INTO v_upd_ids FROM pm_project_updates WHERE tenant_id = v_tenant AND project_id IN (v_p1, v_p2);
+
+  -- Initiatives.
+  INSERT INTO pm_initiatives (tenant_id, name, description, status, owner_user_id, target_quarter)
+  VALUES (v_tenant, 'Q3 · Platform reliability (sample)', 'Sync engine GA, perf budgets in CI, zero data-loss dogfood.', 'active', v_owner, 'Q3 2026') RETURNING id INTO v_init1;
+  INSERT INTO pm_initiatives (tenant_id, name, description, status, owner_user_id, target_quarter)
+  VALUES (v_tenant, 'Q3 · Beta go-to-market (sample)', 'First 20 beta tenants onboarded and referenceable.', 'active', v_owner, 'Q3 2026') RETURNING id INTO v_init2;
+  INSERT INTO pm_initiative_projects (tenant_id, initiative_id, project_id, position) VALUES
+    (v_tenant, v_init1, v_p2, 0), (v_tenant, v_init2, v_p1, 0);
+
+  -- Cycles: completed (with review) + active mid-flight; snapshots.
+  SELECT COALESCE(MAX(number), 0) INTO v_maxnum FROM pm_cycles WHERE team_id = v_team;
+  INSERT INTO pm_cycles (tenant_id, team_id, number, starts_at, ends_at, cooldown_ends_at, status)
+  VALUES (v_tenant, v_team, v_maxnum + 1, NOW() - interval '27 days', NOW() - interval '13 days', NOW() - interval '11 days', 'completed')
+  RETURNING id INTO v_cycle_done;
+  SELECT id INTO v_cycle_active FROM pm_cycles WHERE team_id = v_team AND status = 'active' LIMIT 1;
+  IF v_cycle_active IS NULL THEN
+    INSERT INTO pm_cycles (tenant_id, team_id, number, starts_at, ends_at, cooldown_ends_at, status)
+    VALUES (v_tenant, v_team, v_maxnum + 2, NOW() - interval '11 days', NOW() + interval '3 days', NOW() + interval '5 days', 'active')
+    RETURNING id INTO v_cycle_active;
+  END IF;
+  INSERT INTO pm_cycle_snapshots (tenant_id, cycle_id, snapshot_date, scope_points, started_points, completed_points)
+  VALUES (v_tenant, v_cycle_done, (NOW() - interval '13 days')::date, 24, 3, 19) ON CONFLICT DO NOTHING;
+  FOR d IN 0..11 LOOP
+    INSERT INTO pm_cycle_snapshots (tenant_id, cycle_id, snapshot_date, scope_points, started_points, completed_points)
+    VALUES (v_tenant, v_cycle_active, (NOW() - ((11 - d) || ' days')::interval)::date,
+            18 + round(8 * d / 11.0), 2 + round(9 * d / 11.0), round(14 * d / 11.0))
+    ON CONFLICT DO NOTHING;
+  END LOOP;
+
+  -- 24 issues (cat: t=triage b=backlog u=todo s=started r=review d=done c=canceled).
+  SELECT last_number INTO v_counter FROM pm_team_counters WHERE team_id = v_team FOR UPDATE;
+  FOR r IN SELECT * FROM (VALUES
+    ('Login fails with SSO redirect loop on Safari (sample)', 's', 1, 5,    1, 3, true,  'bug',  2),
+    ('Virtualize issue list at 10k rows (sample)',            'r', 2, 8,    2, 0, true,  'perf', 4),
+    ('Cycle burn-up chart from snapshots (sample)',           'u', 3, 3,    2, 0, true,  'feat', 0),
+    ('Delta endpoint P95 regression (210ms) (sample)',        's', 1, 5,    0, 0, true,  'perf', 1),
+    ('Keyboard: G-then-X goto conflicts with palette (sample)','u', 3, 2,   0, 0, true,  'bug',  0),
+    ('IndexedDB reset flow — corrupted store recovery (sample)','d', 2, 5,  2, 0, false, 'feat', 0),
+    ('Offline queue: replay ordering test matrix (sample)',   'b', 4, 3,    2, 0, false, NULL,   0),
+    ('Palette fuzzy-match highlights wrong span (sample)',    'c', 4, 1,    0, 0, false, 'bug',  0),
+    ('PR merged but issue stayed In Review — webhook retry (sample)', 't', 0, NULL, 0, 0, false, 'bug', 0),
+    ('Import: Linear CSV maps "Duplicate" to Canceled (sample)', 't', 0, NULL, 0, 0, false, NULL, 0),
+    ('Add estimate to quick-create property row (sample)',    't', 0, NULL, 0, 0, false, 'feat', 0),
+    ('Launch teaser — 3 short videos for beta wave (sample)', 's', 2, NULL, 1, 2, false, NULL,   6),
+    ('Beta landing page copy — pricing section (sample)',     'r', 2, NULL, 1, 2, false, NULL,   3),
+    ('Case study: Ripen Labs migration story (sample)',       'u', 3, NULL, 1, 0, false, NULL,   0),
+    ('Webinar dry-run with sales team (sample)',              'b', 4, NULL, 0, 0, false, NULL,   10),
+    ('Translate launch email to DE + PT-BR (sample)',         'u', 3, NULL, 1, 0, false, NULL,   8),
+    ('Bootstrap NDJSON chunking — stream hydration (sample)', 'd', 2, 8,    2, 0, true,  'perf', 0),
+    ('Undo stack: inverse patches for rank moves (sample)',   'u', 3, 3,    2, 0, true,  'feat', 0),
+    ('Glyph set — state category ring variants (sample)',     's', 2, 2,    0, 0, false, 'feat', 5),
+    ('Requirements sign-off checklist (sample)',              'd', 2, 3,    1, 1, false, NULL,   0),
+    ('Data migration dry-run on staging tenant (sample)',     'd', 1, 5,    1, 3, true,  NULL,   0),
+    ('UAT scenario pack for finance flows (sample)',          'b', 3, 3,    1, 4, false, NULL,   0),
+    ('Kill-switch drill — flag off, same UI on REST (sample)','b', 2, 2,    2, 0, false, NULL,   0),
+    ('Presence dots on assignee pickers (sample)',            'd', 4, 1,    0, 0, false, 'feat', 0)
+  ) AS t(title, cat, pr, est, proj, ms, in_cycle, lbl, due_off) LOOP
+    i := i + 1;
+    v_counter := v_counter + 1;
+    v_state := CASE r.cat
+      WHEN 't' THEN v_state_triage WHEN 'b' THEN v_state_backlog WHEN 'u' THEN v_state_todo
+      WHEN 's' THEN v_state_started WHEN 'r' THEN v_state_review WHEN 'd' THEN v_state_done
+      ELSE v_state_canceled END;
+    v_assignee := CASE WHEN r.cat = 't' THEN NULL ELSE v_members[1 + (i % array_length(v_members, 1))] END;
+    INSERT INTO pm_issues (tenant_id, team_id, number, title, state_id, priority, estimate,
+                           assignee_user_id, creator_user_id, project_id, milestone_id, cycle_id,
+                           due_date, board_rank, backlog_rank, source,
+                           started_at, completed_at, canceled_at, created_at, updated_at)
+    VALUES (v_tenant, v_team, v_counter, r.title, v_state, r.pr, r.est,
+            v_assignee, v_owner,
+            CASE r.proj WHEN 1 THEN v_p1 WHEN 2 THEN v_p2 ELSE NULL END,
+            CASE WHEN r.proj = 1 AND r.ms > 0 THEN v_ms1[r.ms] ELSE NULL END,
+            CASE WHEN r.in_cycle THEN v_cycle_active ELSE NULL END,
+            CASE WHEN r.due_off > 0 THEN (NOW() + (r.due_off || ' days')::interval)::date ELSE NULL END,
+            'r' || chr(96 + i), 'r' || chr(96 + i), 'manual',
+            CASE WHEN r.cat IN ('s','r','d') THEN NOW() - interval '4 days' ELSE NULL END,
+            CASE WHEN r.cat = 'd' THEN NOW() - interval '1 day' ELSE NULL END,
+            CASE WHEN r.cat = 'c' THEN NOW() - interval '2 days' ELSE NULL END,
+            NOW() - ((25 - i) || ' days')::interval, NOW() - interval '1 hour')
+    RETURNING id INTO v_issue;
+    v_issue_ids := v_issue_ids || v_issue;
+    INSERT INTO pm_issue_subscribers (tenant_id, issue_id, user_id) VALUES (v_tenant, v_issue, v_owner) ON CONFLICT DO NOTHING;
+    IF r.lbl = 'bug' THEN INSERT INTO pm_issue_labels (tenant_id, issue_id, label_id) VALUES (v_tenant, v_issue, v_lbl_bug) ON CONFLICT DO NOTHING; END IF;
+    IF r.lbl = 'feat' THEN INSERT INTO pm_issue_labels (tenant_id, issue_id, label_id) VALUES (v_tenant, v_issue, v_lbl_feature) ON CONFLICT DO NOTHING; END IF;
+    IF r.lbl = 'perf' THEN INSERT INTO pm_issue_labels (tenant_id, issue_id, label_id) VALUES (v_tenant, v_issue, v_lbl_perf) ON CONFLICT DO NOTHING; END IF;
+    -- Feed the Cycle Review: urgent/high in-cycle rows "moved", backlog "returned".
+    IF r.in_cycle AND r.pr IN (1, 2) AND array_length(v_moved, 1) IS DISTINCT FROM 2 THEN v_moved := v_moved || v_issue; END IF;
+    IF r.cat = 'b' AND (array_length(v_returned, 1) IS NULL OR array_length(v_returned, 1) < 3) THEN v_returned := v_returned || v_issue; END IF;
+  END LOOP;
+  UPDATE pm_team_counters SET last_number = v_counter WHERE team_id = v_team;
+
+  -- Cycle Review event (drives the P13 digest card) — pre-dispatched so the
+  -- worker never re-delivers it.
+  INSERT INTO domain_events (id, tenant_id, event_name, actor_user_id, payload, occurred_at, dispatched_at)
+  VALUES (gen_random_uuid(), v_tenant, 'pm.cycle.rollover_completed', v_owner,
+          jsonb_build_object(
+            'cycle_id', v_cycle_done, 'team_id', v_team, 'number', v_maxnum + 1,
+            'moved', COALESCE(array_length(v_moved, 1), 0), 'returned', COALESCE(array_length(v_returned, 1), 0),
+            'moved_ids', to_jsonb(v_moved), 'returned_ids', to_jsonb(v_returned),
+            'sync', jsonb_build_array(jsonb_build_object('t', 'pm_cycles', 'id', v_cycle_done))
+          ), NOW() - interval '13 days', NOW());
+
+  -- Ledger: the in-app "Remove sample data" button deletes exactly this.
+  INSERT INTO pm_sample_packs (tenant_id, record_ids, created_by) VALUES (v_tenant, jsonb_build_object(
+    'pm_issues', to_jsonb(v_issue_ids),
+    'pm_projects', jsonb_build_array(v_p1, v_p2),
+    'pm_project_milestones', to_jsonb(v_ms_ids),
+    'pm_project_updates', to_jsonb(v_upd_ids),
+    'pm_initiatives', jsonb_build_array(v_init1, v_init2),
+    'pm_labels', jsonb_build_array(v_lbl_bug, v_lbl_feature, v_lbl_perf),
+    'pm_cycles', jsonb_build_array(v_cycle_done, v_cycle_active)
+  ), v_owner);
+  RAISE NOTICE 'PM sample pack seeded: 24 issues, 2 projects, 2 initiatives, 2 cycles, triage queue.';
+END
+$pmseed$;
+INSERT INTO tenant_module_toggles (tenant_id, module, enabled) SELECT id, 'pm', true FROM tenants ON CONFLICT (tenant_id, module) DO NOTHING;
 SQL
 
 echo "  • PRD v4: ToS consent ledgered for all personas (no interstitial on demo logins),"
