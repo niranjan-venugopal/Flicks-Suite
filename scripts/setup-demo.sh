@@ -1677,7 +1677,37 @@ BEGIN
     RETURN;
   END IF;
   IF EXISTS (SELECT 1 FROM pm_sample_packs WHERE tenant_id = v_tenant) THEN
-    RAISE NOTICE 'PM sample pack already loaded — skipping (remove via the Projects page button to re-seed).';
+    -- Data already in the DB — but a browser that cached its local graph
+    -- BEFORE the seed will never learn about rows written without outbox
+    -- events. Emit a catch-up event with refs for every ledgered id so any
+    -- stale sync client converges on its next delta (reload or ≤30s poll).
+    DECLARE
+      v_ledger jsonb; v_sync jsonb := '[]'::jsonb; v_tbl text; v_id text; v_teamref uuid;
+    BEGIN
+      SELECT record_ids INTO v_ledger FROM pm_sample_packs WHERE tenant_id = v_tenant;
+      SELECT id INTO v_teamref FROM pm_teams WHERE tenant_id = v_tenant AND deleted_at IS NULL ORDER BY created_at LIMIT 1;
+      FOR v_tbl IN SELECT jsonb_object_keys(v_ledger) LOOP
+        FOR v_id IN SELECT jsonb_array_elements_text(v_ledger->v_tbl) LOOP
+          v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', v_tbl, 'id', v_id));
+          IF v_tbl = 'pm_issues' THEN
+            v_sync := v_sync || jsonb_build_array(
+              jsonb_build_object('t', 'pm_issue_labels', 'id', v_id),
+              jsonb_build_object('t', 'pm_issue_subscribers', 'id', v_id));
+          ELSIF v_tbl = 'pm_projects' THEN
+            v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', 'pm_project_teams', 'id', v_id));
+          ELSIF v_tbl = 'pm_initiatives' THEN
+            v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', 'pm_initiative_projects', 'id', v_id));
+          END IF;
+        END LOOP;
+      END LOOP;
+      IF v_teamref IS NOT NULL THEN
+        v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', 'pm_teams', 'id', v_teamref));
+      END IF;
+      INSERT INTO domain_events (id, tenant_id, event_name, payload, occurred_at, dispatched_at)
+      VALUES (gen_random_uuid(), v_tenant, 'pm.team.updated',
+              jsonb_build_object('team_id', v_teamref, 'sample_catchup', true, 'sync', v_sync), NOW(), NOW());
+      RAISE NOTICE 'PM sample pack already loaded — emitted a sync catch-up event so stale browsers converge.';
+    END;
     RETURN;
   END IF;
 
@@ -1861,6 +1891,37 @@ BEGIN
     'pm_labels', jsonb_build_array(v_lbl_bug, v_lbl_feature, v_lbl_perf),
     'pm_cycles', jsonb_build_array(v_cycle_done, v_cycle_active)
   ), v_owner);
+
+  -- Catch-up sync event: rows above were written WITHOUT outbox events, so a
+  -- browser holding a cached local graph would never see them. One event
+  -- carrying refs for everything makes every client converge on its next
+  -- delta (reload or ≤30s poll). Pre-dispatched — nothing to redeliver.
+  DECLARE v_sync jsonb := '[]'::jsonb; v_uid uuid;
+  BEGIN
+    FOREACH v_uid IN ARRAY v_issue_ids LOOP
+      v_sync := v_sync || jsonb_build_array(
+        jsonb_build_object('t', 'pm_issues', 'id', v_uid),
+        jsonb_build_object('t', 'pm_issue_labels', 'id', v_uid),
+        jsonb_build_object('t', 'pm_issue_subscribers', 'id', v_uid));
+    END LOOP;
+    FOREACH v_uid IN ARRAY v_ms_ids LOOP
+      v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', 'pm_project_milestones', 'id', v_uid));
+    END LOOP;
+    FOREACH v_uid IN ARRAY v_upd_ids LOOP
+      v_sync := v_sync || jsonb_build_array(jsonb_build_object('t', 'pm_project_updates', 'id', v_uid));
+    END LOOP;
+    v_sync := v_sync || jsonb_build_array(
+      jsonb_build_object('t', 'pm_teams', 'id', v_team),
+      jsonb_build_object('t', 'pm_projects', 'id', v_p1), jsonb_build_object('t', 'pm_projects', 'id', v_p2),
+      jsonb_build_object('t', 'pm_project_teams', 'id', v_p1), jsonb_build_object('t', 'pm_project_teams', 'id', v_p2),
+      jsonb_build_object('t', 'pm_initiatives', 'id', v_init1), jsonb_build_object('t', 'pm_initiatives', 'id', v_init2),
+      jsonb_build_object('t', 'pm_initiative_projects', 'id', v_init1), jsonb_build_object('t', 'pm_initiative_projects', 'id', v_init2),
+      jsonb_build_object('t', 'pm_labels', 'id', v_lbl_bug), jsonb_build_object('t', 'pm_labels', 'id', v_lbl_feature), jsonb_build_object('t', 'pm_labels', 'id', v_lbl_perf),
+      jsonb_build_object('t', 'pm_cycles', 'id', v_cycle_done), jsonb_build_object('t', 'pm_cycles', 'id', v_cycle_active));
+    INSERT INTO domain_events (id, tenant_id, event_name, actor_user_id, payload, occurred_at, dispatched_at)
+    VALUES (gen_random_uuid(), v_tenant, 'pm.team.updated', v_owner,
+            jsonb_build_object('team_id', v_team, 'sample_catchup', true, 'sync', v_sync), NOW(), NOW());
+  END;
   RAISE NOTICE 'PM sample pack seeded: 24 issues, 2 projects, 2 initiatives, 2 cycles, triage queue.';
 END
 $pmseed$;
