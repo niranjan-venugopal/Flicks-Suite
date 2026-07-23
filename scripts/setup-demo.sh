@@ -49,18 +49,22 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 1
 fi
 
-# Auto-source apps/api/.env if it exists and DATABASE_DIRECT_URL hasn't been
-# exported manually. Lets the user run `bash scripts/setup-demo.sh` without
-# having to remember `set -a; source apps/api/.env; set +a` first.
+# Read ONLY the connection keys from apps/api/.env — a naive `source` breaks
+# on values with ';', spaces or parentheses (real .env files have them) and,
+# with set -e, killed the whole script before any seeding ran.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$REPO_ROOT/apps/api/.env"
+envval() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  { grep -E "^$1=" "$ENV_FILE" || true; } | head -1 | cut -d= -f2- \
+    | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
 if [[ -z "${DATABASE_DIRECT_URL:-}" && -z "${DATABASE_SERVICE_ROLE_URL:-}" && -f "$ENV_FILE" ]]; then
-  echo "  ↳ sourcing $ENV_FILE"
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  echo "  ↳ reading connection keys from $ENV_FILE"
+  DATABASE_DIRECT_URL="$(envval DATABASE_DIRECT_URL)"
+  DATABASE_SERVICE_ROLE_URL="$(envval DATABASE_SERVICE_ROLE_URL)"
+  export DATABASE_DIRECT_URL DATABASE_SERVICE_ROLE_URL
 fi
 
 # Prefer DATABASE_DIRECT_URL (Supabase / remote). Fall back to local PG* env vars.

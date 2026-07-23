@@ -66,12 +66,19 @@ APP_ROLE="${APP_ROLE:-flicks_app}"
 PSQL_ARGS=(-v ON_ERROR_STOP=1 --quiet --no-psqlrc)
 export PGOPTIONS='-c client_min_messages=warning'
 
-# Auto-source apps/api/.env (same convenience as setup-demo.sh).
+# Read ONLY the connection keys from apps/api/.env — a naive `source` breaks
+# on values with ';', spaces or parentheses (same fix as setup-demo.sh).
 ENV_FILE="$REPO_ROOT/apps/api/.env"
+_envval() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  { grep -E "^$1=" "$ENV_FILE" || true; } | head -1 | cut -d= -f2- \
+    | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
 if [[ -z "${DATABASE_DIRECT_URL:-}" && -z "${DATABASE_SERVICE_ROLE_URL:-}" && -f "$ENV_FILE" ]]; then
-  echo "  ↳ sourcing $ENV_FILE"
-  set -a; # shellcheck disable=SC1090
-  source "$ENV_FILE"; set +a
+  echo "  ↳ reading connection keys from $ENV_FILE"
+  DATABASE_DIRECT_URL="$(_envval DATABASE_DIRECT_URL)"
+  DATABASE_SERVICE_ROLE_URL="$(_envval DATABASE_SERVICE_ROLE_URL)"
+  export DATABASE_DIRECT_URL DATABASE_SERVICE_ROLE_URL
 fi
 
 # Resolve the privileged connection target into an array usable by psql.
