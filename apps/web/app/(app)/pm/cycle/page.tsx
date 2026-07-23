@@ -22,6 +22,11 @@ interface CycleStatsResponse {
     active: { id: string; number: number; starts_at: string; ends_at: string; cooldown_ends_at: string } | null
     snapshots: Array<{ snapshot_date: string; scope_points: string; started_points: string; completed_points: string }>
     stats: { velocity: number | null; completion_rate: number | null; creep: number; previous: Array<{ number: number; completed: number; scope: number }> }
+    last_review: {
+      number: number | null
+      moved: Array<{ id: string; number: number; title: string; priority: number }>
+      returned: Array<{ id: string; number: number; title: string; priority: number }>
+    } | null
   }
 }
 
@@ -171,6 +176,45 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
           <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)' }}>
             <b>Cooldown · next cycle starts {new Date(cooldown.nextStarts).toLocaleDateString(undefined, { weekday: 'short' })}</b>. No new cycle activates during cooldown.
           </span>
+        </div>
+      )}
+
+      {/* Cycle Review digest (§7.1 Autopilot) */}
+      {d?.last_review && (d.last_review.moved.length > 0 || d.last_review.returned.length > 0) && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14, borderColor: 'rgba(155,123,250,.3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 15px', borderBottom: '1px solid var(--bord)', background: 'rgba(155,123,250,.05)' }}>
+            <Icon.refresh size={14} style={{ color: 'var(--purple)' }} />
+            <span style={{ fontSize: 12, fontWeight: 800, flex: 1 }}>
+              Cycle {d.last_review.number} review — {d.last_review.returned.length} issue{d.last_review.returned.length === 1 ? '' : 's'} didn&apos;t make it
+            </span>
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>Autopilot · Inbox item to lead + assignees · sent once</span>
+          </div>
+          {d.last_review.moved.length > 0 && (
+            <div style={{ padding: '9px 15px', display: 'flex', gap: 7, flexWrap: 'wrap', borderBottom: '1px solid var(--bord)' }}>
+              {d.last_review.moved.map((m) => (
+                <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 7, background: 'rgba(255,153,51,.09)', border: '1px solid rgba(255,153,51,.35)', fontSize: 10, fontWeight: 800 }}>
+                  <PriorityGlyph p={m.priority} size={10} />{team.key}-{m.number} → moved to the next cycle
+                </span>
+              ))}
+            </div>
+          )}
+          <div style={{ padding: '9px 15px' }}>
+            {d.last_review.returned.slice(0, 3).map((r) => (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '5px 0' }}>
+                <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 64 }}>{team.key}-{r.number}</span>
+                <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: 'var(--text-2)' }}>returned to Backlog</span>
+                {active && (
+                  <Btn kind="secondary" size="sm" onClick={() => engine.setIssueCycle(r.id, active.id)}>Re-plan → C{active.number}</Btn>
+                )}
+                <Btn kind="ghost" size="sm">Leave in backlog</Btn>
+              </div>
+            ))}
+            {d.last_review.returned.length > 3 && (
+              <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 4 }}>
+                +{d.last_review.returned.length - 3} more · urgent/high roll automatically; medium/low return honestly — the backlog never snowballs silently
+              </div>
+            )}
+          </div>
         </div>
       )}
 

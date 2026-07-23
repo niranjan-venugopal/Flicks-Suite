@@ -8,6 +8,7 @@ import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
 import { PmCyclesService } from './cycles.service';
+import { PmSampleDataService } from './sample-data.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 import { PmController } from './pm.controller';
@@ -32,6 +33,7 @@ import { PmSyncController } from './sync/sync.controller';
     PmIssuesService,
     PmProjectsService,
     PmCyclesService,
+    PmSampleDataService,
     PmViewsService,
     PmSearchService,
     PmVisibilityService,

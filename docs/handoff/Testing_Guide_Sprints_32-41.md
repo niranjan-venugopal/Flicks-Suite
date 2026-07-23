@@ -139,8 +139,18 @@ timeline/roadmap, cycles + Autopilot, triage).**
 computed progress (migration 0042), initiatives, timeline (drag-to-re-date
 bars, milestone diamonds), roadmap (initiative lanes), weekly staleness
 nudger. Sprint 37 — cycles with the hourly tz-aware scheduler + Autopilot
-rollover + daily snapshots (migration 0043), cycle page with burn columns +
-velocity/creep, triage conveyor, Shift+T, snooze.
+rollover + daily snapshots (migration 0043), cycle page with the Cycle
+Review digest + burn columns + velocity/creep, the P8 triage conveyor,
+Shift+T, snooze — plus the Appendix B sample pack so every surface has
+something to look at before you create real data.
+
+### 0. Load the sample pack (do this first)
+Projects (`G then P`) → **Load sample data**. One click seeds: 24 issues
+across states/priorities, 2 projects with milestones + health updates,
+2 initiatives, a COMPLETED cycle with a Cycle Review, an ACTIVE cycle
+mid-flight with daily snapshots, and 3 issues waiting in Triage — all
+suffixed "(sample)" and removable with the same button (removal deletes
+EXACTLY the seeded rows, never your own).
 
 ### 1. Projects (§6)
 1. **Projects** (sidebar or `G then P`) → **New project**: name, lead,

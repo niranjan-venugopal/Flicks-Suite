@@ -449,6 +449,21 @@ export class PmSyncEngine {
     })
   }
 
+  setIssueLabels(id: string, labelIds: string[]): void {
+    this.store.replaceScopedCollections(
+      'pm_issue_labels',
+      [id],
+      labelIds.map((label_id) => ({ issue_id: id, label_id })),
+    )
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.set_labels',
+      id,
+      fields: { label_ids: labelIds },
+      enqueuedAt: Date.now(),
+    })
+  }
+
   relateIssues(id: string, relatedIssueId: string, type: 'blocks' | 'duplicate_of' | 'relates_to'): void {
     // duplicate_of also moves the issue to the Duplicate state server-side —
     // optimistically mirror the state hop so the conveyor clears instantly.

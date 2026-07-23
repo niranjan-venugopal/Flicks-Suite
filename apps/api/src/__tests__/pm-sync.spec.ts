@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import * as crypto from 'crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, dbAdmin } from '@flicks/db';
 import {
   tenants,
@@ -760,6 +760,47 @@ describe('Sprint 37 — cycles, Autopilot, snapshots, triage (§7/§8, fake-cloc
     const res = await cyclesSvc.teamCycles(tenantId, ownerId, cycTeamId);
     // Last 3 completed by number desc = 103, 102, 101 → mean 19.3.
     expect(res.data.stats.velocity).toBeCloseTo((22 + 19 + 17) / 3, 1);
+  });
+
+  it('sample pack: seed fills every surface, remove deletes EXACTLY those rows', async () => {
+    const { PmSampleDataService } = require('../modules/pm/sample-data.service');
+    const sampleSvc = new PmSampleDataService(dbSvc, audit, domainEventsSvc, issuesSvc);
+
+    const before = await dbAdmin.select({ id: pmIssues.id }).from(pmIssues).where(eq(pmIssues.tenant_id, tenantId));
+    const seeded = await sampleSvc.seed(tenantId, ownerId);
+    expect(seeded.data.issues).toBe(24); // Appendix B
+    expect(seeded.data.projects).toBe(2);
+    // Second seed refuses.
+    await expect(sampleSvc.seed(tenantId, ownerId)).rejects.toThrow(/already loaded/);
+
+    // The pack lights up cycles + triage + review.
+    const { pmProjects: projTable, pmInitiatives: initTable } = require('@flicks/db/schema');
+    const projects = await dbAdmin.select().from(projTable).where(and(eq(projTable.tenant_id, tenantId), sql`${projTable.name} LIKE '%(sample)'`));
+    expect(projects).toHaveLength(2);
+    const cyclesRows = await dbAdmin.select().from(pmCycles).where(eq(pmCycles.tenant_id, tenantId));
+    expect(cyclesRows.some((c) => c.status === 'completed')).toBe(true);
+    expect(cyclesRows.some((c) => c.status === 'active')).toBe(true);
+    const cyclesSvcRes = await cyclesSvc.teamCycles(tenantId, ownerId, teamId);
+    expect(cyclesSvcRes.data.last_review).not.toBeNull();
+    expect((cyclesSvcRes.data.last_review!.returned as unknown[]).length).toBeGreaterThan(0);
+    const triageIssues = await dbAdmin
+      .select({ id: pmIssues.id, state_id: pmIssues.state_id })
+      .from(pmIssues)
+      .where(and(eq(pmIssues.tenant_id, tenantId), sql`${pmIssues.title} LIKE '%(sample)'`));
+    expect(triageIssues).toHaveLength(24);
+
+    // Remove: exactly the pack — pre-existing rows untouched.
+    const removed = await sampleSvc.remove(tenantId, ownerId);
+    expect(removed.data.loaded).toBe(false);
+    const leftSample = await dbAdmin
+      .select({ id: pmIssues.id })
+      .from(pmIssues)
+      .where(and(eq(pmIssues.tenant_id, tenantId), sql`${pmIssues.title} LIKE '%(sample)'`));
+    expect(leftSample).toHaveLength(0);
+    const after = await dbAdmin.select({ id: pmIssues.id }).from(pmIssues).where(eq(pmIssues.tenant_id, tenantId));
+    expect(after.length).toBe(before.length); // nothing user-made was touched
+    const projectsAfter = await dbAdmin.select().from(projTable).where(and(eq(projTable.tenant_id, tenantId), sql`${projTable.name} LIKE '%(sample)'`));
+    expect(projectsAfter).toHaveLength(0);
   });
 
   it('triage: entry rule, accept, decline, snooze, send-to-triage (§8)', async () => {

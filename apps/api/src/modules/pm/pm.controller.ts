@@ -21,6 +21,7 @@ import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
 import { PmCyclesService } from './cycles.service';
+import { PmSampleDataService } from './sample-data.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 
@@ -167,6 +168,7 @@ export class PmController {
     private readonly issues: PmIssuesService,
     private readonly projects: PmProjectsService,
     private readonly cycles: PmCyclesService,
+    private readonly sample: PmSampleDataService,
     private readonly views: PmViewsService,
     private readonly search_: PmSearchService,
   ) {}
@@ -491,5 +493,27 @@ export class PmController {
   @RequireGrant('pm', 'edit')
   snoozeIssue(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SnoozeDto) {
     return this.issues.snooze(user.tenantId, user.sub, id, dto.until ?? null);
+  }
+
+  // ─── Appendix B sample data ───────────────────────────────────────────────
+
+  @Get('sample-data')
+  @RequireGrant('pm', 'view')
+  sampleStatus(@CurrentUser() user: JwtPayload) {
+    return this.sample.status(user.tenantId);
+  }
+
+  @Post('sample-data')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  sampleSeed(@CurrentUser() user: JwtPayload) {
+    return this.sample.seed(user.tenantId, user.sub);
+  }
+
+  @Post('sample-data/remove')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  sampleRemove(@CurrentUser() user: JwtPayload) {
+    return this.sample.remove(user.tenantId, user.sub);
   }
 }

@@ -14,6 +14,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
@@ -588,6 +589,15 @@ export const pmCycleSnapshots = pgTable(
   },
   (t) => [primaryKey({ columns: [t.cycle_id, t.snapshot_date] })],
 );
+
+export const pmSamplePacks = pgTable('pm_sample_packs', {
+  tenant_id: uuid('tenant_id')
+    .primaryKey()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  record_ids: jsonb('record_ids').notNull().default({}), // {table: [ids]}
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
+  domainEvents,
   pmCycles,
   pmCycleSnapshots,
   pmIssues,
@@ -8,7 +9,7 @@ import {
   pmTeamMemberships,
   pmWorkflowStates,
 } from '@flicks/db/schema';
-import type { DbAdmin } from '@flicks/db';
+import type { Db, DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { DatabaseService } from '../../core/database/database.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
@@ -276,6 +277,8 @@ export class PmCyclesService {
       number: cycle.number,
       moved: rollForward.length,
       returned: returned.length,
+      moved_ids: rollForward.map((i) => i.id),
+      returned_ids: returned.map((i) => i.id),
       // sync refs so clients pick up the re-cycled issues without a poll
       sync: [
         { t: 'pm_cycles', id: cycle.id },
@@ -345,6 +348,34 @@ export class PmCyclesService {
       });
     await this.publishCycleEvent(tenantId, 'pm.cycle.snapshot_taken', cycleId, { date: snapshotDate });
     return true;
+  }
+
+  /** Latest Cycle Review (P13 digest card) from the rollover event. */
+  private async lastReview(tx: Db, tenantId: string, teamId: string) {
+    const [ev] = await this.dbAdmin
+      .select({ payload: domainEvents.payload })
+      .from(domainEvents)
+      .where(and(
+        eq(domainEvents.tenant_id, tenantId),
+        eq(domainEvents.event_name, 'pm.cycle.rollover_completed'),
+        sql`${domainEvents.payload}->>'team_id' = ${teamId}`,
+      ))
+      .orderBy(desc(domainEvents.occurred_at))
+      .limit(1);
+    if (!ev) return null;
+    const p = ev.payload as { number?: number; moved_ids?: string[]; returned_ids?: string[] };
+    const allIds = [...(p.moved_ids ?? []), ...(p.returned_ids ?? [])];
+    if (!allIds.length) return { number: p.number ?? null, moved: [], returned: [] };
+    const rows = await tx
+      .select({ id: pmIssues.id, number: pmIssues.number, title: pmIssues.title, priority: pmIssues.priority })
+      .from(pmIssues)
+      .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, allIds), isNull(pmIssues.deleted_at)));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return {
+      number: p.number ?? null,
+      moved: (p.moved_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
+      returned: (p.returned_ids ?? []).map((id) => byId.get(id)).filter(Boolean),
+    };
   }
 
   private async publishCycleEvent(tenantId: string, name: string, cycleId: string, extra: Record<string, unknown>) {
@@ -423,6 +454,7 @@ export class PmCyclesService {
             active,
             snapshots,
             stats: { velocity, completion_rate: completionRate, creep, previous: perCycle },
+            last_review: await this.lastReview(tx, tenantId, teamId),
           },
         };
       },

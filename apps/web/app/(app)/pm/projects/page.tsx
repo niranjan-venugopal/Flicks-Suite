@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
 import { PmAv, ProjectCreateModal, TeamKeyChips } from '@/components/pm/projects'
@@ -60,6 +60,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
           ))}
         </div>
         <div style={{ flex: 1 }} />
+        <SampleDataButton onAfterChange={() => { void engine.pullDelta() }} />
         <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
       </div>
 
@@ -179,8 +180,9 @@ function RestProjects() {
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
       <SectionHead title="Projects" sub="One lead, a target date, honest health updates." right={<Pill tone="yellow" dot>rest</Pill>} />
-      <div style={{ display: 'flex', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <div style={{ flex: 1 }} />
+        <SampleDataButton />
         <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
       </div>
       {!d || d.projects.length === 0 ? (
@@ -212,5 +214,35 @@ function RestProjects() {
         }}
       />
     </div>
+  )
+}
+
+
+// ─── Appendix B sample data (one-click, removable) ───────────────────────────
+
+export function SampleDataButton({ onAfterChange }: { onAfterChange?: () => void }) {
+  const qc = useQueryClient()
+  const status = useQuery({
+    queryKey: ['pm', 'sample-data'],
+    queryFn: () => api.get<{ data: { loaded: boolean } }>('/api/v1/pm/sample-data'),
+  })
+  const toggle = useMutation({
+    mutationFn: () =>
+      status.data?.data.loaded
+        ? api.post('/api/v1/pm/sample-data/remove', {})
+        : api.post('/api/v1/pm/sample-data', {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pm'] })
+      onAfterChange?.()
+    },
+  })
+  const loaded = status.data?.data.loaded ?? false
+  return (
+    <Btn kind="secondary" size="sm"
+      icon={loaded ? <Icon.trash size={13} /> : <Icon.spark size={13} />}
+      disabled={toggle.isPending || status.isLoading}
+      onClick={() => toggle.mutate()}>
+      {toggle.isPending ? 'Working…' : loaded ? 'Remove sample data' : 'Load sample data'}
+    </Btn>
   )
 }

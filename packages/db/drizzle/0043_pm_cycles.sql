@@ -43,11 +43,20 @@ $fk$;
 -- §8 Triage snooze (Z · 1d/3d/1w): hides the issue from the conveyor until due.
 ALTER TABLE pm_issues ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMPTZ;
 
+-- Appendix B sample pack ledger — every seeded id, so removal never touches
+-- anything the team created themselves (same doctrine as CRM sample_packs).
+CREATE TABLE IF NOT EXISTS pm_sample_packs (
+  tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  record_ids JSONB NOT NULL DEFAULT '{}',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- RLS + grants (house DO-loop).
 DO $rls$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['pm_cycles','pm_cycle_snapshots'] LOOP
+  FOREACH t IN ARRAY ARRAY['pm_cycles','pm_cycle_snapshots','pm_sample_packs'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_%I ON %I', t, t);
