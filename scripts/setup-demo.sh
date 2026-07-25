@@ -1978,6 +1978,60 @@ BEGIN
   RAISE NOTICE 'PM inbox sample rows seeded for the demo owner.';
 END
 $pminbox$;
+
+-- ─── PM GitHub sample data (Sprint 39, §12/P16) ──────────────────────────────
+-- A demo installation + repo mappings + git chips on two sample issues so the
+-- P16 screen and the issue-detail Git section have something to show. Guarded:
+-- 0046 applied, PM pack loaded, nothing seeded yet.
+DO $pmgithub$
+DECLARE
+  v_tenant uuid := '11111111-1111-1111-1111-111111111111';
+  v_owner uuid := '22222222-2222-2222-2222-222222222220';
+  v_team uuid; v_key text; v_iss1 uuid; v_n1 int; v_iss2 uuid; v_n2 int;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'pm_github_installations'
+  ) THEN
+    RAISE NOTICE 'PM GitHub sample skipped — run pnpm sync:supabase first (0046).';
+    RETURN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pm_sample_packs WHERE tenant_id = v_tenant) THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM pm_github_installations WHERE tenant_id = v_tenant) THEN RETURN; END IF;
+
+  SELECT id, key INTO v_team, v_key FROM pm_teams WHERE tenant_id = v_tenant AND deleted_at IS NULL ORDER BY created_at LIMIT 1;
+  IF v_team IS NULL THEN RETURN; END IF;
+
+  INSERT INTO pm_github_installations (tenant_id, installation_id, account_login, created_by, last_delivery_status, last_delivery_at)
+  VALUES (v_tenant, 48291002, 'specflicks', v_owner, 200, NOW() - interval '26 minutes');
+
+  INSERT INTO pm_github_repos (tenant_id, installation_id, repo_full_name, team_id)
+  VALUES (v_tenant, 48291002, 'specflicks/flicks-suite', v_team),
+         (v_tenant, 48291002, 'specflicks/mobile-app', v_team)
+  ON CONFLICT (tenant_id, repo_full_name) DO NOTHING;
+
+  -- Chips on two sample issues: an in-flight branch+PR pair and a merged PR.
+  SELECT id, number INTO v_iss1, v_n1 FROM pm_issues
+    WHERE tenant_id = v_tenant AND title LIKE '%(sample)%' AND deleted_at IS NULL ORDER BY number DESC LIMIT 1;
+  SELECT id, number INTO v_iss2, v_n2 FROM pm_issues
+    WHERE tenant_id = v_tenant AND title LIKE '%(sample)%' AND deleted_at IS NULL ORDER BY number ASC LIMIT 1;
+  IF v_iss1 IS NOT NULL THEN
+    INSERT INTO pm_issue_git_links (tenant_id, issue_id, kind, ref, label, state, repo_full_name, url)
+    VALUES
+      (v_tenant, v_iss1, 'branch', 'sara/' || lower(v_key) || '-' || v_n1 || '-sso-loop',
+       'sara/' || lower(v_key) || '-' || v_n1 || '-sso-loop', 'open', 'specflicks/flicks-suite', NULL),
+      (v_tenant, v_iss1, 'pr', '412', '#412 Fix SSO redirect', 'open', 'specflicks/flicks-suite',
+       'https://github.com/specflicks/flicks-suite/pull/412')
+    ON CONFLICT (tenant_id, issue_id, kind, ref) DO NOTHING;
+  END IF;
+  IF v_iss2 IS NOT NULL AND v_iss2 <> v_iss1 THEN
+    INSERT INTO pm_issue_git_links (tenant_id, issue_id, kind, ref, label, state, repo_full_name, url)
+    VALUES (v_tenant, v_iss2, 'pr', '389', '#389 reset local data', 'merged', 'specflicks/flicks-suite',
+            'https://github.com/specflicks/flicks-suite/pull/389')
+    ON CONFLICT (tenant_id, issue_id, kind, ref) DO NOTHING;
+  END IF;
+  RAISE NOTICE 'PM GitHub sample seeded: installation + 2 repo mappings + git chips.';
+END
+$pmgithub$;
 SQL
 
 echo "  • PRD v4: ToS consent ledgered for all personas (no interstitial on demo logins),"

@@ -15,6 +15,7 @@ import {
   pmProjects,
   pmProjectMilestones,
   pmCycles,
+  pmIssueGitLinks,
   memberships,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -962,7 +963,7 @@ export class PmIssuesService {
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
-        const [comments, history, children, relations, subscribers] = await Promise.all([
+        const [comments, history, children, relations, subscribers, gitLinks] = await Promise.all([
           tx
             .select({
               id: pmIssueComments.id,
@@ -998,6 +999,11 @@ export class PmIssuesService {
             .select({ user_id: pmIssueSubscribers.user_id })
             .from(pmIssueSubscribers)
             .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), eq(pmIssueSubscribers.issue_id, id))),
+          tx
+            .select()
+            .from(pmIssueGitLinks)
+            .where(and(eq(pmIssueGitLinks.tenant_id, tenantId), eq(pmIssueGitLinks.issue_id, id)))
+            .orderBy(asc(pmIssueGitLinks.created_at)),
         ]);
         return {
           data: {
@@ -1007,6 +1013,7 @@ export class PmIssuesService {
             sub_issues: children,
             relations,
             subscriber_ids: subscribers.map((s) => s.user_id),
+            git_links: gitLinks,
           },
         };
       },

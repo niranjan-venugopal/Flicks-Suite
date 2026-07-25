@@ -1,6 +1,7 @@
 'use client'
 
 import type { CSSProperties } from 'react'
+import Link from 'next/link'
 import { Icon, Toggle } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -80,6 +81,10 @@ export default function PmNotifSettingsPage() {
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+        <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
+        <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: '#fff', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
+      </div>
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px', gap: 0, padding: '10px 16px', borderBottom: '1px solid var(--bord)' }}>
           <span style={colHead}>Event</span>

@@ -76,6 +76,13 @@ export const pmTeams = pgTable(
     upcoming_cycles: smallint('upcoming_cycles').notNull().default(2),
     estimate_scale: text('estimate_scale').notNull().default('count'),
     triage_enabled: boolean('triage_enabled').notNull().default(true),
+    // GitHub status automations (0046, P16) — on by default; bot comment off.
+    gh_auto_branch: boolean('gh_auto_branch').notNull().default(true),
+    gh_auto_pr_open: boolean('gh_auto_pr_open').notNull().default(true),
+    gh_auto_pr_merge: boolean('gh_auto_pr_merge').notNull().default(true),
+    gh_auto_pr_close: boolean('gh_auto_pr_close').notNull().default(true),
+    gh_magic_words: boolean('gh_magic_words').notNull().default(true),
+    gh_bot_comment: boolean('gh_bot_comment').notNull().default(false),
     default_state_id: uuid('default_state_id'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),
@@ -598,6 +605,104 @@ export const pmSamplePacks = pgTable('pm_sample_packs', {
   created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─── GitHub integration (0046, §12) ──────────────────────────────────────────
+
+export const pmGithubInstallations = pgTable('pm_github_installations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenant_id: uuid('tenant_id')
+    .notNull()
+    .unique()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  installation_id: bigint('installation_id', { mode: 'number' }).notNull().unique(),
+  account_login: text('account_login').notNull(),
+  branch_format: text('branch_format')
+    .notNull()
+    .default('{user}/{team-key-lower}-{number}-{slug}'),
+  status: text('status').notNull().default('active'), // 'active' | 'error'
+  failed_deliveries: integer('failed_deliveries').notNull().default(0),
+  last_delivery_status: integer('last_delivery_status'),
+  last_delivery_at: timestamp('last_delivery_at', { withTimezone: true }),
+  created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const pmGithubRepos = pgTable(
+  'pm_github_repos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    installation_id: bigint('installation_id', { mode: 'number' }).notNull(),
+    repo_id: bigint('repo_id', { mode: 'number' }),
+    repo_full_name: text('repo_full_name').notNull(),
+    team_id: uuid('team_id')
+      .notNull()
+      .references(() => pmTeams.id, { onDelete: 'cascade' }),
+    autolink: boolean('autolink').notNull().default(true),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('pm_github_repos_tenant_id_repo_full_name_key').on(t.tenant_id, t.repo_full_name),
+    index('idx_pm_github_repos_team').on(t.tenant_id, t.team_id),
+  ],
+);
+
+export const pmIssueGitLinks = pgTable(
+  'pm_issue_git_links',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    issue_id: uuid('issue_id')
+      .notNull()
+      .references(() => pmIssues.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(), // 'branch' | 'pr' | 'commit'
+    ref: text('ref').notNull(), // branch name / PR number / short sha
+    label: text('label').notNull(),
+    state: text('state').notNull().default('open'), // 'open' | 'merged' | 'closed'
+    url: text('url'),
+    repo_full_name: text('repo_full_name'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('pm_issue_git_links_tenant_id_issue_id_kind_ref_key').on(
+      t.tenant_id,
+      t.issue_id,
+      t.kind,
+      t.ref,
+    ),
+    index('idx_pm_issue_git_links_issue').on(t.tenant_id, t.issue_id),
+  ],
+);
+
+// Delivery-id idempotency ledger — service-role only (see 0046 RLS).
+export const githubWebhookEvents = pgTable(
+  'github_webhook_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    delivery_id: text('delivery_id').notNull().unique(),
+    event: text('event').notNull(),
+    action: text('action'),
+    installation_id: bigint('installation_id', { mode: 'number' }),
+    tenant_id: uuid('tenant_id'),
+    signature_verified: boolean('signature_verified').notNull().default(false),
+    processed: boolean('processed').notNull().default(false),
+    processed_at: timestamp('processed_at', { withTimezone: true }),
+    processing_error: text('processing_error'),
+    payload: jsonb('payload'),
+    received_at: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('idx_github_webhook_events_pending')
+      .on(t.received_at)
+      .where(sql`${t.signature_verified} AND NOT ${t.processed}`),
+  ],
+);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,8 @@
 'use client'
 
+import type { CSSProperties } from 'react'
+import { Icon } from '@/components/proto'
+
 // PM glyph language — 1:1 translation of the approved prototype's
 // pm-shared.jsx (PRD v6 design kit). Fixed color mapping per state category;
 // priority glyphs use keyboard order 0–4.
@@ -156,5 +159,37 @@ export function DiamondGlyph({ size = 11, color = 'var(--text-faint)' }: { size?
     <svg width={size} height={size} viewBox="0 0 12 12" style={{ flexShrink: 0 }}>
       <rect x="2.6" y="2.6" width="6.8" height="6.8" rx="1.2" transform="rotate(45 6 6)" fill={color} />
     </svg>
+  )
+}
+
+// ─── Git chip (P7/P16, pm-shared.jsx PrChip) ─────────────────────────────────
+// merged → purple · closed → coral · open → green.
+export interface GitLink {
+  t: 'branch' | 'pr' | 'commit'
+  label: string
+  state: 'open' | 'merged' | 'closed'
+  url?: string | null
+}
+
+export function PrChip({ g }: { g: GitLink }) {
+  const c = g.state === 'merged' ? '#9B7BFA' : g.state === 'closed' ? '#F8786B' : '#27D280'
+  const Ic = g.t === 'branch' ? Icon.gitBranch : g.t === 'pr' ? Icon.gitPr : Icon.gitCommit
+  const inner = (
+    <>
+      <Ic size={11} style={{ color: c, flexShrink: 0 }} />
+      <span>{g.label}</span>
+      <span style={{ color: c, fontWeight: 800 }}>{g.state}</span>
+    </>
+  )
+  const style: CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', borderRadius: 6,
+    background: 'var(--surf-1)', border: '1px solid var(--bord)',
+    fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-2)',
+    textDecoration: 'none',
+  }
+  return g.url ? (
+    <a href={g.url} target="_blank" rel="noreferrer" style={style}>{inner}</a>
+  ) : (
+    <span style={style}>{inner}</span>
   )
 }

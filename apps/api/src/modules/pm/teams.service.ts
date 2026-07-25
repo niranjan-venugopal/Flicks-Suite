@@ -278,6 +278,12 @@ export class PmTeamsService {
       cycle_auto_add_started?: boolean;
       upcoming_cycles?: number;
       triage_enabled?: boolean;
+      gh_auto_branch?: boolean;
+      gh_auto_pr_open?: boolean;
+      gh_auto_pr_merge?: boolean;
+      gh_auto_pr_close?: boolean;
+      gh_magic_words?: boolean;
+      gh_bot_comment?: boolean;
     },
   ) {
     return this.db.withTenant(
@@ -304,6 +310,9 @@ export class PmTeamsService {
         if (patch.cycle_auto_add_started !== undefined) clean.cycle_auto_add_started = patch.cycle_auto_add_started;
         if (patch.upcoming_cycles !== undefined) clean.upcoming_cycles = Math.min(Math.max(patch.upcoming_cycles, 1), 4);
         if (patch.triage_enabled !== undefined) clean.triage_enabled = patch.triage_enabled;
+        for (const k of ['gh_auto_branch', 'gh_auto_pr_open', 'gh_auto_pr_merge', 'gh_auto_pr_close', 'gh_magic_words', 'gh_bot_comment'] as const) {
+          if (patch[k] !== undefined) clean[k] = patch[k];
+        }
         if (!Object.keys(clean).length) throw new BadRequestException('empty patch');
         const [team] = await tx
           .update(pmTeams)

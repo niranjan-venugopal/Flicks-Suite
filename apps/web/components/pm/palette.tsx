@@ -46,6 +46,7 @@ export const KEYMAP: Array<{ keys: string; label: string; section: string }> = [
   { keys: 'G then T', label: 'Go to Triage', section: 'Navigate' },
   { keys: 'G then C', label: 'Go to Cycle', section: 'Navigate' },
   { keys: '⇧T', label: 'Send to triage', section: 'Select & edit' },
+  { keys: '⌘⇧B', label: 'Copy branch name', section: 'Select & edit' },
   { keys: '⇧↵ · ⇧⌫ · Z · M', label: 'Triage: accept · decline · snooze · merge', section: 'Select & edit' },
   { keys: 'J / K or ↑ ↓', label: 'Move selection', section: 'Navigate' },
   { keys: 'Enter', label: 'Open selected issue', section: 'Navigate' },

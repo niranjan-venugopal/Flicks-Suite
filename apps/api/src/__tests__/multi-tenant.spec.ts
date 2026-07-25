@@ -615,6 +615,9 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     { label: 'pm_initiatives', table: schema.pmInitiatives, values: () => ({ tenant_id: tenantA.id, name: `Iso Init ${rid()}` }) },
     { label: 'pm_project_milestones', table: schema.pmProjectMilestones, values: () => ({ tenant_id: tenantA.id, project_id: seedPmProjectA(), name: `Iso MS ${rid()}` }) },
     { label: 'pm_project_updates', table: schema.pmProjectUpdates, values: () => ({ tenant_id: tenantA.id, project_id: seedPmProjectA(), health: 'on_track', body_md: 'Iso update' }) },
+    // GitHub integration tables (0046)
+    { label: 'pm_github_installations', table: schema.pmGithubInstallations, values: () => ({ tenant_id: tenantA.id, installation_id: 700000 + Math.floor(Math.random() * 100000), account_login: 'iso-org' }) },
+    { label: 'pm_github_repos', table: schema.pmGithubRepos, values: () => ({ tenant_id: tenantA.id, installation_id: 700001, repo_full_name: `iso/repo-${rid()}`, team_id: seedPmTeamA() }) },
   ];
 
   // Lazily-seeded invoice_subscription for the charge-attempts case (FK).
@@ -628,6 +631,12 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
   function seedPmProjectA(): string {
     if (!pmProjectAId) throw new Error('pm project fixture not seeded');
     return pmProjectAId;
+  }
+  // Lazily-seeded pm_team for the github-repo case (FK).
+  let pmTeamAId: string | null = null;
+  function seedPmTeamA(): string {
+    if (!pmTeamAId) throw new Error('pm team fixture not seeded');
+    return pmTeamAId;
   }
   beforeAll(async () => {
     const [cust] = await idbAdmin.insert(schema.customers).values({
@@ -643,6 +652,10 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
       tenant_id: tenantA.id, name: `Iso Fixture Project ${rid()}`,
     }).returning();
     pmProjectAId = proj!.id;
+    const [pmTeam] = await idbAdmin.insert(schema.pmTeams).values({
+      tenant_id: tenantA.id, key: `I${rid().slice(0, 3).toUpperCase()}`, name: `Iso Team ${rid()}`,
+    }).returning();
+    pmTeamAId = pmTeam!.id;
   });
 
   cases.forEach(({ label, table, values }) => {

@@ -24,6 +24,7 @@ import { PmCyclesService } from './cycles.service';
 import { PmSampleDataService } from './sample-data.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
+import { PmGithubService } from './github.service';
 
 class CreateTeamDto {
   @IsString() @MaxLength(6) key!: string;
@@ -139,6 +140,13 @@ class UpdateTeamConfigDto {
   @IsOptional() @IsBoolean() cycle_auto_add_started?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(4) @Type(() => Number) upcoming_cycles?: number;
   @IsOptional() @IsBoolean() triage_enabled?: boolean;
+  // GitHub status automations (P16)
+  @IsOptional() @IsBoolean() gh_auto_branch?: boolean;
+  @IsOptional() @IsBoolean() gh_auto_pr_open?: boolean;
+  @IsOptional() @IsBoolean() gh_auto_pr_merge?: boolean;
+  @IsOptional() @IsBoolean() gh_auto_pr_close?: boolean;
+  @IsOptional() @IsBoolean() gh_magic_words?: boolean;
+  @IsOptional() @IsBoolean() gh_bot_comment?: boolean;
 }
 class SetIssueCycleDto {
   @IsOptional() @IsUUID() cycle_id?: string | null;
@@ -152,6 +160,18 @@ class TriageDeclineDto {
 }
 class SnoozeDto {
   @IsOptional() @IsString() until?: string | null;
+}
+class GithubInstallDto {
+  @IsInt() @Min(1) @Type(() => Number) installation_id!: number;
+  @IsOptional() @IsString() @MaxLength(120) account_login?: string;
+}
+class GithubMapRepoDto {
+  @IsString() @MaxLength(200) repo_full_name!: string;
+  @IsUUID() team_id!: string;
+  @IsOptional() @IsInt() @Type(() => Number) repo_id?: number;
+}
+class GithubBranchFormatDto {
+  @IsString() @MaxLength(120) format!: string;
 }
 
 /**
@@ -171,6 +191,7 @@ export class PmController {
     private readonly sample: PmSampleDataService,
     private readonly views: PmViewsService,
     private readonly search_: PmSearchService,
+    private readonly github: PmGithubService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -517,5 +538,55 @@ export class PmController {
   @Roles('owner', 'admin', 'manager')
   sampleRemove(@CurrentUser() user: JwtPayload) {
     return this.sample.remove(user.tenantId, user.sub);
+  }
+
+  // ─── GitHub integration (§12, P16) ────────────────────────────────────────
+
+  @Get('github/status')
+  @RequireGrant('pm', 'view')
+  githubStatus(@CurrentUser() user: JwtPayload) {
+    return this.github.status(user.tenantId, user.sub);
+  }
+
+  @Post('github/install')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubInstall(@CurrentUser() user: JwtPayload, @Body() dto: GithubInstallDto) {
+    return this.github.claimInstallation(user.tenantId, user.sub, dto);
+  }
+
+  @Post('github/uninstall')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubUninstall(@CurrentUser() user: JwtPayload) {
+    return this.github.uninstall(user.tenantId, user.sub);
+  }
+
+  @Post('github/repos')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubMapRepo(@CurrentUser() user: JwtPayload, @Body() dto: GithubMapRepoDto) {
+    return this.github.mapRepo(user.tenantId, user.sub, dto);
+  }
+
+  @Post('github/repos/:id/delete')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubUnmapRepo(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.github.unmapRepo(user.tenantId, user.sub, id);
+  }
+
+  @Patch('github/branch-format')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubBranchFormat(@CurrentUser() user: JwtPayload, @Body() dto: GithubBranchFormatDto) {
+    return this.github.setBranchFormat(user.tenantId, user.sub, dto.format);
+  }
+
+  @Post('github/redeliver')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubRedeliver(@CurrentUser() user: JwtPayload) {
+    return this.github.redeliver(user.tenantId, user.sub);
   }
 }

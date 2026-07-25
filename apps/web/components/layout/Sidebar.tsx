@@ -123,7 +123,7 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/pm/projects', label: 'Projects' },
           { href: '/pm/timeline', label: 'Timeline' },
           { href: '/pm/roadmap', label: 'Roadmap' },
-          { href: '/pm/settings/notifications', label: 'Settings' },
+          { href: '/pm/settings/github', label: 'Settings' },
         ],
       },
       {
@@ -180,7 +180,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/notifications', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/github', label: 'Settings' }] },
     ],
   },
   {
@@ -213,7 +213,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/notifications', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/inbox', label: 'Inbox' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/settings/github', label: 'Settings' }] },
     ],
   },
   {

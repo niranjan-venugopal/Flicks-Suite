@@ -208,5 +208,77 @@ matrix + timesheet linkage, then the GitHub integration).**
 
 ---
 
-*(CP4 — after Sprint 39 · CP5/beta gate — after Sprint 41. Sections are
-appended as each pair lands.)*
+## CHECKPOINT 4 — after Sprints 38–39 (the connected workflow)
+
+**What shipped:** Sprint 38 — the Inbox (P9: one collapsing row per issue,
+E archive / Z snooze, first-run coach), notification fan-out for assignment/
+mention/comment/final-state, the 5-min unread-only urgent emails + hourly/
+daily digest folds, the P10 notification matrix (Projects → Settings →
+Notifications), and timesheet↔project/task linkage (migration 0045).
+Sprint 39 — the GitHub App integration (migration 0046): signed webhooks,
+TEAM-123 autolinks from branches/PRs/commits, per-team status automations,
+magic words, git chips on issues, branch-name generator, and the P16 settings
+screen. Run `bash scripts/setup-demo.sh` first — it seeds sample inbox rows,
+a demo GitHub installation, 2 repo mappings, and git chips on 2 sample issues.
+
+### 0. Setup
+`git pull && pnpm sync:supabase` (applies 0045 + 0046), re-run
+`bash scripts/setup-demo.sh`, hard-refresh.
+
+### 1. Inbox (P9, §11)
+1. **Projects → Inbox** (or `G` then `N`): the seeded rows show — a mention
+   with a **+2 more** collapse pill, an assignment, a purple cycle-review row.
+   The sidebar Inbox item carries the unread count badge.
+2. First visit shows the 3-step **"How Inbox works"** coach — Skip/Next, and
+   "don't show again" sticks.
+3. `J`/`K` move the focus; **E** archives (row leaves), **Z** opens the
+   snooze menu (1d/3d/1w) — a snoozed row drops into the dimmed **Snoozed**
+   section with its due date. Enter (or click) opens the issue and marks read.
+4. Have a teammate (or second browser as manager@demo.co) assign you an
+   issue and comment on it twice: ONE inbox row for that issue, bumping with
+   a climbing "+N more" — never three rows.
+
+### 2. Notification matrix + email digests (P10)
+1. **Projects → Settings → Notifications**: the 7-row matrix (In-app/Email
+   toggles), the digest frequency segmented control (5-min urgent only /
+   Hourly / Daily), and the DND note. Toggle "Comment on subscribed" off →
+   new comments stop landing in your inbox (the automated suite proves the
+   suppression + the 5-min unread-only email + exactly-once fold).
+
+### 3. Timesheet ↔ Projects (§15.3)
+1. **Time → Timesheets**: each category row now has a project picker and,
+   once a project is chosen, a task picker (issues of that project). Save —
+   reload keeps the linkage. Rows are now per (category, project, task).
+
+### 4. GitHub (§12, P16)
+1. **Projects → Settings** (GitHub tab): the demo seed shows the installed
+   state — status card (`github.com/specflicks`, Healthy pill), 2 mapped
+   repos with team badges + autolink chips, the status-automation card (4
+   flow tiles + magic words / personal automation / bot comment), branch
+   format with live preview, and webhook health.
+2. Open the sample issue with git chips (issues list → the "(sample)" issue
+   with the SSO title): the **Git** section shows the branch + PR chips
+   (green open / purple merged); the header has **Branch ⌘⇧B** — press it
+   and paste somewhere: `{you}/{team}-{n}-{slug}`. With "Personal
+   automation" on, copying also assigns you + moves the issue to started.
+3. **Live App test (only if you registered the GitHub App and set
+   GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY / GITHUB_WEBHOOK_SECRET, webhook
+   URL `https://<your-api>/api/v1/webhooks/github`):** install the App on a
+   repo, map it to your team, then create a branch named after a real issue
+   key (e.g. `you/di-12-test`) → the issue moves to In Progress with a
+   branch chip; open a PR titled "Fixes DI-12" → In Review; merge → Done +
+   an inbox ping. Without the App, the automated fixture chain is the proof.
+
+### 5. Automated (verify green)
+`cd apps/api && pnpm jest pm-github pm-sync` → 55 tests incl. Sprint 39's:
+bad-signature 401, delivery-id replay no-op, the full fixture chain
+Todo→In Progress→In Review→Done with history + inbox, close-unmerged revert,
+magic-words toggle, commit chips, and the cross-tenant installation
+isolation case.
+
+**Confirm CP4 to start Sprints 40–41 (importers, templates, settings
+suites, deal→project, public API scopes — then the beta gate).**
+
+---
+
+*(CP5/beta gate — after Sprint 41.)*

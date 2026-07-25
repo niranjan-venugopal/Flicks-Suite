@@ -17,6 +17,9 @@ import { PmSyncService } from './sync/sync.service';
 import { PmMutationExecutor } from './sync/mutation-executor.service';
 import { PmSyncThrottleGuard } from './sync/sync-throttle.guard';
 import { PmSyncController } from './sync/sync.controller';
+import { GithubAppService } from './github-app.service';
+import { PmGithubService } from './github.service';
+import { GithubWebhookController } from './github-webhook.controller';
 
 /**
  * PM — Projects module (PRD v6). Ships behind the `pm` tenant toggle +
@@ -25,7 +28,7 @@ import { PmSyncController } from './sync/sync.controller';
  */
 @Module({
   imports: [AuditModule, CrmModule, NotificationsModule],
-  controllers: [PmController, PmSyncController],
+  controllers: [PmController, PmSyncController, GithubWebhookController],
   providers: [
     PmGrantGuard,
     PmSyncGateway,
@@ -40,6 +43,8 @@ import { PmSyncController } from './sync/sync.controller';
     PmSyncService,
     PmMutationExecutor,
     PmSyncThrottleGuard,
+    GithubAppService,
+    PmGithubService,
   ],
   exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService],
 })

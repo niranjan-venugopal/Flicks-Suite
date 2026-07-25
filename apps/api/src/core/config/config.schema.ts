@@ -82,6 +82,13 @@ export const configValidationSchema = Joi.object({
   RAZORPAY_KEY_ID: Joi.string().allow('').optional(),
   RAZORPAY_KEY_SECRET: Joi.string().allow('').optional(),
   RAZORPAY_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+  // GitHub App (PRD v6 §12). Optional — fixture tests + CI never need live
+  // credentials; live API calls (install verify, bot comments) no-op without
+  // them. Private key is the PEM with literal \n escapes (single-line .env).
+  GITHUB_APP_ID: Joi.string().allow('').optional(),
+  GITHUB_APP_PRIVATE_KEY: Joi.string().allow('').optional(),
+  GITHUB_WEBHOOK_SECRET: Joi.string().allow('').optional(),
+  GITHUB_APP_SLUG: Joi.string().allow('').optional(),
   // Razorpay OAuth Connect (Sprint 15). Partner app credentials — sellers
   // connect their own Razorpay account; orders are created on the sub-merchant
   // with a Bearer access token. Optional → connect/order endpoints return a

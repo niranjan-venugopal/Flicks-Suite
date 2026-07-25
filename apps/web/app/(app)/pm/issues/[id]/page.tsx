@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
-import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
+import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
@@ -26,8 +27,21 @@ interface DetailResponse {
     sub_issues: Array<{ id: string; number: number; title: string; state_id: string; priority: number; completed_at: string | null }>
     relations: Array<{ id: string; issue_id: string; related_issue_id: string; type: string }>
     subscriber_ids: string[]
+    git_links: Array<{ id: string; kind: 'branch' | 'pr' | 'commit'; ref: string; label: string; state: 'open' | 'merged' | 'closed'; url: string | null }>
   }
 }
+
+// §12.5 branch-name generator: {user}/{team-key-lower}-{number}-{slug}.
+function branchNameFor(format: string, user: string, teamKey: string, number: number, title: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 28).replace(/-+$/g, '')
+  return format
+    .replace('{user}', user.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'me')
+    .replace('{team-key-lower}', teamKey.toLowerCase())
+    .replace('{number}', String(number))
+    .replace('{slug}', slug || 'issue')
+}
+
+const PERSONAL_AUTO_KEY = 'pm-gh-personal-auto' // '0' = off; default on
 
 export default function IssueDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -93,6 +107,13 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const doAssign = (uid: string | null) => (engine ? engine.assignIssue(id, uid) : restAssign.mutate(uid))
   const doPriority = (p: number) => (engine ? engine.setIssuePriority(id, p) : restPriority.mutate(p))
   const doProject = (pid: string | null) => (engine ? engine.setIssueProject(id, pid) : restProject.mutate(pid))
+  const me = useAuthStore((st) => st.currentUser)
+  const ghStatus = useQuery({
+    queryKey: ['pm', 'github', 'status'],
+    queryFn: () => api.get<{ data: { installation: { branch_format: string } | null } }>('/api/v1/pm/github/status'),
+    staleTime: 300_000,
+    retry: false,
+  })
   const saveDesc = () => {
     if (engine) engine.updateIssue(id, { description: desc })
     else restUpdate.mutate({ description: desc })
@@ -100,8 +121,30 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     setTimeout(() => qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }), 600)
   }
 
+  // ⌘⇧B — copy branch name; personal automation assigns me + moves to started
+  // (P16 "copy-branch assigns me + moves to started", on unless switched off).
+  const copyBranchName = () => {
+    const iss = issue
+    if (!iss) return
+    const t = engine?.store.teams.get(iss.team_id)
+    const format = ghStatus.data?.data.installation?.branch_format ?? '{user}/{team-key-lower}-{number}-{slug}'
+    const firstName = (me?.name ?? 'me').split(/\s+/)[0] ?? 'me'
+    const name = branchNameFor(format, firstName, t?.key ?? 'team', iss.number, iss.title)
+    void navigator.clipboard.writeText(name)
+    const auto = typeof window !== 'undefined' && window.localStorage.getItem(PERSONAL_AUTO_KEY) !== '0'
+    if (auto && engine && me) {
+      if (!iss.assignee_user_id) engine.assignIssue(id, me.id)
+      const started = engine.store.statesForTeam(iss.team_id).find((s) => s.category === 'started')
+      const cur = engine.store.states.get(iss.state_id)
+      if (started && cur && ['triage', 'backlog', 'unstarted'].includes(cur.category)) {
+        engine.moveIssueState(id, started.id)
+      }
+    }
+  }
+
   useHotkeys({
     escape: () => { if (menu) setMenu(null); else router.push('/pm/issues') },
+    'mod+shift+b': (e) => { e.preventDefault(); copyBranchName() },
     ...Object.fromEntries([0, 1, 2, 3, 4].map((p) => [String(p), () => doPriority(p)])),
   })
 
@@ -133,6 +176,9 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
         <span style={{ flex: 1 }} />
         <Btn kind="ghost" size="sm" onClick={() => { void navigator.clipboard.writeText(`${team?.key}-${issue.number}`) }}>
           Copy ID <Kbd style={{ marginLeft: 5 }}>⌘⇧.</Kbd>
+        </Btn>
+        <Btn kind="ghost" size="sm" icon={<Icon.gitBranch size={12} />} onClick={copyBranchName} title="Copy branch name">
+          Branch <Kbd style={{ marginLeft: 5 }}>⌘⇧B</Kbd>
         </Btn>
       </div>
 
@@ -207,6 +253,19 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                   </button>
                 )
               })}
+            </div>
+          )}
+
+          {/* Git (§12 — chips attached by the GitHub App) */}
+          {(d?.git_links?.length ?? 0) > 0 && (
+            <div className="card" style={{ padding: '10px 14px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="t-caption">Git</span>
+              {d!.git_links.map((g) => (
+                <PrChip key={g.id} g={{ t: g.kind, label: g.label, state: g.state, url: g.url } as GitLink} />
+              ))}
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
+                PR merged → auto-moves to Done (team automation)
+              </span>
             </div>
           )}
 

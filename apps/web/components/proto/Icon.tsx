@@ -131,6 +131,7 @@ export const Icon = {
   // PRD v6 P9/P16 — git glyphs (prototype pm-shared.jsx)
   gitPr: makeIcon(<><circle cx="6" cy="6" r="2.6" /><circle cx="6" cy="18" r="2.6" /><circle cx="18" cy="18" r="2.6" /><path d="M6 8.6v6.8M13 6h2a3 3 0 013 3v6.4" /><path d="M15.4 3.6L13 6l2.4 2.4" /></>),
   gitBranch: makeIcon(<><circle cx="6" cy="6" r="2.6" /><circle cx="6" cy="18" r="2.6" /><circle cx="18" cy="6" r="2.6" /><path d="M6 8.6v6.8M18 8.6c0 4-4 5.4-8 5.4" /></>),
+  gitCommit: makeIcon(<><circle cx="12" cy="12" r="3.4" /><path d="M2 12h6.6M15.4 12H22" /></>),
 } as const
 
 export type IconKey = keyof typeof Icon
