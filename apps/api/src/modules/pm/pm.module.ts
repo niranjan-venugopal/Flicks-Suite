@@ -18,6 +18,9 @@ import { PmMutationExecutor } from './sync/mutation-executor.service';
 import { PmSyncThrottleGuard } from './sync/sync-throttle.guard';
 import { PmSyncController } from './sync/sync.controller';
 import { GithubAppService } from './github-app.service';
+import { PmImportService } from './import.service';
+import { PmTemplatesService } from './templates.service';
+import { PmPublicService } from './public';
 import { PmGithubService } from './github.service';
 import { GithubWebhookController } from './github-webhook.controller';
 
@@ -45,7 +48,10 @@ import { GithubWebhookController } from './github-webhook.controller';
     PmSyncThrottleGuard,
     GithubAppService,
     PmGithubService,
+    PmImportService,
+    PmTemplatesService,
+    PmPublicService,
   ],
-  exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService],
+  exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService, PmPublicService],
 })
 export class PmModule {}

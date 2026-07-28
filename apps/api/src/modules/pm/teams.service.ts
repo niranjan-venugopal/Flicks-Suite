@@ -1,11 +1,13 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
 import {
   pmTeams,
   pmTeamMemberships,
   pmTeamCounters,
   pmWorkflowStates,
   pmLabels,
+  pmIssues,
+  pmProjects,
   memberships,
   tenants,
   users,
@@ -454,6 +456,70 @@ export class PmTeamsService {
           .innerJoin(memberships, eq(memberships.user_id, users.id))
           .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
         return rows;
+      },
+      userId,
+    );
+  }
+
+  // ─── Recently deleted (§15.4, P18): 30-day restore window ─────────────────
+
+  async recentlyDeleted(tenantId: string, userId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const cutoff = new Date(Date.now() - 30 * 86_400_000);
+        const issues = await tx
+          .select({
+            id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+            team_id: pmIssues.team_id, deleted_at: pmIssues.deleted_at,
+          })
+          .from(pmIssues)
+          .where(and(eq(pmIssues.tenant_id, tenantId), gte(pmIssues.deleted_at, cutoff)))
+          .orderBy(sql`${pmIssues.deleted_at} DESC`)
+          .limit(100);
+        const projects = await tx
+          .select({ id: pmProjects.id, name: pmProjects.name, deleted_at: pmProjects.deleted_at })
+          .from(pmProjects)
+          .where(and(eq(pmProjects.tenant_id, tenantId), gte(pmProjects.deleted_at, cutoff)))
+          .orderBy(sql`${pmProjects.deleted_at} DESC`)
+          .limit(100);
+        const teamKeys = await tx
+          .select({ id: pmTeams.id, key: pmTeams.key })
+          .from(pmTeams)
+          .where(eq(pmTeams.tenant_id, tenantId));
+        const keyOf = new Map(teamKeys.map((t) => [t.id, t.key]));
+        return {
+          data: {
+            issues: issues.map((i) => ({ ...i, key: `${keyOf.get(i.team_id) ?? '?'}-${i.number}` })),
+            projects,
+          },
+        };
+      },
+      userId,
+    );
+  }
+
+  /** Hard-delete one soft-deleted row ahead of the 30-day purge (P18 Purge). */
+  async purgeDeleted(tenantId: string, userId: string, kind: string, id: string) {
+    if (kind !== 'issue' && kind !== 'project') throw new BadRequestException('kind must be issue|project');
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const table = kind === 'issue' ? pmIssues : pmProjects;
+        const [row] = await tx
+          .delete(table)
+          .where(and(eq(table.id, id), eq(table.tenant_id, tenantId), sql`${table.deleted_at} IS NOT NULL`))
+          .returning({ id: table.id });
+        if (!row) throw new BadRequestException('Not found in recently deleted');
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: `pm.${kind}.purge`,
+          resourceType: kind === 'issue' ? 'pm_issue' : 'pm_project',
+          resourceId: id,
+          metadata: {},
+        });
+        return { data: { purged: true } };
       },
       userId,
     );

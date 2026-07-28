@@ -301,7 +301,8 @@ export class PmProjectsService {
             actorUserId: userId,
             payload: {
               project_id: id,
-              ...(statusChanged ? { status: clean.status, deal_id: project.deal_id } : {}),
+              // deal_id rides completed too — the CRM timeline echo needs it.
+              ...(statusChanged || completing ? { status: clean.status, deal_id: project.deal_id } : {}),
               sync: [{ t: 'pm_projects', id }],
             },
           },

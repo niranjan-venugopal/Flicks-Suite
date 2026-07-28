@@ -418,8 +418,9 @@ export const RESERVED_TENANT_SLUGS = [
   'support', 'assets', 'cdn', 'static', 'blog', 'billing', 'legal',
 ] as const;
 
-/** Public-API key scopes (PRD v5 §11). */
+/** Public-API key scopes (PRD v5 §11 + v6 §19). */
 export const API_KEY_SCOPES = [
   'crm:read', 'crm:write', 'directory:read', 'directory:write', 'webhooks:manage',
+  'pm:read', 'pm:write',
 ] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];

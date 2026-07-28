@@ -234,6 +234,8 @@ export class PmSyncEngine {
     state_id?: string
     priority?: number
     assignee_user_id?: string | null
+    description?: string | null
+    estimate?: number | string | null
   }): string {
     const id = crypto.randomUUID()
     const team = this.store.teams.get(input.team_id)
@@ -261,7 +263,7 @@ export class PmSyncEngine {
       title: input.title,
       state_id: stateId,
       priority: input.priority ?? 0,
-      estimate: null,
+      estimate: input.estimate != null ? String(input.estimate) : null,
       assignee_user_id: input.assignee_user_id ?? null,
       creator_user_id: this.userId,
       parent_issue_id: null,
@@ -292,6 +294,8 @@ export class PmSyncEngine {
         state_id: stateId,
         priority: input.priority,
         assignee_user_id: input.assignee_user_id ?? undefined,
+        description: input.description ?? undefined,
+        estimate: input.estimate ?? undefined,
       },
       inverse: { table: 'pm_issues', id, row: null }, // rollback = remove
       enqueuedAt: Date.now(),

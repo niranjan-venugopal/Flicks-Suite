@@ -1,7 +1,8 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsEmail, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { and, asc, eq } from 'drizzle-orm';
 import { memberships, tenants } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
@@ -9,6 +10,7 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { ApiKeyGuard, ApiScopes, type PublicApiRequest } from './api-key.guard';
 import { CrmPublicService } from '../crm/public';
+import { PmPublicService } from '../pm/public';
 
 class ApiPersonDto {
   @IsOptional() @IsString() @MaxLength(120) first_name?: string;
@@ -58,6 +60,15 @@ class ApiLeadDto {
  * prefix, so this really serves at /api/public/v1/*.
  */
 @ApiTags('public-api')
+class ApiPmIssueDto {
+  @IsUUID() team_id!: string;
+  @IsString() @MaxLength(500) title!: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
+  @IsOptional() estimate?: number | string | null;
+  @IsOptional() @IsUUID() assignee_user_id?: string;
+}
+
 @Public()
 @SkipThrottle()
 @UseGuards(ApiKeyGuard)
@@ -66,6 +77,7 @@ export class PublicV1Controller {
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly crm: CrmPublicService,
+    private readonly pm: PmPublicService,
   ) {}
 
   @Get('me')
@@ -125,6 +137,44 @@ export class PublicV1Controller {
   @ApiOperation({ summary: 'Create a deal (same FX/stage rules as the UI; source is stamped "api")' })
   async createDeal(@Req() req: PublicApiRequest, @Body() dto: ApiDealDto) {
     return this.crm.createDeal(req.apiKey!.tenantId, await this.actor(req), { ...dto, source: 'api' });
+  }
+
+  // ─── Projects module (PRD v6 §19 — pm:read / pm:write) ─────────────────────
+
+  @Get('pm/teams')
+  @ApiScopes('pm:read')
+  async pmTeams(@Req() req: PublicApiRequest) {
+    return this.pm.listTeams(req.apiKey!.tenantId, await this.actor(req));
+  }
+
+  @Get('pm/issues')
+  @ApiScopes('pm:read')
+  async pmIssues(
+    @Req() req: PublicApiRequest,
+    @Query('team_id') teamId?: string,
+    @Query('project_id') projectId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.pm.listIssues((req as PublicApiRequest).apiKey!.tenantId, await this.actor(req as PublicApiRequest), {
+      team_id: teamId,
+      project_id: projectId,
+      page: num(page),
+      limit: num(limit),
+    });
+  }
+
+  @Post('pm/issues')
+  @ApiScopes('pm:write')
+  @ApiOperation({ summary: 'Create an issue (source stamped "api" — §8 triage entry rules apply)' })
+  async pmCreateIssue(@Req() req: PublicApiRequest, @Body() dto: ApiPmIssueDto) {
+    return this.pm.createIssue(req.apiKey!.tenantId, await this.actor(req), dto);
+  }
+
+  @Get('pm/projects')
+  @ApiScopes('pm:read')
+  async pmProjects(@Req() req: PublicApiRequest) {
+    return this.pm.listProjects(req.apiKey!.tenantId, await this.actor(req));
   }
 
   // ─── Leads ───────────────────────────────────────────────────────────────────

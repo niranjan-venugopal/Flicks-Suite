@@ -29,6 +29,11 @@ import {
   auditLog,
   feedbackSubmissions,
   productEvents,
+  pmTeams,
+  pmIssues,
+  pmProjects,
+  pmLabels,
+  pmCycles,
 } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -286,6 +291,12 @@ export class DataExportService {
       debit_notes: await tx.select().from(debitNotes),
       subscriptions: await tx.select().from(invoiceSubscriptions),
       settings: await tx.select().from(invoicingSettings),
+      // PM (PRD v6 §19) — projects layer joins the org export.
+      pm_teams: await tx.select().from(pmTeams),
+      pm_issues: await tx.select().from(pmIssues),
+      pm_projects: await tx.select().from(pmProjects),
+      pm_labels: await tx.select().from(pmLabels),
+      pm_cycles: await tx.select().from(pmCycles),
     }));
 
     const zip = new JSZip();

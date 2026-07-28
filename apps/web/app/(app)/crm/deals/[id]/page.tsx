@@ -2,6 +2,8 @@
 
 import { use, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/api/client'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Modal, Pill } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
@@ -69,6 +71,18 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const dealActivities = useDealActivities(id)
   const completeLoop = useCompleteWithNext(id)
+  // §15.2 deal → project (PM). The link is read from PM by deal id — no
+  // server-side cross-module hydration needed.
+  const linkedProject = useQuery({
+    queryKey: ['pm', 'project-by-deal', id],
+    queryFn: () => api.get<{ data: { project: { id: string; name: string; status: string; health: string; completed_at?: string | null; created_at: string }; latest_update: { health: string; created_at: string } | null } | null }>(`/api/v1/pm/projects/by-deal/${id}`),
+    retry: false,
+  })
+  const qcPm = useQueryClient()
+  const createProject = useMutation({
+    mutationFn: () => api.post<{ data: { id: string } }>('/api/v1/pm/projects/from-deal', { deal_id: id }),
+    onSuccess: () => qcPm.invalidateQueries({ queryKey: ['pm', 'project-by-deal', id] }),
+  })
 
   const d = data?.data
   const pipeline = pipelines.data?.data.find((p) => p.id === d?.pipeline_id)
@@ -98,6 +112,16 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
     } catch (err) {
       toast({ title: 'Could not move', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
       return false
+    }
+  }
+
+  const onCreateProject = async () => {
+    try {
+      await createProject.mutateAsync()
+      toast({ title: 'Project created', description: 'Linked to this deal — opening Projects.' })
+      router.push('/pm/projects')
+    } catch (err) {
+      toast({ title: 'Could not create project', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
   }
 
@@ -158,6 +182,9 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
                 {FEATURES.crm_email && <EnrollInSequence deal={d} />}
                 <Btn kind="secondary" size="sm" icon={<Icon.doc size={13} />} onClick={() => void onCreateQuote()} disabled={createQuote.isPending}>Create quote</Btn>
                 <Btn kind="secondary" size="sm" icon={<Icon.receipt size={13} />} onClick={() => void onCreateInvoice()} disabled={createInvoice.isPending}>Create invoice</Btn>
+                {!linkedProject.data?.data && (
+                  <Btn kind="secondary" size="sm" icon={<Icon.target size={13} />} onClick={() => void onCreateProject()} disabled={createProject.isPending}>Create project</Btn>
+                )}
                 {wonStage && <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} onClick={async () => { if (await doMove(wonStage.id)) setWonOpen(true) }}>Won</Btn>}
                 {lostStage && <Btn kind="danger" size="sm" icon={<Icon.x size={13} />} onClick={() => setLostOpen(true)}>Lost</Btn>}
               </>
@@ -197,8 +224,18 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* Linked billing documents (§4.4 echo) */}
-        {(d.linked_invoice || d.linked_quote) && (
+        {(d.linked_invoice || d.linked_quote || linkedProject.data?.data) && (
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            {linkedProject.data?.data && (
+              <Link href={`/pm/projects/${linkedProject.data.data.project.id}`} style={{ textDecoration: 'none' }}>
+                <Pill
+                  tone={linkedProject.data.data.project.status === 'completed' ? 'green' : linkedProject.data.data.project.health === 'at_risk' || linkedProject.data.data.project.health === 'off_track' ? 'coral' : 'blue'}
+                  icon={<Icon.target size={11} />}
+                >
+                  {linkedProject.data.data.project.name} · {linkedProject.data.data.project.status === 'completed' ? 'Completed' : linkedProject.data.data.project.health.replace('_', ' ')}
+                </Pill>
+              </Link>
+            )}
             {d.linked_invoice && (
               <Link href="/invoicing/invoices" style={{ textDecoration: 'none' }}>
                 <Pill tone={d.linked_invoice.status === 'PAID' ? 'green' : 'blue'} icon={<Icon.receipt size={11} />}>
@@ -397,6 +434,12 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
   onComplete: (a: Activity) => void
   onLog: () => void
 }) {
+  const pmLinkQ = useQuery({
+    queryKey: ['pm', 'project-by-deal', deal.id],
+    queryFn: () => api.get<{ data: { project: { id: string; name: string; status: string; health: string; completed_at?: string | null; created_at: string }; latest_update: { health: string; created_at: string } | null } | null }>(`/api/v1/pm/projects/by-deal/${deal.id}`),
+    retry: false,
+  })
+  const pmLink = pmLinkQ.data?.data ?? null
   const stageName = (sid: string | null) => stages.find((s) => s.id === sid)?.name ?? '—'
   const open = activities.filter((a) => !a.completed_at)
   type Entry = { icon: keyof typeof Icon; title: string; meta: string; when: string; suite?: boolean; act?: boolean; color?: string }
@@ -413,6 +456,12 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
     })
   }
   if (deal.linked_invoice) entries.push({ icon: 'receipt', title: `Invoice ${deal.linked_invoice.number} created from this deal`, meta: `${deal.linked_invoice.status} · ${fmtCur(parseFloat(deal.linked_invoice.total), deal.currency)}`, when: new Date(deal.linked_invoice.created_at).toLocaleDateString(), suite: true })
+  // §15.2 PM echoes — project created / health / completed from the live link.
+  if (pmLink) {
+    entries.push({ icon: 'target', title: `Project "${pmLink.project.name}" created from this deal`, meta: pmLink.project.status.replace('_', ' '), when: new Date(pmLink.project.created_at).toLocaleDateString(), suite: true })
+    if (pmLink.latest_update) entries.push({ icon: 'spark', title: `Project health: ${pmLink.latest_update.health.replace('_', ' ')}`, meta: pmLink.project.name, when: new Date(pmLink.latest_update.created_at).toLocaleDateString(), suite: true })
+    if (pmLink.project.status === 'completed') entries.push({ icon: 'check', title: `Project "${pmLink.project.name}" completed`, meta: 'delivered', when: pmLink.project.completed_at ? new Date(pmLink.project.completed_at).toLocaleDateString() : '', suite: true })
+  }
   if (deal.linked_quote) entries.push({ icon: 'doc', title: `Quote ${deal.linked_quote.number} created from this deal`, meta: `${deal.linked_quote.status}`, when: new Date(deal.linked_quote.created_at).toLocaleDateString(), suite: true })
   for (const h of deal.stage_history) {
     entries.push(

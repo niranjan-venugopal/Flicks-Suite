@@ -556,9 +556,25 @@ function QuickCreate({ engine, teamId, onClose }: { engine: PmSyncEngine; teamId
   const [createMore, setCreateMore] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // §15.5 — C honors the team's default template: description/priority/
+  // estimate prefill (an explicit priority pick wins over the template's).
+  const tmpl = useQuery({
+    queryKey: ['pm', 'templates', teamId],
+    queryFn: () => api.get<{ data: Array<{ is_team_default: boolean; description_md: string | null; default_priority: number | null; default_estimate: string | null; title_pattern: string | null }> }>(`/api/v1/pm/teams/${teamId}/templates`),
+    staleTime: 120_000,
+    retry: false,
+  })
+  const defaultTmpl = (tmpl.data?.data ?? []).find((t) => t.is_team_default) ?? null
+
   const submit = () => {
     if (!title.trim()) return
-    engine.createIssue({ team_id: teamId, title: title.trim(), priority })
+    engine.createIssue({
+      team_id: teamId,
+      title: title.trim(),
+      priority: priority || (defaultTmpl?.default_priority ?? 0),
+      description: defaultTmpl?.description_md ?? undefined,
+      estimate: defaultTmpl?.default_estimate ?? undefined,
+    })
     setTitle('')
     if (!createMore) onClose()
     else inputRef.current?.focus()

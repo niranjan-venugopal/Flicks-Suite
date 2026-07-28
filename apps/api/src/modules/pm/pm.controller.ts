@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -25,6 +26,9 @@ import { PmSampleDataService } from './sample-data.service';
 import { PmViewsService } from './views.service';
 import { PmSearchService } from './search.service';
 import { PmGithubService } from './github.service';
+import { PmImportService } from './import.service';
+import { PmTemplatesService } from './templates.service';
+import { PmPublicService } from './public';
 
 class CreateTeamDto {
   @IsString() @MaxLength(6) key!: string;
@@ -173,6 +177,27 @@ class GithubMapRepoDto {
 class GithubBranchFormatDto {
   @IsString() @MaxLength(120) format!: string;
 }
+class PmImportParseDto {
+  @IsString() @MaxLength(5_000_000) csv!: string;
+  @IsOptional() @IsString() @MaxLength(200) file_name?: string;
+}
+class PmImportRunDto extends PmImportParseDto {
+  @IsObject() @Type(() => Object) mapping!: Record<string, string>;
+  @IsOptional() @IsIn(['skip', 'update']) strategy?: 'skip' | 'update';
+  @IsIn(['linear', 'jira', 'csv']) preset!: 'linear' | 'jira' | 'csv';
+}
+class SaveTemplateDto {
+  @IsOptional() @IsUUID() id?: string;
+  @IsString() @MaxLength(120) name!: string;
+  @IsOptional() @IsString() @MaxLength(300) title_pattern?: string | null;
+  @IsOptional() @IsString() description_md?: string | null;
+  @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) default_priority?: number | null;
+  @IsOptional() @Type(() => Number) default_estimate?: number | null;
+  @IsOptional() @IsBoolean() is_team_default?: boolean;
+}
+class FromDealDto {
+  @IsUUID() deal_id!: string;
+}
 
 /**
  * PM conventional REST (PRD v6 §19) — the kill-switch path. Same domain
@@ -192,6 +217,9 @@ export class PmController {
     private readonly views: PmViewsService,
     private readonly search_: PmSearchService,
     private readonly github: PmGithubService,
+    private readonly import_: PmImportService,
+    private readonly templates: PmTemplatesService,
+    private readonly pub: PmPublicService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -588,5 +616,101 @@ export class PmController {
   @Roles('owner', 'admin')
   githubRedeliver(@CurrentUser() user: JwtPayload) {
     return this.github.redeliver(user.tenantId, user.sub);
+  }
+
+  // ─── Importers (§14, P17) ─────────────────────────────────────────────────
+
+  @Post('import/parse')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  importParse(@Body() dto: PmImportParseDto) {
+    return this.import_.parse(dto);
+  }
+
+  @Post('import/dry-run')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  importDryRun(@CurrentUser() user: JwtPayload, @Body() dto: PmImportRunDto) {
+    return this.import_.dryRun(user.tenantId, user.sub, dto);
+  }
+
+  @Post('import/run')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  importRun(@CurrentUser() user: JwtPayload, @Body() dto: PmImportRunDto) {
+    return this.import_.run(user.tenantId, user.sub, dto);
+  }
+
+  @Get('import/batches')
+  @RequireGrant('pm', 'view')
+  importBatches(@CurrentUser() user: JwtPayload) {
+    return this.import_.batches(user.tenantId, user.sub);
+  }
+
+  @Post('import/:id/undo')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  importUndo(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.import_.undo(user.tenantId, user.sub, id);
+  }
+
+  // ─── Issue templates (§15.5, P15) ─────────────────────────────────────────
+
+  @Get('teams/:teamId/templates')
+  @RequireGrant('pm', 'view')
+  listTemplates(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string) {
+    return this.templates.list(user.tenantId, user.sub, teamId);
+  }
+
+  @Post('teams/:teamId/templates')
+  @RequireGrant('pm', 'edit')
+  saveTemplate(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string, @Body() dto: SaveTemplateDto) {
+    return this.templates.save(user.tenantId, user.sub, teamId, dto);
+  }
+
+  @Post('teams/:teamId/templates/:id/delete')
+  @RequireGrant('pm', 'edit')
+  deleteTemplate(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string, @Param('id') id: string) {
+    return this.templates.remove(user.tenantId, user.sub, teamId, id);
+  }
+
+  // ─── Deal → project (§15.2) ───────────────────────────────────────────────
+
+  @Post('projects/from-deal')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin', 'manager')
+  createFromDeal(@CurrentUser() user: JwtPayload, @Body() dto: FromDealDto) {
+    return this.pub.createProjectFromDeal(user.tenantId, user.sub, dto.deal_id);
+  }
+
+  @Get('projects/by-deal/:dealId')
+  @RequireGrant('pm', 'view')
+  projectByDeal(@CurrentUser() user: JwtPayload, @Param('dealId') dealId: string) {
+    return this.pub.projectForDeal(user.tenantId, user.sub, dealId);
+  }
+
+  // ─── Recently deleted (§15.4, P18) ────────────────────────────────────────
+
+  @Get('recently-deleted')
+  @RequireGrant('pm', 'view')
+  recentlyDeleted(@CurrentUser() user: JwtPayload) {
+    return this.teams.recentlyDeleted(user.tenantId, user.sub);
+  }
+
+  @Post('issues/:id/restore')
+  @RequireGrant('pm', 'edit')
+  restoreIssue(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.issues.restore(user.tenantId, user.sub, id);
+  }
+
+  @Post('recently-deleted/:kind/:id/purge')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  purgeDeleted(
+    @CurrentUser() user: JwtPayload,
+    @Param('kind') kind: string,
+    @Param('id') id: string,
+  ) {
+    return this.teams.purgeDeleted(user.tenantId, user.sub, kind, id);
   }
 }

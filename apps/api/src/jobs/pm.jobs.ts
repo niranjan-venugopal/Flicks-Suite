@@ -4,6 +4,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-o
 import {
   domainEvents,
   syncMutations,
+  pmIssues,
   pmProjects,
   pmProjectUpdates,
   notifications,
@@ -21,6 +22,7 @@ import { PmCyclesService } from '../modules/pm/cycles.service';
 const EVENT_RETENTION_DAYS = 90; // §3.7 — dispatched outbox rows
 const MUTATION_RETENTION_DAYS = 30; // §3.2 — idempotency ledger
 const UPDATE_STALE_DAYS = 7; // §6.3 — nudge leads when the latest update is older
+const RECENTLY_DELETED_DAYS = 30; // §15.4 — restore window before hard purge
 const URGENT_TYPES = ['pm.issue.assigned', 'pm.issue.mention']; // §11.4 5-min email
 const URGENT_DELAY_MS = 5 * 60_000;
 
@@ -61,6 +63,28 @@ export class PmJobs {
       }
     } catch (err) {
       this.logger.error(`pm-cycle-sweep failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** §15.4 — hard-delete soft-deleted rows past the 30-day restore window. */
+  @Cron('30 3 * * *', { name: 'pm-recently-deleted-purge', timeZone: 'UTC' })
+  async purgeRecentlyDeleted(): Promise<void> {
+    if (!runsWorkloads()) return;
+    try {
+      const cutoff = new Date(Date.now() - RECENTLY_DELETED_DAYS * 86_400_000);
+      const issues = await this.dbAdmin
+        .delete(pmIssues)
+        .where(and(isNotNull(pmIssues.deleted_at), lt(pmIssues.deleted_at, cutoff)))
+        .returning({ id: pmIssues.id });
+      const projects = await this.dbAdmin
+        .delete(pmProjects)
+        .where(and(isNotNull(pmProjects.deleted_at), lt(pmProjects.deleted_at, cutoff)))
+        .returning({ id: pmProjects.id });
+      if (issues.length || projects.length) {
+        this.logger.log(`pm-recently-deleted-purge: ${issues.length} issues, ${projects.length} projects hard-deleted`);
+      }
+    } catch (err) {
+      this.logger.error(`pm-recently-deleted-purge failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 

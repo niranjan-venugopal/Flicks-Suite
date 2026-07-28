@@ -66,6 +66,8 @@ function SettingsTabs({ active }: { active: 'github' | 'notifications' }) {
     <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
       {tab('/pm/settings/github', 'GitHub', active === 'github')}
       {tab('/pm/settings/notifications', 'Notifications', active === 'notifications')}
+      {tab('/pm/settings/import', 'Import', false)}
+      {tab('/pm/settings/workspace', 'Workspace', false)}
     </div>
   )
 }

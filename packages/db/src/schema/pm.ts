@@ -195,6 +195,8 @@ export const pmIssues = pgTable(
     milestone_id: uuid('milestone_id'),
     cycle_id: uuid('cycle_id'), // FK added in 0043
     snoozed_until: timestamp('snoozed_until', { withTimezone: true }), // triage Z (0043)
+    import_batch_id: uuid('import_batch_id'), // §14 — undo retracts by batch (0047)
+    external_ref: text('external_ref'), // '<source>:<id>' idempotent re-import (0047)
     due_date: date('due_date'),
     board_rank: text('board_rank').notNull(), // fractional index (LexoRank-lite)
     backlog_rank: text('backlog_rank').notNull(),
@@ -440,6 +442,8 @@ export const pmProjects = pgTable(
     start_date: date('start_date'),
     target_date: date('target_date'),
     deal_id: uuid('deal_id'), // CRM back-link (§15.2); no FK — module boundary
+    import_batch_id: uuid('import_batch_id'), // §14 (0047)
+    external_ref: text('external_ref'), // §14 (0047)
     completed_at: timestamp('completed_at', { withTimezone: true }),
     created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

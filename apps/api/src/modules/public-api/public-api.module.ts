@@ -5,6 +5,7 @@ import { PublicV1Controller } from './public-v1.controller';
 import { ApiKeyGuard } from './api-key.guard';
 import { AuditModule } from '../audit/audit.module';
 import { CrmModule } from '../crm/crm.module';
+import { PmModule } from '../pm/pm.module';
 
 /**
  * Public API framework (PRD v5 §11): key management (app API, Owner/Admin) +
@@ -12,7 +13,7 @@ import { CrmModule } from '../crm/crm.module';
  * (people/companies/deals/leads) mounted since Sprint 30.
  */
 @Module({
-  imports: [AuditModule, CrmModule],
+  imports: [AuditModule, CrmModule, PmModule],
   controllers: [ApiKeysController, PublicV1Controller],
   providers: [ApiKeysService, ApiKeyGuard],
   exports: [ApiKeysService],
