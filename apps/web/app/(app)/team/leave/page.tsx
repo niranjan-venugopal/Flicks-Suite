@@ -88,7 +88,7 @@ export default function TeamLeavePage() {
           title="Team leave"
           sub="Pending leave requests from your direct reports"
           right={
-            <Link href="/inbox" style={{ textDecoration: 'none' }}>
+            <Link href="/inbox?tab=approvals" style={{ textDecoration: 'none' }}>
               <Btn kind="secondary" size="sm" icon={<Icon.inbox size={13} />}>
                 Full Inbox
               </Btn>

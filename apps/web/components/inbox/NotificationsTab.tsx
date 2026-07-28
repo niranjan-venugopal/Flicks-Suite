@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
 import { Kbd } from '@/components/pm/glyphs'
@@ -14,16 +15,19 @@ import {
 import { useHotkeys } from '@/lib/pm/hotkeys'
 
 // ─────────────────────────────────────────────────────────
-// P9 — Inbox (§11), faithful to scr-issue-inbox.jsx ScrInbox: unread dot +
-// kind tile rows that collapse per issue ("+N more"), hover/keyboard E
-// archive · Z snooze, a Snoozed section, and the AC-COACH first-run overlay.
-// Notifications ride REST (they are not sync-engine tables), so this page
-// works identically in sync and kill-switch modes.
+// The common notifications inbox (lifted from the PM P9 inbox): one stream
+// for EVERY kind — HRMS leave/attendance/timesheets, CRM, invoicing and PM —
+// with unread dots, per-issue collapse ("+N more"), hover/keyboard E archive
+// · Z snooze, a Snoozed section, and the first-run coach. Notifications ride
+// REST, so this works identically in sync and kill-switch modes.
 // ─────────────────────────────────────────────────────────
 
 const COACH_KEY = 'pm-inbox-coach-seen'
 
-type Kind = 'mention' | 'comment' | 'assign' | 'cycle' | 'digest' | 'done' | 'github' | 'other'
+type Kind =
+  | 'mention' | 'comment' | 'assign' | 'cycle' | 'digest' | 'done' | 'github'
+  | 'leave' | 'regularization' | 'timesheet' | 'onboarding' | 'crm' | 'billing'
+  | 'other'
 
 function kindOf(type: string): Kind {
   if (type === 'pm.issue.mention') return 'mention'
@@ -33,6 +37,12 @@ function kindOf(type: string): Kind {
   if (type.startsWith('pm.digest')) return 'digest'
   if (type === 'pm.issue.status') return 'done'
   if (type.startsWith('pm.github.')) return 'github'
+  if (type.startsWith('leave.')) return 'leave'
+  if (type.startsWith('regularization.')) return 'regularization'
+  if (type.startsWith('timesheet.')) return 'timesheet'
+  if (type.startsWith('onboarding.')) return 'onboarding'
+  if (type.startsWith('crm.')) return 'crm'
+  if (type.startsWith('invoice.') || type.startsWith('payment.')) return 'billing'
   return 'other'
 }
 
@@ -44,10 +54,16 @@ const KIND_IC: Record<Kind, typeof Icon.bell> = {
   digest: Icon.layers,
   done: Icon.check,
   github: Icon.gitPr,
+  leave: Icon.cal,
+  regularization: Icon.fingerprint,
+  timesheet: Icon.sheet,
+  onboarding: Icon.userPlus,
+  crm: Icon.funnel,
+  billing: Icon.wallet,
   other: Icon.bell,
 }
 
-/** "DC-12 assigned to you — title" → { key: 'DC-12', line: 'assigned to you — title' } */
+/** "DC-12 assigned to you — title" → { key: 'DC-12', line: '…' }; non-issue messages pass through. */
 function splitKey(message: string): { key: string | null; line: string } {
   const m = /^([A-Z][A-Z0-9]*-\d+)\s+(.*)$/.exec(message)
   return m ? { key: m[1]!, line: m[2]! } : { key: null, line: message }
@@ -72,9 +88,9 @@ function KbdHint({ k, label }: { k: string; label: string }) {
   )
 }
 
-export default function PmInboxPage() {
+export function NotificationsTab() {
   const router = useRouter()
-  const { data, isLoading } = useInbox('pm')
+  const { data, isLoading } = useInbox('all')
   const archive = useArchiveNotification()
   const snooze = useSnoozeNotification()
   const markRead = useMarkRead()
@@ -202,7 +218,7 @@ export default function PmInboxPage() {
   }
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: '18px 20px' }}>
+    <div style={{ maxWidth: 760 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800 }}>Unread &amp; recent</span>
         <span style={{ flex: 1 }} />
@@ -225,9 +241,9 @@ export default function PmInboxPage() {
           <div style={{ padding: '34px 20px', textAlign: 'center' }}>
             <Icon.inbox size={20} style={{ color: 'var(--text-faint)', marginBottom: 8 }} />
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 10 }}>
-              Inbox zero — you only hear about issues you subscribe to.
+              Inbox zero — approvals, mentions and updates land here.
             </div>
-            <Btn kind="ghost" size="sm" onClick={() => router.push('/pm/my')}>Back to My Issues</Btn>
+            <Btn kind="ghost" size="sm" onClick={() => router.push('/dashboard')}>Go to Dashboard</Btn>
           </div>
         )}
       </div>
@@ -235,7 +251,7 @@ export default function PmInboxPage() {
       {snoozed.length > 0 && (
         <>
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-mute)', marginBottom: 8 }}>Snoozed</div>
-          <div className="card" style={{ padding: 0, overflow: 'hidden', opacity: 0.75 }}>
+          <div className="card" style={{ padding: 0, overflow: 'hidden', opacity: 0.75, marginBottom: 14 }}>
             {snoozed.map((n) => {
               const { key, line } = splitKey(n.message)
               return (
@@ -253,6 +269,13 @@ export default function PmInboxPage() {
         </>
       )}
 
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
+        Tune what lands here in{' '}
+        <Link href="/settings/notifications" style={{ color: 'var(--blue)', textDecoration: 'none' }}>
+          notification preferences →
+        </Link>
+      </div>
+
       {/* First-run coach (AC-COACH) */}
       {coach && (
         <div
@@ -269,11 +292,11 @@ export default function PmInboxPage() {
               {coachStep === 0 ? <Icon.bell size={20} /> : coachStep === 1 ? <Icon.inbox size={20} /> : <Icon.mail size={20} />}
             </div>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 7 }}>
-              {['You subscribe, we notify', 'One row per issue', 'Email that respects you'][coachStep]}
+              {['One inbox, everything', 'One row per thread', 'Email that respects you'][coachStep]}
             </div>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.65, marginBottom: 16 }}>
               {[
-                'You auto-subscribe to issues you create, get assigned, or are mentioned on. Unsubscribe any issue with the bell — silence is one click.',
+                'Leave decisions, timesheet nudges, mentions, assignments and project updates all land here — you hear about the work you own, follow or are mentioned on.',
                 'Many events on one issue collapse into a single row that updates. Low-urgency bulk becomes a digest line, not 12 pings.',
                 'Mentions and assignments email after 5 minutes only if still unread in-app. Everything else folds into an hourly or daily digest you choose.',
               ][coachStep]}
@@ -296,7 +319,6 @@ export default function PmInboxPage() {
           </div>
         </div>
       )}
-
     </div>
   )
 }

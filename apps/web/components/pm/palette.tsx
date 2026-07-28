@@ -26,7 +26,7 @@ interface Command {
 const COMMANDS: Command[] = [
   { id: 'nav.issues', label: 'Go to Issues', hint: 'G then B', run: (r) => r.push('/pm/issues') },
   { id: 'nav.my', label: 'Go to My Issues', hint: 'G then I', run: (r) => r.push('/pm/my') },
-  { id: 'nav.inbox', label: 'Go to Inbox', hint: 'G then N', run: (r) => r.push('/pm/inbox') },
+  { id: 'nav.inbox', label: 'Go to Inbox', hint: 'G then N', run: (r) => r.push('/inbox') },
   { id: 'nav.projects', label: 'Go to Projects', hint: 'G then P', run: (r) => r.push('/pm/projects') },
   { id: 'nav.timeline', label: 'Go to Timeline', run: (r) => r.push('/pm/timeline') },
   { id: 'nav.roadmap', label: 'Go to Roadmap', hint: 'G then R', run: (r) => r.push('/pm/roadmap') },
@@ -84,7 +84,7 @@ export function PmGlobalKeys() {
     'shift+?': (e) => { e.preventDefault(); setKeymap((v) => !v) },
     g: () => markG(),
     i: () => { if (recentG()) router.push('/pm/my') },
-    n: () => { if (recentG()) router.push('/pm/inbox') },
+    n: () => { if (recentG()) router.push('/inbox') },
     b: () => { if (recentG()) router.push('/pm/issues') },
     p: () => { if (recentG()) router.push('/pm/projects') },
     r: () => { if (recentG()) router.push('/pm/roadmap') },

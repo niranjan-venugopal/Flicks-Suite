@@ -66,6 +66,14 @@ const config: NextConfig = {
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
+  // The common Inbox absorbed the PM inbox and the old notifications list —
+  // bookmarks and stale links land on the unified page.
+  async redirects() {
+    return [
+      { source: '/pm/inbox', destination: '/inbox', permanent: false },
+      { source: '/notifications', destination: '/inbox', permanent: false },
+    ]
+  },
 }
 
 // Source-map upload only runs where SENTRY_AUTH_TOKEN is set (CI/prod);

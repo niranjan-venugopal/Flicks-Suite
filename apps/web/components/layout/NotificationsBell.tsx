@@ -263,7 +263,7 @@ export function NotificationsBell() {
             {markAllRead.isPending ? 'Marking…' : 'Mark all read'}
           </Btn>
           <Link
-            href="/notifications"
+            href="/inbox"
             onClick={() => setOpen(false)}
             style={{
               fontSize: 12,

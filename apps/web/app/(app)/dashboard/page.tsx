@@ -229,7 +229,7 @@ function AdminDashboard() {
                   One-click approve where it's safe
                 </div>
               </div>
-              <Link href="/inbox" style={{ textDecoration: 'none' }}>
+              <Link href="/inbox?tab=approvals" style={{ textDecoration: 'none' }}>
                 <Btn kind="ghost" size="sm" iconRight={<Icon.arrow size={13} />}>
                   Open inbox
                 </Btn>
@@ -318,7 +318,7 @@ function AdminDashboard() {
                   }}
                 >
                   <Link
-                    href="/inbox"
+                    href="/inbox?tab=approvals"
                     style={{
                       fontSize: 12,
                       fontWeight: 800,
@@ -800,7 +800,7 @@ function ManagerDashboard() {
                 Team calendar
               </Btn>
             </Link>
-            <Link href="/inbox" style={{ textDecoration: 'none' }}>
+            <Link href="/inbox?tab=approvals" style={{ textDecoration: 'none' }}>
               <Btn kind="primary" size="sm" icon={<Icon.inbox size={13} />}>
                 Open approvals
               </Btn>
@@ -925,7 +925,7 @@ function ManagerDashboard() {
             )}
             {pending.length > 5 && (
               <Link
-                href="/inbox"
+                href="/inbox?tab=approvals"
                 style={{
                   display: 'block',
                   marginTop: 12,

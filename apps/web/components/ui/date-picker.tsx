@@ -44,6 +44,45 @@ function RoundNav({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => void 
   )
 }
 
+/**
+ * Month + year chooser (same design language): round year nav, 3×4 month
+ * grid, the selected month as the glowing blue pill. Used inside
+ * CalendarPanel (click the month label) and by MonthNav toolbars.
+ */
+export function MonthYearPanel({ cursor, onPick }: { cursor: Date; onPick: (d: Date) => void }) {
+  const [year, setYear] = useState(cursor.getFullYear())
+  return (
+    <div style={{ width: 316, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <RoundNav dir="prev" onClick={() => setYear((y) => y - 1)} />
+        <span style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800 }}>{year}</span>
+        <RoundNav dir="next" onClick={() => setYear((y) => y + 1)} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+        {MONTHS.map((m, i) => {
+          const isSel = year === cursor.getFullYear() && i === cursor.getMonth()
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => onPick(new Date(year, i, 1))}
+              style={{
+                height: 40, border: 'none', cursor: 'pointer', borderRadius: 999,
+                background: isSel ? 'var(--blue)' : 'transparent',
+                color: isSel ? '#fff' : 'var(--text)',
+                fontSize: 12.5, fontWeight: isSel ? 800 : 600,
+                boxShadow: isSel ? '0 0 14px rgba(62,123,250,.35)' : 'none',
+              }}
+            >
+              {m.slice(0, 3)}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function CalendarPanel({
   mode, selStart, selEnd, min, max, onPick, initialCursor,
 }: {
@@ -56,6 +95,16 @@ function CalendarPanel({
   initialCursor: Date
 }) {
   const [cursor, setCursor] = useState(initialCursor)
+  const [view, setView] = useState<'days' | 'months'>('days')
+
+  if (view === 'months') {
+    return (
+      <MonthYearPanel
+        cursor={cursor}
+        onPick={(d) => { setCursor(d); setView('days') }}
+      />
+    )
+  }
 
   const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
   const gridStart = new Date(monthStart)
@@ -72,7 +121,17 @@ function CalendarPanel({
     <div style={{ width: 316, padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
         <RoundNav dir="prev" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} />
-        <span style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800 }}>{monthLabel(cursor)}</span>
+        <button
+          type="button"
+          onClick={() => setView('months')}
+          title="Choose month and year"
+          style={{
+            flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800, cursor: 'pointer',
+            background: 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit',
+          }}
+        >
+          {monthLabel(cursor)}
+        </button>
         <RoundNav dir="next" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>

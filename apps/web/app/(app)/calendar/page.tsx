@@ -13,32 +13,13 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { Btn, Icon, SectionHead } from '@/components/proto'
 import { useICalUrl } from '@/lib/api/queries/use-calendar'
-import { MonthCalendar, monthTitle } from '@/components/attendance/MonthCalendar'
+import { MonthCalendar } from '@/components/attendance/MonthCalendar'
+import { MonthNav } from '@/components/ui/month-nav'
 
 // ─────────────────────────────────────────────────────────
 // The ONE calendar (modernized design): attendance status dots + holidays +
 // my/team leave in a single month grid with the day-detail popover.
 // ─────────────────────────────────────────────────────────
-
-function RoundNav({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => void }) {
-  const Ic = dir === 'prev' ? Icon.arrowL : Icon.arrow
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={dir === 'prev' ? 'Previous month' : 'Next month'}
-      style={{
-        width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
-        background: dir === 'next' ? '#fff' : 'transparent',
-        border: dir === 'next' ? 'none' : '1px solid var(--bord-2)',
-        color: dir === 'next' ? '#01010D' : 'var(--text)',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-    >
-      <Ic size={13} />
-    </button>
-  )
-}
 
 export default function CalendarPage() {
   const [cursor, setCursor] = useState(new Date())
@@ -57,11 +38,9 @@ export default function CalendarPage() {
           }
         />
 
-        {/* Month toolbar (design: title + round prev/next) */}
+        {/* Month toolbar — title opens the month/year chooser */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>{monthTitle(cursor)}</span>
-          <RoundNav dir="prev" onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))} />
-          <RoundNav dir="next" onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))} />
+          <MonthNav cursor={cursor} onChange={setCursor} />
           <span style={{ flex: 1 }} />
           <Btn kind="secondary" size="sm" onClick={() => setCursor(new Date())}>Today</Btn>
         </div>
