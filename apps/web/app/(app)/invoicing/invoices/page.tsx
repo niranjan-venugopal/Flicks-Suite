@@ -99,6 +99,17 @@ const TABS = [
 const dateFmt = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
+
+// Aging escalation (catalog): the due-date cell escalates with days past due.
+function dueTone(inv: { status: string; due_date: string }): { color: string; label?: string } {
+  if (['PAID', 'VOID', 'DRAFT'].includes(inv.status)) return { color: INVO.muted60 }
+  const days = Math.floor((Date.now() - new Date(`${inv.due_date}T00:00:00`).getTime()) / 86_400_000)
+  if (days < 0) return { color: INVO.muted60 }
+  if (days === 0) return { color: 'var(--blue)', label: 'due today' }
+  if (days <= 7) return { color: 'var(--yellow)', label: `overdue · ${days}d` }
+  return { color: 'var(--coral)', label: `overdue · ${days}d` }
+}
+
 export default function InvoicesPage() {
   const router = useRouter()
   const { toast } = useToast()
@@ -266,7 +277,12 @@ export default function InvoicesPage() {
             <td style={{ ...invoTd, color: INVO.muted60 }}>{inv.invoice_number}</td>
             <td style={invoTd}>{inv.customer_name ?? '—'}</td>
             <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(inv.invoice_date)}</td>
-            <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(inv.due_date)}</td>
+            <td style={{ ...invoTd, color: dueTone(inv).color }}>
+              {dateFmt(inv.due_date)}
+              {dueTone(inv).label && (
+                <span style={{ display: 'block', fontSize: 9.5, fontWeight: 800 }}>{dueTone(inv).label}</span>
+              )}
+            </td>
             <td style={invoTd}>{fmt(inv.total_amount, inv.currency)}</td>
             <td style={invoTd}>
               <StatusChip status={inv.status} />

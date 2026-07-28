@@ -600,3 +600,53 @@ export function InvoBreadcrumb({ items }: { items: { label: string; onClick?: ()
     </div>
   )
 }
+
+/**
+ * Lifecycle stepper (states catalog) — Draft → Sent → Viewed → Partially
+ * paid → Paid with the current stage highlighted; Overdue and Void branch
+ * off Sent/Viewed and render as a coral/gray chip beside the trail.
+ */
+export function InvoiceStepper({ status }: { status: string }) {
+  const TRAIL = ['DRAFT', 'SENT', 'VIEWED', 'PARTIALLY_PAID', 'PAID'] as const
+  const LABEL: Record<string, string> = {
+    DRAFT: 'Draft', SENT: 'Sent', VIEWED: 'Viewed', PARTIALLY_PAID: 'Partially paid', PAID: 'Paid',
+  }
+  const branch = ['OVERDUE', 'CANCELLED', 'VOIDED', 'WRITE_OFF'].includes(status) ? status : null
+  // An overdue invoice has at least been sent — anchor the trail there.
+  const anchor = branch ? 'SENT' : status
+  const idx = TRAIL.indexOf(anchor as (typeof TRAIL)[number])
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {TRAIL.map((st, i) => {
+        const on = idx >= i || status === 'PAID'
+        const here = !branch && st === status
+        return (
+          <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {i > 0 && <span style={{ width: 14, height: 1.5, background: on ? 'var(--blue)' : 'rgba(255,255,255,.14)' }} />}
+            <span
+              className={here ? 'pm-pop' : undefined}
+              style={{
+                padding: '3px 10px', borderRadius: 99, fontSize: 10, fontWeight: 800,
+                background: here ? 'rgba(62,123,250,.14)' : 'transparent',
+                border: `1px solid ${on ? 'rgba(62,123,250,.45)' : 'rgba(255,255,255,.08)'}`,
+                color: on ? '#fff' : 'rgba(255,255,255,.32)',
+              }}
+            >
+              {LABEL[st]}
+            </span>
+          </span>
+        )
+      })}
+      {branch && (
+        <span className="pm-pop" style={{
+          marginLeft: 6, padding: '3px 10px', borderRadius: 99, fontSize: 10, fontWeight: 800,
+          background: branch === 'OVERDUE' ? 'rgba(248,120,107,.12)' : 'rgba(255,255,255,.06)',
+          border: branch === 'OVERDUE' ? '1px solid rgba(248,120,107,.4)' : '1px solid rgba(255,255,255,.14)',
+          color: branch === 'OVERDUE' ? 'var(--coral)' : 'rgba(255,255,255,.5)',
+        }}>
+          {branch === 'OVERDUE' ? 'Overdue' : branch === 'WRITE_OFF' ? 'Write-off' : branch[0] + branch.slice(1).toLowerCase()}
+        </span>
+      )}
+    </div>
+  )
+}

@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite'
 import { Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import { usePm } from '@/lib/pm/PmProvider'
+import { FirstRunChecklist } from '@/components/pm/FirstRunChecklist'
 import { useHotkeys } from '@/lib/pm/hotkeys'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 
@@ -75,6 +76,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
         sub="Assigned to you, created by you, and everything you subscribe to — from the local graph, instantly."
         right={<Pill tone="blue" dot>sync</Pill>}
       />
+      <FirstRunChecklist />
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 9, width: 'fit-content', marginBottom: 14 }}>
         {TABS.map((t) => (
           <button key={t} onClick={() => { setTab(t); setFocusIdx(-1) }}

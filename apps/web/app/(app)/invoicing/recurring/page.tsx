@@ -282,6 +282,18 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
 }
 
 /** Recurring — prototype ScrRecurring (profiles + MRR + lifecycle actions). */
+
+// Catalog: next-run countdown bar — fraction of the current billing period
+// elapsed, in the status colour. Paused/canceled rows draw no bar.
+const PERIOD_DAYS: Record<string, number> = { monthly: 30, quarterly: 91, annually: 365 }
+function nextRunBar(s: { status: string; billing_period: string; next_billing_date: string | null }): { pct: number; days: number } | null {
+  if (!s.next_billing_date || !['active', 'trial'].includes(s.status)) return null
+  const period = PERIOD_DAYS[s.billing_period] ?? 30
+  const days = Math.ceil((new Date(`${s.next_billing_date}T00:00:00`).getTime() - Date.now()) / 86_400_000)
+  if (days < 0) return null
+  return { pct: Math.max(4, Math.min(100, Math.round(((period - days) / period) * 100))), days }
+}
+
 export default function RecurringPage() {
   const { toast } = useToast()
   const { data, isLoading } = useSubscriptions()
@@ -354,7 +366,23 @@ export default function RecurringPage() {
             </td>
             <td style={invoTd}>{s.customer_name ?? '—'}</td>
             <td style={{ ...invoTd, textTransform: 'capitalize' }}>{s.billing_period}</td>
-            <td style={{ ...invoTd, color: INVO.muted60 }}>{s.next_billing_date ?? '—'}</td>
+            <td style={{ ...invoTd, color: INVO.muted60 }}>
+              {s.next_billing_date ?? '—'}
+              {(() => {
+                const bar = nextRunBar(s)
+                if (!bar) return null
+                return (
+                  <span style={{ display: 'block', marginTop: 5 }}>
+                    <span style={{ display: 'block', width: 76, height: 4, borderRadius: 99, background: 'var(--surf-2)', overflow: 'hidden' }}>
+                      <span style={{ display: 'block', width: `${bar.pct}%`, height: '100%', background: 'var(--green)' }} />
+                    </span>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)' }}>
+                      next invoice in {bar.days}d
+                    </span>
+                  </span>
+                )
+              })()}
+            </td>
             <td style={{ ...invoTd, textAlign: 'right', fontWeight: 800 }}>{inr(cycleAmount(s), s.currency)}</td>
             <td style={invoTd}>
               <Pill tone={STATUS_TONE[s.status] ?? ''} dot>{s.status.replace(/_/g, ' ').toLowerCase()}</Pill>

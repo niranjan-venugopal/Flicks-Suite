@@ -111,6 +111,36 @@ export function PaymentModal({
             <label style={LABEL}>Date</label>
             <DateField value={date} onChange={setDate} style={FIELD} />
           </div>
+          {/* Catalog: the capture-mode tiles come first — Razorpay is
+              auto-captured (manual entry disabled, arrives with auto-debit),
+              manual methods require the audit-logged reference below. */}
+          <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9 }}>
+            <div
+              style={{
+                padding: '10px 12px', borderRadius: 10, textAlign: 'left',
+                background: 'var(--surf-1)', border: '1px solid var(--bord)', opacity: 0.55,
+              }}
+              title="Razorpay auto-capture arrives with auto-debit — status updates itself; manual entry is disabled for captured payments"
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 2 }}>
+                Razorpay <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--yellow)', marginLeft: 4 }}>COMING SOON</span>
+              </div>
+              <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.45 }}>
+                auto-captured — status updates itself; manual entry disabled
+              </div>
+            </div>
+            <div
+              style={{
+                padding: '10px 12px', borderRadius: 10, textAlign: 'left',
+                background: 'rgba(62,123,250,.08)', border: '1px solid rgba(62,123,250,.45)',
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 2 }}>Manual entry</div>
+              <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.45 }}>
+                bank transfer / UPI / cheque — reference no., audit-logged
+              </div>
+            </div>
+          </div>
           <div>
             <label style={LABEL}>Method</label>
             <select style={FIELD} value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -123,7 +153,7 @@ export function PaymentModal({
           </div>
           <div>
             <label style={LABEL}>Reference (UTR/cheque #)</label>
-            <input style={FIELD} value={reference} onChange={(e) => setReference(e.target.value)} />
+            <input style={{ ...FIELD, fontFamily: 'var(--font-mono)' }} value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / reference number" />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={LABEL}>Notes</label>

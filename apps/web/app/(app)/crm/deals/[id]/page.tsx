@@ -10,6 +10,7 @@ import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
+import { PendingDot } from '@/components/pm/glyphs'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
 import { EmailsTab } from '@/components/crm/EmailsTab'
 import { FEATURES } from '@/lib/feature-flags'
@@ -33,6 +34,7 @@ import {
   useContacts,
   useCustomFields,
   useDealActivities,
+  useCreateActivity,
   useSequences,
   useEnrollInSequence,
   type DealDetail,
@@ -303,9 +305,10 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
           baseValue: parseFloat(d.value_base_amount),
           productCount: d.products.length, customerLinked: !!d.invoice_id || !!d.quote_id,
         }}
-        busy={createInvoice.isPending || createQuote.isPending}
+        busy={createInvoice.isPending || createQuote.isPending || createProject.isPending}
         onCreateInvoice={() => { setWonOpen(false); void onCreateInvoice() }}
         onCreateQuote={() => { setWonOpen(false); void onCreateQuote() }}
+        onCreateProject={() => { setWonOpen(false); void onCreateProject() }}
       />
       {lostStage && (
         <LostDialog
@@ -440,6 +443,22 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
     queryFn: () => api.get<{ data: { project: { id: string; name: string; status: string; health: string; completed_at?: string | null; created_at: string }; latest_update: { health: string; created_at: string } | null } | null }>(`/api/v1/pm/projects/by-deal/${deal.id}`),
     retry: false,
   })
+  // Catalog: notes append OPTIMISTICALLY with a pending dot (<50ms), then the
+  // authoritative row replaces the local echo on refetch.
+  const createActivity = useCreateActivity()
+  const [note, setNote] = useState('')
+  const [pendingNotes, setPendingNotes] = useState<Array<{ key: number; text: string }>>([])
+  const logNote = () => {
+    const text = note.trim()
+    if (!text) return
+    const key = Date.now()
+    setPendingNotes((x) => [{ key, text }, ...x])
+    setNote('')
+    createActivity.mutate(
+      { deal_id: deal.id, type: 'note', subject: text, completed: true },
+      { onSettled: () => setPendingNotes((x) => x.filter((n) => n.key !== key)) },
+    )
+  }
   const pmLink = pmLinkQ.data?.data ?? null
   const stageName = (sid: string | null) => stages.find((s) => s.id === sid)?.name ?? '—'
   const open = activities.filter((a) => !a.completed_at)
@@ -500,6 +519,32 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
           <span className="t-caption" style={{ flex: 1 }}>History</span>
           <Btn kind="ghost" size="sm" icon={<Icon.plus size={12} />} onClick={onLog}>Schedule activity</Btn>
         </div>
+        {/* Inline note composer (catalog: optimistic append with pending dot) */}
+        <div style={{ display: 'flex', gap: 8, padding: '6px 20px 10px' }}>
+          <input
+            className="input"
+            placeholder="Log a note… (⏎)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') logNote() }}
+            style={{ height: 34, flex: 1, fontSize: 12 }}
+          />
+          <Btn kind="secondary" size="sm" onClick={logNote} disabled={!note.trim()}>Log</Btn>
+        </div>
+        {pendingNotes.map((n) => (
+          <div key={n.key} className="pm-fade" style={{ display: 'flex', gap: 13, padding: '13px 20px', borderBottom: '1px solid var(--bord)' }}>
+            <div style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--surf-2)', color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Icon.edit size={14} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 7 }}>
+                {n.text}
+                <PendingDot />
+              </div>
+              <div className="t-mute" style={{ fontSize: 11 }}>just now</div>
+            </div>
+          </div>
+        ))}
         {entries.length === 0 && <div className="t-mute" style={{ padding: 20, fontSize: 12.5 }}>No timeline entries yet.</div>}
         {entries.map((t, i) => {
           const Ic = Icon[t.icon]

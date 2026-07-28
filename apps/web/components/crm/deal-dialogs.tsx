@@ -10,12 +10,14 @@ import { fmtCur } from './kit'
 // Lost: reason REQUIRED + optional note (win/loss honesty)
 // ─────────────────────────────────────────────────────────
 
-export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote, busy }: {
+export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote, onCreateProject, busy }: {
   open: boolean
   onClose: () => void
   deal: { title: string; companyName?: string | null; value: number; currency: string; base: string; baseValue: number; productCount: number; customerLinked: boolean }
   onCreateInvoice: () => void
   onCreateQuote: () => void
+  /** CRM→PM bridge (catalog: "Won offers Create project"). */
+  onCreateProject?: () => void
   busy?: boolean
 }) {
   if (!open) return null
@@ -24,6 +26,9 @@ export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote,
     <Modal open={open} onClose={onClose} width={480} title="Deal won 🏆" sub={sub}
       footer={<>
         <Btn kind="ghost" onClick={onClose}>Later</Btn>
+        {onCreateProject && (
+          <Btn kind="secondary" icon={<Icon.target size={14} />} onClick={onCreateProject} disabled={busy}>Create project</Btn>
+        )}
         <Btn kind="secondary" icon={<Icon.doc size={14} />} onClick={onCreateQuote} disabled={busy}>Create quote</Btn>
         <Btn kind="primary" icon={<Icon.receipt size={14} />} onClick={onCreateInvoice} disabled={busy}>{busy ? 'Creating…' : 'Create invoice'}</Btn>
       </>}>

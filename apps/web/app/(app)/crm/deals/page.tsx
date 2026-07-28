@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
+import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
 import { TagChip, OwnerAv, EmptyState, SavedViewTabs, FilterBar, BulkBar, KeymapOverlay, fmtCur, type FilterChip } from '@/components/crm/kit'
@@ -66,6 +68,10 @@ export default function DealsBoardPage() {
   const update = useUpdateDeal()
   const del = useDeleteDeal()
   const createInvoice = useCreateInvoiceFromDeal()
+  const createProjectFromDeal = useMutation({
+    mutationFn: (dealId: string) =>
+      api.post<{ data: { id: string } }>('/api/v1/pm/projects/from-deal', { deal_id: dealId }),
+  })
 
   // Board interaction state
   const [drag, setDrag] = useState<string | null>(null)
@@ -334,9 +340,16 @@ export default function DealsBoardPage() {
             productCount: 0,
             customerLinked: false,
           }}
-          busy={createInvoice.isPending}
+          busy={createInvoice.isPending || createProjectFromDeal.isPending}
           onCreateInvoice={() => void onWonCreateInvoice()}
           onCreateQuote={() => { setWonDeal(null); router.push(`/crm/deals/${wonDeal.id}`) }}
+          onCreateProject={() => {
+            const dealId = wonDeal.id
+            createProjectFromDeal.mutate(dealId, {
+              onSuccess: (r) => { setWonDeal(null); toast({ title: 'Project created from deal' }); router.push(`/pm/projects/${r.data.id}`) },
+              onError: (e) => toast({ title: 'Could not create project', description: e instanceof Error ? e.message : undefined, variant: 'destructive' }),
+            })
+          }}
         />
       )}
 

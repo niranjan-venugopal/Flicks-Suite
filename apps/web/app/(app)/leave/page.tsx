@@ -11,6 +11,7 @@ import {
 } from '@/components/proto'
 import {
   useApplyLeave,
+  useCancelLeave,
   useHolidays,
   useLeaveTypes,
   useMyLeaveBalances,
@@ -51,10 +52,12 @@ function accentFor(code: string): { color: string; icon: IconKey } {
 }
 
 function statusPill(s: LeaveRequest['status']) {
+  // key + pm-pop: when the status flips (poll/refetch) the chip morphs in
+  // place with the 140ms pop instead of swapping silently (catalog).
   switch (s) {
-    case 'approved':  return <Pill tone="green" dot>Approved</Pill>
+    case 'approved':  return <span key="approved" className="pm-pop" style={{ display: 'inline-flex' }}><Pill tone="green" dot>Approved</Pill></span>
     case 'pending':   return <Pill tone="yellow" dot>Pending</Pill>
-    case 'rejected':  return <Pill tone="coral" dot>Rejected</Pill>
+    case 'rejected':  return <span key="rejected" className="pm-pop" style={{ display: 'inline-flex' }}><Pill tone="coral" dot>Rejected</Pill></span>
     case 'cancelled': return <Pill>Cancelled</Pill>
     case 'revoked':   return <Pill tone="coral">Revoked</Pill>
     case 'draft':     return <Pill>Draft</Pill>
@@ -94,6 +97,16 @@ export default function LeavePage() {
   const balancesQ = useMyLeaveBalances()
   const myReqs = useMyLeaveRequests()
   const holidays = useHolidays()
+  const cancel = useCancelLeave()
+  const { toast } = useToast()
+  const withdraw = async (id: string) => {
+    try {
+      await cancel.mutateAsync({ id })
+      toast({ title: 'Request withdrawn' })
+    } catch (e) {
+      toast({ title: 'Could not withdraw', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
+    }
+  }
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -141,7 +154,7 @@ export default function LeavePage() {
                 No leave requests yet. Use Apply for leave to submit one.
               </div>
             ) : (
-              <HistoryTable rows={myReqs.data.data} />
+              <HistoryTable rows={myReqs.data.data} onWithdraw={withdraw} />
             )}
           </div>
 
@@ -203,7 +216,7 @@ function BalanceCard({ balance: b }: { balance: LeaveBalance }) {
 
 // ─── History table ─────────────────────────────────────────────────────────
 
-function HistoryTable({ rows }: { rows: LeaveRequest[] }) {
+function HistoryTable({ rows, onWithdraw }: { rows: LeaveRequest[]; onWithdraw: (id: string) => void }) {
   return (
     <table className="tbl" style={{ width: '100%' }}>
       <thead>
@@ -213,17 +226,30 @@ function HistoryTable({ rows }: { rows: LeaveRequest[] }) {
           <th>Days</th>
           <th>Status</th>
           <th>Reason</th>
+          <th />
         </tr>
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.id}>
+          <tr key={r.id} className="pm-row">
             <td>{typePill(extractCode(r.leaveTypeName))}</td>
             <td>{fmtRange(r.startDate, r.endDate)}</td>
             <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 800 }}>{r.totalDays}</td>
             <td>{statusPill(r.status)}</td>
             <td style={{ color: 'var(--text-2)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.reason ?? '—'}
+            </td>
+            <td style={{ textAlign: 'right' }}>
+              {r.status === 'pending' && (
+                <button
+                  type="button"
+                  className="pm-row-acts"
+                  onClick={() => onWithdraw(r.id)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}
+                >
+                  Withdraw
+                </button>
+              )}
             </td>
           </tr>
         ))}

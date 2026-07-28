@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import {
   Avatar,
@@ -46,6 +46,7 @@ export default function TeamLeavePage() {
   const { data, isLoading } = usePendingLeaveRequests()
   const review = useReviewLeave()
   const { toast } = useToast()
+  const [exiting, setExiting] = useState<string | null>(null)
 
   const requests = Array.isArray(data) ? data : []
 
@@ -60,12 +61,20 @@ export default function TeamLeavePage() {
     id: string,
     action: 'approve' | 'reject',
   ) => {
+    const who = requests.find((r) => r.id === id)?.employeeName
+    // Catalog: the row exits right (160ms) before the list refetch settles.
+    setExiting(id)
+    await new Promise((r) => setTimeout(r, 170))
     try {
       await review.mutateAsync({ id, action })
+      setExiting(null)
       toast({
-        title: action === 'approve' ? 'Leave approved' : 'Leave rejected',
+        title: action === 'approve'
+          ? `Approved${who ? ` — ${who} notified` : ''}`
+          : `Rejected${who ? ` — ${who} notified` : ''}`,
       })
     } catch (e: any) {
+      setExiting(null)
       toast({
         title: 'Could not record review',
         description: e?.message,
@@ -177,6 +186,7 @@ export default function TeamLeavePage() {
                 {requests.map((r, i, arr) => (
                   <tr
                     key={r.id}
+                    className={exiting === r.id ? 'pm-exit-right pm-row' : 'pm-row'}
                     style={{
                       borderBottom:
                         i < arr.length - 1 ? '1px solid var(--bord)' : 'none',
@@ -244,7 +254,7 @@ export default function TeamLeavePage() {
                       {r.reason ?? '—'}
                     </td>
                     <td style={{ padding: '12px 14px', textAlign: 'right' }}>
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-2 pm-row-acts">
                         <Btn
                           kind="ghost"
                           size="sm"

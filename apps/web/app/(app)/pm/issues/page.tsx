@@ -314,11 +314,11 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
                 <Icon.check size={20} />
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-2)', maxWidth: 380, lineHeight: 1.5, textAlign: 'center' }}>
-                {allIssues.length === 0 ? 'Write issues, not user stories — describe the task and press Enter.' : 'Nothing matches these filters.'}
+                {allIssues.length === 0 ? 'Write issues, not user stories — describe the task, assign one owner, move on.' : 'Nothing matches these filters.'}
               </div>
               {allIssues.length === 0 && (
                 <Btn kind="primary" size="sm" onClick={() => setComposerOpen(true)}>
-                  Create the first issue <Kbd style={{ marginLeft: 7, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>C</Kbd>
+                  Create your first issue <Kbd style={{ marginLeft: 7, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>C</Kbd>
                 </Btn>
               )}
             </div>

@@ -51,11 +51,19 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
   const users = [...store.users.values()]
   const teamLabels = [...store.labels.values()].filter((l) => !l.team_id || l.team_id === teamId)
 
-  const act = (fn: (id: string) => void) => {
-    if (!focus) return
-    fn(focus.id)
-    setMenu(null)
-    setIdx((i) => Math.min(i, Math.max(0, rows.length - 2)))
+  const [exiting, setExiting] = useState<'accept' | 'decline' | null>(null)
+  // Catalog: the card exits right (accept) or left (decline) over 160–180ms,
+  // THEN the mutation fires and the next card rises into place.
+  const act = (fn: (id: string) => void, dir: 'accept' | 'decline' = 'accept') => {
+    if (!focus || exiting) return
+    const id = focus.id
+    setExiting(dir)
+    window.setTimeout(() => {
+      fn(id)
+      setExiting(null)
+      setMenu(null)
+      setIdx((i) => Math.min(i, Math.max(0, rows.length - 2)))
+    }, 180)
   }
 
   useHotkeys({
@@ -150,7 +158,11 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
 
           {/* Focus card + toolbar */}
           <div>
-            <div className="card" style={{ padding: '16px 18px', marginBottom: 10 }}>
+            <div
+              key={focus.id}
+              className={exiting === 'accept' ? 'card pm-exit-right' : exiting === 'decline' ? 'card pm-exit-left' : 'card pm-fade'}
+              style={{ padding: '16px 18px', marginBottom: 10 }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{team.key}-{focus.number}</span>
                 <Pill tone="purple">source · {focus.source === 'manual' ? creatorName : focus.source}</Pill>
@@ -244,7 +256,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                       onChange={(e) => setDeclineReason(e.target.value)}
                       onKeyDown={(e) => {
                         e.stopPropagation()
-                        if (e.key === 'Enter') { act((id) => engine.triageDecline(id, declineReason.trim() || undefined)); setDeclineReason('') }
+                        if (e.key === 'Enter') { act((id) => engine.triageDecline(id, declineReason.trim() || undefined), 'decline'); setDeclineReason('') }
                         if (e.key === 'Escape') setMenu(null)
                       }}
                       style={{ height: 28, fontSize: 11, width: '100%' }} />

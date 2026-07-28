@@ -154,9 +154,19 @@ export function MonthCalendar({ cursor }: { cursor: Date }) {
             const dot = day ? dotForDay(day, todayIso) : null
             const dayEvents = eventsByDate.get(iso) ?? []
             const isToday = iso === todayIso
+            // Catalog: hover = tooltip with the punches; click = day popover.
+            const tip = day
+              ? [
+                  day.attendanceStatus ? day.attendanceStatus.replace(/_/g, ' ') : day.isHoliday ? 'holiday' : day.isWeekend ? 'weekend' : undefined,
+                  day.firstPunchInAt ? `in ${fmtClock(day.firstPunchInAt)}` : undefined,
+                  day.lastPunchOutAt ? `out ${fmtClock(day.lastPunchOutAt)}` : undefined,
+                  day.regularization ? `regularization ${day.regularization.status}` : undefined,
+                ].filter(Boolean).join(' · ') || undefined
+              : undefined
             const cell = (
               <div
                 key={iso}
+                title={tip}
                 onClick={() => { if (dot || dayEvents.length) setOpenDate(openDate === iso ? null : iso) }}
                 style={{
                   borderRight: (i % 7) < 6 ? '1px solid var(--bord)' : 'none',

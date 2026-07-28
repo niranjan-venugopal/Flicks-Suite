@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { InvoiceRenderer } from '@/components/invoicing/InvoiceRenderer'
-import { INVO, InvoBtn, InvoIcons } from '@/components/invoicing/invo'
+import { INVO, InvoBtn, InvoIcons, InvoiceStepper } from '@/components/invoicing/invo'
 import { Toggle } from '@/components/proto/Toggle'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
@@ -216,6 +216,14 @@ export default function InvoicePreviewPage() {
           )}
         </div>
       </div>
+
+
+      {/* Lifecycle stepper — the chip morphs in place as the status advances */}
+      {inv && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 24px 0' }}>
+          <InvoiceStepper status={inv.status} />
+        </div>
+      )}
 
       {/* Document area re-themes with the toggle (toolbar above stays dark chrome). */}
       <div style={{ padding: '40px 24px', background: theme === 'light' ? '#f4f5f7' : '#01010D', minHeight: '70vh' }}>

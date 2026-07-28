@@ -248,24 +248,46 @@ export function ClockCard() {
         </div>
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <Btn
-            kind={dayComplete ? 'secondary' : isClockedIn ? 'danger' : 'primary'}
-            icon={<Icon.fingerprint size={16} />}
-            onClick={handlePunch}
-            disabled={
-              dayComplete ||
-              punchIn.isPending ||
-              punchOut.isPending ||
-              today.isLoading
-            }
-            style={{ flex: 1, justifyContent: 'center', height: 52, fontSize: 15 }}
-          >
-            {dayComplete
-              ? 'Day complete · see you tomorrow'
-              : isClockedIn
-                ? 'Clock out'
-                : 'Clock in'}
-          </Btn>
+          {/* Check-in/out MORPH (catalog): one button that IS the state —
+              clocked-in renders the green pill with a pulsing dot and the
+              live worked time, popping in place (140ms). Never two buttons. */}
+          {isClockedIn && !dayComplete ? (
+            <button
+              type="button"
+              onClick={handlePunch}
+              disabled={punchOut.isPending}
+              className="pm-pop"
+              key="out"
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                height: 52, borderRadius: 10, cursor: 'pointer',
+                background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.45)',
+                opacity: punchOut.isPending ? 0.6 : 1,
+              }}
+            >
+              <span className="pm-pending" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)' }} />
+              <span style={{ fontSize: 15, fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>
+                {fmtHM(workedMin)}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--green)' }}>Clock out</span>
+            </button>
+          ) : (
+            <Btn
+              kind={dayComplete ? 'secondary' : 'primary'}
+              icon={<Icon.fingerprint size={16} />}
+              onClick={handlePunch}
+              disabled={
+                dayComplete ||
+                punchIn.isPending ||
+                punchOut.isPending ||
+                today.isLoading
+              }
+              className="pm-pop"
+              style={{ flex: 1, justifyContent: 'center', height: 52, fontSize: 15 }}
+            >
+              {dayComplete ? 'Day complete · see you tomorrow' : 'Clock in'}
+            </Btn>
+          )}
           <Btn
             kind="secondary"
             icon={<Icon.coffee size={14} />}
