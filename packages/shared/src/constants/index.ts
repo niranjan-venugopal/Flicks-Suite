@@ -386,7 +386,8 @@ export const DOMAIN_EVENTS = [
   'member.deactivated',
   // PM (PRD v6 Appendix A) — every event advances domain_events.sync_seq and
   // therefore the FSE delta cursor; payloads are ids/enums/numbers only.
-  'pm.team.created', 'pm.team.updated', 'pm.team.membership_changed', 'pm.team.privacy_changed',
+  'pm.team.created', 'pm.team.updated',
+  'pm.team.deleted', 'pm.team.membership_changed', 'pm.team.privacy_changed',
   'pm.state.created', 'pm.state.updated',
   'pm.label.created', 'pm.label.updated',
   'pm.issue.created', 'pm.issue.updated', 'pm.issue.state_changed', 'pm.issue.priority_changed',

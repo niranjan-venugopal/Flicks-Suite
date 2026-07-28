@@ -175,10 +175,16 @@ export class PmTeamsService {
               .orderBy(asc(pmWorkflowStates.position))
           : [];
         const labels = await tx.select().from(pmLabels).where(eq(pmLabels.tenant_id, tenantId));
+        const membershipsAll = await tx
+          .select()
+          .from(pmTeamMemberships)
+          .where(eq(pmTeamMemberships.tenant_id, tenantId));
         return {
           data: {
             teams,
             memberships: mine,
+            // P15 — member rows/avatars per visible team.
+            memberships_all: membershipsAll.filter((m) => teamIds.includes(m.team_id)),
             states: states.filter((s) => teamIds.includes(s.team_id)),
             labels,
           },
@@ -286,6 +292,8 @@ export class PmTeamsService {
       gh_auto_pr_close?: boolean;
       gh_magic_words?: boolean;
       gh_bot_comment?: boolean;
+      is_private?: boolean;
+      estimate_scale?: string;
     },
   ) {
     return this.db.withTenant(
@@ -314,6 +322,24 @@ export class PmTeamsService {
         if (patch.triage_enabled !== undefined) clean.triage_enabled = patch.triage_enabled;
         for (const k of ['gh_auto_branch', 'gh_auto_pr_open', 'gh_auto_pr_merge', 'gh_auto_pr_close', 'gh_magic_words', 'gh_bot_comment'] as const) {
           if (patch[k] !== undefined) clean[k] = patch[k];
+        }
+        if (patch.estimate_scale !== undefined) {
+          if (!['count', 'linear', 'fibonacci', 'exponential', 'tshirt'].includes(patch.estimate_scale)) {
+            throw new BadRequestException('estimate_scale invalid');
+          }
+          clean.estimate_scale = patch.estimate_scale;
+        }
+        if (patch.is_private !== undefined) {
+          clean.is_private = patch.is_private;
+          // §4.4 — visibility changes are always audit-logged.
+          await this.audit.log({
+            tenantId,
+            actorUserId: userId,
+            action: patch.is_private ? 'pm.team.make_private' : 'pm.team.make_public',
+            resourceType: 'pm_team',
+            resourceId: teamId,
+            metadata: {},
+          });
         }
         if (!Object.keys(clean).length) throw new BadRequestException('empty patch');
         const [team] = await tx
@@ -456,6 +482,140 @@ export class PmTeamsService {
           .innerJoin(memberships, eq(memberships.user_id, users.id))
           .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
         return rows;
+      },
+      userId,
+    );
+  }
+
+  // ─── Members (§4.4, P15) ──────────────────────────────────────────────────
+
+  async addMember(tenantId: string, userId: string, role: string, teamId: string, memberUserId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertSettingsAccess(tx, tenantId, userId, teamId, role);
+        const [m] = await tx
+          .select({ user_id: memberships.user_id })
+          .from(memberships)
+          .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, memberUserId), eq(memberships.status, 'active')))
+          .limit(1);
+        if (!m) throw new BadRequestException('Not an active workspace member');
+        const [team] = await tx
+          .select({ is_private: pmTeams.is_private })
+          .from(pmTeams)
+          .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId)))
+          .limit(1);
+        await tx
+          .insert(pmTeamMemberships)
+          .values({ tenant_id: tenantId, team_id: teamId, user_id: memberUserId })
+          .onConflictDoNothing();
+        // Owner/Admin self-add to a PRIVATE team is legal but always audited
+        // and visible (P15 confirm modal copy).
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: userId === memberUserId && team?.is_private ? 'pm.team.self_add' : 'pm.team.member_add',
+          resourceType: 'pm_team',
+          resourceId: teamId,
+          metadata: { member_user_id: memberUserId },
+        });
+        await this.domainEvents.publish(
+          {
+            name: 'pm.team.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { team_id: teamId, sync: [{ t: 'pm_teams', id: teamId }, { t: 'pm_team_memberships', id: teamId }] },
+          },
+          tx,
+        );
+        return { data: { added: true } };
+      },
+      userId,
+    );
+  }
+
+  async removeMember(tenantId: string, userId: string, role: string, teamId: string, memberUserId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertSettingsAccess(tx, tenantId, userId, teamId, role);
+        await tx
+          .delete(pmTeamMemberships)
+          .where(and(eq(pmTeamMemberships.team_id, teamId), eq(pmTeamMemberships.user_id, memberUserId)))
+          .returning();
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.team.member_remove',
+          resourceType: 'pm_team',
+          resourceId: teamId,
+          metadata: { member_user_id: memberUserId },
+        });
+        await this.domainEvents.publish(
+          {
+            name: 'pm.team.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { team_id: teamId, sync: [{ t: 'pm_teams', id: teamId }, { t: 'pm_team_memberships', id: teamId }] },
+          },
+          tx,
+        );
+        return { data: { removed: true } };
+      },
+      userId,
+    );
+  }
+
+  /** Public teams are open to join (P15 teams index "Join"). */
+  async joinTeam(tenantId: string, userId: string, teamId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [team] = await tx
+          .select({ is_private: pmTeams.is_private })
+          .from(pmTeams)
+          .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId), isNull(pmTeams.deleted_at)))
+          .limit(1);
+        if (!team) throw new BadRequestException('team not found');
+        if (team.is_private) throw new BadRequestException('Private team — invite only');
+        await tx
+          .insert(pmTeamMemberships)
+          .values({ tenant_id: tenantId, team_id: teamId, user_id: userId })
+          .onConflictDoNothing();
+        await this.domainEvents.publish(
+          { name: 'pm.team.updated', tenantId, actorUserId: userId, payload: { team_id: teamId, sync: [{ t: 'pm_teams', id: teamId }, { t: 'pm_team_memberships', id: teamId }] } },
+          tx,
+        );
+        return { data: { joined: true } };
+      },
+      userId,
+    );
+  }
+
+  /** Soft-delete (Danger zone) — Owner/Admin only, 30-day restorable rows. */
+  async deleteTeam(tenantId: string, userId: string, teamId: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [team] = await tx
+          .update(pmTeams)
+          .set({ deleted_at: new Date() })
+          .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId), isNull(pmTeams.deleted_at)))
+          .returning();
+        if (!team) throw new BadRequestException('team not found');
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.team.delete',
+          resourceType: 'pm_team',
+          resourceId: teamId,
+          metadata: { key: team.key },
+        });
+        await this.domainEvents.publish(
+          { name: 'pm.team.deleted', tenantId, actorUserId: userId, payload: { team_id: teamId, sync: [{ t: 'pm_teams', id: teamId }] } },
+          tx,
+        );
+        return { data: { deleted: true } };
       },
       userId,
     );

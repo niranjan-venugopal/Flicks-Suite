@@ -281,4 +281,58 @@ suites, deal→project, public API scopes — then the beta gate).**
 
 ---
 
-*(CP5/beta gate — after Sprint 41.)*
+## CHECKPOINT 5 — after Sprints 40–41 (THE BETA GATE)
+
+**What shipped:** Sprint 40 — Linear/Jira/CSV importers (P17 wizard,
+external-id dedupe, 24h undo), issue templates (C prefills the team
+default), deal→project with suite echoes, public API pm:read/pm:write,
+Recently deleted + purge job, P18 workspace settings (migration 0047).
+Sprint 41 — P15 Teams suite (index + tabbed settings: General/Members/
+Workflow states/Labels/Templates/Cycles/Estimates/Danger zone), the
+10k-issue perf seeder with CI budget assertions, and
+`docs/pm-beta-gate.md` — the sign-off checklist.
+
+### 1. Teams (P15)
+1. **Projects → Teams**: the index lists every team (key, member avatars,
+   cycles, estimate scale, visibility). **Join** a public team from the row.
+   **Create team** (Owner/Admin/Manager) — name auto-derives the key.
+2. Click a team → the tabbed settings screen. Walk the tabs:
+   - **Workflow states** (default tab): rename via the pencil, re-color via
+     the swatches, "+ Add state" inside a category — the glyph preview is
+     live and the issue lists pick the change up on the next delta.
+   - **Members**: add from the workspace directory, remove, ★ Lead marker.
+   - **Labels**: team-scoped labels (workspace labels live in Workspace).
+   - **Templates**: create one, set it default, give it a description +
+     priority → press `C` on the issues list: the new issue carries them.
+   - **Cycles**: the same config as the Cycle page header, per prototype.
+   - **Estimates**: switch the scale (radio list with previews).
+   - **General**: rename, timezone, color, and the **Private team** toggle —
+     the confirm modal spells out the audit rules; flipping it hides the
+     team from non-members on their next delta (tombstones).
+   - **Danger zone**: delete (Owner/Admin) — issues restorable 30 days.
+
+### 2. Import a REAL export (P17)
+Repeat the CP4 §import walk with your actual Linear or Jira CSV export.
+Spot-check 10 issues: states landed in sensible categories, priorities map,
+epics became projects, re-running the same file updates instead of
+duplicating.
+
+### 3. Perf + drills (§21/§22)
+1. `cd apps/api && pnpm jest pm-perf` → the 10k-issue reference workspace
+   asserts bootstrap < 2s, delta < 150ms P95, search < 200ms P95.
+2. Kill-switch drill: FAM → flag `pm_sync_engine` off → fresh session shows
+   the same lists on REST; on again → sync pill returns.
+3. Projects → Settings → Workspace → **Reset local data** → re-bootstrap
+   in seconds, nothing lost.
+
+### 4. Phone pass (P19)
+Open `/pm/issues`, an issue, and `/pm/inbox` at 390px width (device
+toolbar): rows stay readable, nothing overflows horizontally.
+
+### 5. Sign-off
+Work through `docs/pm-beta-gate.md` top to bottom. Confirming CP5 = the
+beta gate is open and the 2-week dogfood clock starts.
+
+---
+
+*(End of the PRD v6 program guide — CP1…CP5.)*

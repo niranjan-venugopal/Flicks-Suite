@@ -144,6 +144,8 @@ class UpdateTeamConfigDto {
   @IsOptional() @IsBoolean() cycle_auto_add_started?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(4) @Type(() => Number) upcoming_cycles?: number;
   @IsOptional() @IsBoolean() triage_enabled?: boolean;
+  @IsOptional() @IsBoolean() is_private?: boolean;
+  @IsOptional() @IsIn(['count', 'linear', 'fibonacci', 'exponential', 'tshirt']) estimate_scale?: string;
   // GitHub status automations (P16)
   @IsOptional() @IsBoolean() gh_auto_branch?: boolean;
   @IsOptional() @IsBoolean() gh_auto_pr_open?: boolean;
@@ -197,6 +199,9 @@ class SaveTemplateDto {
 }
 class FromDealDto {
   @IsUUID() deal_id!: string;
+}
+class TeamMemberDto {
+  @IsUUID() user_id!: string;
 }
 
 /**
@@ -349,6 +354,33 @@ export class PmController {
   @RequireGrant('pm', 'edit')
   moveTeam(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: { team_id: string }) {
     return this.issues.moveTeam(user.tenantId, user.sub, id, dto.team_id);
+  }
+
+  // ─── Team membership + lifecycle (§4.4, P15) ──────────────────────────────
+
+  @Post('teams/:teamId/members')
+  @RequireGrant('pm', 'edit')
+  addTeamMember(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string, @Body() dto: TeamMemberDto) {
+    return this.teams.addMember(user.tenantId, user.sub, user.role, teamId, dto.user_id);
+  }
+
+  @Post('teams/:teamId/members/:userId/remove')
+  @RequireGrant('pm', 'edit')
+  removeTeamMember(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string, @Param('userId') userId: string) {
+    return this.teams.removeMember(user.tenantId, user.sub, user.role, teamId, userId);
+  }
+
+  @Post('teams/:teamId/join')
+  @RequireGrant('pm', 'edit')
+  joinTeam(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string) {
+    return this.teams.joinTeam(user.tenantId, user.sub, teamId);
+  }
+
+  @Post('teams/:teamId/delete')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  deleteTeam(@CurrentUser() user: JwtPayload, @Param('teamId') teamId: string) {
+    return this.teams.deleteTeam(user.tenantId, user.sub, teamId);
   }
 
   // ─── Team settings: states + labels (§4.2/§4.3, lead-gated in service) ────
