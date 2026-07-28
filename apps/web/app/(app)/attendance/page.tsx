@@ -24,6 +24,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { ClockCard } from '@/components/attendance/ClockCard'
 import { DateField } from '@/components/ui/date-picker'
 import { MonthNav, monthTitle } from '@/components/ui/month-nav'
+import { SkeletonRows, StateEmpty } from '@/components/states'
 import {
   Btn,
   Icon,
@@ -148,32 +149,15 @@ export default function AttendancePage() {
             </div>
           </div>
           {range.isLoading ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                color: 'var(--text-mute)',
-                fontSize: 13,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
+            <SkeletonRows rows={6} height={44} />
           ) : !range.data || range.data.data.length === 0 ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                color: 'var(--text-mute)',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              No attendance records for this month.
+            <div style={{ padding: 20 }}>
+              <StateEmpty
+                line="No attendance records for this month."
+                cta="Request regularization"
+                onCta={() => setRegOpen(true)}
+                icon={<Icon.fingerprint size={20} />}
+              />
             </div>
           ) : (
             <DailyLogTable rows={range.data.data} />

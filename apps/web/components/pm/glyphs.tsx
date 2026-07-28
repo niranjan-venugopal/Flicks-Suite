@@ -106,10 +106,15 @@ export function Kbd({ children, style }: { children: React.ReactNode; style?: Re
   )
 }
 
+/**
+ * Pending-sync dot — 6px, pulsing 1.6s (catalog). Appears the instant an
+ * optimistic write is applied locally and clears on the server ack.
+ */
 export function PendingDot({ title = 'Syncing — not yet confirmed' }: { title?: string }) {
   return (
     <span
       title={title}
+      className="pm-pending"
       style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--blue)', display: 'inline-block', flexShrink: 0 }}
     />
   )

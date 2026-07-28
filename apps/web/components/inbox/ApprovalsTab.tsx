@@ -9,6 +9,7 @@ import { useReviewRegularization } from '@/lib/api/queries/use-attendance'
 import { Btn, Icon, Pill, type PillTone } from '@/components/proto'
 import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { usePresence } from '@/lib/api/queries/use-presence'
+import { useToast } from '@/components/ui/use-toast'
 
 // ─────────────────────────────────────────────────────────
 // Approvals tab of the common Inbox (approver roles only): the leave +
@@ -87,8 +88,10 @@ export function ApprovalsTab() {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [comment, setComment] = useState('')
+  const [exiting, setExiting] = useState<string | null>(null)
   const qc = useQueryClient()
   const overview = useAdminOverview()
+  const { toast } = useToast()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
 
@@ -112,6 +115,10 @@ export function ApprovalsTab() {
 
   const handleAction = async (action: 'approve' | 'reject') => {
     if (!selected) return
+    const who = selected.who
+    // Slide the row out first (160ms) so the list settles before the refetch.
+    setExiting(selected.id)
+    await new Promise((r) => setTimeout(r, 170))
     try {
       if (selected.kind === 'leave') {
         await reviewLeave.mutateAsync({ id: selected.id, action, comment: comment || undefined })
@@ -120,9 +127,16 @@ export function ApprovalsTab() {
       }
       setComment('')
       setSelectedId(null)
+      setExiting(null)
       refresh()
+      // Decisions notify the requester, so this is feedback rather than a
+      // rollback handle — the toast states plainly what the other side saw.
+      toast({
+        title: action === 'approve' ? `Approved — ${who} notified` : `Rejected — ${who} notified`,
+      })
     } catch {
-      /* error toast intentionally omitted; pendingApprovals will retry on next overview poll */
+      setExiting(null)
+      /* pendingApprovals will retry on the next overview poll */
     }
   }
 
@@ -209,6 +223,7 @@ export function ApprovalsTab() {
                   key={a.id}
                   type="button"
                   onClick={() => setSelectedId(a.id)}
+                  className={exiting === a.id ? 'pm-exit-right pm-row' : 'pm-row'}
                   style={{
                     padding: '14px 18px',
                     borderBottom: i < filtered.length - 1 ? '1px solid var(--bord)' : 'none',

@@ -244,6 +244,54 @@ button { background: none; border: none; cursor: pointer; }
   to { background-position: -200% 0; }
 }
 
+/* ─── Motion contract (States & Interactions catalog) ────────────────────────
+   ONE vocabulary for the whole suite. Durations are non-negotiable:
+   hover 0ms · fades 120ms · slides/exits 160–180ms · pops 140ms · all
+   ease-out, zero bounce/spring/overshoot. Pending pulse 1.6s, shimmer 1.4s,
+   undo bar 5s linear. Anything that loops is disabled under reduced-motion.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes pmpulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+@keyframes pmfade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pmpop { 0% { transform: scale(.55); opacity: .4; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes pmtoast { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes pmtoastup { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pmundo { from { width: 100%; } to { width: 0; } }
+@keyframes pmout { to { opacity: 0; transform: translateX(46px); } }
+@keyframes pmoutl { to { opacity: 0; transform: translateX(-46px); } }
+
+/* Pending-sync dot: 6px, applied locally in <50ms, clears on server ack. */
+.pm-pending { animation: pmpulse 1.6s ease-in-out infinite; }
+
+/* Named helpers so components stay declarative. */
+.pm-fade { animation: pmfade .12s ease-out; }
+.pm-pop { animation: pmpop .14s ease-out; }
+.pm-rise { animation: pmtoastup .16s ease-out; }
+.pm-exit-right { animation: pmout .17s ease-out forwards; }
+.pm-exit-left { animation: pmoutl .17s ease-out forwards; }
+
+/* Hover is instant (0ms) — only the paint properties transition, never layout. */
+.pm-row { transition: background .12s ease-out; }
+.pm-row:hover { background: var(--surf-1); }
+/* Row hover actions: hidden until the row is hovered or keyboard-focused. */
+.pm-row-acts { opacity: 0; transition: opacity .12s ease-out; }
+.pm-row:hover .pm-row-acts,
+.pm-row:focus-within .pm-row-acts,
+.pm-row[data-focused='true'] .pm-row-acts { opacity: 1; }
+
+/* Drag: flat ghost at 40% opacity (no tilt), 2px blue drop line. */
+.pm-drag-ghost { opacity: .4 !important; }
+.pm-drop-before { box-shadow: 0 -2px 0 0 var(--blue); }
+.pm-drop-after { box-shadow: 0 2px 0 0 var(--blue); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ─── Org-chart tree connectors (elbow brackets, v1 UX pass) ────────────────── */
 /* Classic nested-ul tree: each <li> draws half the horizontal bracket plus a
    vertical drop; the parent's <ul>::before draws the stem down from the card.

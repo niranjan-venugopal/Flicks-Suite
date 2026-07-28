@@ -11,6 +11,13 @@ type ToasterToast = ToastProps & {
   title?: React.ReactNode
   description?: React.ReactNode
   action?: ToastActionElement
+  /** Leading glyph (status dot, check, warn) rendered in the pill. */
+  icon?: React.ReactNode
+  /**
+   * Undo affordance (catalog: "undo > confirm"). When present the toast shows
+   * an Undo button and a 5s linear draining bar, then auto-dismisses.
+   */
+  undo?: { onUndo: () => void; label?: string }
 }
 
 const actionTypes = {
@@ -131,6 +138,9 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, 'id'>
 
+/** Undo window in ms — must match the draining bar animation in Toaster. */
+export const UNDO_MS = 5000
+
 function toast({ ...props }: Toast) {
   const id = genId()
 
@@ -197,4 +207,23 @@ function useToast() {
   }
 }
 
-export { useToast, toast }
+/**
+ * Reversible action feedback: one line, an Undo button and a 5s draining bar.
+ * Prefer this over a confirm dialog for anything that can be taken back —
+ * confirms are reserved for destructive, cross-user actions.
+ */
+function toastUndo(opts: {
+  title: string
+  onUndo: () => void
+  icon?: React.ReactNode
+  label?: string
+}) {
+  return toast({
+    title: opts.title,
+    icon: opts.icon,
+    undo: { onUndo: opts.onUndo, label: opts.label ?? 'Undo' },
+    duration: UNDO_MS,
+  })
+}
+
+export { useToast, toast, toastUndo }

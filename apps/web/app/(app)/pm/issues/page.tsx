@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmBoard } from '@/components/pm/board'
+import { SkeletonRows } from '@/components/states'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { recentG, useHotkeys } from '@/lib/pm/hotkeys'
@@ -662,7 +663,9 @@ function RestIssues() {
         </Btn>
       </div>
       {issues.isLoading ? (
-        <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Icon.refresh size={18} className="animate-spin" style={{ color: 'var(--text-mute)' }} /></div>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <SkeletonRows rows={6} />
+        </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {(issues.data?.data ?? []).map((i, idx, arr) => {

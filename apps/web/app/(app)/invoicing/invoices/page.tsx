@@ -12,6 +12,7 @@ import {
   type InvoiceRow,
 } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
+import { Sk } from '@/components/states'
 import {
   INVO,
   InvoPage,
@@ -232,13 +233,20 @@ export default function InvoicesPage() {
           </>
         }
       >
-        {isLoading && (
-          <tr>
-            <td style={{ ...invoTd, color: INVO.muted40 }} colSpan={7}>
-              Loading…
-            </td>
-          </tr>
-        )}
+        {isLoading &&
+          [0, 1, 2, 3, 4].map((r) => (
+            <tr key={`sk-${r}`}>
+              <td style={invoTd} colSpan={7}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <Sk w={92} h={10} />
+                  <Sk w="30%" h={10} />
+                  <span style={{ flex: 1 }} />
+                  <Sk w={70} h={10} />
+                  <Sk w={54} h={18} r={99} />
+                </div>
+              </td>
+            </tr>
+          ))}
         {isError && (
           <tr>
             <td style={{ ...invoTd, color: INVO.coral }} colSpan={7}>

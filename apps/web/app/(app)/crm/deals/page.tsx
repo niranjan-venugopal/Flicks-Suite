@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
 import { TagChip, OwnerAv, EmptyState, SavedViewTabs, FilterBar, BulkBar, KeymapOverlay, fmtCur, type FilterChip } from '@/components/crm/kit'
+import { Sk } from '@/components/states'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import {
   useBoard,
@@ -228,8 +229,19 @@ export default function DealsBoardPage() {
       />
 
       {board.isLoading ? (
-        <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
-          <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
+        // Cold load only — a warm cache renders the board instantly.
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(218px, 1fr))', gap: 12, alignItems: 'start' }}>
+          {[0, 1, 2, 3].map((c) => (
+            <div key={c} className="card" style={{ padding: 10 }}>
+              <Sk w={90} h={9} style={{ marginBottom: 12 }} />
+              {[0, 1, 2].map((r) => (
+                <div key={r} style={{ padding: '9px 0', borderTop: r ? '1px solid var(--bord)' : 'none' }}>
+                  <Sk w="80%" h={10} style={{ marginBottom: 7 }} />
+                  <Sk w="55%" h={8} />
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       ) : totalDeals === 0 ? (
         <EmptyState
@@ -403,6 +415,11 @@ function Column({ col, base, over, onDragOver, onDragLeave, onDrop, selected, on
           <span title="Weighted by stage probability" style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>w {fmtCur(col.weighted_base, base)}</span>
         </div>
       </div>
+
+      {/* Drop line — flat 2px blue rule where the card will land (catalog). */}
+      {over && (
+        <div className="pm-fade" style={{ height: 2, borderRadius: 2, background: 'var(--blue)', margin: '0 2px 8px' }} />
+      )}
 
       {col.cards.map((d) => (
         <DealCardView key={d.id} d={d} base={base} selected={selected.includes(d.id)} dragging={dragId === d.id}
