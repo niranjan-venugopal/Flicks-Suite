@@ -25,6 +25,7 @@ import {
   invoLabel,
 } from '@/components/invoicing/invo'
 import { TDS_CODES, isGstCurrency, taxLabel } from '@/lib/invoicing/constants'
+import { DateField } from '@/components/ui/date-picker'
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 const emptyLine = (): InvoiceLineInput => ({ item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
@@ -277,11 +278,11 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               </div>
               <div>
                 <label style={invoLabel}>Issue date</label>
-                <input type="date" style={invoField()} value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+                <DateField value={invoiceDate} onChange={setInvoiceDate} style={invoField()} />
               </div>
               <div>
                 <label style={invoLabel}>Due date</label>
-                <input type="date" style={invoField()} value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <DateField value={dueDate} onChange={setDueDate} style={invoField()} />
               </div>
               <div>
                 <label style={invoLabel}>Currency</label>

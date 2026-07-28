@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/use-toast'
 import { InvoBtn } from '@/components/invoicing/invo'
 import { useRecordPayment, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
+import { DateField } from '@/components/ui/date-picker'
 
 const FIELD: React.CSSProperties = {
   width: '100%',
@@ -108,7 +109,7 @@ export function PaymentModal({
           </div>
           <div>
             <label style={LABEL}>Date</label>
-            <input style={FIELD} type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <DateField value={date} onChange={setDate} style={FIELD} />
           </div>
           <div>
             <label style={LABEL}>Method</label>

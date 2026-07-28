@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill, type IconKey } from '@/components/proto'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
@@ -575,11 +576,9 @@ function PersonalInfoStep({
       </div>
       <div>
         <label className="label">Date of birth</label>
-        <input
-          className="input"
-          type="date"
+        <DateField
           value={form.dateOfBirth}
-          onChange={(e) => set('dateOfBirth', e.target.value)}
+          onChange={(v) => set('dateOfBirth', v)}
         />
       </div>
       <div>

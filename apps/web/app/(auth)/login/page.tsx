@@ -5,10 +5,12 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
 import { useRequestOtp, useVerifyOtp, useCompleteTotp } from '@/lib/api/queries/use-auth'
+import { APIError } from '@/lib/api/client'
 
 const emailSchema = z.object({
   email: z.string().email('Enter a valid email address'),
@@ -25,6 +27,7 @@ export default function LoginPage() {
   const [challengeToken, setChallengeToken] = useState('')
   const [totpCode, setTotpCode] = useState('')
 
+  const router = useRouter()
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
   const completeTotp = useCompleteTotp()
@@ -42,15 +45,21 @@ export default function LoginPage() {
 
   const handleEmailSubmit = emailForm.handleSubmit(async (data) => {
     try {
-      await requestOtp.mutateAsync({ email: data.email })
+      await requestOtp.mutateAsync({ email: data.email, intent: 'signin' })
       setEmail(data.email)
       setStep('otp')
       setCountdown(60)
       setTimeout(() => otpInputsRef.current[0]?.focus(), 100)
-    } catch {
+    } catch (e) {
+      // Unregistered email → push to signup with the email prefilled (the
+      // server sent NO code — accepted Slack/Notion-style behavior).
+      if (e instanceof APIError && (e.data as { code?: string } | undefined)?.code === 'NOT_REGISTERED') {
+        router.push(`/onboarding?email=${encodeURIComponent(data.email)}&reason=unregistered`)
+        return
+      }
       toast({
-        title: 'Something went wrong',
-        description: 'Could not send the code. Please try again.',
+        title: 'Could not send the code',
+        description: e instanceof Error ? e.message : 'Please try again.',
         variant: 'destructive',
       })
     }
@@ -117,7 +126,7 @@ export default function LoginPage() {
 
   const handleResend = async () => {
     try {
-      await requestOtp.mutateAsync({ email })
+      await requestOtp.mutateAsync({ email, intent: 'signin' })
       setCountdown(60)
       setOtpDigits(['', '', '', '', '', ''])
       toast({ title: 'Code sent', description: `New code sent to ${email}` })

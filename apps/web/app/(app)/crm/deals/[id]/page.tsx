@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Modal, Pill } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
@@ -705,11 +706,19 @@ function Field({ label, value, type = 'text', readOnly, custom, onSave }: {
   return (
     <div>
       <div className="label">{label} {custom && <span style={{ color: 'var(--text-faint)' }}>· custom</span>}</div>
-      <input className="input" type={type} value={v} readOnly={readOnly}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={() => { if (!readOnly && onSave && v !== value) onSave(v) }}
-        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-        style={{ height: 38, fontSize: 12.5, width: '100%', opacity: readOnly ? 0.75 : 1 }} />
+      {type === 'date' && !readOnly ? (
+        <DateField
+          value={v}
+          onChange={(iso) => { setV(iso); if (onSave && iso !== value) onSave(iso) }}
+          style={{ height: 38, fontSize: 12.5 }}
+        />
+      ) : (
+        <input className="input" type={type} value={v} readOnly={readOnly}
+          onChange={(e) => setV(e.target.value)}
+          onBlur={() => { if (!readOnly && onSave && v !== value) onSave(v) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          style={{ height: 38, fontSize: 12.5, width: '100%', opacity: readOnly ? 0.75 : 1 }} />
+      )}
     </div>
   )
 }

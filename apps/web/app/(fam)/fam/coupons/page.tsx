@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Btn, Icon, Pill, SectionHead, Skeleton } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import {
   downloadCouponCsv,
@@ -159,12 +160,10 @@ function BatchForm({ onDone }: { onDone: (minted: number) => void }) {
         </div>
         <div style={field}>
           <span className="label">Expires (IST)</span>
-          <input
-            className="input"
-            type="date"
-            style={{ height: 36, fontSize: 12 }}
+          <DateField
             value={expiresAt}
-            onChange={(e) => setExpiresAt(e.target.value)}
+            onChange={setExpiresAt}
+            style={{ height: 36, fontSize: 12 }}
           />
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
@@ -509,11 +510,14 @@ function DealCardView({ d, base, selected, dragging, onSelect, onOpen, onDragSta
           </span>
         )}
         {editingDate ? (
-          <input autoFocus type="date" className="input" defaultValue={d.expected_close_date ?? ''}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={(e) => { setEditingDate(false); if (e.target.value) onInlineEdit({ expected_close_date: e.target.value }) }}
-            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingDate(false) }}
-            style={{ height: 24, width: 120, fontSize: 9.5, padding: '0 6px' }} />
+          <span onClick={(e) => e.stopPropagation()}>
+            <DateField
+              value={d.expected_close_date ?? ''}
+              defaultOpen
+              onChange={(iso) => { setEditingDate(false); if (iso) onInlineEdit({ expected_close_date: iso }) }}
+              style={{ height: 24, width: 130, fontSize: 9.5, padding: '0 6px' }}
+            />
+          </span>
         ) : (
           <span onClick={(e) => { e.stopPropagation(); setEditingDate(true) }} title={d.expected_close_date ? `Close ${d.expected_close_date} — click to edit` : 'Set expected close'} className="t-caption" style={{ fontSize: 9.5, whiteSpace: 'nowrap', cursor: 'pointer' }}>
             {d.expected_close_date ?? 'no close date'}

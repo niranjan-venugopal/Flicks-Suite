@@ -29,6 +29,11 @@ export class RequestOtpDto {
   @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty()
   email: string;
+
+  @ApiPropertyOptional({ enum: ['signin', 'signup'], default: 'signin' })
+  @IsIn(['signin', 'signup'])
+  @IsOptional()
+  intent?: 'signin' | 'signup';
 }
 
 export class VerifyOtpDto {

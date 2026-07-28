@@ -97,6 +97,7 @@ export class AuthService {
     email: string,
     ip?: string,
     userAgent?: string,
+    intent: 'signin' | 'signup' = 'signin',
   ): Promise<{ success: true; message: string }> {
     const normalizedEmail = email.toLowerCase().trim();
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -110,12 +111,31 @@ export class AuthService {
     );
     const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
 
-    // Find existing user (don't reveal if user exists)
+    // Registration check. Revealing registration status is ACCEPTED product
+    // behavior (Slack/Notion-style: unregistered sign-ins are pushed to
+    // signup with the email prefilled) — a deliberate reversal of the old
+    // anti-enumeration stance. Probing is still bounded by the 5/hr/IP
+    // throttle on the route. "Registered" = a users row exists: invite
+    // flows pre-create users (invited memberships flip active on verify),
+    // and an abandoned-signup row can still complete via verify+consents.
     const existingUser = await this.db
       .select({ id: users.id })
       .from(users)
       .where(eq(users.email, normalizedEmail))
       .limit(1);
+
+    if (intent !== 'signup' && !existingUser[0]) {
+      await this.writeAuthEvent({
+        email: normalizedEmail,
+        eventType: 'login_failed',
+        ip,
+        userAgent,
+      });
+      throw new NotFoundException({
+        message: 'This email is not registered. Create a workspace to get started.',
+        code: 'NOT_REGISTERED',
+      });
+    }
 
     // Invalidate any prior unconsumed SHORT-LIVED OTPs / magic links for
     // this email so only the freshly-issued code is valid. Without this
@@ -181,11 +201,9 @@ export class AuthService {
       );
     }
 
-    // Always return generic success (never reveal if email exists)
     return {
       success: true,
-      message:
-        'If this email is registered, you will receive an OTP and magic link shortly.',
+      message: 'We sent a sign-in code and magic link to your email.',
     };
   }
 

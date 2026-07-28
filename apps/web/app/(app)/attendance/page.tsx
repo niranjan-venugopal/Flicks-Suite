@@ -22,19 +22,24 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { ClockCard } from '@/components/attendance/ClockCard'
+import { MonthCalendar, monthOf, monthTitle } from '@/components/attendance/MonthCalendar'
+import { DateField } from '@/components/ui/date-picker'
 import {
   Btn,
   Icon,
   Kpi,
   Pill,
+  Toggle,
   type PillTone,
   SectionHead,
 } from '@/components/proto'
 import {
+  useMyAttendanceMonth,
   useMyAttendanceRange,
   useMyAttendanceToday,
   useRequestRegularization,
   type AttendanceRecord,
+  type AttendanceStatus,
   type RegularizationType,
   type TodayAttendance,
 } from '@/lib/api/queries/use-attendance'
@@ -81,12 +86,22 @@ function todayEyebrow(): string {
 
 export default function AttendancePage() {
   const [regOpen, setRegOpen] = useState(false)
+  const [calendarView, setCalendarView] = useState(true)
+  const [cursor, setCursor] = useState(new Date())
   const today = useMyAttendanceToday()
-  const range = useMyAttendanceRange({
-    fromDate: startOfMonth(),
-    toDate: todayISO(),
-    limit: 31,
-  })
+  const range = useMyAttendanceRange(
+    {
+      fromDate: startOfMonth(),
+      toDate: todayISO(),
+      limit: 31,
+    },
+    { enabled: !calendarView },
+  )
+  const monthQ = useMyAttendanceMonth(monthOf(cursor))
+  const monthDays = useMemo(() => {
+    const t = todayISO()
+    return (monthQ.data?.days ?? []).filter((d) => d.date <= t)
+  }, [monthQ.data])
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -120,68 +135,72 @@ export default function AttendancePage() {
           <TimelineCard data={today.data} />
         </div>
 
-        {/* Month KPIs */}
-        <SectionHead
-          title={new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
-          sub={
-            range.data
-              ? `Month-to-date · ${range.data.data.length} day${range.data.data.length === 1 ? '' : 's'} logged`
-              : 'Loading…'
-          }
-        />
-
-        <MonthKpis records={range.data?.data ?? []} />
-
-        {/* Daily log */}
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: '16px 20px',
-              borderBottom: '1px solid var(--bord)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <div className="t-h3" style={{ fontSize: 15 }}>
-              Daily log
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', letterSpacing: '.04em', textTransform: 'uppercase' }}>
-              This month
-            </div>
-          </div>
-          {range.isLoading ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                color: 'var(--text-mute)',
-                fontSize: 13,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
-          ) : !range.data || range.data.data.length === 0 ? (
-            <div
-              style={{
-                padding: '48px',
-                textAlign: 'center',
-                color: 'var(--text-mute)',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              No attendance records yet. Clock in above to start tracking.
-            </div>
-          ) : (
-            <DailyLogTable rows={range.data.data} />
-          )}
+        {/* Month toolbar (design: month title + round prev/next · calendar-view toggle) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '6px 0 16px' }}>
+          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>{monthTitle(cursor)}</span>
+          <RoundNav dir="prev" onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))} />
+          <RoundNav dir="next" onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))} />
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-2)' }}>Calendar view</span>
+          <Toggle on={calendarView} onChange={setCalendarView} />
         </div>
+
+        <MonthKpis records={calendarView ? monthDays : (range.data?.data ?? [])} />
+
+        {calendarView ? (
+          <MonthCalendar cursor={cursor} />
+        ) : (
+          /* Daily log */
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--bord)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div className="t-h3" style={{ fontSize: 15 }}>
+                Daily log
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', letterSpacing: '.04em', textTransform: 'uppercase' }}>
+                This month
+              </div>
+            </div>
+            {range.isLoading ? (
+              <div
+                style={{
+                  padding: '48px',
+                  textAlign: 'center',
+                  color: 'var(--text-mute)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : !range.data || range.data.data.length === 0 ? (
+              <div
+                style={{
+                  padding: '48px',
+                  textAlign: 'center',
+                  color: 'var(--text-mute)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                }}
+              >
+                No attendance records yet. Clock in above to start tracking.
+              </div>
+            ) : (
+              <DailyLogTable rows={range.data.data} />
+            )}
+          </div>
+        )}
       </div>
 
       <RegularizationDialog open={regOpen} onOpenChange={setRegOpen} />
@@ -189,6 +208,28 @@ export default function AttendancePage() {
   )
 }
 
+
+// ─── Round month nav (design) ──────────────────────────────────────────────
+
+function RoundNav({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => void }) {
+  const Ic = dir === 'prev' ? Icon.arrowL : Icon.arrow
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={dir === 'prev' ? 'Previous month' : 'Next month'}
+      style={{
+        width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
+        background: dir === 'next' ? '#fff' : 'transparent',
+        border: dir === 'next' ? 'none' : '1px solid var(--bord-2)',
+        color: dir === 'next' ? '#01010D' : 'var(--text)',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <Ic size={13} />
+    </button>
+  )
+}
 
 // ─── Timeline card ─────────────────────────────────────────────────────────
 
@@ -305,7 +346,13 @@ function TimelineCard({ data }: { data: TodayAttendance | undefined }) {
 
 // ─── Month KPIs ────────────────────────────────────────────────────────────
 
-function MonthKpis({ records }: { records: AttendanceRecord[] }) {
+type KpiRow = {
+  attendanceStatus: AttendanceStatus | null
+  totalWorkedMinutes: number
+  isLate: boolean
+}
+
+function MonthKpis({ records }: { records: KpiRow[] }) {
   const stats = useMemo(() => {
     let present = 0
     let totalWorked = 0
@@ -510,11 +557,10 @@ function RegularizationDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="reg-date">Date</Label>
-            <Input
+            <DateField
               id="reg-date"
-              type="date"
               value={attendanceDate}
-              onChange={(e) => setAttendanceDate(e.target.value)}
+              onChange={setAttendanceDate}
               max={todayISO()}
               required
             />

@@ -12,6 +12,7 @@ import {
 
 interface RequestOtpPayload {
   email: string
+  intent?: 'signin' | 'signup'
 }
 
 interface VerifyOtpPayload {

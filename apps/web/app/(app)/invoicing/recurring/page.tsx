@@ -6,6 +6,7 @@ import { RefreshCw, Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead, Toggle } from '@/components/proto'
 import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useSubscriptions,
@@ -215,7 +216,7 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
             <div>
               <div className="label">First invoice date</div>
-              <input className="input w-full" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+              <DateField value={start} onChange={setStart} />
             </div>
           </div>
 

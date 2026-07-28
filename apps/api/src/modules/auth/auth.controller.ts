@@ -59,7 +59,8 @@ export class AuthController {
     description:
       'Send a 6-digit OTP and magic link to the given email. Rate limited to 5/hour per email.',
   })
-  @ApiResponse({ status: 200, description: 'OTP sent (generic success)' })
+  @ApiResponse({ status: 200, description: 'OTP sent' })
+  @ApiResponse({ status: 404, description: 'NOT_REGISTERED — signin intent with an unknown email (no OTP sent)' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   async requestOtp(
     @Body() dto: RequestOtpDto,
@@ -67,7 +68,7 @@ export class AuthController {
   ): Promise<{ success: true; message: string }> {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    return this.authService.requestOtp(dto.email, ip, userAgent);
+    return this.authService.requestOtp(dto.email, ip, userAgent, dto.intent ?? 'signin');
   }
 
   @Public()

@@ -7,7 +7,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { eq, and, gte, lte, isNull, or, sql, desc, asc } from 'drizzle-orm';
+import { eq, and, gte, lte, isNull, or, sql, desc, asc, inArray } from 'drizzle-orm';
 import {
   attendanceRecords,
   attendancePunches,
@@ -17,6 +17,7 @@ import {
   employees,
   memberships,
   users,
+  holidays,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -818,6 +819,122 @@ export class AttendanceService {
     );
 
     return { data, pagination: { page, limit, total: data.length } };
+  }
+
+
+  /**
+   * Unified month view (calendar redesign): one entry PER calendar day —
+   * records + punch ids + the employee's own regularization status (never
+   * exposed before) + holiday/weekend flags. Weekend derives from the shift
+   * template resolved at month START (documented approximation for
+   * mid-month shift changes).
+   */
+  async getMyMonth(userId: string, tenantId: string, month: string) {
+    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
+    const [y, m] = month.split('-').map(Number);
+    const first = `${month}-01`;
+    const daysInMonth = new Date(y!, m!, 0).getDate();
+    const last = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+
+    const shift = await this.resolveShiftTemplate(tenantId, employeeId, first);
+    const workingDays = new Set<number>(shift?.working_days ?? [1, 2, 3, 4, 5]);
+
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const records = await tx
+        .select()
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.tenant_id, tenantId),
+            eq(attendanceRecords.employee_id, employeeId),
+            gte(attendanceRecords.attendance_date, first),
+            lte(attendanceRecords.attendance_date, last),
+          ),
+        );
+      const recordIds = records.map((r) => r.id);
+      const punches = recordIds.length
+        ? await tx
+            .select({
+              id: attendancePunches.id,
+              record_id: attendancePunches.attendance_record_id,
+              punch_type: attendancePunches.punch_type,
+              punched_at: attendancePunches.punched_at,
+            })
+            .from(attendancePunches)
+            .where(inArray(attendancePunches.attendance_record_id, recordIds))
+            .orderBy(asc(attendancePunches.punched_at))
+        : [];
+      const regs = await tx
+        .select({
+          id: attendanceRegularizations.id,
+          attendance_date: attendanceRegularizations.attendance_date,
+          status: attendanceRegularizations.status,
+          request_type: attendanceRegularizations.request_type,
+          created_at: attendanceRegularizations.created_at,
+        })
+        .from(attendanceRegularizations)
+        .where(
+          and(
+            eq(attendanceRegularizations.tenant_id, tenantId),
+            eq(attendanceRegularizations.employee_id, employeeId),
+            gte(attendanceRegularizations.attendance_date, first),
+            lte(attendanceRegularizations.attendance_date, last),
+          ),
+        )
+        .orderBy(asc(attendanceRegularizations.created_at));
+      const monthHolidays = await tx
+        .select({ holiday_date: holidays.holiday_date, name: holidays.name })
+        .from(holidays)
+        .where(
+          and(
+            eq(holidays.tenant_id, tenantId),
+            gte(holidays.holiday_date, first),
+            lte(holidays.holiday_date, last),
+          ),
+        );
+
+      const recordByDate = new Map(records.map((r) => [r.attendance_date, r]));
+      const punchesByRecord = new Map<string, typeof punches>();
+      for (const pch of punches) {
+        const list = punchesByRecord.get(pch.record_id) ?? [];
+        list.push(pch);
+        punchesByRecord.set(pch.record_id, list);
+      }
+      // Latest regularization per date wins.
+      const regByDate = new Map<string, (typeof regs)[number]>();
+      for (const r of regs) regByDate.set(r.attendance_date, r);
+      const holidayByDate = new Map(monthHolidays.map((h) => [h.holiday_date, h.name]));
+
+      const days = Array.from({ length: daysInMonth }, (_, i) => {
+        const date = `${month}-${String(i + 1).padStart(2, '0')}`;
+        const dow = new Date(`${date}T00:00:00`).getDay();
+        const record = recordByDate.get(date) ?? null;
+        const reg = regByDate.get(date) ?? null;
+        return {
+          date,
+          attendanceStatus: record?.attendance_status ?? null,
+          isWeekend: !workingDays.has(dow),
+          isHoliday: holidayByDate.has(date),
+          holidayName: holidayByDate.get(date) ?? null,
+          firstPunchInAt: record?.first_punch_in_at ?? null,
+          lastPunchOutAt: record?.last_punch_out_at ?? null,
+          totalWorkedMinutes: record?.total_worked_minutes ?? 0,
+          totalBreakMinutes: record?.total_break_minutes ?? 0,
+          isLate: record?.is_late ?? false,
+          isRegularized: record?.is_regularized ?? false,
+          regularization: reg
+            ? { id: reg.id, status: reg.status, requestType: reg.request_type }
+            : null,
+          punches: (record ? punchesByRecord.get(record.id) ?? [] : []).map((pch) => ({
+            id: pch.id,
+            punchType: pch.punch_type,
+            punchedAt: pch.punched_at,
+          })),
+        };
+      });
+
+      return { month, days };
+    });
   }
 
   async listTeamToday(userId: string, tenantId: string) {

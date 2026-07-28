@@ -633,6 +633,7 @@ export class LeaveService {
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
           leaveTypeName: leaveTypes.name,
+          leaveTypeCode: leaveTypes.code,
         })
         .from(leaveRequests)
         .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))

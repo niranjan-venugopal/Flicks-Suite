@@ -26,6 +26,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { DateRangeField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import type { IconKey } from '@/components/proto'
 
@@ -414,15 +415,16 @@ function ApplyLeaveDialog({
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <div className="label">From</div>
-              <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </div>
-            <div>
-              <div className="label">To</div>
-              <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            </div>
+          <div>
+            <div className="label">Dates</div>
+            <DateRangeField
+              start={startDate}
+              end={endDate}
+              onChange={(r) => {
+                setStartDate(r.start)
+                setEndDate(r.end)
+              }}
+            />
           </div>
 
           <div

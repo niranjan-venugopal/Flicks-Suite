@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
 import { api } from '@/lib/api/client'
@@ -155,9 +156,9 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             </span>
           )}
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-            <input type="date" className="input" value={project.start_date ?? ''} onChange={(e) => patchProject({ start_date: e.target.value || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
+            <DateField value={project.start_date ?? ''} onChange={(iso) => patchProject({ start_date: iso || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
             →
-            <input type="date" className="input" value={project.target_date ?? ''} onChange={(e) => patchProject({ target_date: e.target.value || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
+            <DateField value={project.target_date ?? ''} onChange={(iso) => patchProject({ target_date: iso || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
           </span>
         </div>
         {d.project.summary && <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>{d.project.summary}</div>}
@@ -205,7 +206,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
                 <input autoFocus placeholder="Milestone name…" value={msName} onChange={(e) => setMsName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') addMilestone(); if (e.key === 'Escape') setAddMs(false) }}
                   style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }} />
-                <input type="date" className="input" value={msDate} onChange={(e) => setMsDate(e.target.value)} style={{ height: 26, width: 130, fontSize: 10.5 }} />
+                <DateField value={msDate} onChange={setMsDate} style={{ height: 26, width: 130, fontSize: 10.5 }} />
                 <Kbd>⏎</Kbd>
               </div>
             )}

@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { useToast } from '@/components/ui/use-toast'
@@ -44,13 +44,26 @@ function toSlug(name: string): string {
 
 type Step = 1 | 2 | 3
 
+// useSearchParams needs a Suspense boundary in Next 15 static builds
+// (house pattern: verify/page.tsx).
 export default function OnboardingWizardPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingWizard />
+    </Suspense>
+  )
+}
+
+function OnboardingWizard() {
   const router = useRouter()
   const { toast } = useToast()
+  const sp = useSearchParams()
   const [step, setStep] = useState<Step>(1)
+  // Sign-in bounced an unregistered email here with it prefilled (§gate).
+  const fromSignin = sp.get('reason') === 'unregistered'
 
   // Step 1 state
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => sp.get('email') ?? '')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   // D16 clickwrap (§3.4): required box starts UNTICKED; marketing is optional
@@ -115,7 +128,7 @@ export default function OnboardingWizardPage() {
       return
     }
     try {
-      await requestOtp.mutateAsync({ email: email.trim().toLowerCase() })
+      await requestOtp.mutateAsync({ email: email.trim().toLowerCase(), intent: 'signup' })
       toast({
         title: 'Check your inbox',
         description: 'We sent a 6-digit code. It expires in 10 minutes.',
@@ -218,6 +231,7 @@ export default function OnboardingWizardPage() {
     >
       {step === 1 && (
         <SignupStep
+          notice={fromSignin ? 'Since you are not a user yet, please register with us to create your workspace.' : null}
           email={email}
           setEmail={setEmail}
           firstName={firstName}
@@ -241,7 +255,7 @@ export default function OnboardingWizardPage() {
           onSubmit={handleVerifyOtp}
           onBack={() => setStep(1)}
           onResend={() => {
-            requestOtp.mutate({ email: email.trim().toLowerCase() })
+            requestOtp.mutate({ email: email.trim().toLowerCase(), intent: 'signup' })
             toast({ title: 'New code sent', description: 'Check your inbox.' })
           }}
           submitting={verifyOtp.isPending}
@@ -277,6 +291,7 @@ export default function OnboardingWizardPage() {
 // ─── Step 1: Sign-up (build your workspace) ─────────────────────────────────
 
 function SignupStep(props: {
+  notice?: string | null
   email: string
   setEmail: (v: string) => void
   firstName: string
@@ -292,6 +307,15 @@ function SignupStep(props: {
 }) {
   return (
     <AuthCard>
+      {props.notice && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', marginBottom: 18,
+          borderRadius: 10, background: 'rgba(62,123,250,.06)', border: '1px solid rgba(62,123,250,.2)',
+        }}>
+          <Icon.info size={16} style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.55 }}>{props.notice}</span>
+        </div>
+      )}
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <div className="t-display" style={{ fontSize: 32, marginBottom: 10 }}>
           Build your workspace

@@ -2,6 +2,7 @@ import {
   IsString,
   IsNotEmpty,
   IsOptional,
+  Matches,
   IsNumber,
   IsUUID,
   IsEnum,
@@ -98,6 +99,12 @@ export class ReviewRegularizationDto {
   @IsOptional()
   @MaxLength(500)
   comment?: string;
+}
+
+export class AttendanceMonthQueryDto {
+  @ApiProperty({ example: '2026-07' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'month must be YYYY-MM' })
+  month: string;
 }
 
 // ─── Listing ──────────────────────────────────────────────────────────────────

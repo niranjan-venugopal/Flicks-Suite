@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Btn, Icon, Modal, avBg, initials } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
 
@@ -80,7 +81,7 @@ export function ProjectCreateModal({
         </div>
         <div>
           <div className="label">Target date</div>
-          <input type="date" className="input" value={target} onChange={(e) => setTarget(e.target.value)} style={{ height: 38 }} />
+          <DateField value={target} onChange={setTarget} style={{ height: 38 }} />
         </div>
       </div>
       <div className="label" style={{ marginBottom: 6 }}>Teams</div>

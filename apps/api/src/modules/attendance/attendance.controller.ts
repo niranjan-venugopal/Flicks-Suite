@@ -24,6 +24,7 @@ import {
   RegularizationRequestDto,
   ReviewRegularizationDto,
   AttendanceListQueryDto,
+  AttendanceMonthQueryDto,
 } from './attendance.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -107,6 +108,12 @@ export class AttendanceController {
   @ApiResponse({ status: 200, description: 'Break ended' })
   async breakEnd(@CurrentUser() user: JwtPayload) {
     return this.attendanceService.breakEnd(user.sub, user.tenantId);
+  }
+
+  @Get('me/month')
+  @ApiOperation({ summary: 'Unified month view — every calendar day with punches, regularization status, holiday/weekend flags' })
+  async getMyMonth(@Query() query: AttendanceMonthQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.attendanceService.getMyMonth(user.sub, user.tenantId, query.month);
   }
 
   @Get('me/today')

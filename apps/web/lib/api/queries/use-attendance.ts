@@ -151,15 +151,19 @@ export function useMyAttendanceToday() {
   })
 }
 
-export function useMyAttendanceRange(query?: {
-  fromDate?: string
-  toDate?: string
-  limit?: number
-  page?: number
-  status?: AttendanceStatus
-}) {
+export function useMyAttendanceRange(
+  query?: {
+    fromDate?: string
+    toDate?: string
+    limit?: number
+    page?: number
+    status?: AttendanceStatus
+  },
+  opts?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['attendance', 'me', 'range', query],
+    enabled: opts?.enabled ?? true,
     queryFn: () => {
       const params = new URLSearchParams()
       if (query?.fromDate) params.set('fromDate', query.fromDate)
@@ -329,5 +333,36 @@ export function useReviewRegularization() {
     onSuccess: async () => {
       await invalidateAttendance(qc)
     },
+  })
+}
+
+// ─── Unified month view (calendar redesign) ────────────────────────────────
+
+export interface AttendanceMonthDay {
+  date: string
+  attendanceStatus: AttendanceStatus | null
+  isWeekend: boolean
+  isHoliday: boolean
+  holidayName: string | null
+  firstPunchInAt: string | null
+  lastPunchOutAt: string | null
+  totalWorkedMinutes: number
+  totalBreakMinutes: number
+  isLate: boolean
+  isRegularized: boolean
+  regularization: { id: string; status: 'pending' | 'approved' | 'rejected' | 'cancelled'; requestType: string } | null
+  punches: Array<{ id: string; punchType: string; punchedAt: string }>
+}
+
+export interface AttendanceMonthPayload {
+  month: string
+  days: AttendanceMonthDay[]
+}
+
+export function useMyAttendanceMonth(month: string) {
+  return useQuery({
+    queryKey: ['attendance', 'month', month],
+    queryFn: () => api.get<AttendanceMonthPayload>(`/api/v1/attendance/me/month?month=${month}`),
+    staleTime: 30_000,
   })
 }

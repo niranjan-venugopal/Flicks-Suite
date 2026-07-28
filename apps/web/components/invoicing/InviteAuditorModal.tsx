@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Btn, Icon, Modal } from '@/components/proto'
 import { useInviteAuditor, type InviteAuditorPayload } from '@/lib/api/queries/use-members'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 
 /**
@@ -229,12 +230,7 @@ export function InviteAuditorModal({ open, onClose }: { open: boolean; onClose: 
           <div className="label">
             Access window <span style={{ color: 'var(--text-faint)' }}>· optional</span>
           </div>
-          <input
-            className="input"
-            type="date"
-            value={expiresAt}
-            onChange={(e) => setExpiresAt(e.target.value)}
-          />
+          <DateField value={expiresAt} onChange={setExpiresAt} />
         </div>
         <div>
           <div className="label">

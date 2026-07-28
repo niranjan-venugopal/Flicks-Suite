@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { api } from '@/lib/api/client'
@@ -383,13 +384,11 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             />
           </RailRow>
           <RailRow label="Due">
-            <input
-              className="input"
-              type="date"
-              defaultValue={issue.due_date ?? ''}
-              onChange={(e) => {
-                if (engine) engine.updateIssue(id, { due_date: e.target.value || null })
-                else restUpdate.mutate({ due_date: e.target.value || null })
+            <DateField
+              value={issue.due_date ?? ''}
+              onChange={(iso) => {
+                if (engine) engine.updateIssue(id, { due_date: iso || null })
+                else restUpdate.mutate({ due_date: iso || null })
               }}
               style={{ height: 26, width: 130, fontSize: 11.5 }}
             />

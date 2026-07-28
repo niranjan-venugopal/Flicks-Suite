@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useEmployees,
@@ -261,11 +262,9 @@ export default function InviteEmployeePage() {
               </div>
               <div>
                 <label className="label">Date of birth</label>
-                <input
-                  className="input"
-                  type="date"
+                <DateField
                   value={form.dateOfBirth}
-                  onChange={(e) => set('dateOfBirth', e.target.value)}
+                  onChange={(v) => set('dateOfBirth', v)}
                 />
               </div>
               <div style={{ gridColumn: 'span 2' }}>
@@ -377,11 +376,9 @@ export default function InviteEmployeePage() {
               </div>
               <div>
                 <label className="label">Start date</label>
-                <input
-                  className="input"
-                  type="date"
+                <DateField
                   value={form.joiningDate}
-                  onChange={(e) => set('joiningDate', e.target.value)}
+                  onChange={(v) => set('joiningDate', v)}
                 />
               </div>
               <div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill } from '@/components/proto'
+import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
 import { useQuickAdd, type QuickAddKind } from '@/lib/stores/quick-add.store'
@@ -220,7 +221,7 @@ function QuickAddModal({ initialTab, onClose }: { initialTab: QuickAddKind; onCl
               </div>
               <div style={{ gridColumn: '1/-1' }}>
                 <div className="label">Expected close</div>
-                <input className="input" type="date" value={close} onChange={(e) => setClose(e.target.value)} style={{ width: '100%' }} />
+                <DateField value={close} onChange={setClose} />
               </div>
               <div className="t-caption" style={{ gridColumn: '1/-1' }}>
                 Add the customer on the <b style={{ color: 'var(--text-2)' }}>Person</b> and <b style={{ color: 'var(--text-2)' }}>Company</b> tabs — everything is created and linked together when you hit Create deal.

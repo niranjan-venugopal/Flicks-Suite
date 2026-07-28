@@ -168,6 +168,7 @@ export default function TeamLeavePage() {
                   <th style={th}>Dates</th>
                   <th style={th}>Days</th>
                   <th style={th}>Applied</th>
+                  <th style={th}>Status</th>
                   <th style={th}>Reason</th>
                   <th style={{ ...th, textAlign: 'right' }}>Actions</th>
                 </tr>
@@ -201,7 +202,7 @@ export default function TeamLeavePage() {
                       </div>
                     </td>
                     <td style={{ padding: '12px 14px' }}>
-                      <Pill tone={typePillTone(r.leaveTypeName)}>
+                      <Pill tone={typePillTone(r.leaveTypeCode)}>
                         {r.leaveTypeName ?? '—'}
                       </Pill>
                     </td>
@@ -226,6 +227,9 @@ export default function TeamLeavePage() {
                         day: 'numeric',
                         month: 'short',
                       })}
+                    </td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <Pill tone="yellow" dot>Pending</Pill>
                     </td>
                     <td
                       style={{

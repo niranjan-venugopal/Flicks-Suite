@@ -61,6 +61,7 @@ export interface PendingLeaveRequest {
   employeeName: string
   employeeCode: string
   leaveTypeName: string | null
+  leaveTypeCode: string | null
 }
 
 export interface ApplyLeavePayload {
