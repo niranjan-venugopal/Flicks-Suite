@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { and, asc, eq, gte, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmTeams,
   pmTeamMemberships,
@@ -17,6 +17,7 @@ import { PM_STATE_CATEGORIES } from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { PmVisibilityService } from './sync/visibility.service';
 
 /**
  * PM teams (PRD v6 §4). Workspace = tenant; work happens in teams. First call
@@ -52,6 +53,7 @@ export class PmTeamsService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
+    private readonly visibility: PmVisibilityService,
   ) {}
 
   /** Seed states + counter for a team inside the caller's tx. */
@@ -186,7 +188,9 @@ export class PmTeamsService {
             // P15 — member rows/avatars per visible team.
             memberships_all: membershipsAll.filter((m) => teamIds.includes(m.team_id)),
             states: states.filter((s) => teamIds.includes(s.team_id)),
-            labels,
+            // Workspace labels (team_id null) are shared; team labels follow the
+            // same visibility rule as their team — matches the sync bootstrap.
+            labels: labels.filter((l) => !l.team_id || teamIds.includes(l.team_id)),
           },
         };
       },
@@ -438,6 +442,19 @@ export class PmTeamsService {
         }
         let row;
         if (dto.id) {
+          // The access check above ran against the SUBMITTED team_id — re-check
+          // against the label's ACTUAL owner so a lead of team A can't rewrite
+          // a private team B label (or a workspace label) by lying about it.
+          const [existing] = await tx
+            .select({ team_id: pmLabels.team_id })
+            .from(pmLabels)
+            .where(and(eq(pmLabels.id, dto.id), eq(pmLabels.tenant_id, tenantId)));
+          if (!existing) throw new BadRequestException('label not found');
+          if (existing.team_id) {
+            await this.assertSettingsAccess(tx, tenantId, userId, existing.team_id, role);
+          } else if (!['owner', 'admin', 'super_admin', 'fam'].includes(role)) {
+            throw new BadRequestException('Workspace labels need Owner/Admin');
+          }
           [row] = await tx
             .update(pmLabels)
             .set({ name: dto.name.trim(), color: dto.color, description: dto.description ?? null })
@@ -628,21 +645,43 @@ export class PmTeamsService {
       tenantId,
       async (tx) => {
         const cutoff = new Date(Date.now() - 30 * 86_400_000);
-        const issues = await tx
-          .select({
-            id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
-            team_id: pmIssues.team_id, deleted_at: pmIssues.deleted_at,
-          })
-          .from(pmIssues)
-          .where(and(eq(pmIssues.tenant_id, tenantId), gte(pmIssues.deleted_at, cutoff)))
-          .orderBy(sql`${pmIssues.deleted_at} DESC`)
-          .limit(100);
-        const projects = await tx
-          .select({ id: pmProjects.id, name: pmProjects.name, deleted_at: pmProjects.deleted_at })
-          .from(pmProjects)
-          .where(and(eq(pmProjects.tenant_id, tenantId), gte(pmProjects.deleted_at, cutoff)))
-          .orderBy(sql`${pmProjects.deleted_at} DESC`)
-          .limit(100);
+        // §16 — the restore list is a read like any other: private-team rows
+        // (titles included) must never surface to non-members.
+        const visibleTeams = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+        const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId, {
+          withDeleted: true,
+        });
+        const issues = visibleTeams.length
+          ? await tx
+              .select({
+                id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+                team_id: pmIssues.team_id, deleted_at: pmIssues.deleted_at,
+              })
+              .from(pmIssues)
+              .where(
+                and(
+                  eq(pmIssues.tenant_id, tenantId),
+                  gte(pmIssues.deleted_at, cutoff),
+                  inArray(pmIssues.team_id, visibleTeams),
+                ),
+              )
+              .orderBy(sql`${pmIssues.deleted_at} DESC`)
+              .limit(100)
+          : [];
+        const projects = visibleProjects.length
+          ? await tx
+              .select({ id: pmProjects.id, name: pmProjects.name, deleted_at: pmProjects.deleted_at })
+              .from(pmProjects)
+              .where(
+                and(
+                  eq(pmProjects.tenant_id, tenantId),
+                  gte(pmProjects.deleted_at, cutoff),
+                  inArray(pmProjects.id, visibleProjects),
+                ),
+              )
+              .orderBy(sql`${pmProjects.deleted_at} DESC`)
+              .limit(100)
+          : [];
         const teamKeys = await tx
           .select({ id: pmTeams.id, key: pmTeams.key })
           .from(pmTeams)

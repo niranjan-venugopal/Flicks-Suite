@@ -1194,14 +1194,32 @@ export class NotificationsService {
     this.logger.log(`In-app notification created for user ${userId}: ${type}`);
   }
 
+  /**
+   * Tenant scope for every user-facing read/write. These run on dbAdmin
+   * (notifications are deny-all under RLS), so the tenant predicate is the
+   * ONLY thing stopping a multi-tenant user — a consultant, or someone whose
+   * membership was revoked — from seeing another workspace's issue titles in
+   * their feed. Platform rows (tenant_id NULL) stay visible everywhere.
+   */
+  private tenantScope(tenantId: string | null | undefined) {
+    // Omitted tenant = trusted internal caller (jobs, sweeps, tests) → no
+    // narrowing. Every HTTP entry point passes the JWT tenant, which is where
+    // the untrusted input actually arrives.
+    return tenantId
+      ? sql`(${notifications.tenant_id} = ${tenantId}::uuid OR ${notifications.tenant_id} IS NULL)`
+      : undefined;
+  }
+
   async getUnread(
     userId: string,
     limit = 10,
+    tenantId?: string,
   ): Promise<{ items: InAppNotification[]; total: number }> {
     const safeLimit = Math.max(1, Math.min(limit, 50));
     // Archived rows are done; snoozed rows are hidden until due (0045).
     const unreadVisible = and(
       eq(notifications.user_id, userId),
+      this.tenantScope(tenantId),
       isNull(notifications.read_at),
       isNull(notifications.archived_at),
       sql`(${notifications.snoozed_until} IS NULL OR ${notifications.snoozed_until} <= now())`,
@@ -1228,11 +1246,12 @@ export class NotificationsService {
    */
   async getInbox(
     userId: string,
-    opts: { scope?: 'pm' | 'all'; limit?: number } = {},
+    opts: { scope?: 'pm' | 'all'; limit?: number; tenantId?: string } = {},
   ): Promise<{ items: InAppNotification[]; snoozed: InAppNotification[] }> {
     const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
     const scopeCond =
       opts.scope === 'pm' ? sql`${notifications.type} LIKE 'pm.%'` : sql`true`;
+    const tenantCond = this.tenantScope(opts.tenantId);
     const [items, snoozed] = await Promise.all([
       this.dbAdmin
         .select()
@@ -1240,6 +1259,7 @@ export class NotificationsService {
         .where(
           and(
             eq(notifications.user_id, userId),
+            tenantCond,
             isNull(notifications.archived_at),
             sql`(${notifications.snoozed_until} IS NULL OR ${notifications.snoozed_until} <= now())`,
             scopeCond,
@@ -1253,6 +1273,7 @@ export class NotificationsService {
         .where(
           and(
             eq(notifications.user_id, userId),
+            tenantCond,
             isNull(notifications.archived_at),
             sql`${notifications.snoozed_until} > now()`,
             scopeCond,
@@ -1265,7 +1286,7 @@ export class NotificationsService {
   }
 
   /** Archive = done. Archiving also marks read (it left the inbox on purpose). */
-  async archive(notificationId: string, userId: string): Promise<void> {
+  async archive(notificationId: string, userId: string, tenantId?: string): Promise<void> {
     await this.dbAdmin
       .update(notifications)
       .set({ archived_at: new Date(), read_at: sql`COALESCE(${notifications.read_at}, now())` })
@@ -1273,6 +1294,7 @@ export class NotificationsService {
         and(
           eq(notifications.id, notificationId),
           eq(notifications.user_id, userId),
+          this.tenantScope(tenantId),
           isNull(notifications.archived_at),
         ),
       );
@@ -1283,6 +1305,7 @@ export class NotificationsService {
     notificationId: string,
     userId: string,
     until: Date,
+    tenantId?: string,
   ): Promise<void> {
     await this.dbAdmin
       .update(notifications)
@@ -1291,6 +1314,7 @@ export class NotificationsService {
         and(
           eq(notifications.id, notificationId),
           eq(notifications.user_id, userId),
+          this.tenantScope(tenantId),
           isNull(notifications.archived_at),
         ),
       );
@@ -1319,7 +1343,7 @@ export class NotificationsService {
 
   async listAll(
     userId: string,
-    opts: { filter?: 'all' | 'unread'; page?: number; pageSize?: number } = {},
+    opts: { filter?: 'all' | 'unread'; page?: number; pageSize?: number; tenantId?: string } = {},
   ): Promise<{
     items: InAppNotification[];
     total: number;
@@ -1333,8 +1357,12 @@ export class NotificationsService {
 
     const where =
       filter === 'unread'
-        ? and(eq(notifications.user_id, userId), isNull(notifications.read_at))
-        : eq(notifications.user_id, userId);
+        ? and(
+            eq(notifications.user_id, userId),
+            this.tenantScope(opts.tenantId),
+            isNull(notifications.read_at),
+          )
+        : and(eq(notifications.user_id, userId), this.tenantScope(opts.tenantId));
 
     const [rows, [{ n }]] = await Promise.all([
       this.dbAdmin
@@ -1358,7 +1386,7 @@ export class NotificationsService {
     };
   }
 
-  async markRead(notificationId: string, userId: string): Promise<void> {
+  async markRead(notificationId: string, userId: string, tenantId?: string): Promise<void> {
     await this.dbAdmin
       .update(notifications)
       .set({ read_at: new Date() })
@@ -1366,18 +1394,20 @@ export class NotificationsService {
         and(
           eq(notifications.id, notificationId),
           eq(notifications.user_id, userId),
+          this.tenantScope(tenantId),
           isNull(notifications.read_at),
         ),
       );
   }
 
-  async markAllRead(userId: string): Promise<void> {
+  async markAllRead(userId: string, tenantId?: string): Promise<void> {
     await this.dbAdmin
       .update(notifications)
       .set({ read_at: new Date() })
       .where(
         and(
           eq(notifications.user_id, userId),
+          this.tenantScope(tenantId),
           isNull(notifications.read_at),
         ),
       );

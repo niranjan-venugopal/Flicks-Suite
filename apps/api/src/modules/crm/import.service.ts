@@ -205,7 +205,20 @@ export class ImportService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const [batch] = await tx.select().from(importBatches).where(eq(importBatches.id, batchId)).limit(1);
+        // Explicit tenant predicate (house rule) + object_type guard: the
+        // table is shared with PM, and the leads branch below is the `else`,
+        // so an unguarded PM batch id would be treated as a lead import.
+        const [batch] = await tx
+          .select()
+          .from(importBatches)
+          .where(
+            and(
+              eq(importBatches.id, batchId),
+              eq(importBatches.tenant_id, tenantId),
+              inArray(importBatches.object_type, ['people', 'companies', 'leads']),
+            ),
+          )
+          .limit(1);
         if (!batch) throw new NotFoundException('Import not found');
         if (batch.status === 'undone') throw new BadRequestException('Already undone');
         if (Date.now() - batch.created_at.getTime() > UNDO_WINDOW_MS) {

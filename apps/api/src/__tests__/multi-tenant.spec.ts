@@ -12,6 +12,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { sql, eq } from 'drizzle-orm';
 import * as schema from '@flicks/db/schema';
+import { randomUUID } from 'crypto';
 
 // ─── Test Setup ──────────────────────────────────────────────────────────────
 // Two connections by design:
@@ -566,17 +567,20 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
   let tenantB: typeof schema.tenants.$inferSelect;
   let customerA: typeof schema.customers.$inferSelect;
   let customerB: typeof schema.customers.$inferSelect;
+  let userA: typeof schema.users.$inferSelect;
 
   beforeAll(async () => {
     tenantA = await mkTenant(`InvAlpha${rid()}`);
     tenantB = await mkTenant(`InvBeta${rid()}`);
     [customerA] = await idbAdmin.insert(schema.customers).values({ tenant_id: tenantA.id, customer_code: `CUST-A-${rid()}`, display_name: 'Customer A' }).returning();
     [customerB] = await idbAdmin.insert(schema.customers).values({ tenant_id: tenantB.id, customer_code: `CUST-B-${rid()}`, display_name: 'Customer B' }).returning();
+    userA = await mkUser(`iso-a-${rid()}@iso.test`);
   });
 
   afterAll(async () => {
     await idbAdmin.delete(schema.tenants).where(eq(schema.tenants.id, tenantA.id));
     await idbAdmin.delete(schema.tenants).where(eq(schema.tenants.id, tenantB.id));
+    if (userA) await idbAdmin.delete(schema.users).where(eq(schema.users.id, userA.id));
     await invApp.end();
     await invAdmin.end();
   });
@@ -618,6 +622,19 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     // GitHub integration tables (0046)
     { label: 'pm_github_installations', table: schema.pmGithubInstallations, values: () => ({ tenant_id: tenantA.id, installation_id: 700000 + Math.floor(Math.random() * 100000), account_login: 'iso-org' }) },
     { label: 'pm_github_repos', table: schema.pmGithubRepos, values: () => ({ tenant_id: tenantA.id, installation_id: 700001, repo_full_name: `iso/repo-${rid()}`, team_id: seedPmTeamA() }) },
+    // PM core (0040/0041) — pm_issues is the highest-value row in the module,
+    // so the isolation class must cover it and its child tables directly.
+    { label: 'pm_teams', table: schema.pmTeams, values: () => ({ tenant_id: tenantA.id, key: `IS${rid().slice(0, 3).toUpperCase()}`, name: `Iso Team ${rid()}` }) },
+    { label: 'pm_workflow_states', table: schema.pmWorkflowStates, values: () => ({ tenant_id: tenantA.id, team_id: seedPmTeamA(), name: `Iso State ${rid()}`, color: '#A8B0C2', category: 'unstarted', position: 1 }) },
+    { label: 'pm_labels', table: schema.pmLabels, values: () => ({ tenant_id: tenantA.id, name: `iso-label-${rid()}`, color: '#3E7BFA' }) },
+    { label: 'pm_issues', table: schema.pmIssues, values: () => ({ tenant_id: tenantA.id, team_id: seedPmTeamA(), number: Math.floor(Math.random() * 1_000_000), title: `Iso issue ${rid()}`, state_id: seedPmStateA(), board_rank: 'm', backlog_rank: 'm' }) },
+    { label: 'pm_issue_comments', table: schema.pmIssueComments, values: () => ({ tenant_id: tenantA.id, issue_id: seedPmIssueA(), author_user_id: userA.id, body: 'iso comment' }) },
+    { label: 'pm_issue_history', table: schema.pmIssueHistory, values: () => ({ tenant_id: tenantA.id, issue_id: seedPmIssueA(), field: 'title', to_value: 'iso' }) },
+    { label: 'pm_issue_git_links', table: schema.pmIssueGitLinks, values: () => ({ tenant_id: tenantA.id, issue_id: seedPmIssueA(), kind: 'branch', ref: `iso/${rid()}`, label: `iso-${rid()}` }) },
+    // FSE mutation ledger (0039) — carries client payloads, must be isolated.
+    { label: 'sync_mutations', table: schema.syncMutations, values: () => ({ tenant_id: tenantA.id, user_id: userA.id, client_mutation_id: randomUUID(), op: 'issue.update', status: 'applied' }) },
+    // Import stamping table (0047) — shared by CRM + PM.
+    { label: 'import_batches', table: schema.importBatches, values: () => ({ tenant_id: tenantA.id, object_type: 'pm_issues', status: 'done', created_by: userA.id }) },
   ];
 
   // Lazily-seeded invoice_subscription for the charge-attempts case (FK).
@@ -638,6 +655,17 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
     if (!pmTeamAId) throw new Error('pm team fixture not seeded');
     return pmTeamAId;
   }
+  // Workflow state + issue fixtures for the PM core isolation cases (FKs).
+  let pmStateAId: string | null = null;
+  function seedPmStateA(): string {
+    if (!pmStateAId) throw new Error('pm state fixture not seeded');
+    return pmStateAId;
+  }
+  let pmIssueAId: string | null = null;
+  function seedPmIssueA(): string {
+    if (!pmIssueAId) throw new Error('pm issue fixture not seeded');
+    return pmIssueAId;
+  }
   beforeAll(async () => {
     const [cust] = await idbAdmin.insert(schema.customers).values({
       tenant_id: tenantA.id, customer_code: `CA-${rid()}`, display_name: 'Iso Cust',
@@ -656,6 +684,15 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
       tenant_id: tenantA.id, key: `I${rid().slice(0, 3).toUpperCase()}`, name: `Iso Team ${rid()}`,
     }).returning();
     pmTeamAId = pmTeam!.id;
+    const [pmState] = await idbAdmin.insert(schema.pmWorkflowStates).values({
+      tenant_id: tenantA.id, team_id: pmTeamAId, name: `Iso Todo ${rid()}`, color: '#A8B0C2', category: 'unstarted', position: 1,
+    }).returning();
+    pmStateAId = pmState!.id;
+    const [pmIssue] = await idbAdmin.insert(schema.pmIssues).values({
+      tenant_id: tenantA.id, team_id: pmTeamAId, number: 900000 + Math.floor(Math.random() * 90000),
+      title: `Iso fixture issue ${rid()}`, state_id: pmStateAId, board_rank: 'm', backlog_rank: 'm',
+    }).returning();
+    pmIssueAId = pmIssue!.id;
   });
 
   cases.forEach(({ label, table, values }) => {
@@ -667,6 +704,21 @@ describe('Invoicing v3 RLS Isolation (PRD §4.4)', () => {
       expect(seenByB.length).toBe(0);
       await idbAdmin.delete(table).where(eq(table.id, (row as any).id));
     });
+  });
+
+  // pm_team_memberships has a composite PK (team_id, user_id) rather than an
+  // id, so it gets its own assertion instead of the generic id-based case.
+  it('isolation: pm_team_memberships — A sees its row, B sees none', async () => {
+    await idbAdmin.insert(schema.pmTeamMemberships).values({
+      tenant_id: tenantA.id, team_id: seedPmTeamA(), user_id: userA.id,
+    });
+    const seenByA = await withTenant(tenantA.id, (tx) =>
+      tx.select().from(schema.pmTeamMemberships).where(eq(schema.pmTeamMemberships.user_id, userA.id)));
+    expect(seenByA.length).toBe(1);
+    const seenByB = await withTenant(tenantB.id, (tx) =>
+      tx.select().from(schema.pmTeamMemberships).where(eq(schema.pmTeamMemberships.user_id, userA.id)));
+    expect(seenByB.length).toBe(0);
+    await idbAdmin.delete(schema.pmTeamMemberships).where(eq(schema.pmTeamMemberships.user_id, userA.id));
   });
 
   it('isolation: invoice_line_items follow their invoice tenant', async () => {

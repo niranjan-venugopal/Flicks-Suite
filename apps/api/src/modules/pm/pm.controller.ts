@@ -170,6 +170,8 @@ class SnoozeDto {
 class GithubInstallDto {
   @IsInt() @Min(1) @Type(() => Number) installation_id!: number;
   @IsOptional() @IsString() @MaxLength(120) account_login?: string;
+  /** One-shot nonce from POST github/install-url — proves this tenant installed it. */
+  @IsString() @MaxLength(96) state!: string;
 }
 class GithubMapRepoDto {
   @IsString() @MaxLength(200) repo_full_name!: string;
@@ -606,6 +608,14 @@ export class PmController {
   @RequireGrant('pm', 'view')
   githubStatus(@CurrentUser() user: JwtPayload) {
     return this.github.status(user.tenantId, user.sub);
+  }
+
+  /** Mint the GitHub install URL + state nonce (the claim below requires it). */
+  @Post('github/install-url')
+  @RequireGrant('pm', 'edit')
+  @Roles('owner', 'admin')
+  githubInstallUrl(@CurrentUser() user: JwtPayload) {
+    return this.github.startInstall(user.tenantId, user.sub);
   }
 
   @Post('github/install')

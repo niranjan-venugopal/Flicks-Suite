@@ -47,7 +47,8 @@ const dbSvc = new DatabaseService();
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
+const visibility = new PmVisibilityService(dbSvc);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
 // REAL NotificationsService — Sprint 38 asserts on actual inbox rows
 // (collapse, preferences, sweeps). Emails are spied per-test, never sent.
 const notificationsSvc = new NotificationsService(
@@ -57,7 +58,6 @@ const notificationsSvc = new NotificationsService(
   emitter,
 );
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
-const visibility = new PmVisibilityService(dbSvc);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const gatewayStub = { emitSeq: jest.fn() };

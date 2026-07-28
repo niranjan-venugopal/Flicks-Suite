@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Inject } from '@nestjs/common';
+import type Redis from 'ioredis';
 import * as crypto from 'crypto';
+import { REDIS_CLIENT } from '../../core/redis/redis.module';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmGithubInstallations,
@@ -60,6 +62,23 @@ interface ResolvedIssue {
   teamKey: string;
 }
 
+/**
+ * Webhook payloads are attacker-shaped data; these URLs are rendered as
+ * anchor hrefs on the issue page. Only absolute https://github.com links
+ * survive — a `javascript:` value would otherwise be stored XSS on click.
+ */
+function safeGithubUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const ok = u.protocol === 'https:' && (host === 'github.com' || host.endsWith('.github.com'));
+    return ok ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseKeys(...texts: Array<string | null | undefined>): Array<{ key: string; number: number }> {
   const seen = new Set<string>();
   const out: Array<{ key: string; number: number }> = [];
@@ -108,7 +127,51 @@ export class PmGithubService {
     private readonly notifications: NotificationsService,
     private readonly issues: PmIssuesService,
     private readonly app: GithubAppService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  // ─── Install handshake (§12.1) ─────────────────────────────────────────────
+  // An installation_id alone proves nothing: it is a small sequential integer
+  // and the App JWT can read ANY installation of the App. So the claim must
+  // carry a state nonce this server minted for THIS tenant and handed to
+  // GitHub as ?state= on the install redirect. Without it, a tenant could
+  // squat another org's installation id and receive their webhook traffic.
+
+  private stateKey(state: string): string {
+    return `pm:gh:install-state:${state}`;
+  }
+
+  /** Mint the install URL + one-shot state nonce (10 min TTL). */
+  async startInstall(tenantId: string, userId: string) {
+    const slug = this.appSlug();
+    const state = crypto.randomBytes(24).toString('hex');
+    await this.redis.set(
+      this.stateKey(state),
+      JSON.stringify({ tenantId, userId }),
+      'EX',
+      600,
+    );
+    return {
+      data: {
+        state,
+        url: slug ? `https://github.com/apps/${slug}/installations/new?state=${state}` : null,
+      },
+    };
+  }
+
+  /** Consume the nonce; true only when it was minted for this tenant. */
+  private async consumeInstallState(state: string | undefined, tenantId: string): Promise<boolean> {
+    if (!state) return false;
+    const key = this.stateKey(state);
+    const raw = await this.redis.get(key);
+    if (!raw) return false;
+    await this.redis.del(key); // one-shot
+    try {
+      return (JSON.parse(raw) as { tenantId?: string }).tenantId === tenantId;
+    } catch {
+      return false;
+    }
+  }
 
   // ─── Settings (P16) ────────────────────────────────────────────────────────
 
@@ -153,10 +216,20 @@ export class PmGithubService {
   async claimInstallation(
     tenantId: string,
     userId: string,
-    input: { installation_id: number; account_login?: string },
+    input: { installation_id: number; account_login?: string; state?: string },
   ) {
     if (!Number.isInteger(input.installation_id) || input.installation_id <= 0) {
       throw new BadRequestException('installation_id must be a positive integer');
+    }
+    // Ownership proof: the state nonce we minted for this tenant and GitHub
+    // echoed back on the setup redirect. getInstallation() below only proves
+    // the id EXISTS (App JWT sees every installation) — never that this
+    // tenant installed it, so the nonce is the load-bearing check.
+    const proven = await this.consumeInstallState(input.state, tenantId);
+    if (!proven) {
+      throw new BadRequestException(
+        'Installation could not be verified — start the install from Projects → Settings → GitHub so the request carries a valid state.',
+      );
     }
     let login = input.account_login?.trim() || 'unknown';
     if (this.app.configured) {
@@ -372,21 +445,43 @@ export class PmGithubService {
 
   // ─── Webhook pipeline ──────────────────────────────────────────────────────
 
-  /** X-Hub-Signature-256 verify — HMAC-SHA256 hex, timing-safe (§12.2). */
+  /**
+   * X-Hub-Signature-256 verify — HMAC-SHA256 hex, timing-safe (§12.2).
+   * FAIL CLOSED: a missing secret rejects the delivery in every environment.
+   * Local fixture runs opt in explicitly with ALLOW_UNSIGNED_GITHUB_WEBHOOKS=1,
+   * which is refused outright when NODE_ENV=production — an unset/odd NODE_ENV
+   * (staging, empty) must never silently open a public unauthenticated write.
+   */
   verifySignature(rawBody: Buffer, signatureHeader: string | undefined): boolean {
+    return this.signatureVerdict(rawBody, signatureHeader).verified;
+  }
+
+  /**
+   * `accept` = process this delivery; `verified` = the HMAC actually matched
+   * (what the ledger records, so an unsigned local delivery can never be
+   * replayed later as if GitHub had signed it).
+   */
+  signatureVerdict(
+    rawBody: Buffer,
+    signatureHeader: string | undefined,
+  ): { accept: boolean; verified: boolean } {
     const secret = this.config.get<string>('GITHUB_WEBHOOK_SECRET');
     if (!secret) {
-      if (process.env.NODE_ENV === 'production') {
+      const optedIn =
+        this.config.get<string>('ALLOW_UNSIGNED_GITHUB_WEBHOOKS') === '1' &&
+        process.env.NODE_ENV !== 'production';
+      if (!optedIn) {
         throw new UnauthorizedException('GitHub webhook secret not configured');
       }
-      this.logger.warn('GITHUB_WEBHOOK_SECRET unset — accepting unverified delivery (dev only)');
-      return true;
+      this.logger.warn('ALLOW_UNSIGNED_GITHUB_WEBHOOKS=1 — accepting an UNVERIFIED delivery (local only)');
+      return { accept: true, verified: false };
     }
-    if (!signatureHeader?.startsWith('sha256=')) return false;
+    if (!signatureHeader?.startsWith('sha256=')) return { accept: false, verified: false };
     const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
     const given = signatureHeader.slice('sha256='.length);
-    if (given.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(given, 'utf8'), Buffer.from(expected, 'utf8'));
+    if (given.length !== expected.length) return { accept: false, verified: false };
+    const ok = crypto.timingSafeEqual(Buffer.from(given, 'utf8'), Buffer.from(expected, 'utf8'));
+    return { accept: ok, verified: ok };
   }
 
   /**
@@ -395,7 +490,8 @@ export class PmGithubService {
    * records health. Always safe to call twice with the same delivery id.
    */
   async handleDelivery(input: DeliveryInput): Promise<{ status: string }> {
-    if (!this.verifySignature(input.rawBody, input.signature)) {
+    const verdict = this.signatureVerdict(input.rawBody, input.signature);
+    if (!verdict.accept) {
       throw new UnauthorizedException('Invalid X-Hub-Signature-256');
     }
     const installationId = Number(
@@ -418,7 +514,7 @@ export class PmGithubService {
         action: (input.payload.action as string) ?? null,
         installation_id: Number.isInteger(installationId) ? installationId : null,
         tenant_id: installation?.tenant_id ?? null,
-        signature_verified: true,
+        signature_verified: verdict.verified,
         payload: input.payload,
       })
       .onConflictDoNothing({ target: githubWebhookEvents.delivery_id })
@@ -556,7 +652,7 @@ export class PmGithubService {
         ref: link.ref,
         label: link.label,
         state: link.state ?? 'open',
-        url: link.url ?? null,
+        url: safeGithubUrl(link.url),
         repo_full_name: link.repo ?? null,
       })
       .onConflictDoUpdate({

@@ -43,12 +43,12 @@ const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const config = new ConfigService();
 const notificationsSvc = new NotificationsService(db as never, dbAdmin as never, config, emitter);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
-const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
 const visibility = new PmVisibilityService(dbSvc);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
+const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const importSvc = new PmImportService(dbSvc, audit, domainEventsSvc);
-const templatesSvc = new PmTemplatesService(dbSvc, audit, domainEventsSvc);
+const templatesSvc = new PmTemplatesService(dbSvc, audit, domainEventsSvc, visibility);
 
 let tenantId: string;
 let ownerId: string;

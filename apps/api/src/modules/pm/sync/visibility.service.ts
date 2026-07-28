@@ -37,12 +37,21 @@ export class PmVisibilityService {
    * links (workspace-wide) or at least one linked team is visible. Same
    * doctrine as teams — implemented once, used by bootstrap/delta/REST.
    */
-  async visibleProjectIdsTx(tx: Db, tenantId: string, userId: string): Promise<string[]> {
+  async visibleProjectIdsTx(
+    tx: Db,
+    tenantId: string,
+    userId: string,
+    opts: { withDeleted?: boolean } = {},
+  ): Promise<string[]> {
     const visibleTeams = new Set(await this.visibleTeamIdsTx(tx, tenantId, userId));
     const projects = await tx
       .select({ id: pmProjects.id })
       .from(pmProjects)
-      .where(and(eq(pmProjects.tenant_id, tenantId), isNull(pmProjects.deleted_at)));
+      .where(
+        opts.withDeleted
+          ? eq(pmProjects.tenant_id, tenantId)
+          : and(eq(pmProjects.tenant_id, tenantId), isNull(pmProjects.deleted_at)),
+      );
     const links = await tx
       .select({ project_id: pmProjectTeams.project_id, team_id: pmProjectTeams.team_id })
       .from(pmProjectTeams)

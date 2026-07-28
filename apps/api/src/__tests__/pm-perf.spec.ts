@@ -25,8 +25,8 @@ const dbSvc = new DatabaseService();
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
 const visibility = new PmVisibilityService(dbSvc);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
 const searchSvc = new PmSearchService(dbSvc, visibility);
 

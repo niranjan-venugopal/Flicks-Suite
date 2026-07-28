@@ -38,25 +38,64 @@ SELECT 'member_of          = ' || COALESCE(string_agg(r.rolname, ', '), '(none)'
   FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid
   WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user);
 "
-# With a deliberately-bogus tenant context, an RLS-subject connection must see 0
-# employees. Any number > 0 means this connection bypasses RLS.
-psql "$DATABASE_URL" "${PA[@]}" -c "
+# With a deliberately-bogus tenant context, an RLS-subject connection must see
+# ZERO rows in EVERY tenant-scoped table — not just employees. This sweeps them
+# all and reports the ones that leak, so a single table losing its policy can't
+# hide behind a green employees check.
+LEAK_REPORT="$(psql "$DATABASE_URL" "${PA[@]}" <<'SQL' || true
 SELECT set_config('app.tenant_id','00000000-0000-0000-0000-0000000000ff', false);
-SELECT 'leak_with_bogus_context = ' || count(*) || '  (must be 0)' FROM employees;
-" | grep leak_with_bogus_context || true
+DO $$
+DECLARE
+  t record;
+  n bigint;
+  leaked text[] := '{}';
+  checked int := 0;
+BEGIN
+  FOR t IN
+    SELECT c.relname
+      FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+      JOIN information_schema.columns col
+        ON col.table_schema = 'public' AND col.table_name = c.relname AND col.column_name = 'tenant_id'
+     WHERE ns.nspname = 'public' AND c.relkind = 'r'
+     ORDER BY c.relname
+  LOOP
+    BEGIN
+      EXECUTE format('SELECT count(*) FROM %I', t.relname) INTO n;
+      checked := checked + 1;
+      IF n > 0 THEN leaked := leaked || t.relname; END IF;
+    EXCEPTION WHEN insufficient_privilege THEN
+      NULL; -- revoked-by-design tables (outbox, api_keys, webhook ledgers)
+    END;
+  END LOOP;
+  RAISE NOTICE 'tenant_tables_probed     = %', checked;
+  RAISE NOTICE 'leak_with_bogus_context  = %  (must be 0)', coalesce(array_length(leaked,1),0);
+  IF array_length(leaked,1) > 0 THEN
+    RAISE NOTICE 'LEAKING TABLES           = %', array_to_string(leaked, ', ');
+  END IF;
+END $$;
+SQL
+)"
+echo "$LEAK_REPORT" | grep -E "tenant_tables_probed|leak_with_bogus_context|LEAKING TABLES" || true
 
 echo
 echo "════════ Policy / RLS posture (via service-role URL) ════════"
 psql "$ADMIN_URL" "${PA[@]}" -c "
-SELECT 'public_policies    = ' || count(*) || '   (expect ~24)' FROM pg_policies WHERE schemaname='public';
-SELECT 'employees rls/force= ' || relrowsecurity || ' / ' || relforcerowsecurity || '   (expect t / t)'
-  FROM pg_class WHERE relname='employees';
-SELECT 'flicks_app role    = ' || COALESCE(
+SELECT 'public_policies      = ' || count(*) FROM pg_policies WHERE schemaname='public';
+SELECT 'tenant_tables        = ' || count(*) FROM information_schema.columns
+  WHERE table_schema='public' AND column_name='tenant_id';
+SELECT 'tenant_tables_no_rls = ' || COALESCE(string_agg(c.relname, ', '), '(none — good)')
+  FROM pg_class c
+  JOIN pg_namespace ns ON ns.oid = c.relnamespace
+  JOIN information_schema.columns col
+    ON col.table_schema='public' AND col.table_name=c.relname AND col.column_name='tenant_id'
+  WHERE ns.nspname='public' AND c.relkind='r' AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity);
+SELECT 'flicks_app role      = ' || COALESCE(
   (SELECT 'exists, rolbypassrls=' || rolbypassrls FROM pg_roles WHERE rolname='flicks_app'),
   'DOES NOT EXIST — run setup-supabase.sh with APP_ROLE_PASSWORD');
 "
 echo
 echo "Diagnosis hints:"
 echo "  • connected_as=postgres OR rolbypassrls=t  -> repoint DATABASE_URL at flicks_app."
-echo "  • leak_with_bogus_context > 0              -> app connection is bypassing RLS."
-echo "  • public_policies=0 / force=f              -> re-run setup-supabase.sh (policies missing)."
+echo "  • leak_with_bogus_context > 0              -> those tables are NOT RLS-protected."
+echo "  • tenant_tables_no_rls lists anything      -> that table is missing ENABLE/FORCE RLS."

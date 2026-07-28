@@ -25,6 +25,30 @@ import { PmTeamsService } from '../modules/pm/teams.service';
 import { PmIssuesService } from '../modules/pm/issues.service';
 import { GithubAppService } from '../modules/pm/github-app.service';
 import { PmGithubService } from '../modules/pm/github.service';
+import { PmVisibilityService } from '../modules/pm/sync/visibility.service';
+
+/** In-memory Redis double — the install handshake stores its state nonce here. */
+const redisStub = (() => {
+  const store = new Map<string, string>();
+  return {
+    async set(k: string, v: string) { store.set(k, v); return 'OK'; },
+    async get(k: string) { return store.get(k) ?? null; },
+    async del(k: string) { return store.delete(k) ? 1 : 0; },
+    async incr(k: string) { const n = Number(store.get(k) ?? 0) + 1; store.set(k, String(n)); return n; },
+    async expire() { return 1; },
+  };
+})();
+
+/** Claim helper: mint the state nonce the way the UI does, then claim. */
+async function claimWithState(
+  svc: PmGithubService,
+  tenant: string,
+  user: string,
+  input: { installation_id: number; account_login?: string },
+) {
+  const { data } = await svc.startInstall(tenant, user);
+  return svc.claimInstallation(tenant, user, { ...input, state: data.state });
+}
 
 /**
  * PRD v6 Sprint 39 — GitHub integration on GOLDEN FIXTURES (no live App):
@@ -44,7 +68,8 @@ const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const config = new ConfigService();
 const notificationsSvc = new NotificationsService(db as never, dbAdmin as never, config, emitter);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc);
+const visibility = new PmVisibilityService(dbSvc);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
 const appSvc = new GithubAppService(config); // unconfigured — API calls no-op
 const github = new PmGithubService(
@@ -56,6 +81,7 @@ const github = new PmGithubService(
   notificationsSvc,
   issuesSvc,
   appSvc,
+  redisStub as never,
 );
 
 let tenantId: string;
@@ -110,7 +136,7 @@ beforeAll(async () => {
   teamId = team!.id;
   teamKey = team!.key;
 
-  await github.claimInstallation(tenantId, ownerId, { installation_id: INSTALLATION_ID, account_login: 'specflicks' });
+  await claimWithState(github, tenantId, ownerId, { installation_id: INSTALLATION_ID, account_login: 'specflicks' });
   await github.mapRepo(tenantId, ownerId, { repo_full_name: REPO, team_id: teamId });
 });
 
@@ -313,7 +339,7 @@ describe('Close-unmerged + toggles + isolation', () => {
     await teamsSvc.ensureWorkspace(tb!.id, ub!.id);
     const [teamB] = await dbAdmin.select().from(pmTeams).where(eq(pmTeams.tenant_id, tb!.id));
     const B_INSTALL = INSTALLATION_ID + 1;
-    await github.claimInstallation(tb!.id, ub!.id, { installation_id: B_INSTALL, account_login: 'beta-org' });
+    await claimWithState(github, tb!.id, ub!.id, { installation_id: B_INSTALL, account_login: 'beta-org' });
     await github.mapRepo(tb!.id, ub!.id, { repo_full_name: 'beta/repo', team_id: teamB!.id });
 
     // Tenant A issue that a malicious/mistaken branch name in B references.

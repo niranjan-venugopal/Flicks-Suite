@@ -121,8 +121,20 @@ export default function PmGithubSettingsPage() {
   const fail = (e: unknown) =>
     toast({ title: 'Could not save', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
 
+  // Two-step handshake: the server mints a one-shot state nonce (and the
+  // install URL) and only accepts a claim carrying it — an installation id on
+  // its own proves nothing, so it can't be used to squat another org's install.
   const claim = useMutation({
-    mutationFn: () => api.post('/api/v1/pm/github/install', { installation_id: Number(claimId) }),
+    mutationFn: async () => {
+      const started = await api.post<{ data: { state: string; url: string | null } }>(
+        '/api/v1/pm/github/install-url',
+        {},
+      )
+      return api.post('/api/v1/pm/github/install', {
+        installation_id: Number(claimId),
+        state: started.data.state,
+      })
+    },
     onSuccess: () => { setClaimOpen(false); setClaimId(''); invalidate() },
     onError: fail,
   })

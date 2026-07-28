@@ -71,8 +71,14 @@ export class PmProjectsService {
     return project;
   }
 
-  private async assertProjectAccess(tx: Db, tenantId: string, userId: string, id: string) {
-    const visible = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+  private async assertProjectAccess(
+    tx: Db,
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts: { withDeleted?: boolean } = {},
+  ) {
+    const visible = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId, opts);
     if (!visible.includes(id)) throw new ForbiddenException('Project not visible to you');
   }
 
@@ -424,6 +430,9 @@ export class PmProjectsService {
       tenantId,
       async (tx) => {
         const project = await this.loadProject(tx, tenantId, id, { withDeleted: true });
+        // Restore is a write like every sibling op — a private team's project
+        // must not be un-deleted by someone who can't even see it.
+        await this.assertProjectAccess(tx, tenantId, userId, id, { withDeleted: true });
         if (!project.deleted_at) return { data: project };
         const [row] = await tx
           .update(pmProjects)

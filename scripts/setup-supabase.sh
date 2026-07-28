@@ -114,7 +114,11 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${APP_ROLE}";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON TABLES TO "${APP_ROLE}";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "${APP_ROLE}";
 SQL
+  # The blanket grant above undoes the migrations' per-table lockdowns
+  # (append-only ledgers, service-role-only tables). Replay them.
+  psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" -f "$REPO_ROOT/scripts/sql/relock-grants.sql" >/dev/null
   echo "  ✓ role '${APP_ROLE}' ready (NOBYPASSRLS) — point DATABASE_URL at it"
+  echo "  ✓ migration lockdowns (REVOKEs) re-asserted after the blanket grant"
 fi
 
 echo "─── Step 4: insert seed tenant ───"

@@ -109,7 +109,9 @@ GRANT USAGE ON SCHEMA public TO "${APP_ROLE}";
 GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA public TO "${APP_ROLE}";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "${APP_ROLE}";
 SQL
-  echo "  ✓ grants re-asserted for '${APP_ROLE}'"
+  # Replay the per-table lockdowns the blanket grant just undid.
+  psql "$DATABASE_DIRECT_URL" "${PSQL_ARGS[@]}" -f "$REPO_ROOT/scripts/sql/relock-grants.sql" >/dev/null
+  echo "  ✓ grants re-asserted for '${APP_ROLE}' (migration lockdowns replayed)"
 else
   echo "  ⚠ role '${APP_ROLE}' not found — skipping grants. (Create it via"
   echo "    setup-supabase.sh / setup-db.sh and point DATABASE_URL at it.)"

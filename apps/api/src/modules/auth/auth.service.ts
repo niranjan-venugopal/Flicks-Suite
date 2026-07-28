@@ -6,7 +6,10 @@ import {
   ForbiddenException,
   Logger,
   Inject,
+  Optional,
 } from '@nestjs/common';
+import type Redis from 'ioredis';
+import { REDIS_CLIENT } from '../../core/redis/redis.module';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -91,7 +94,34 @@ export class AuthService {
     private readonly auditService: AuditService,
     private readonly totpService: TotpService,
     private readonly consentService: ConsentService,
+    @Optional() @Inject(REDIS_CLIENT) private readonly redis?: Redis,
   ) {}
+
+  /**
+   * Per-EMAIL OTP limiter. The route's ThrottlerGuard keys on IP, which does
+   * nothing against a rotating-IP attacker targeting one address: they could
+   * both bomb the victim's mailbox and — because each request consumes the
+   * previous OTP — keep the victim permanently unable to finish sign-in.
+   * Redis-backed; a Redis outage degrades to the IP limiter (logged).
+   */
+  private async assertEmailOtpQuota(email: string): Promise<void> {
+    if (!this.redis) return;
+    const burst = `auth:otp:burst:${sha256(email)}`;
+    const hourly = `auth:otp:hr:${sha256(email)}`;
+    try {
+      const [b, h] = await Promise.all([this.redis.incr(burst), this.redis.incr(hourly)]);
+      if (b === 1) await this.redis.expire(burst, 60);
+      if (h === 1) await this.redis.expire(hourly, 3600);
+      if (b > 1 || h > 5) {
+        throw new BadRequestException(
+          'A sign-in code was just sent to this address. Check your inbox, or try again in a minute.',
+        );
+      }
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.warn(`OTP email quota check degraded (redis): ${(err as Error).message}`);
+    }
+  }
 
   async requestOtp(
     email: string,
@@ -100,7 +130,9 @@ export class AuthService {
     intent: 'signin' | 'signup' = 'signin',
   ): Promise<{ success: true; message: string }> {
     const normalizedEmail = email.toLowerCase().trim();
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // crypto.randomInt, never Math.random: V8's PRNG state is recoverable from
+    // a run of outputs, and signup intent lets anyone harvest their own codes.
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     const otpHash = sha256(otpCode);
     const magicLinkRawToken = generateSecureToken();
     const magicLinkHash = sha256(magicLinkRawToken);
@@ -136,6 +168,10 @@ export class AuthService {
         code: 'NOT_REGISTERED',
       });
     }
+
+    // Quota BEFORE any invalidation/send — otherwise a rejected request would
+    // still have killed the victim's outstanding (valid) code.
+    await this.assertEmailOtpQuota(normalizedEmail);
 
     // Invalidate any prior unconsumed SHORT-LIVED OTPs / magic links for
     // this email so only the freshly-issued code is valid. Without this

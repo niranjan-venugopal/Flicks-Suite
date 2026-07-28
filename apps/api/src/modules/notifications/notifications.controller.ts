@@ -45,7 +45,7 @@ export class NotificationsController {
     @Query('limit') limit?: string,
   ) {
     const parsed = limit ? Number(limit) : 10;
-    return this.notificationsService.getUnread(user.sub, parsed);
+    return this.notificationsService.getUnread(user.sub, parsed, user.tenantId);
   }
 
   @Get('preferences')
@@ -85,6 +85,7 @@ export class NotificationsController {
       filter: filter === 'unread' ? 'unread' : 'all',
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
+      tenantId: user.tenantId,
     });
   }
 
@@ -97,6 +98,7 @@ export class NotificationsController {
   ) {
     return this.notificationsService.getInbox(user.sub, {
       scope: scope === 'pm' ? 'pm' : 'all',
+      tenantId: user.tenantId,
     });
   }
 
@@ -118,7 +120,7 @@ export class NotificationsController {
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.notificationsService.archive(id, user.sub);
+    await this.notificationsService.archive(id, user.sub, user.tenantId);
   }
 
   @Patch(':id/snooze')
@@ -134,7 +136,7 @@ export class NotificationsController {
     if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) {
       throw new BadRequestException('until must be a future ISO timestamp');
     }
-    await this.notificationsService.snooze(id, user.sub, until);
+    await this.notificationsService.snooze(id, user.sub, until, user.tenantId);
   }
 
   @Patch(':id/read')
@@ -145,7 +147,7 @@ export class NotificationsController {
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
   ): Promise<void> {
-    await this.notificationsService.markRead(id, user.sub);
+    await this.notificationsService.markRead(id, user.sub, user.tenantId);
   }
 
   @Post('mark-all-read')
@@ -153,6 +155,6 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Mark every unread notification as read' })
   @ApiResponse({ status: 204, description: 'All marked as read' })
   async markAllRead(@CurrentUser() user: JwtPayload): Promise<void> {
-    await this.notificationsService.markAllRead(user.sub);
+    await this.notificationsService.markAllRead(user.sub, user.tenantId);
   }
 }

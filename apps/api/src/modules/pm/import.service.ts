@@ -528,7 +528,16 @@ export class PmImportService {
         const [batch] = await tx
           .select()
           .from(importBatches)
-          .where(and(eq(importBatches.id, batchId), eq(importBatches.tenant_id, tenantId)))
+          .where(
+            and(
+              eq(importBatches.id, batchId),
+              eq(importBatches.tenant_id, tenantId),
+              // import_batches is shared with CRM — without this guard a PM
+              // undo would stamp a CRM lead batch 'undone', stranding it
+              // (CRM's own undo then refuses with "Already undone").
+              inArray(importBatches.object_type, ['pm_issues', 'pm_projects']),
+            ),
+          )
           .limit(1);
         if (!batch) throw new BadRequestException('Batch not found');
         if (batch.status === 'undone') throw new BadRequestException('Already undone');

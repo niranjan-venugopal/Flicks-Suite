@@ -89,27 +89,34 @@ export class PmSyncService {
     private readonly teams: PmTeamsService,
   ) {}
 
-  /** Global cursor head (indexed max). */
-  async latestSeq(): Promise<number> {
-    const [row] = await this.dbAdmin
+  /**
+   * Cursor head for ONE tenant. Scoped deliberately: a global max would leak
+   * platform-wide write volume to any tenant polling the endpoint, and a
+   * global min would drag an unrelated tenant past its horizon (410 storm)
+   * whenever someone else's history was pruned.
+   */
+  async latestSeq(tenantId?: string): Promise<number> {
+    const q = this.dbAdmin
       .select({ max: sql<number>`coalesce(max(${domainEvents.sync_seq}), 0)` })
       .from(domainEvents);
+    const [row] = await (tenantId ? q.where(eq(domainEvents.tenant_id, tenantId)) : q);
     return Number(row?.max ?? 0);
   }
 
-  /** Oldest retained seq (prune job advances this; 0 = full history present). */
-  async minSeqHorizon(): Promise<number> {
-    const [row] = await this.dbAdmin
+  /** Oldest retained seq for this tenant (prune advances it; 0 = full history). */
+  async minSeqHorizon(tenantId?: string): Promise<number> {
+    const q = this.dbAdmin
       .select({ min: sql<number>`coalesce(min(${domainEvents.sync_seq}), 0)` })
       .from(domainEvents);
+    const [row] = await (tenantId ? q.where(eq(domainEvents.tenant_id, tenantId)) : q);
     return Math.max(0, Number(row?.min ?? 0) - 1);
   }
 
   /** Bootstrap payload as NDJSON lines (§3.3). */
   async bootstrap(tenantId: string, userId: string): Promise<string[]> {
     await this.teams.ensureWorkspace(tenantId, userId);
-    const latestSeq = await this.latestSeq(); // BEFORE the snapshot reads
-    const horizon = await this.minSeqHorizon();
+    const latestSeq = await this.latestSeq(tenantId); // BEFORE the snapshot reads
+    const horizon = await this.minSeqHorizon(tenantId);
 
     return this.db.withTenant(
       tenantId,
@@ -319,9 +326,9 @@ export class PmSyncService {
 
   /** Delta since a cursor (§3.4). Returns 410-shaped flag when past horizon. */
   async delta(tenantId: string, userId: string, since: number) {
-    const horizon = await this.minSeqHorizon();
+    const horizon = await this.minSeqHorizon(tenantId);
     if (since < horizon) {
-      return { reBootstrap: true as const, latest_seq: await this.latestSeq() };
+      return { reBootstrap: true as const, latest_seq: await this.latestSeq(tenantId) };
     }
 
     // 1. Collect touched refs from pm.* events past the cursor (service role;
@@ -339,7 +346,7 @@ export class PmSyncService {
       .orderBy(asc(domainEvents.sync_seq))
       .limit(5000);
 
-    const latestSeq = await this.latestSeq();
+    const latestSeq = await this.latestSeq(tenantId);
     const touched = new Map<string, Set<string>>(); // table → ids
     for (const ev of events) {
       const refs = (ev.payload as { sync?: SyncRef[] })?.sync ?? [];

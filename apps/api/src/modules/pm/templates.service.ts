@@ -4,6 +4,8 @@ import { pmIssueTemplates, pmTeams } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import type { Db } from '@flicks/db';
+import { PmVisibilityService } from './sync/visibility.service';
 
 /**
  * Issue templates (PRD v6 §15.5, P15 Templates tab) — per-team, one may be
@@ -17,12 +19,24 @@ export class PmTemplatesService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
+    private readonly visibility: PmVisibilityService,
   ) {}
+
+  /**
+   * §16 — templates carry a team's working copy (title patterns, description
+   * boilerplate), so reads follow team visibility and writes need the same
+   * settings rights as the rest of the team's configuration.
+   */
+  private async assertTeamVisible(tx: Db, tenantId: string, userId: string, teamId: string) {
+    const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+    if (!visible.includes(teamId)) throw new NotFoundException('team not found');
+  }
 
   async list(tenantId: string, userId: string, teamId: string) {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.assertTeamVisible(tx, tenantId, userId, teamId);
         const rows = await tx
           .select()
           .from(pmIssueTemplates)
@@ -61,6 +75,7 @@ export class PmTemplatesService {
           .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId)))
           .limit(1);
         if (!team) throw new BadRequestException('team not found');
+        await this.assertTeamVisible(tx, tenantId, userId, teamId);
         // Exactly one default per team — setting a new default clears the rest.
         if (input.is_team_default) {
           await tx
@@ -101,6 +116,7 @@ export class PmTemplatesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.assertTeamVisible(tx, tenantId, userId, teamId);
         const [row] = await tx
           .delete(pmIssueTemplates)
           .where(and(eq(pmIssueTemplates.id, id), eq(pmIssueTemplates.tenant_id, tenantId), eq(pmIssueTemplates.team_id, teamId)))
