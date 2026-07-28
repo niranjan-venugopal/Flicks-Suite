@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from 'react'
 import Link from 'next/link'
+import { FEATURES } from '@/lib/feature-flags'
 import { Icon, Toggle } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -25,7 +26,10 @@ const EVENTS: Array<{ event: NotificationEvent; label: string }> = [
   { event: 'pm_status', label: 'Status → completed/canceled' },
   { event: 'pm_cycle_digest', label: 'Cycle review digest' },
   { event: 'pm_project_nudge', label: 'Project update nudge' },
-  { event: 'pm_github', label: 'GitHub state change on my issues' },
+  // GitHub events can't fire while the integration is parked.
+  ...(FEATURES.pm_github
+    ? [{ event: 'pm_github' as const, label: 'GitHub state change on my issues' }]
+    : []),
 ]
 
 const FREQS: Array<['urgent' | 'hourly' | 'daily', string]> = [
@@ -82,7 +86,9 @@ export default function PmNotifSettingsPage() {
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px' }}>
       <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-        <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
+        {FEATURES.pm_github && (
+          <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
+        )}
         <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: '#fff', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
         <Link href="/pm/settings/import" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Import</Link>
         <Link href="/pm/settings/workspace" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Workspace</Link>

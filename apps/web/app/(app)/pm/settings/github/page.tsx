@@ -8,6 +8,7 @@ import { Kbd, StateGlyph } from '@/components/pm/glyphs'
 import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
+import { FEATURES } from '@/lib/feature-flags'
 
 // ─────────────────────────────────────────────────────────
 // P16 — GitHub settings (§12), faithful to scr-settings-pm.jsx ScrGithub:
@@ -64,7 +65,7 @@ function SettingsTabs({ active }: { active: 'github' | 'notifications' }) {
   )
   return (
     <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-      {tab('/pm/settings/github', 'GitHub', active === 'github')}
+      {FEATURES.pm_github && tab('/pm/settings/github', 'GitHub', active === 'github')}
       {tab('/pm/settings/notifications', 'Notifications', active === 'notifications')}
       {tab('/pm/settings/import', 'Import', false)}
       {tab('/pm/settings/workspace', 'Workspace', false)}
@@ -90,7 +91,44 @@ function FlowStep({
   )
 }
 
+/**
+ * Coming-soon state while GitHub is parked (FEATURES.pm_github).
+ * The full P16 console below is untouched — flipping the flag restores it.
+ */
+function GithubComingSoon() {
+  return (
+    <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px' }}>
+      <SettingsTabs active="github" />
+      <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 11, background: 'var(--surf-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>
+            <Icon.gitPr size={17} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 800 }}>GitHub integration</div>
+            <div className="t-mute" style={{ fontSize: 11.5 }}>
+              Branch → PR → merge moves the issue, with git chips on the issue page
+            </div>
+          </div>
+          <Pill tone="yellow">Coming soon</Pill>
+        </div>
+        <div style={{ marginTop: 10, lineHeight: 1.6, fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+          We&apos;re switching the connection from an org-wide GitHub App install to
+          signing in with your own GitHub account (OAuth) — so the link is tied to
+          you, scopes stay minimal, and access follows your GitHub permissions.
+          The automations are built and tested; they turn on with the new connect flow.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function PmGithubSettingsPage() {
+  if (!FEATURES.pm_github) return <GithubComingSoon />
+  return <PmGithubSettingsPageInner />
+}
+
+function PmGithubSettingsPageInner() {
   const role = useAuthStore((s) => s.currentUser?.role)
   const canAdmin = role === 'OWNER' || role === 'HR_ADMIN'
   const { toast } = useToast()

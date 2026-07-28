@@ -12,6 +12,7 @@ import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
 import type { PmIssueRow } from '@/lib/pm/types'
+import { FEATURES } from '@/lib/feature-flags'
 
 // ─────────────────────────────────────────────────────────
 // P7 Issue detail — two-pane: doc (title + description + activity/comments)
@@ -114,6 +115,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     queryFn: () => api.get<{ data: { installation: { branch_format: string } | null } }>('/api/v1/pm/github/status'),
     staleTime: 300_000,
     retry: false,
+    enabled: FEATURES.pm_github,
   })
   const saveDesc = () => {
     if (engine) engine.updateIssue(id, { description: desc })
@@ -145,7 +147,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
 
   useHotkeys({
     escape: () => { if (menu) setMenu(null); else router.push('/pm/issues') },
-    'mod+shift+b': (e) => { e.preventDefault(); copyBranchName() },
+    'mod+shift+b': (e) => { if (!FEATURES.pm_github) return; e.preventDefault(); copyBranchName() },
     ...Object.fromEntries([0, 1, 2, 3, 4].map((p) => [String(p), () => doPriority(p)])),
   })
 
@@ -178,9 +180,11 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
         <Btn kind="ghost" size="sm" onClick={() => { void navigator.clipboard.writeText(`${team?.key}-${issue.number}`) }}>
           Copy ID <Kbd style={{ marginLeft: 5 }}>⌘⇧.</Kbd>
         </Btn>
-        <Btn kind="ghost" size="sm" icon={<Icon.gitBranch size={12} />} onClick={copyBranchName} title="Copy branch name">
-          Branch <Kbd style={{ marginLeft: 5 }}>⌘⇧B</Kbd>
-        </Btn>
+        {FEATURES.pm_github && (
+          <Btn kind="ghost" size="sm" icon={<Icon.gitBranch size={12} />} onClick={copyBranchName} title="Copy branch name">
+            Branch <Kbd style={{ marginLeft: 5 }}>⌘⇧B</Kbd>
+          </Btn>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20, alignItems: 'start' }}>
@@ -257,8 +261,9 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             </div>
           )}
 
-          {/* Git (§12 — chips attached by the GitHub App) */}
-          {(d?.git_links?.length ?? 0) > 0 && (
+          {/* Git (§12 — chips attached by the GitHub App; parked behind
+              FEATURES.pm_github while the connection moves to OAuth) */}
+          {FEATURES.pm_github && (d?.git_links?.length ?? 0) > 0 && (
             <div className="card" style={{ padding: '10px 14px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span className="t-caption">Git</span>
               {d!.git_links.map((g) => (

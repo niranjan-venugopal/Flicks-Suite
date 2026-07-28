@@ -18,16 +18,29 @@ const PARKED_CRM_HREFS = new Set<string>([
   ...(FEATURES.crm_automation ? [] : ['/crm/automation']),
 ])
 
-/** Drop parked CRM sub-items from every section's item list. */
+/**
+ * Drop parked sub-items from every section's item list. CRM sequences /
+ * templates / automation disappear entirely; the PM "Settings" child is
+ * repointed (it deep-links to the GitHub tab, which is parked) so Projects
+ * settings still opens on a live tab.
+ */
 function withoutParkedCrm(sections: NavSection[]): NavSection[] {
-  if (PARKED_CRM_HREFS.size === 0) return sections
   return sections.map((sec) => ({
     ...sec,
-    items: sec.items.map((it) =>
-      it.id === 'crm' && it.children
-        ? { ...it, children: it.children.filter((c) => !PARKED_CRM_HREFS.has(c.href)) }
-        : it,
-    ),
+    items: sec.items.map((it) => {
+      if (it.id === 'crm' && it.children && PARKED_CRM_HREFS.size > 0) {
+        return { ...it, children: it.children.filter((c) => !PARKED_CRM_HREFS.has(c.href)) }
+      }
+      if (it.id === 'projects' && it.children && !FEATURES.pm_github) {
+        return {
+          ...it,
+          children: it.children.map((c) =>
+            c.href === '/pm/settings/github' ? { ...c, href: '/pm/settings/notifications' } : c,
+          ),
+        }
+      }
+      return it
+    }),
   }))
 }
 

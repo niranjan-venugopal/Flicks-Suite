@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Toggle } from '@/components/proto'
 import { api } from '@/lib/api/client'
+import { FEATURES } from '@/lib/feature-flags'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
@@ -25,7 +26,9 @@ interface DeletedResponse {
 
 function SettingsTabs({ active }: { active: string }) {
   const tabs = [
-    ['/pm/settings/github', 'GitHub'],
+    // GitHub is parked (FEATURES.pm_github) while the connection model moves
+    // to per-user OAuth — the tab returns when the flag flips.
+    ...(FEATURES.pm_github ? ([['/pm/settings/github', 'GitHub']] as const) : []),
     ['/pm/settings/notifications', 'Notifications'],
     ['/pm/settings/import', 'Import'],
     ['/pm/settings/workspace', 'Workspace'],
@@ -66,6 +69,7 @@ export default function PmWorkspacePage() {
     queryKey: ['pm', 'github', 'status'],
     queryFn: () => api.get<{ data: { installation: { branch_format: string } | null } }>('/api/v1/pm/github/status'),
     retry: false,
+    enabled: FEATURES.pm_github,
   })
   const deletedQ = useQuery({
     queryKey: ['pm', 'recently-deleted'],
@@ -136,7 +140,8 @@ export default function PmWorkspacePage() {
         )}
       </div>
 
-      {/* Branch format default */}
+      {/* Branch format default — hidden while GitHub is parked */}
+      {FEATURES.pm_github && (
       <div className="card">
         <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Branch format default</div>
         <input
@@ -149,6 +154,7 @@ export default function PmWorkspacePage() {
           Managed under Settings → GitHub once the App is connected.
         </div>
       </div>
+      )}
 
       {/* Recently deleted */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

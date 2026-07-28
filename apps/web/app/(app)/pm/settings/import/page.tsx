@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useMutation } from '@tanstack/react-query'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { api } from '@/lib/api/client'
+import { FEATURES } from '@/lib/feature-flags'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -47,7 +48,9 @@ const SOURCES: Array<{ id: Preset; label: string; sub: string }> = [
 
 function SettingsTabs({ active }: { active: string }) {
   const tabs = [
-    ['/pm/settings/github', 'GitHub'],
+    // GitHub is parked (FEATURES.pm_github) while the connection model moves
+    // to per-user OAuth — the tab returns when the flag flips.
+    ...(FEATURES.pm_github ? ([['/pm/settings/github', 'GitHub']] as const) : []),
     ['/pm/settings/notifications', 'Notifications'],
     ['/pm/settings/import', 'Import'],
     ['/pm/settings/workspace', 'Workspace'],
