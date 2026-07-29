@@ -12,6 +12,7 @@ import { and, eq } from 'drizzle-orm';
 import { memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload } from '@flicks/shared/types';
 import { DatabaseService } from '../core/database/database.service';
+import { wsCors } from '../core/common/ws-cors';
 
 interface BoardChangedPayload {
   tenantId: string;
@@ -25,7 +26,7 @@ interface BoardChangedPayload {
  * room so a drag-drop by one rep appears on every open board within the tenant.
  * Same JWT-handshake pattern as the presence/notifications gateways.
  */
-@WebSocketGateway({ namespace: '/crm', cors: { origin: true, credentials: true } })
+@WebSocketGateway({ namespace: '/crm', cors: wsCors() })
 export class CrmGateway implements OnGatewayConnection {
   private readonly logger = new Logger(CrmGateway.name);
 

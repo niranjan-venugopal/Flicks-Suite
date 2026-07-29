@@ -46,10 +46,14 @@ export class InvoicePdfService implements OnModuleDestroy {
 
   private async browser(): Promise<Browser> {
     if (!this.browserPromise) {
+      // Prod containers point this at distro Chromium (the image can't run
+      // puppeteer's bundled glibc build); unset in dev = puppeteer's own cache.
+      const execPath = this.config.get<string>('PUPPETEER_EXECUTABLE_PATH');
       this.browserPromise = this.loadPuppeteer().then(({ default: puppeteer }) =>
         puppeteer.launch({
           headless: true,
           args: this.launchArgs(),
+          ...(execPath ? { executablePath: execPath } : {}),
         }),
       );
     }

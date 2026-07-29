@@ -19,7 +19,11 @@ export const configValidationSchema = Joi.object({
   JWT_ISSUER: Joi.string().default('flicks-suite'),
   JWT_AUDIENCE: Joi.string().default('flicks-suite-api'),
 
-  // Redis
+  // Redis. REDIS_URL wins when set (managed providers hand out a URL —
+  // Railway/Upstash; rediss:// enables TLS via ioredis). Host/port/password
+  // remain the local-dev path. Railway private networking is IPv6-only:
+  // append ?family=0 so ioredis resolves *.railway.internal.
+  REDIS_URL: Joi.string().uri({ scheme: ['redis', 'rediss'] }).allow('').optional(),
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').optional(),
@@ -32,9 +36,11 @@ export const configValidationSchema = Joi.object({
   // App URLs
   APP_URL: Joi.string().uri().default('http://localhost:3000'),
   API_URL: Joi.string().uri().default('http://localhost:4000'),
+  // Full URL INCLUDING the path — the mailer appends ?token=…. The web route
+  // is /verify (apps/web/app/(auth)/verify); prod: https://app.<domain>/verify
   MAGIC_LINK_BASE_URL: Joi.string()
     .uri()
-    .default('http://localhost:3000/auth/magic'),
+    .default('http://localhost:3000/verify'),
 
   // R2 (or any S3-compatible storage — PRD v4 §10 exit ramp). All allow('')
   // so a blank `R2_ACCOUNT_ID=` line (the documented "no storage" setup in
@@ -53,6 +59,13 @@ export const configValidationSchema = Joi.object({
   // TOTP secrets at rest. Optional in dev — FAM TOTP enforcement no-ops when
   // unset so local FAM logins still work.
   TOTP_SECRET: Joi.string().allow('').optional(),
+
+  // Chromium binary for invoice PDFs. Unset in dev (puppeteer's own cached
+  // Chrome); the production image sets /usr/bin/chromium-browser.
+  PUPPETEER_EXECUTABLE_PATH: Joi.string().allow('').optional(),
+
+  // Swagger is OFF in production unless explicitly enabled.
+  SWAGGER_ENABLED: Joi.string().valid('0', '1').optional(),
 
   // Observability
   SENTRY_DSN: Joi.string().allow('').optional(),

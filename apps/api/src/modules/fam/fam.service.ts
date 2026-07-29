@@ -578,9 +578,10 @@ export class FamService {
   }
 
   /**
-   * Extends a tenant's trial by N days. Updates tenants.trial_ends_at and,
-   * if a subscription exists, slides subscriptions.current_period_end by
-   * the same number of days so the billing surface stays consistent.
+   * Extends a tenant's trial by N days. Updates tenants.trial_ends_at, and on
+   * the subscription (if any) slides current_period_end and — for a trialing
+   * sub — trial_ends_at, which is the column BillingStateService actually
+   * reads for the day-8 lock. Takes ≤60s to surface (billing-state cache).
    */
   async extendTrial(
     tenantId: string,
@@ -614,18 +615,32 @@ export class FamService {
     const [sub] = await this.dbAdmin
       .select({
         id: subscriptions.id,
+        status: subscriptions.status,
+        trialEndsAt: subscriptions.trial_ends_at,
         currentPeriodEnd: subscriptions.current_period_end,
       })
       .from(subscriptions)
       .where(eq(subscriptions.tenant_id, tenantId))
       .limit(1);
-    if (sub?.currentPeriodEnd) {
-      const slid = new Date(
-        sub.currentPeriodEnd.getTime() + dto.days * 24 * 60 * 60 * 1000,
-      );
+    if (sub) {
+      const patch: Partial<typeof subscriptions.$inferInsert> = { updated_at: now };
+      if (sub.currentPeriodEnd) {
+        patch.current_period_end = new Date(
+          sub.currentPeriodEnd.getTime() + dto.days * 24 * 60 * 60 * 1000,
+        );
+      }
+      // BillingStateService reads subscriptions.trial_ends_at (NOT the tenants
+      // column) to decide the day-8 lock — a trialing sub must be extended too
+      // or this whole lever is a no-op against the paywall.
+      if (sub.status === 'trialing') {
+        const subBase = sub.trialEndsAt ?? now;
+        patch.trial_ends_at = new Date(
+          subBase.getTime() + dto.days * 24 * 60 * 60 * 1000,
+        );
+      }
       await this.dbAdmin
         .update(subscriptions)
-        .set({ current_period_end: slid, updated_at: now })
+        .set(patch)
         .where(eq(subscriptions.id, sub.id));
     }
 

@@ -11,6 +11,7 @@ import { and, eq } from 'drizzle-orm';
 import { memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload } from '@flicks/shared/types';
 import { DatabaseService } from '../core/database/database.service';
+import { wsCors } from '../core/common/ws-cors';
 
 /**
  * FSE realtime gateway (PRD v6 §3.6) — socket.io namespace /sync, room per
@@ -20,7 +21,7 @@ import { DatabaseService } from '../core/database/database.service';
  * seq to its cursor and pulls the delta. Same JWT-handshake + live-access
  * re-check pattern as the CRM gateway.
  */
-@WebSocketGateway({ namespace: '/sync', cors: { origin: true, credentials: true } })
+@WebSocketGateway({ namespace: '/sync', cors: wsCors() })
 export class PmSyncGateway implements OnGatewayConnection {
   private readonly logger = new Logger(PmSyncGateway.name);
 

@@ -17,14 +17,19 @@ export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
       provide: REDIS_CLIENT,
       inject: [ConfigService],
       useFactory: (config: ConfigService): Redis => {
-        const client = new Redis({
-          host: config.get<string>('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get<string>('REDIS_PASSWORD'),
-          // Never let a Redis blip hang a request: fail fast, callers catch.
-          maxRetriesPerRequest: 1,
-          lazyConnect: true,
-        });
+        // Never let a Redis blip hang a request: fail fast, callers catch.
+        const opts = { maxRetriesPerRequest: 1, lazyConnect: true };
+        // REDIS_URL wins when set (Railway/Upstash; rediss:// = TLS). ioredis
+        // merges the second-arg options over the parsed URL.
+        const url = config.get<string>('REDIS_URL');
+        const client = url
+          ? new Redis(url, opts)
+          : new Redis({
+              host: config.get<string>('REDIS_HOST', 'localhost'),
+              port: config.get<number>('REDIS_PORT', 6379),
+              password: config.get<string>('REDIS_PASSWORD'),
+              ...opts,
+            });
         const logger = new Logger('Redis');
         client.on('error', (err) => logger.warn(`redis error: ${err.message}`));
         return client;

@@ -128,13 +128,20 @@ import { PmJobs } from './jobs/pm.jobs';
 
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get<string>('REDIS_PASSWORD'),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        // Managed providers hand out a URL (rediss:// = TLS via ioredis);
+        // host/port/password stays the local-dev path.
+        const url = config.get<string>('REDIS_URL');
+        return {
+          connection: url
+            ? { url }
+            : {
+                host: config.get<string>('REDIS_HOST', 'localhost'),
+                port: config.get<number>('REDIS_PORT', 6379),
+                password: config.get<string>('REDIS_PASSWORD'),
+              },
+        };
+      },
     }),
 
     DatabaseModule,

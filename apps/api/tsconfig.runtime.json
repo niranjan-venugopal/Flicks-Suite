@@ -1,0 +1,26 @@
+{
+  "//": [
+    "RUNTIME path map for the production container — consumed by",
+    "`node -r tsconfig-paths/register` via TS_NODE_PROJECT (see Dockerfile).",
+    "Because tsconfig.json maps @flicks/* into ../../packages/*/src, `nest",
+    "build` emits a ROOTED dist (dist/apps/api/src + dist/packages/*) and the",
+    "compiled JS still contains require('@flicks/…') specifiers that plain",
+    "node cannot resolve. This file maps them onto the compiled output.",
+    "KEEP IN SYNC with the paths block in tsconfig.json — a new @flicks",
+    "subpath added there without a mirror entry here breaks prod while dev",
+    "keeps working."
+  ],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@flicks/db": ["dist/packages/db/src/index.js"],
+      "@flicks/db/schema": ["dist/packages/db/src/schema/index.js"],
+      "@flicks/db/client": ["dist/packages/db/src/client.js"],
+      "@flicks/shared": ["dist/packages/shared/src/index.js"],
+      "@flicks/shared/types": ["dist/packages/shared/src/types/index.js"],
+      "@flicks/shared/validators": ["dist/packages/shared/src/validators/index.js"],
+      "@flicks/shared/constants": ["dist/packages/shared/src/constants/index.js"],
+      "@flicks/shared/pm": ["dist/packages/shared/src/pm/index.js"]
+    }
+  }
+}

@@ -207,7 +207,7 @@ export class AuthService {
 
     const magicLinkBaseUrl = this.configService.get<string>(
       'MAGIC_LINK_BASE_URL',
-      'http://localhost:3000/auth/magic',
+      'http://localhost:3000/verify',
     );
     const magicLinkUrl = `${magicLinkBaseUrl}?token=${magicLinkRawToken}`;
 

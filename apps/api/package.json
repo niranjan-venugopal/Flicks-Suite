@@ -5,7 +5,7 @@
   "scripts": {
     "build": "nest build",
     "dev": "node --env-file=.env --require ts-node/register --require tsconfig-paths/register src/main.ts",
-    "start": "node dist/main",
+    "start": "TS_NODE_PROJECT=tsconfig.runtime.json node -r tsconfig-paths/register dist/apps/api/src/main.js",
     "lint": "eslint src --ext .ts",
     "test": "jest",
     "typecheck": "tsc --noEmit",
@@ -52,6 +52,7 @@
     "rxjs": "^7.8.1",
     "sharp": "^0.35.3",
     "socket.io": "^4.8.1",
+    "tsconfig-paths": "^4.2.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -68,7 +69,6 @@
     "postgres": "^3.4.4",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
@@ -90,5 +90,8 @@
     "testEnvironment": "node",
     "maxWorkers": 2,
     "testTimeout": 30000
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import type { JwtPayload } from '@flicks/shared/types';
+import { wsCors } from '../core/common/ws-cors';
 
 interface NotificationCreatedPayload {
   userId: string;
@@ -22,10 +23,7 @@ interface NotificationCreatedPayload {
 
 @WebSocketGateway({
   namespace: '/notifications',
-  cors: {
-    origin: true,
-    credentials: true,
-  },
+  cors: wsCors(),
 })
 export class NotificationsGateway
   implements OnGatewayConnection, OnGatewayDisconnect

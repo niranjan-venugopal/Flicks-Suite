@@ -112,55 +112,61 @@ async function bootstrap() {
   // @Roles. RolesGuard allows when a route has no @Roles metadata, and
   // JwtAuthGuard lets @Public routes through.
 
-  // Swagger
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Flicks Suite HRMS API')
-    .setDescription(
-      'Production-grade multi-tenant HRMS SaaS API for Indian startups',
-    )
-    .setVersion('1.0')
-    .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'access-token',
-    )
-    .addCookieAuth('access_token')
-    .addTag('Auth', 'Authentication & session management')
-    .addTag('Onboarding', 'Tenant onboarding flows')
-    .addTag('Employees', 'Employee management')
-    .addTag('Attendance', 'Attendance tracking & punch management')
-    .addTag('Leave', 'Leave management')
-    .addTag('Timesheet', 'Timesheet tracking')
-    .addTag('Notifications', 'In-app notifications')
-    .addTag('Settings', 'Tenant settings & configuration')
-    .addTag('Audit', 'Audit log')
-    .addTag('FAM', 'Fleet Administration & Monitoring (platform admins only)')
-    .build();
+  // Swagger — dev-only by default; prod exposes it only with SWAGGER_ENABLED=1
+  // (the docs enumerate every internal route, so they stay off the public
+  // internet). The API routes themselves are unaffected either way.
+  const swaggerEnabled =
+    !isProd || configService.get<string>('SWAGGER_ENABLED') === '1';
+  if (swaggerEnabled) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Flicks Suite HRMS API')
+      .setDescription(
+        'Production-grade multi-tenant HRMS SaaS API for Indian startups',
+      )
+      .setVersion('1.0')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'access-token',
+      )
+      .addCookieAuth('access_token')
+      .addTag('Auth', 'Authentication & session management')
+      .addTag('Onboarding', 'Tenant onboarding flows')
+      .addTag('Employees', 'Employee management')
+      .addTag('Attendance', 'Attendance tracking & punch management')
+      .addTag('Leave', 'Leave management')
+      .addTag('Timesheet', 'Timesheet tracking')
+      .addTag('Notifications', 'In-app notifications')
+      .addTag('Settings', 'Tenant settings & configuration')
+      .addTag('Audit', 'Audit log')
+      .addTag('FAM', 'Fleet Administration & Monitoring (platform admins only)')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      tagsSorter: 'alpha',
-    },
-  });
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+        tagsSorter: 'alpha',
+      },
+    });
 
-  // Public API docs (PRD v5 §11) — customer-facing OpenAPI, scoped to the
-  // public-api module only so internal app routes never leak into it.
-  const { PublicApiModule } = await import('./modules/public-api/public-api.module');
-  const publicConfig = new DocumentBuilder()
-    .setTitle('Flicks Suite Public API')
-    .setDescription(
-      'Key-authenticated REST API. Authenticate with `Authorization: Bearer flk_live_…`. Rate limit: 120 requests/minute per key.',
-    )
-    .setVersion('1.0')
-    .addBearerAuth({ type: 'http', scheme: 'bearer' }, 'api-key')
-    .build();
-  const publicDoc = SwaggerModule.createDocument(app, publicConfig, {
-    include: [PublicApiModule],
-  });
-  SwaggerModule.setup('api/public/docs', app, publicDoc, {
-    swaggerOptions: { persistAuthorization: true },
-  });
+    // Public API docs (PRD v5 §11) — customer-facing OpenAPI, scoped to the
+    // public-api module only so internal app routes never leak into it.
+    const { PublicApiModule } = await import('./modules/public-api/public-api.module');
+    const publicConfig = new DocumentBuilder()
+      .setTitle('Flicks Suite Public API')
+      .setDescription(
+        'Key-authenticated REST API. Authenticate with `Authorization: Bearer flk_live_…`. Rate limit: 120 requests/minute per key.',
+      )
+      .setVersion('1.0')
+      .addBearerAuth({ type: 'http', scheme: 'bearer' }, 'api-key')
+      .build();
+    const publicDoc = SwaggerModule.createDocument(app, publicConfig, {
+      include: [PublicApiModule],
+    });
+    SwaggerModule.setup('api/public/docs', app, publicDoc, {
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
 
   // Shutdown hooks
   app.enableShutdownHooks();
@@ -177,7 +183,8 @@ async function bootstrap() {
   logger.log(
     `${workerMode ? 'WORKER' : 'API'} process running on port ${listenPort} [${nodeEnv}]`,
   );
-  if (!workerMode) logger.log(`Swagger docs: http://localhost:${port}/api/docs`);
+  if (!workerMode && swaggerEnabled)
+    logger.log(`Swagger docs: http://localhost:${port}/api/docs`);
 }
 
 bootstrap();

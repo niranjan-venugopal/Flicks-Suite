@@ -17,6 +17,7 @@ import {
   PresenceService,
   type LiveActivity,
 } from '../modules/presence/presence.service';
+import { wsCors } from '../core/common/ws-cors';
 
 /**
  * Presence gateway (PRD v4 §5) — socket.io namespace /presence.
@@ -38,7 +39,7 @@ import {
 const LIVE_TTL_SECONDS = 1800; // §5.2 — matches the 30-min offline threshold
 @WebSocketGateway({
   namespace: '/presence',
-  cors: { origin: true, credentials: true },
+  cors: wsCors(),
 })
 export class PresenceGateway
   implements OnGatewayConnection, OnGatewayDisconnect

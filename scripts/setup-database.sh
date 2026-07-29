@@ -167,23 +167,12 @@ fi
 
 # The blanket GRANT above would silently undo the per-table lockdowns the
 # migrations establish (append-only ledgers, service-role-only tables). Replay
-# them so a fresh sync ends in the exact posture the migrations specify.
-if psql_run -tAc "SELECT 1 FROM pg_roles WHERE rolname='${APP_ROLE}'" | grep -q 1; then
-  psql_run >/dev/null <<SQL
-REVOKE UPDATE, DELETE ON consent_records FROM "${APP_ROLE}";              -- 0022 append-only
-REVOKE UPDATE, DELETE ON feedback_submissions FROM "${APP_ROLE}";         -- 0026
-REVOKE DELETE ON nps_responses FROM "${APP_ROLE}";                        -- 0026
-REVOKE UPDATE, DELETE ON subscription_charge_attempts FROM "${APP_ROLE}"; -- 0027 ledger
-REVOKE ALL ON coupon_codes FROM "${APP_ROLE}";                            -- 0028 service-role only
-REVOKE INSERT, UPDATE, DELETE ON coupon_redemptions FROM "${APP_ROLE}";   -- 0028 read-only
-REVOKE SELECT, UPDATE, DELETE ON domain_events FROM "${APP_ROLE}";        -- 0030 outbox: INSERT-only
-REVOKE ALL ON api_keys FROM "${APP_ROLE}";                                -- 0030 service-role only
-REVOKE ALL ON webhook_endpoints FROM "${APP_ROLE}";                       -- 0030 service-role only
-REVOKE ALL ON webhook_deliveries FROM "${APP_ROLE}";                      -- 0030 service-role only
-REVOKE INSERT, UPDATE, DELETE ON fx_rates FROM "${APP_ROLE}";             -- 0032 read-only reference
-SQL
-  echo "  ✓ migration lockdowns (REVOKEs) re-asserted after the blanket grant"
-fi
+# them from the ONE shared file (scripts/sql/relock-grants.sql) so this script
+# can never drift from setup-supabase.sh / apply-rls-hardening.sh again.
+# (The file no-ops gracefully when the role is absent; it targets flicks_app —
+# the APP_ROLE default here.)
+psql_run -f "$SCRIPT_DIR/sql/relock-grants.sql" >/dev/null
+echo "  ✓ migration lockdowns (REVOKEs) re-asserted after the blanket grant"
 
 echo "─── Step 6: seed tenant ───"
 psql_run >/dev/null <<SQL
