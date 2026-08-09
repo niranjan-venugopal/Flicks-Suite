@@ -12,7 +12,9 @@
 --   the flicks_app RLS-enforced role + all 48 migrations + grants + lockdowns
 --   + the seed tenant. Intended for a FRESH (empty) Supabase project.
 --   If it errors partway, copy the error message and ask for help before
---   re-running.
+--   re-running. (Running it a SECOND time on an already-set-up project stops
+--   immediately at "type tenant_status already exists" — that error is
+--   harmless and just means the setup already ran.)
 -- =============================================================================
 
 -- Guard: refuses to run until the password placeholder has been replaced.
