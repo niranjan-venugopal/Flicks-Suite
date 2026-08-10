@@ -44,6 +44,9 @@ RUN pnpm install --frozen-lockfile --prod --filter @flicks/api...
 # ── builder ─────────────────────────────────────────────────────────────────
 FROM base AS builder
 WORKDIR /app
+# Root package.json (packageManager pin — keeps corepack on OUR pnpm, not
+# latest) + workspace file (so pnpm sees the real monorepo layout).
+COPY package.json pnpm-workspace.yaml ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
