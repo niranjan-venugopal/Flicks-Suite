@@ -328,7 +328,7 @@ function SignupStep(props: {
             lineHeight: 1.5,
           }}
         >
-          HR for India&apos;s modern startups. Free for 7 days, no card needed.
+          The complete Business suite for modern startups. Free for 7 days, no card needed.
         </div>
       </div>
 
