@@ -713,34 +713,8 @@ function OtpStep(props: {
         </button>
       </div>
 
-      <div
-        style={{
-          marginTop: 22,
-          padding: 14,
-          background: 'rgba(62, 123, 250, 0.06)',
-          border: '1px solid rgba(62, 123, 250, 0.2)',
-          borderRadius: 10,
-          display: 'flex',
-          gap: 10,
-        }}
-      >
-        <Icon.info
-          size={16}
-          style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }}
-        />
-        <div
-          style={{
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: 'var(--text-2)',
-            lineHeight: 1.5,
-          }}
-        >
-          You can also{' '}
-          <strong style={{ color: '#fff' }}>tap the magic link</strong> in the
-          email to sign in instantly.
-        </div>
-      </div>
+      {/* No magic-link hint here: signup emails are code-only (a link can't
+          carry the Terms acceptance a new account requires). */}
     </AuthCard>
   )
 }
