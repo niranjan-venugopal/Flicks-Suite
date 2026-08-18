@@ -211,10 +211,16 @@ export class AuthService {
     );
     const magicLinkUrl = `${magicLinkBaseUrl}?token=${magicLinkRawToken}`;
 
+    // Brand-new accounts get a CODE-ONLY email: a magic link cannot carry the
+    // Terms-of-Service acceptance a first signup requires (§3.4 clickwrap), so
+    // including one just walks new users into "Link expired or invalid".
+    // Existing accounts keep the one-click link.
+    const isNewAccount = !existingUser[0];
+
     // Send email
     await this.notificationsService.sendEmail('login-otp', normalizedEmail, {
       otpCode,
-      magicLinkUrl,
+      ...(isNewAccount ? {} : { magicLinkUrl }),
       expiryMinutes,
     });
 
@@ -239,7 +245,9 @@ export class AuthService {
 
     return {
       success: true,
-      message: 'We sent a sign-in code and magic link to your email.',
+      message: isNewAccount
+        ? 'We sent a sign-in code to your email.'
+        : 'We sent a sign-in code and magic link to your email.',
     };
   }
 

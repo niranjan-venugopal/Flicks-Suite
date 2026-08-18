@@ -468,11 +468,19 @@ export class NotificationsService {
       }
 
       case 'login-otp': {
+        // magicLinkUrl is OMITTED for brand-new accounts (first signup must
+        // accept the ToS in the wizard, which a bare link can't carry) — the
+        // email then shows only the code.
         const { otpCode, magicLinkUrl, expiryMinutes } = props as {
           otpCode: string;
-          magicLinkUrl: string;
+          magicLinkUrl?: string;
           expiryMinutes: number;
         };
+        const magicLinkBlock = magicLinkUrl
+          ? `
+              <p>Or use the magic link:</p>
+              <a href="${String(magicLinkUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Sign in with Magic Link</a>`
+          : '';
         return {
           subject: `${otpCode} — Your ${appName} login code`,
           html: `
@@ -482,9 +490,7 @@ export class NotificationsService {
               <div style="background: #f4f4f8; border-radius: 8px; padding: 24px; text-align: center; margin: 24px 0;">
                 <span style="font-size: 40px; font-weight: bold; letter-spacing: 8px; color: #6366f1;">${otpCode}</span>
               </div>
-              <p>This code expires in ${expiryMinutes} minutes.</p>
-              <p>Or use the magic link:</p>
-              <a href="${String(magicLinkUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Sign in with Magic Link</a>
+              <p>This code expires in ${expiryMinutes} minutes.</p>${magicLinkBlock}
               <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't request this, please ignore this email.</p>
             </div>
           `,

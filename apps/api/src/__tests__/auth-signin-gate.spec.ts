@@ -117,6 +117,11 @@ describe('requestOtp sign-in gate', () => {
     expect(rows[0]!.user_id).toBeNull(); // no users row yet — verify creates it
     expect(sendEmail).toHaveBeenCalledTimes(1);
     expect((sendEmail.mock.calls[0] as unknown as unknown[])[0]).toBe('login-otp');
+    // NEW accounts get a CODE-ONLY email: a magic link can't carry the ToS
+    // acceptance the first signup requires, so it must not be offered.
+    const props = (sendEmail.mock.calls[0] as unknown as unknown[])[2] as Record<string, unknown>;
+    expect(props.magicLinkUrl).toBeUndefined();
+    expect(res.message).not.toMatch(/magic link/i);
   });
 
   it('registered user with zero memberships can still sign in (finishes setup on verify)', async () => {
@@ -132,6 +137,9 @@ describe('requestOtp sign-in gate', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.user_id).toBe(u!.id);
     expect(sendEmail).toHaveBeenCalledTimes(1);
+    // Existing accounts DO get the one-click magic link.
+    const props = (sendEmail.mock.calls[0] as unknown as unknown[])[2] as Record<string, unknown>;
+    expect(String(props.magicLinkUrl)).toContain('?token=');
   });
 
   it('invited-only membership counts as registered (invite pre-creates the users row)', async () => {
