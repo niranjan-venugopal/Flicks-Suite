@@ -361,3 +361,17 @@ button { background: none; border: none; cursor: pointer; }
 .org-tree > ul > li { padding-top: 0; }
 .org-tree > ul > li::before,
 .org-tree > ul > li::after { display: none; }
+
+/* ─── Responsive pass (2026-08): wide tables + settings shell ─────────────── */
+/* Wide-table wrapper: the table scrolls inside its card instead of forcing
+   the whole page wider (which slid content under the sticky sidebar). */
+.tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Settings 2-column shell. minmax(0,1fr) lets the content column actually
+   shrink (a bare 1fr refuses to go below its content width); the nav rail
+   compresses at laptop widths and stacks into wrapping chips on tablets. */
+.settings-grid { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 20px; }
+@media (max-width: 1180px) { .settings-grid { grid-template-columns: 200px minmax(0, 1fr); } }
+@media (max-width: 900px) {
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { flex-direction: row !important; flex-wrap: wrap; }
+}

@@ -26,7 +26,16 @@ export function Sparkline({
   const d = 'M' + pts.map((p) => p.join(' ')).join(' L')
 
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ display: 'block' }}>
+    // w/h define the drawing coordinate space; the rendered element shrinks
+    // with its container (never exceeding the design width) so a fixed-size
+    // chart can't push a card wider than the viewport.
+    <svg
+      width="100%"
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      style={{ display: 'block', maxWidth: w }}
+    >
       {fill && <path d={`${d} L${w} ${h} L0 ${h} Z`} fill={color} fillOpacity=".12" />}
       <path
         d={d}

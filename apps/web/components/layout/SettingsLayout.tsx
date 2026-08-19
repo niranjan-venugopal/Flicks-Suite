@@ -55,9 +55,9 @@ export function SettingsLayout({ children }: SettingsLayoutProps) {
         </div>
 
         {/* 2-column grid — exactly as prototype */}
-        <div style={{ display: 'grid', gridTemplateColumns: '232px 1fr', gap: 20 }}>
+        <div className="settings-grid">
           {/* Vertical nav */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <nav className="settings-nav" style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {NAV.map((item) => {
               const active = item.href === activeHref
               const IconComp = Icon[item.icon]

@@ -163,7 +163,7 @@ export default function MembersSettingsPage() {
   return (
     <SettingsLayout>
       {/* Seats — members are billable, auditors are not (PRD §3 / §13.3 Q3). */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 18 }}>
         <Kpi
           label="Member seats"
           value={seats.data?.data.billable ?? counts.active}
@@ -209,7 +209,8 @@ export default function MembersSettingsPage() {
             modules you grant.
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="tbl-scroll">
+          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--bord)' }}>
                 <th style={th}>Auditor</th>
@@ -276,6 +277,7 @@ export default function MembersSettingsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -307,7 +309,8 @@ export default function MembersSettingsPage() {
             </Link>
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="tbl-scroll">
+          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--bord)' }}>
                 <th style={th}>Member</th>
@@ -390,6 +393,7 @@ export default function MembersSettingsPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

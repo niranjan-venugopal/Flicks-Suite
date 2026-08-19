@@ -167,7 +167,7 @@ function AdminDashboard() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
             gap: 14,
             marginBottom: 24,
           }}
@@ -207,7 +207,7 @@ function AdminDashboard() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.55fr 1fr',
+            gridTemplateColumns: 'minmax(0, 1.55fr) minmax(0, 1fr)',
             gap: 18,
             marginBottom: 24,
           }}
@@ -418,7 +418,7 @@ function AdminDashboard() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
             gap: 18,
             marginBottom: 24,
           }}
@@ -447,7 +447,7 @@ function AdminDashboard() {
         </div>
 
         {/* Activity feed + Onboarding pipeline */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: 18 }}>
           <div className="card">
             <SectionHead
               title="Recent activity"
@@ -809,7 +809,7 @@ function ManagerDashboard() {
         </div>
 
         {/* KPI strip — team-scoped */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14, marginBottom: 18 }}>
           <Kpi
             label="Direct reports"
             value={data?.stats.totalEmployees ?? '—'}
@@ -839,7 +839,7 @@ function ManagerDashboard() {
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: 18 }}>
           {/* Your team today — placeholder until /team roster endpoint ships */}
           <div className="card">
             <SectionHead
@@ -1034,7 +1034,7 @@ function EmployeeHome() {
         </div>
 
         {/* My leave + upcoming holidays */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: 18 }}>
           {/* My leave balances */}
           <div className="card">
             <SectionHead

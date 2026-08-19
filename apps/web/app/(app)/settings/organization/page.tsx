@@ -123,7 +123,8 @@ export default function OrgFinancialPage() {
       ) : (
         <>
           <div className="card overflow-hidden mb-6">
-            <table className="tbl w-full">
+            <div className="tbl-scroll">
+            <table className="tbl w-full" style={{ minWidth: 640 }}>
               <thead>
                 <tr>
                   <th>Bank</th>
@@ -182,6 +183,7 @@ export default function OrgFinancialPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Per-currency defaults */}

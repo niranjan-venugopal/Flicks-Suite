@@ -227,7 +227,8 @@ export default function LeavePoliciesPage() {
             </Btn>
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="tbl-scroll">
+          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--bord)' }}>
                 <th style={th}>Type</th>
@@ -292,6 +293,7 @@ export default function LeavePoliciesPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
