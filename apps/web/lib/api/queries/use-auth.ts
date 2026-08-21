@@ -55,7 +55,6 @@ interface ApiMembership {
 
 // Returned by /verify-otp and /magic-link
 interface VerifyAuthResponse {
-  requiresTenantSelection: false
   accessToken?: string
   refreshToken?: string
   expiresIn?: number

@@ -11,16 +11,24 @@ function VerifyMagicLinkInner() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
 
-  const { isLoading, isSuccess, isError, error } = useVerifyMagicLinkQuery(token)
+  const { isLoading, isSuccess, isError, error, data } = useVerifyMagicLinkQuery(token)
 
   useEffect(() => {
     if (isSuccess) {
+      // Platform admins carry a second factor: unenrolled ones have a session
+      // and go straight to setup; enrolled ones got a challenge (no session
+      // yet), which only the login page's code flow can complete.
+      const target = data?.requiresTotpEnrollment
+        ? '/totp-setup'
+        : data?.requiresTotp
+          ? '/login'
+          : '/dashboard'
       const timeout = setTimeout(() => {
-        window.location.assign('/dashboard')
+        window.location.assign(target)
       }, 800)
       return () => clearTimeout(timeout)
     }
-  }, [isSuccess])
+  }, [isSuccess, data])
 
   const iconWrap = (color: string, bg: string, node: React.ReactNode) => (
     <div

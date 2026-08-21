@@ -13,7 +13,7 @@ import { REDIS_CLIENT } from '../../core/redis/redis.module';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, and, gt, isNull, lt, desc, sql } from 'drizzle-orm';
+import { eq, and, gt, isNull, lt, asc, desc, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { Response } from 'express';
 import {
@@ -72,6 +72,10 @@ function generateBackupCodes(n = 10): {
   }
   return { plain, stored };
 }
+
+// The Specflicks-internal platform tenant (FAM memberships live here).
+// Mirrors the private const in billing.service.ts:30 — keep in sync.
+const SPECFLICKS_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 @Injectable()
 export class AuthService {
@@ -493,21 +497,25 @@ export class AuthService {
           eq(memberships.user_id, currentUser.id),
           eq(memberships.status, 'active'),
         ),
-      );
+      )
+      .orderBy(asc(memberships.created_at));
 
-    // If user has trusted device and exactly one active membership, auto-select
-    let activeMembership = userMemberships[0];
-    let requiresTenantSelection = false;
-
-    if (userMemberships.length === 0) {
-      // New user, no tenants
-      requiresTenantSelection = false;
-    } else if (userMemberships.length === 1) {
-      activeMembership = userMemberships[0];
-    } else {
-      // Multiple tenants - require selection
-      requiresTenantSelection = true;
-    }
+    // Deterministic auto-select. The old behavior returned
+    // requiresTenantSelection (a token-less response) for >1 membership, but
+    // no client surface ever implemented that branch — a platform admin or
+    // multi-company user hit a silent dead-end at login. Instead: pick the
+    // OLDEST membership, preferring real workspaces over the Specflicks
+    // platform tenant (the FAM membership every platform admin carries).
+    // In-app switching (CompanySwitcher → /auth/select-tenant) still lets
+    // the user move between workspaces afterwards.
+    // (stable sort: SQL already ordered oldest-first, so this only moves the
+    // platform tenant to the back)
+    const sortedMemberships = [...userMemberships].sort(
+      (a, b) =>
+        (a.tenantId === SPECFLICKS_TENANT_ID ? 1 : 0) -
+        (b.tenantId === SPECFLICKS_TENANT_ID ? 1 : 0),
+    );
+    const activeMembership = sortedMemberships[0];
 
     // Write trusted device if deviceId provided
     if (deviceId) {
@@ -527,26 +535,6 @@ export class AuthService {
       userAgent,
       deviceId,
     });
-
-    if (requiresTenantSelection) {
-      return {
-        requiresTenantSelection: true,
-        tenants: userMemberships.map((m) => ({
-          id: m.tenantId,
-          name: m.tenantName,
-          slug: m.tenantSlug,
-          logoUrl: m.tenantLogoUrl,
-          role: m.role,
-          status: m.tenantStatus,
-        })),
-        user: {
-          id: currentUser.id,
-          email: currentUser.email,
-          fullName: currentUser.full_name,
-          avatarUrl: currentUser.avatar_url,
-        },
-      };
-    }
 
     if (!activeMembership) {
       // No tenant yet — return partial auth for onboarding
