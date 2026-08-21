@@ -23,6 +23,10 @@ export class TotpService {
   private readonly key: Buffer | null;
 
   constructor(private readonly config: ConfigService) {
+    // Accept codes from the adjacent 30s step (standard drift tolerance) —
+    // otplib's default window of 0 rejects valid codes on minor phone/server
+    // clock skew.
+    authenticator.options = { window: 1 };
     const secret = this.config.get<string>('TOTP_SECRET');
     // Derive a stable 32-byte key from the configured secret. scrypt with a
     // fixed salt is fine here — the input secret is already high-entropy.

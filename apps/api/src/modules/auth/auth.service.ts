@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -1396,16 +1397,42 @@ export class AuthService {
 
   // ─── FAM TOTP enrolment + challenge (PRD §11.6) ───────────────────────────
 
-  /** Generate (and store, pending confirmation) a TOTP secret for a FAM user. */
-  async enrollTotp(userId: string): Promise<{ secret: string; otpauthUrl: string }> {
+  /**
+   * Return the pending TOTP secret for a FAM user, generating one only when
+   * needed. IDEMPOTENT by design: the setup page calls this on every mount,
+   * and regenerating each time silently invalidated whatever the user had
+   * already added to their authenticator app (the prod enrolment loop).
+   * `regenerate` is the explicit escape hatch for a stale authenticator
+   * entry; an already-enrolled user gets a conflict so the client can route
+   * them to the challenge flow instead.
+   */
+  async enrollTotp(
+    userId: string,
+    opts?: { regenerate?: boolean },
+  ): Promise<{ secret: string; otpauthUrl: string }> {
     const [user] = await this.dbAdmin
-      .select({ email: users.email, isPlatformAdmin: users.is_platform_admin })
+      .select({
+        email: users.email,
+        isPlatformAdmin: users.is_platform_admin,
+        secret: users.totp_secret,
+        enrolledAt: users.totp_enrolled_at,
+      })
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     if (!user) throw new NotFoundException('User not found');
     if (!user.isPlatformAdmin) {
       throw new ForbiddenException('TOTP enrolment is for platform admins only');
+    }
+    if (user.enrolledAt) {
+      throw new ConflictException(
+        'Two-factor is already set up — sign in with your authenticator code.',
+      );
+    }
+
+    if (user.secret && !opts?.regenerate) {
+      const secret = this.totpService.decrypt(user.secret);
+      return { secret, otpauthUrl: this.totpService.keyUri(user.email, secret) };
     }
 
     const secret = this.totpService.generateSecret();

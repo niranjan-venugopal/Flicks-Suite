@@ -10,7 +10,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { TotpCodeDto, TotpVerifyDto } from './auth.dto';
+import { TotpCodeDto, TotpEnrollDto, TotpVerifyDto } from './auth.dto';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
@@ -27,8 +27,8 @@ export class TotpController {
     description:
       'Generates a TOTP secret + otpauth URL for the signed-in platform admin. Authenticated; confirm with /auth/totp/confirm.',
   })
-  async enroll(@CurrentUser() user: JwtPayload) {
-    return this.authService.enrollTotp(user.sub);
+  async enroll(@Body() dto: TotpEnrollDto, @CurrentUser() user: JwtPayload) {
+    return this.authService.enrollTotp(user.sub, { regenerate: dto?.regenerate });
   }
 
   @Post('confirm')

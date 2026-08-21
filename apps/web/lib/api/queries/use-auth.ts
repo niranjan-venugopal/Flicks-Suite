@@ -70,6 +70,9 @@ interface VerifyAuthResponse {
 
 // Returned by /me
 interface MeResponse extends ApiUser {
+  // User-level platform-admin flag (users.is_platform_admin) — independent
+  // of which workspace is currently active.
+  isPlatformAdmin?: boolean
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
   // PRD v6 — effective runtime flags for the current tenant (e.g.
@@ -282,13 +285,17 @@ export function useCompleteTotp() {
   })
 }
 
-/** Begin FAM TOTP enrolment — returns the secret + otpauth URL for a QR. */
+/**
+ * Begin FAM TOTP enrolment — returns the secret + otpauth URL for a QR.
+ * Idempotent server-side: repeat calls return the SAME pending secret;
+ * pass { regenerate: true } to explicitly mint a new one.
+ */
 export function useEnrollTotp() {
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (opts?: { regenerate?: boolean }) =>
       api.post<{ secret: string; otpauthUrl: string }>(
         '/api/v1/auth/totp/enroll',
-        {},
+        { regenerate: opts?.regenerate ?? false },
       ),
   })
 }
@@ -297,7 +304,7 @@ export function useEnrollTotp() {
 export function useConfirmTotp() {
   return useMutation({
     mutationFn: (code: string) =>
-      api.post<{ ok: true }>('/api/v1/auth/totp/confirm', { code }),
+      api.post<{ ok: true; backupCodes: string[] }>('/api/v1/auth/totp/confirm', { code }),
   })
 }
 

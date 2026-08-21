@@ -24,8 +24,13 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
 
   const freshRole =
     (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
+  // User-level flag first: after login auto-selection the ACTIVE workspace is
+  // usually the admin's own company (role 'owner'), so membership role alone
+  // would wrongly bounce platform admins out of /fam.
   const isPlatformAdmin =
-    freshRole === 'fam' || freshRole === 'super_admin'
+    meData?.isPlatformAdmin === true ||
+    freshRole === 'fam' ||
+    freshRole === 'super_admin'
 
   useEffect(() => {
     if (isLoading) return

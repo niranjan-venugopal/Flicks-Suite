@@ -117,6 +117,15 @@ export class LogoutDto {
   refreshToken?: string;
 }
 
+export class TotpEnrollDto {
+  // Explicitly discard the pending secret and mint a new one — the escape
+  // hatch when the user's authenticator holds a stale entry.
+  @ApiPropertyOptional({ description: 'Discard the pending secret and generate a new one' })
+  @IsOptional()
+  @IsBoolean()
+  regenerate?: boolean;
+}
+
 export class TotpCodeDto {
   @ApiProperty({ example: '123456', description: '6-digit TOTP code' })
   @IsString()
