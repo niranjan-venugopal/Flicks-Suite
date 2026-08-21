@@ -18,6 +18,7 @@ import {
   type UpdateOrganizationPayload,
 } from '@/lib/api/queries/use-settings'
 import { useToast } from '@/components/ui/use-toast'
+import { stateCodeFromGstin } from '@flicks/shared/constants'
 
 // ─── Static option lists (PRD §4.3) ──────────────────────────────────────────
 
@@ -429,7 +430,14 @@ export default function OrganizationSettingsPage() {
               <Field label="State" hint={form.gstin ? 'From GSTIN' : 'Two-letter code'}>
                 <select
                   className="input"
-                  value={form.stateCode}
+                  value={
+                    // GSTIN's numeric prefix maps to the two-letter code; the
+                    // stored value may still be the raw digits from before the
+                    // mapping fix, so derive for display whenever GSTIN is set.
+                    form.gstin
+                      ? stateCodeFromGstin(form.gstin) ?? form.stateCode
+                      : form.stateCode
+                  }
                   onChange={(e) => set('stateCode', e.target.value)}
                   disabled={Boolean(form.gstin)}
                 >

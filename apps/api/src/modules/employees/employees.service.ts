@@ -704,6 +704,16 @@ export class EmployeesService {
       empPatch.personal_phone = dto.personalPhone;
     if (dto.designationId !== undefined)
       empPatch.designation_id = dto.designationId;
+    if (dto.employeeCode !== undefined)
+      empPatch.employee_code = dto.employeeCode.trim().toUpperCase();
+    if (dto.departmentId !== undefined) empPatch.department_id = dto.departmentId;
+    if (dto.locationId !== undefined) empPatch.location_id = dto.locationId;
+    if (dto.reportingManagerId !== undefined)
+      empPatch.reporting_manager_id = dto.reportingManagerId;
+    if (dto.employmentType !== undefined)
+      empPatch.employment_type = dto.employmentType as typeof employees.$inferInsert.employment_type;
+    if (dto.dateOfJoining !== undefined)
+      empPatch.date_of_joining = dto.dateOfJoining;
 
     const updated = await this.databaseService.withTenant(
       tenantId,
@@ -712,7 +722,16 @@ export class EmployeesService {
           .update(employees)
           .set(empPatch)
           .where(eq(employees.id, employeeId))
-          .returning();
+          .returning()
+          .catch((err: unknown) => {
+            // employees_tenant_code_unique — duplicate code in this workspace.
+            if ((err as { code?: string })?.code === '23505') {
+              throw new ConflictException(
+                'That employee code is already in use in this workspace.',
+              );
+            }
+            throw err;
+          });
 
         // Name + avatar live on the user record, shared across memberships.
         if (

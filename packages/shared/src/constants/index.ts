@@ -425,3 +425,23 @@ export const API_KEY_SCOPES = [
   'pm:read', 'pm:write',
 ] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+
+// ─── GST state codes (India) ─────────────────────────────────────────────────
+// GSTIN's first two digits are the numeric GST state code. UI and statutory
+// surfaces use the two-letter abbreviations, so this is the single source for
+// the numeric → two-letter mapping (used by settings derivation on the API
+// and the State field in the web settings page).
+export const GST_STATE_BY_NUMERIC: Record<string, string> = {
+  '01': 'JK', '02': 'HP', '03': 'PB', '04': 'CH', '05': 'UK',
+  '06': 'HR', '07': 'DL', '08': 'RJ', '09': 'UP', '10': 'BR',
+  '11': 'SK', '12': 'AR', '13': 'NL', '14': 'MN', '15': 'MZ',
+  '16': 'TR', '17': 'ML', '18': 'AS', '19': 'WB', '20': 'JH',
+  '21': 'OR', '22': 'CG', '23': 'MP', '24': 'GJ', '26': 'DN',
+  '27': 'MH', '28': 'AP', '29': 'KA', '30': 'GA', '31': 'LD',
+  '32': 'KL', '33': 'TN', '34': 'PY', '35': 'AN', '36': 'TS',
+  '37': 'AP', '38': 'LA',
+};
+
+/** Two-letter state code from a GSTIN (or null when unrecognised/absent). */
+export const stateCodeFromGstin = (gstin?: string | null): string | null =>
+  gstin ? GST_STATE_BY_NUMERIC[gstin.slice(0, 2)] ?? null : null;

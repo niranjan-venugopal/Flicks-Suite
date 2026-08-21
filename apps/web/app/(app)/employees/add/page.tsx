@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
@@ -53,15 +53,44 @@ export default function InviteEmployeePage() {
   const locations = useLocations()
   const shifts = useShifts()
 
-  // Auto-suggest the next EMP code by scanning existing employees.
+  // Auto-suggest the next employee code from the workspace's OWN pattern:
+  // parse existing codes as (prefix)(number), continue the dominant prefix
+  // with its digit width. A workspace that switched from EMP001 to a custom
+  // scheme (e.g. SPF-014) keeps counting in the custom scheme.
   const suggestedCode = useMemo(() => {
-    const codes = (employees.data?.employees ?? []).map((e) => e.employeeCode ?? '')
-    const ints = codes
-      .map((c) => /^EMP(\d+)$/.exec(c))
-      .map((m) => (m ? parseInt(m[1]!, 10) : 0))
-    const next = Math.max(0, ...ints) + 1
-    return `EMP${String(next).padStart(3, '0')}`
+    const parsed = (employees.data?.employees ?? [])
+      .map((e) => /^(.*?)(\d+)$/.exec(e.employeeCode ?? ''))
+      .filter((m): m is RegExpExecArray => m !== null)
+    if (parsed.length === 0) return 'EMP001'
+    const byPrefix = new Map<string, { count: number; max: number; width: number }>()
+    for (const m of parsed) {
+      const prefix = m[1]!
+      const num = parseInt(m[2]!, 10)
+      const entry = byPrefix.get(prefix) ?? { count: 0, max: 0, width: 3 }
+      entry.count += 1
+      if (num >= entry.max) {
+        entry.max = num
+        entry.width = m[2]!.length
+      }
+      byPrefix.set(prefix, entry)
+    }
+    // Most-used prefix wins; ties break toward the highest sequence number
+    // (≈ most recently issued).
+    const [prefix, info] = [...byPrefix.entries()].sort(
+      (a, b) => b[1].count - a[1].count || b[1].max - a[1].max,
+    )[0]!
+    return `${prefix}${String(info.max + 1).padStart(info.width, '0')}`
   }, [employees.data])
+
+  // Prefill once the roster loads — still fully editable. Tracks whether the
+  // user has typed so we never clobber their input.
+  const codeTouched = useRef(false)
+  useEffect(() => {
+    if (!codeTouched.current) {
+      setForm((f) => (f.employeeCode === suggestedCode ? f : { ...f, employeeCode: suggestedCode }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestedCode])
 
   const [form, setForm] = useState<FormState>({
     firstName: '',
@@ -272,9 +301,10 @@ export default function InviteEmployeePage() {
                 <input
                   className="input font-mono"
                   value={form.employeeCode}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    codeTouched.current = true
                     set('employeeCode', e.target.value.toUpperCase())
-                  }
+                  }}
                   placeholder={suggestedCode}
                 />
                 <div

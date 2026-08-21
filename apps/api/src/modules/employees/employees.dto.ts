@@ -16,6 +16,7 @@ import {
   ValidateNested,
   IsObject,
   IsIn,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -113,6 +114,38 @@ export class UpdateEmployeeDto {
   @IsString()
   @IsOptional()
   avatarUrl?: string;
+
+  // ── Admin-editable org/employment fields (owner/HR profile editing) ──
+  @ApiPropertyOptional({ example: 'EMP007' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(24)
+  employeeCode?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  departmentId?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  locationId?: string;
+
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  reportingManagerId?: string;
+
+  @ApiPropertyOptional({ enum: ['full_time', 'part_time', 'contract', 'intern', 'consultant', 'probation'] })
+  @IsIn(['full_time', 'part_time', 'contract', 'intern', 'consultant', 'probation'])
+  @IsOptional()
+  employmentType?: string;
+
+  @ApiPropertyOptional({ example: '2026-01-15' })
+  @IsDateString()
+  @IsOptional()
+  dateOfJoining?: string;
 }
 
 export class ImportEmployeeRowDto {

@@ -11,6 +11,7 @@ import {
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
+  useSaveCustomer,
 } from '@/lib/api/queries/use-invoicing'
 import { computeTotals } from '@/lib/invoicing/totals'
 import {
@@ -60,6 +61,40 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const { toast } = useToast()
   const save = useSaveInvoice()
   const send = useSendInvoice()
+  const saveCustomer = useSaveCustomer()
+  // Inline "new client" quick-add — invoicing customers are separate from CRM
+  // contacts, and leaving the editor to create one lost the whole draft.
+  const [addingClient, setAddingClient] = useState(false)
+  const [newClient, setNewClient] = useState({ name: '', email: '', phone: '', gstin: '' })
+
+  const createClient = async () => {
+    if (!newClient.name.trim()) {
+      toast({ title: 'Client name is required', variant: 'destructive' })
+      return
+    }
+    if (!/.+@.+\..+/.test(newClient.email.trim())) {
+      toast({ title: 'A valid email is required', description: 'Sending the invoice needs it.', variant: 'destructive' })
+      return
+    }
+    try {
+      const created = await saveCustomer.mutateAsync({
+        display_name: newClient.name.trim(),
+        email: newClient.email.trim(),
+        phone: newClient.phone.trim() || undefined,
+        gstin: newClient.gstin.trim() || undefined,
+      })
+      setCustomerId(created.data.id)
+      setAddingClient(false)
+      setNewClient({ name: '', email: '', phone: '', gstin: '' })
+      toast({ title: `Client ${created.data.display_name} added` })
+    } catch (err) {
+      toast({
+        title: 'Could not add client',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
   const { data: customersData } = useCustomers({})
   const { data: banksData } = useBankAccounts()
 
@@ -206,24 +241,36 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   }
 
   const onSave = async (thenSend = false) => {
+    let saved: Awaited<ReturnType<typeof persist>> = null
     try {
-      const saved = await persist()
+      saved = await persist()
       if (!saved) return
-      if (thenSend) {
-        const sent = await send.mutateAsync(saved.id)
-        toast({ title: `Invoice ${saved.invoice_number} sent`, description: sent.meta.public_url })
-      } else {
-        const noun = isQuote ? 'Quote' : 'Draft'
-        toast({ title: invoice ? `${noun} updated` : `${noun} ${saved.invoice_number} created` })
-      }
-      router.push(isQuote ? '/invoicing/quotes' : '/invoicing/invoices')
     } catch (err) {
       toast({
         title: 'Could not save invoice',
         description: err instanceof Error ? err.message : undefined,
         variant: 'destructive',
       })
+      return
     }
+    if (thenSend) {
+      try {
+        const sent = await send.mutateAsync(saved.id)
+        toast({ title: `Invoice ${saved.invoice_number} sent`, description: sent.meta.public_url })
+      } catch (err) {
+        // The draft persisted — say so, or the user retypes everything.
+        toast({
+          title: `Saved as ${saved.invoice_number}, but sending failed`,
+          description: err instanceof Error ? err.message : undefined,
+          variant: 'destructive',
+        })
+        return
+      }
+    } else {
+      const noun = isQuote ? 'Quote' : 'Draft'
+      toast({ title: invoice ? `${noun} updated` : `${noun} ${saved.invoice_number} created` })
+    }
+    router.push(isQuote ? '/invoicing/quotes' : '/invoicing/invoices')
   }
 
   // Preview the current draft (prototype's editor "Preview" CTA). Saves first so
@@ -261,7 +308,19 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
             <InvoCardTitle>Invoice details</InvoCardTitle>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={invoLabel}>Client</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <label style={invoLabel}>Client</label>
+                  <button
+                    type="button"
+                    onClick={() => setAddingClient((v) => !v)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: INVO.blue, fontSize: 12, fontWeight: 700, padding: 0,
+                    }}
+                  >
+                    {addingClient ? 'Cancel' : '+ New client'}
+                  </button>
+                </div>
                 <select style={invoField()} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
                   <option value="">Select a client…</option>
                   {customers.map((c) => (
@@ -270,6 +329,46 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                     </option>
                   ))}
                 </select>
+                {addingClient && (
+                  <div
+                    style={{
+                      marginTop: 10, padding: 14, borderRadius: 10,
+                      border: `1px dashed ${INVO.muted30}`, display: 'grid',
+                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10,
+                    }}
+                  >
+                    <input
+                      style={invoField()}
+                      placeholder="Client name *"
+                      value={newClient.name}
+                      onChange={(e) => setNewClient((c) => ({ ...c, name: e.target.value }))}
+                    />
+                    <input
+                      style={invoField()}
+                      placeholder="Email * (needed to send)"
+                      type="email"
+                      value={newClient.email}
+                      onChange={(e) => setNewClient((c) => ({ ...c, email: e.target.value }))}
+                    />
+                    <input
+                      style={invoField()}
+                      placeholder="Phone (optional)"
+                      value={newClient.phone}
+                      onChange={(e) => setNewClient((c) => ({ ...c, phone: e.target.value }))}
+                    />
+                    <input
+                      style={invoField()}
+                      placeholder="GSTIN (optional)"
+                      value={newClient.gstin}
+                      onChange={(e) => setNewClient((c) => ({ ...c, gstin: e.target.value.toUpperCase() }))}
+                    />
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <InvoBtn kind="secondary" height={40} onClick={createClient} disabled={saveCustomer.isPending}>
+                        {saveCustomer.isPending ? 'Adding…' : 'Add client'}
+                      </InvoBtn>
+                    </div>
+                  </div>
+                )}
                 {customer?.gstin && (
                   <div style={{ marginTop: 8, fontWeight: 600, fontSize: 12, color: INVO.muted40 }}>
                     GSTIN: {customer.gstin}

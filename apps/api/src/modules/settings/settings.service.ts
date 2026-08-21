@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
+import { stateCodeFromGstin } from '@flicks/shared/constants';
 import { eq, and, asc, count, sql } from 'drizzle-orm';
 import {
   tenants,
@@ -149,9 +150,12 @@ export class SettingsService {
       throw new NotFoundException('Tenant not found');
     }
 
-    // GSTIN's first 2 chars are the state code — keep stateCode in sync if GSTIN changes.
+    // GSTIN's first 2 digits are the NUMERIC GST state code — map it to the
+    // two-letter abbreviation the UI uses (storing the raw digits left the
+    // State field permanently on "Select…"). Unrecognised prefix → fall back
+    // to whatever the caller supplied.
     const derivedStateCode = dto.gstin
-      ? dto.gstin.substring(0, 2)
+      ? stateCodeFromGstin(dto.gstin) ?? dto.stateCode
       : dto.stateCode;
 
     const [updated] = await this.dbAdmin

@@ -1,34 +1,55 @@
 'use client'
 
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
-import { useVerifyMagicLinkQuery } from '@/lib/api/queries/use-auth'
+import { useVerifyMagicLinkQuery, useCompleteTotp } from '@/lib/api/queries/use-auth'
+import { useToast } from '@/components/ui/use-toast'
 
 function VerifyMagicLinkInner() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
 
   const { isLoading, isSuccess, isError, error, data } = useVerifyMagicLinkQuery(token)
+  const completeTotp = useCompleteTotp()
+  const { toast } = useToast()
+  const [totpCode, setTotpCode] = useState('')
+
+  // Enrolled platform admins get a CHALLENGE from the magic link (no session
+  // yet) — completed inline below. Unenrolled ones have a session and go to
+  // setup; everyone else goes straight in.
+  const requiresTotp = Boolean(isSuccess && data?.requiresTotp && data?.challengeToken)
 
   useEffect(() => {
-    if (isSuccess) {
-      // Platform admins carry a second factor: unenrolled ones have a session
-      // and go straight to setup; enrolled ones got a challenge (no session
-      // yet), which only the login page's code flow can complete.
-      const target = data?.requiresTotpEnrollment
-        ? '/totp-setup'
-        : data?.requiresTotp
-          ? '/login'
-          : '/dashboard'
+    if (isSuccess && !requiresTotp) {
+      const target = data?.requiresTotpEnrollment ? '/totp-setup' : '/dashboard'
       const timeout = setTimeout(() => {
         window.location.assign(target)
       }, 800)
       return () => clearTimeout(timeout)
     }
-  }, [isSuccess, data])
+  }, [isSuccess, requiresTotp, data])
+
+  const handleTotpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!/^\d{6}$/.test(totpCode)) {
+      toast({ title: 'Enter the 6-digit code', variant: 'destructive' })
+      return
+    }
+    try {
+      await completeTotp.mutateAsync({ challengeToken: data!.challengeToken!, code: totpCode })
+      window.location.assign('/fam/overview')
+    } catch {
+      toast({
+        title: 'Invalid authentication code',
+        description: 'Check your authenticator app and try again.',
+        variant: 'destructive',
+      })
+      setTotpCode('')
+    }
+  }
 
   const iconWrap = (color: string, bg: string, node: React.ReactNode) => (
     <div
@@ -72,6 +93,35 @@ function VerifyMagicLinkInner() {
           <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
             Hang tight while we sign you in securely…
           </div>
+        </div>
+      )
+    }
+
+    if (requiresTotp) {
+      return (
+        <div>
+          <div style={{ textAlign: 'center' }}>
+            {iconWrap('var(--purple)', 'rgba(155,123,250,.12)', <Icon.shield size={26} />)}
+            <div className="t-h2" style={{ marginBottom: 8 }}>Two-factor check</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', marginBottom: 18 }}>
+              Enter the 6-digit code from your authenticator app to finish signing in.
+            </div>
+          </div>
+          <form onSubmit={handleTotpSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <input
+              className="input"
+              inputMode="numeric"
+              maxLength={6}
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              placeholder="123456"
+              autoFocus
+              style={{ textAlign: 'center', letterSpacing: '0.5em', fontSize: 20, height: 56 }}
+            />
+            <Btn kind="primary" type="submit" disabled={completeTotp.isPending} style={{ height: 48, fontSize: 14 }}>
+              {completeTotp.isPending ? 'Verifying…' : 'Verify'}
+            </Btn>
+          </form>
         </div>
       )
     }

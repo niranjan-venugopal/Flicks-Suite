@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Browser } from 'puppeteer';
 
@@ -22,11 +22,23 @@ const importPuppeteer = new Function(
  * (launch is ~1s) and relaunched if it disconnects.
  */
 @Injectable()
-export class InvoicePdfService implements OnModuleDestroy {
+export class InvoicePdfService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(InvoicePdfService.name);
   private browserPromise: Promise<Browser> | null = null;
 
   constructor(private readonly config: ConfigService) {}
+
+  /**
+   * Warm Chromium at boot so the first PDF doesn't pay the ~1-3s launch.
+   * Production only — jest specs stub the loadPuppeteer seam and must not
+   * trigger a real launch from module init.
+   */
+  onModuleInit(): void {
+    if (this.config.get<string>('NODE_ENV') !== 'production') return;
+    void this.browser().catch((err) =>
+      this.logger.warn(`Chromium warmup failed (will retry on first render): ${(err as Error).message}`),
+    );
+  }
 
   private launchArgs(): string[] {
     // --no-sandbox is required in most container/CI hosts; dev-shm avoids
@@ -90,12 +102,17 @@ export class InvoicePdfService implements OnModuleDestroy {
     const page = await browser.newPage();
     try {
       await page.emulateMediaType('print');
-      await page.goto(url, { waitUntil: 'networkidle0', timeout: 30_000 });
-      // The hosted page renders an invoice container once its data loads; wait
+      // domcontentloaded + explicit readiness selector instead of
+      // networkidle0: waiting for TOTAL network silence on a Next.js page
+      // (fonts, chunk prefetches) added 10s+ per render for no visual gain.
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      // The hosted print page marks readiness with [data-invoice-root]; wait
       // for it when present, but don't fail the render if the hook isn't there.
       await page
-        .waitForSelector('[data-invoice-root]', { timeout: 5_000 })
+        .waitForSelector('[data-invoice-root]', { timeout: 15_000 })
         .catch(() => undefined);
+      // Small settle for late-arriving webfonts/logo image.
+      await new Promise((r) => setTimeout(r, 300));
       // Zero margins: the print page is full-bleed dark, so any PDF margin would
       // show as a white border around the document. The page supplies its own
       // padding.

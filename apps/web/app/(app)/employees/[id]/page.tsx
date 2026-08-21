@@ -9,6 +9,7 @@ import {
   useUpdateEmployee,
   type EmployeeDetail,
 } from '@/lib/api/queries/use-employees'
+import { useDepartments, useLocations } from '@/lib/api/queries/use-settings'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -17,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { DateField } from '@/components/ui/date-picker'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -240,11 +242,18 @@ function EditProfileDialog({
 }) {
   const update = useUpdateEmployee()
   const { toast } = useToast()
+  const departments = useDepartments()
+  const locations = useLocations()
   const initialName =
     [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || ''
   const [fullName, setFullName] = useState(initialName)
   const [workPhone, setWorkPhone] = useState(e.workPhone ?? '')
   const [personalPhone, setPersonalPhone] = useState(e.personalPhone ?? '')
+  const [employeeCode, setEmployeeCode] = useState(e.employeeCode ?? '')
+  const [departmentId, setDepartmentId] = useState(e.departmentId ?? '')
+  const [locationId, setLocationId] = useState(e.locationId ?? '')
+  const [employmentType, setEmploymentType] = useState(e.employmentType ?? 'full_time')
+  const [dateOfJoining, setDateOfJoining] = useState(e.dateOfJoining ?? '')
 
   const handleSave = async () => {
     if (!fullName.trim()) {
@@ -252,11 +261,20 @@ function EditProfileDialog({
       return
     }
     try {
+      if (!employeeCode.trim()) {
+        toast({ title: 'Employee code is required', variant: 'destructive' })
+        return
+      }
       await update.mutateAsync({
         id: e.id,
         fullName: fullName.trim(),
         workPhone: workPhone.trim() || undefined,
         personalPhone: personalPhone.trim() || undefined,
+        employeeCode: employeeCode.trim().toUpperCase(),
+        departmentId: departmentId || undefined,
+        locationId: locationId || undefined,
+        employmentType,
+        dateOfJoining: dateOfJoining || undefined,
       })
       toast({ title: 'Profile updated', description: fullName.trim() })
       onClose()
@@ -289,6 +307,78 @@ function EditProfileDialog({
               style={{ width: '100%' }}
               autoFocus
             />
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Employee code <span style={{ color: 'var(--coral)' }}>*</span>
+              </label>
+              <input
+                className="input font-mono"
+                value={employeeCode}
+                onChange={(ev) => setEmployeeCode(ev.target.value.toUpperCase())}
+                maxLength={24}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Joining date
+              </label>
+              <DateField value={dateOfJoining} onChange={setDateOfJoining} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Department
+              </label>
+              <select
+                className="input"
+                value={departmentId}
+                onChange={(ev) => setDepartmentId(ev.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">—</option>
+                {(departments.data?.data ?? []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Work location
+              </label>
+              <select
+                className="input"
+                value={locationId}
+                onChange={(ev) => setLocationId(ev.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">—</option>
+                {(locations.data?.data ?? []).map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Employment type
+              </label>
+              <select
+                className="input"
+                value={employmentType}
+                onChange={(ev) => setEmploymentType(ev.target.value as typeof employmentType)}
+                style={{ width: '100%' }}
+              >
+                {(['full_time', 'part_time', 'contract', 'intern', 'consultant', 'probation'] as const).map((t) => (
+                  <option key={t} value={t}>{t.replace('_', ' ')}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }} />
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <div style={{ flex: 1 }}>

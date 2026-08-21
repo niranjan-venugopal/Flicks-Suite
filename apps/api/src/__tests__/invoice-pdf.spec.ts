@@ -72,7 +72,7 @@ describe('Invoice PDF generation — Puppeteer (Sprint 13 §B)', () => {
     expect(isPdf(buf)).toBe(true);
     expect(page.goto).toHaveBeenCalledWith(
       'https://pay.example.com/inv/tok123/print',
-      expect.objectContaining({ waitUntil: 'networkidle0' }),
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
     );
     expect(page.pdf).toHaveBeenCalledWith(
       expect.objectContaining({ format: 'A4', printBackground: true }),

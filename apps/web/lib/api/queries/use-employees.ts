@@ -233,6 +233,13 @@ export interface UpdateEmployeePayload {
   personalPhone?: string
   designationId?: string
   avatarUrl?: string
+  // Admin-editable org/employment fields (owner/HR profile editing)
+  employeeCode?: string
+  departmentId?: string
+  locationId?: string
+  reportingManagerId?: string
+  employmentType?: string
+  dateOfJoining?: string
 }
 
 export function useUpdateEmployee() {
