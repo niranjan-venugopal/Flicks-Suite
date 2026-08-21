@@ -551,10 +551,12 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Workspace / company switcher — hidden for FAM, who isn't inside any
-          tenant. Multi-company users (auditors, multi-workspace owners) get
-          the live dropdown; everyone else the static chip. */}
-      {!isFam && collapsed && <CompanySwitcher collapsed />}
+      {/* Workspace / company switcher. Rendered for FAM too: a platform
+          admin who also owns a workspace (the founder) needs the way BACK
+          out of the console — hiding it here trapped them in /fam.
+          Multi-company users get the live dropdown; everyone else the
+          static chip. */}
+      {collapsed && <CompanySwitcher collapsed />}
       {collapsed && (
         <button
           type="button"
@@ -577,7 +579,7 @@ export function Sidebar() {
           <Icon.chevR size={15} />
         </button>
       )}
-      {!isFam && !collapsed && <CompanySwitcher />}
+      {!collapsed && <CompanySwitcher />}
 
       {/* Nav */}
       <nav style={{ flex: 1, overflow: 'auto', padding: collapsed ? '8px 10px 12px' : '8px 8px 12px' }}>
