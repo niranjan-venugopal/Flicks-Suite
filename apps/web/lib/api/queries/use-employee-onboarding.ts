@@ -105,3 +105,22 @@ export function useSubmitOnboardingStep() {
     },
   })
 }
+
+// ─── Admin variant (owner/HR) ────────────────────────────────────────────────
+// Same step writer targeted at ANY employee — powers the detail page's
+// "Edit personal & statutory" dialog. Review flags are self-service only.
+
+export function useAdminSubmitEmployeeDetails() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ employeeId, ...payload }: SubmitOnboardingStepPayload & { employeeId: string }) =>
+      api.post<OnboardingStepResponse>(
+        `/api/v1/employees/${employeeId}/onboarding/${payload.step}`,
+        payload,
+      ),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['employees', vars.employeeId] })
+      qc.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}

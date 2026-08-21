@@ -31,6 +31,7 @@ import {
 const CONSENT_VERSION = '2026-05-v1';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
+import { FieldCipher } from '../../core/common/field-cipher';
 import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -91,6 +92,14 @@ export class EmployeesService {
     private readonly configService: ConfigService,
     private readonly authService: AuthService,
   ) {}
+
+  // AES-256-GCM for sensitive at-rest columns (PAN, bank account number).
+  // Blank key (local dev) = plaintext passthrough; decrypt handles legacy
+  // plaintext rows written before encryption shipped.
+  private readonly fieldCipher = new FieldCipher(
+    process.env.EMPLOYEE_DATA_ENC_KEY,
+    'flicks-employee-fields-v1',
+  );
 
   async listEmployees(tenantId: string, query: EmployeeListQueryDto) {
     const page = query.page ?? 1;
@@ -969,9 +978,8 @@ export class EmployeesService {
 
     if (data.identity) {
       const i = data.identity;
-      // *_encrypted columns are named for the future; field-level encryption
-      // is a Sprint 4 hardening task. For now we write plain text.
-      if (i.pan !== undefined) updateFields.pan_encrypted = i.pan;
+      if (i.pan !== undefined)
+        updateFields.pan_encrypted = this.fieldCipher.encrypt(i.pan);
       if (i.personalPhone !== undefined)
         updateFields.personal_phone = i.personalPhone;
       if (i.personalEmail !== undefined)
@@ -989,7 +997,9 @@ export class EmployeesService {
       if (b.bankAccountHolder !== undefined)
         updateFields.bank_account_holder = b.bankAccountHolder;
       if (b.bankAccountNumber !== undefined)
-        updateFields.bank_account_number_encrypted = b.bankAccountNumber;
+        updateFields.bank_account_number_encrypted = this.fieldCipher.encrypt(
+          b.bankAccountNumber,
+        );
       if (b.pfUan !== undefined) updateFields.pf_uan = b.pfUan;
     }
 

@@ -58,6 +58,9 @@ export const configValidationSchema = Joi.object({
   // FAM second factor (TOTP). Application-level key used to encrypt per-user
   // TOTP secrets at rest. Optional in dev — FAM TOTP enforcement no-ops when
   // unset so local FAM logins still work.
+  // AES-256-GCM key for employee PAN/bank-account columns at rest
+  // (openssl rand -hex 32). Blank = plaintext (dev only — set in prod).
+  EMPLOYEE_DATA_ENC_KEY: Joi.string().allow('').optional(),
   TOTP_SECRET: Joi.string().allow('').optional(),
 
   // Chromium binary for invoice PDFs. Unset in dev (puppeteer's own cached

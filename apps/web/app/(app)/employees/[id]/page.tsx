@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { DateField } from '@/components/ui/date-picker'
+import { EditDetailsDialog } from '@/components/employees/EditDetailsDialog'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   const role = useAuthStore((s) => s.currentUser?.role)
   const canEdit = role === 'OWNER' || role === 'HR_ADMIN'
   const [editing, setEditing] = useState(false)
+  const [editingDetails, setEditingDetails] = useState(false)
   const contactEmail = e.workEmail || e.userEmail || e.personalEmail || undefined
 
   return (
@@ -213,19 +215,32 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
           </a>
         )}
         {canEdit && (
-          <Btn
-            kind="secondary"
-            size="sm"
-            icon={<Icon.cog size={13} />}
-            onClick={() => setEditing(true)}
-          >
-            Edit profile
-          </Btn>
+          <>
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon.cog size={13} />}
+              onClick={() => setEditing(true)}
+            >
+              Edit profile
+            </Btn>
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon.shield size={13} />}
+              onClick={() => setEditingDetails(true)}
+            >
+              Edit details
+            </Btn>
+          </>
         )}
       </div>
 
       {canEdit && (
         <EditProfileDialog e={e} open={editing} onClose={() => setEditing(false)} />
+      )}
+      {canEdit && (
+        <EditDetailsDialog e={e} open={editingDetails} onClose={() => setEditingDetails(false)} />
       )}
     </div>
   )

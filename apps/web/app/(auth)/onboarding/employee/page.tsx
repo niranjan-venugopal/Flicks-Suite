@@ -13,6 +13,7 @@ import {
   useSubmitOnboardingStep,
   type SubmitOnboardingStepPayload,
 } from '@/lib/api/queries/use-employee-onboarding'
+import { PAN_RE, IFSC_RE } from '@/lib/employee-details'
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
@@ -29,8 +30,6 @@ const STEPS: StepMeta[] = [
   { title: 'Review',            sub: 'Submit for HR review' },
 ]
 
-const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/
-const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/
 
 // Whole form state — every step writes into this then submits per-step.
 type FormState = {

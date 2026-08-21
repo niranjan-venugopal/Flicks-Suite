@@ -107,8 +107,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const isImpersonating = !!meData?.impersonatorUserId
   const isPlatformAdmin =
     !isImpersonating && (freshRole === 'fam' || freshRole === 'super_admin')
+  // Self-onboarding applies to EVERY tenant role (owner/HR/finance included
+  // — statutory + banking details are needed regardless of seniority).
+  // External auditors have no employee row (employeeId null skips them) and
+  // FAM sessions are redirected to the console before this check.
   const isJoiningEmployee =
-    freshRole === 'employee' || freshRole === 'manager'
+    !!freshRole && !['auditor', 'fam', 'super_admin'].includes(freshRole)
   const onboarding = useEmployeeOnboardingStatus()
   const needsOnboarding =
     isJoiningEmployee &&

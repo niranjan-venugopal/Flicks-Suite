@@ -182,6 +182,35 @@ export class EmployeesController {
     );
   }
 
+  @Post(':id/onboarding/:step')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Admin: write onboarding-step details onto an employee record',
+    description:
+      'Owner/HR variant of the self-onboarding step writer — same validation, encryption and audit pipeline, targeted at any employee in the workspace. Used by the "Edit personal & statutory" dialog. Steps 1-3 (personal / identity / bank); review flags are a self-service concern and are ignored here.',
+  })
+  @ApiParam({ name: 'step', type: Number })
+  @ApiResponse({ status: 200, description: 'Step saved' })
+  async adminSubmitEmployeeDetails(
+    @Param('id') id: string,
+    @Param('step', ParseIntPipe) step: number,
+    @Body() dto: SubmitOnboardingStepDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.employeesService.submitOnboardingStep(
+      id,
+      step,
+      { ...dto, submitForReview: undefined },
+      user.tenantId,
+      user.sub,
+      {
+        ip: req.ip ?? req.socket?.remoteAddress ?? undefined,
+        userAgent: req.headers['user-agent'] ?? undefined,
+      },
+    );
+  }
+
   @Get('me/onboarding-status')
   @ApiOperation({
     summary: 'Get the current user\'s onboarding progress',
