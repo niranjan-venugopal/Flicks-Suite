@@ -13,6 +13,7 @@ import {
 } from '@/lib/api/queries/use-employees'
 import {
   useDepartments,
+  useDesignations,
   useLocations,
   useShifts,
 } from '@/lib/api/queries/use-settings'
@@ -34,6 +35,7 @@ interface FormState {
   dateOfBirth: string
   jobTitle: string
   departmentId: string
+  designationId: string
   managerId: string
   locationId: string
   employmentType: string
@@ -50,6 +52,7 @@ export default function InviteEmployeePage() {
   const invite = useInviteEmployee()
   const employees = useEmployees()
   const departments = useDepartments()
+  const designations = useDesignations()
   const locations = useLocations()
   const shifts = useShifts()
 
@@ -100,6 +103,7 @@ export default function InviteEmployeePage() {
     dateOfBirth: '',
     jobTitle: '',
     departmentId: '',
+    designationId: '',
     managerId: '',
     locationId: '',
     employmentType: 'full_time',
@@ -139,6 +143,7 @@ export default function InviteEmployeePage() {
 
     const fullName = `${firstName} ${lastName}`.trim()
     const departmentId = asUuid(form.departmentId)
+    const designationId = asUuid(form.designationId)
     const locationId = asUuid(form.locationId)
     const managerId = asUuid(form.managerId)
     const shiftTemplateId = asUuid(form.shiftTemplateId)
@@ -149,6 +154,7 @@ export default function InviteEmployeePage() {
       employeeCode: (form.employeeCode || suggestedCode).trim().toUpperCase(),
       ...(form.jobTitle.trim() ? { jobTitle: form.jobTitle.trim() } : {}),
       ...(departmentId ? { departmentId } : {}),
+      ...(designationId ? { designationId } : {}),
       ...(locationId ? { locationId } : {}),
       ...(managerId ? { managerId } : {}),
       ...(form.employmentType ? { employmentType: form.employmentType } : {}),
@@ -165,6 +171,7 @@ export default function InviteEmployeePage() {
     // correct.
     const dropped = [
       form.departmentId && !departmentId && 'departmentId',
+      form.designationId && !designationId && 'designationId',
       form.locationId && !locationId && 'locationId',
       form.managerId && !managerId && 'managerId',
       form.shiftTemplateId && !shiftTemplateId && 'shiftTemplateId',
@@ -344,7 +351,21 @@ export default function InviteEmployeePage() {
                 <select
                   className="input"
                   value={form.departmentId}
-                  onChange={(e) => set('departmentId', e.target.value)}
+                  onChange={(e) => {
+                    const departmentId = e.target.value
+                    // Keep the designation only if it still applies: common
+                    // (no department) designations survive any switch.
+                    const keep = (designations.data?.data ?? []).some(
+                      (d) =>
+                        d.id === form.designationId &&
+                        (!d.departmentId || d.departmentId === departmentId),
+                    )
+                    setForm((p) => ({
+                      ...p,
+                      departmentId,
+                      designationId: keep ? p.designationId : '',
+                    }))
+                  }}
                 >
                   <option value="">—</option>
                   {(departments.data?.data ?? [])
@@ -352,6 +373,31 @@ export default function InviteEmployeePage() {
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="label">Designation</label>
+                <select
+                  className="input"
+                  value={form.designationId}
+                  onChange={(e) => set('designationId', e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(designations.data?.data ?? [])
+                    .filter(
+                      (d) =>
+                        d.isActive &&
+                        (!d.departmentId ||
+                          !form.departmentId ||
+                          d.departmentId === form.departmentId),
+                    )
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.title}
+                        {d.level ? ` · L${d.level}` : ''}
+                        {!d.departmentId ? '' : d.departmentName ? ` (${d.departmentName})` : ''}
                       </option>
                     ))}
                 </select>

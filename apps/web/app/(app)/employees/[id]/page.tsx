@@ -9,7 +9,7 @@ import {
   useUpdateEmployee,
   type EmployeeDetail,
 } from '@/lib/api/queries/use-employees'
-import { useDepartments, useLocations } from '@/lib/api/queries/use-settings'
+import { useDepartments, useDesignations, useLocations } from '@/lib/api/queries/use-settings'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -258,6 +258,7 @@ function EditProfileDialog({
   const update = useUpdateEmployee()
   const { toast } = useToast()
   const departments = useDepartments()
+  const designations = useDesignations()
   const locations = useLocations()
   const initialName =
     [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || ''
@@ -266,6 +267,7 @@ function EditProfileDialog({
   const [personalPhone, setPersonalPhone] = useState(e.personalPhone ?? '')
   const [employeeCode, setEmployeeCode] = useState(e.employeeCode ?? '')
   const [departmentId, setDepartmentId] = useState(e.departmentId ?? '')
+  const [designationId, setDesignationId] = useState(e.designationId ?? '')
   const [locationId, setLocationId] = useState(e.locationId ?? '')
   const [employmentType, setEmploymentType] = useState(e.employmentType ?? 'full_time')
   const [dateOfJoining, setDateOfJoining] = useState(e.dateOfJoining ?? '')
@@ -287,6 +289,7 @@ function EditProfileDialog({
         personalPhone: personalPhone.trim() || undefined,
         employeeCode: employeeCode.trim().toUpperCase(),
         departmentId: departmentId || undefined,
+        designationId: designationId || undefined,
         locationId: locationId || undefined,
         employmentType,
         dateOfJoining: dateOfJoining || undefined,
@@ -351,7 +354,16 @@ function EditProfileDialog({
               <select
                 className="input"
                 value={departmentId}
-                onChange={(ev) => setDepartmentId(ev.target.value)}
+                onChange={(ev) => {
+                  const next = ev.target.value
+                  setDepartmentId(next)
+                  // Common (no-department) designations survive a department
+                  // switch; department-specific ones reset.
+                  const keep = (designations.data?.data ?? []).some(
+                    (d) => d.id === designationId && (!d.departmentId || d.departmentId === next),
+                  )
+                  if (!keep) setDesignationId('')
+                }}
                 style={{ width: '100%' }}
               >
                 <option value="">—</option>
@@ -362,18 +374,27 @@ function EditProfileDialog({
             </div>
             <div style={{ flex: 1 }}>
               <label className="label" style={{ display: 'block', marginBottom: 6 }}>
-                Work location
+                Designation
               </label>
               <select
                 className="input"
-                value={locationId}
-                onChange={(ev) => setLocationId(ev.target.value)}
+                value={designationId}
+                onChange={(ev) => setDesignationId(ev.target.value)}
                 style={{ width: '100%' }}
               >
                 <option value="">—</option>
-                {(locations.data?.data ?? []).map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
+                {(designations.data?.data ?? [])
+                  .filter(
+                    (d) =>
+                      (d.isActive || d.id === designationId) &&
+                      (!d.departmentId || !departmentId || d.departmentId === departmentId),
+                  )
+                  .map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.title}
+                      {d.level ? ` · L${d.level}` : ''}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
@@ -393,7 +414,22 @@ function EditProfileDialog({
                 ))}
               </select>
             </div>
-            <div style={{ flex: 1 }} />
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Work location
+              </label>
+              <select
+                className="input"
+                value={locationId}
+                onChange={(ev) => setLocationId(ev.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">—</option>
+                {(locations.data?.data ?? []).map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <div style={{ flex: 1 }}>

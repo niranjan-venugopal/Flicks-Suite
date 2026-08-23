@@ -11,6 +11,7 @@ import {
   MaxLength,
   Min,
   Max,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -602,15 +603,19 @@ export class UpdateOrganizationDto {
   @MaxLength(200)
   legalName?: string;
 
+  // '' is the explicit "clear it" signal (global tenants removing Indian
+  // IDs) — the format check only applies to a non-empty value.
   @ApiPropertyOptional({ example: '27AABCU9603R1ZX' })
   @IsString()
   @IsOptional()
+  @ValidateIf((o: UpdateOrganizationDto) => !!o.gstin)
   @Matches(GSTIN_RE, { message: 'Invalid GSTIN format' })
   gstin?: string;
 
   @ApiPropertyOptional({ example: 'AABCU9603R' })
   @IsString()
   @IsOptional()
+  @ValidateIf((o: UpdateOrganizationDto) => !!o.pan)
   @Matches(PAN_RE, { message: 'Invalid PAN format' })
   pan?: string;
 
@@ -650,10 +655,21 @@ export class UpdateOrganizationDto {
   @MaxLength(80)
   city?: string;
 
+  @ApiPropertyOptional({
+    example: 'IN',
+    description: 'ISO-3166 alpha-2. Non-IN hides/clears Indian statutory fields in the UI.',
+  })
+  @IsString()
+  @IsOptional()
+  @Matches(/^[A-Z]{2}$/, { message: 'countryCode must be a 2-letter ISO code' })
+  countryCode?: string;
+
+  // 2-letter GST code for India; free text (state/province/emirate) for
+  // global workspaces — hence the generous cap.
   @ApiPropertyOptional({ example: 'KA' })
   @IsString()
   @IsOptional()
-  @MaxLength(2)
+  @MaxLength(40)
   stateCode?: string;
 
   @ApiPropertyOptional({ example: '560038' })

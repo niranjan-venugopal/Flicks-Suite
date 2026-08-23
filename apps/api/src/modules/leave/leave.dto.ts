@@ -11,6 +11,10 @@ import {
   Min,
   MinLength,
   MaxLength,
+  Matches,
+  ValidateIf,
+  ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -147,4 +151,132 @@ export class LeaveListQueryDto {
   @Min(1)
   @Type(() => Number)
   limit?: number = 20;
+}
+
+// ─── Holidays (admin CRUD — Owner/HR via @Roles('admin')) ────────────────────
+
+export const HOLIDAY_TYPES = [
+  'national',
+  'regional',
+  'optional',
+  'restricted',
+  'company',
+] as const;
+export type HolidayTypeValue = (typeof HOLIDAY_TYPES)[number];
+
+const DATE_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+export class CreateHolidayDto {
+  @ApiProperty({ example: '2026-11-08' })
+  @IsString()
+  @Matches(DATE_YMD, { message: 'date must be YYYY-MM-DD' })
+  date: string;
+
+  @ApiProperty({ example: 'Diwali' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiPropertyOptional({ enum: HOLIDAY_TYPES, default: 'company' })
+  @IsIn(HOLIDAY_TYPES as unknown as string[])
+  @IsOptional()
+  type?: HolidayTypeValue;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  description?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Location the holiday applies to. Omit for a company-wide holiday (all locations).',
+  })
+  @IsUUID()
+  @IsOptional()
+  locationId?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'Repeats yearly (fixed-date holidays)' })
+  @IsBoolean()
+  @IsOptional()
+  isRecurring?: boolean;
+}
+
+export class UpdateHolidayDto {
+  @ApiPropertyOptional({ example: '2026-11-08' })
+  @IsString()
+  @IsOptional()
+  @Matches(DATE_YMD, { message: 'date must be YYYY-MM-DD' })
+  date?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional({ enum: HOLIDAY_TYPES })
+  @IsIn(HOLIDAY_TYPES as unknown as string[])
+  @IsOptional()
+  type?: HolidayTypeValue;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  description?: string;
+
+  // null = make it company-wide again; undefined = leave unchanged.
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((o: UpdateHolidayDto) => o.locationId !== null)
+  @IsUUID()
+  locationId?: string | null;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  isRecurring?: boolean;
+}
+
+export class ImportHolidayItemDto {
+  @ApiProperty({ example: '2026-01-26' })
+  @IsString()
+  @Matches(DATE_YMD, { message: 'date must be YYYY-MM-DD' })
+  date: string;
+
+  @ApiProperty({ example: 'Republic Day' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiPropertyOptional({ enum: HOLIDAY_TYPES, default: 'national' })
+  @IsIn(HOLIDAY_TYPES as unknown as string[])
+  @IsOptional()
+  type?: HolidayTypeValue;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  description?: string;
+}
+
+export class ImportHolidaysDto {
+  @ApiProperty({ type: [ImportHolidayItemDto] })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => ImportHolidayItemDto)
+  holidays: ImportHolidayItemDto[];
+
+  @ApiPropertyOptional({
+    description: 'Assign every imported holiday to this location. Omit for company-wide.',
+  })
+  @IsUUID()
+  @IsOptional()
+  locationId?: string;
 }

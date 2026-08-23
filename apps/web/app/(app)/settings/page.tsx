@@ -52,6 +52,34 @@ const STATE_CODES = [
   'SK', 'TN', 'TR', 'TS', 'UK', 'UP', 'WB',
 ] as const
 
+// Country decides which statutory block applies: India shows GSTIN/PAN/CIN
+// with the GST state dropdown; everywhere else those fields are hidden and
+// State is free text. Curated list — ISO-3166 alpha-2 codes.
+const COUNTRIES = [
+  ['IN', 'India'],
+  ['AE', 'United Arab Emirates'],
+  ['US', 'United States'],
+  ['GB', 'United Kingdom'],
+  ['SG', 'Singapore'],
+  ['AU', 'Australia'],
+  ['CA', 'Canada'],
+  ['SA', 'Saudi Arabia'],
+  ['QA', 'Qatar'],
+  ['KW', 'Kuwait'],
+  ['BH', 'Bahrain'],
+  ['OM', 'Oman'],
+  ['DE', 'Germany'],
+  ['FR', 'France'],
+  ['NL', 'Netherlands'],
+  ['LK', 'Sri Lanka'],
+  ['BD', 'Bangladesh'],
+  ['NP', 'Nepal'],
+  ['ID', 'Indonesia'],
+  ['PH', 'Philippines'],
+  ['MY', 'Malaysia'],
+  ['NZ', 'New Zealand'],
+] as const
+
 // ─── Status pill helper ──────────────────────────────────────────────────────
 
 function statusPill(status: string) {
@@ -100,6 +128,7 @@ type FormState = {
   addressLine1: string
   addressLine2: string
   city: string
+  countryCode: string
   stateCode: string
   postalCode: string
 }
@@ -116,6 +145,7 @@ function toForm(org: ReturnType<typeof useOrganization>['data']): FormState {
     addressLine1: org?.addressLine1 ?? '',
     addressLine2: org?.addressLine2 ?? '',
     city: org?.city ?? '',
+    countryCode: org?.countryCode ?? 'IN',
     stateCode: org?.stateCode ?? '',
     postalCode: org?.postalCode ?? '',
   }
@@ -163,6 +193,11 @@ export default function OrganizationSettingsPage() {
     [form, baseline],
   )
 
+  // India shows the GST/PAN/CIN statutory block and the GST state dropdown;
+  // any other country hides those and frees the State field.
+  const isIndia = (form.countryCode || 'IN') === 'IN'
+  const hasIndianIds = Boolean(form.gstin || form.pan || form.cin)
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((p) => ({ ...p, [key]: value }))
 
@@ -175,7 +210,10 @@ export default function OrganizationSettingsPage() {
       toast({ title: 'Workspace name is required', variant: 'destructive' })
       return
     }
-    if (form.gstin && !GSTIN_RE.test(form.gstin)) {
+    // GSTIN/PAN are Indian statutory formats — only enforced when the
+    // workspace country is India (global tenants have neither).
+    const isIndia = (form.countryCode || 'IN') === 'IN'
+    if (isIndia && form.gstin && !GSTIN_RE.test(form.gstin)) {
       toast({
         title: 'Invalid GSTIN',
         description: '15 characters: 2 state digits, 10 PAN, 1 entity, "Z", 1 checksum.',
@@ -183,7 +221,7 @@ export default function OrganizationSettingsPage() {
       })
       return
     }
-    if (form.pan && !PAN_RE.test(form.pan)) {
+    if (isIndia && form.pan && !PAN_RE.test(form.pan)) {
       toast({
         title: 'Invalid PAN',
         description: '10 characters: 5 letters, 4 digits, 1 letter.',
@@ -356,7 +394,37 @@ export default function OrganizationSettingsPage() {
             </div>
           </section>
 
-          {/* ─── Tax & legal ────────────────────────────────────────────── */}
+          {/* ─── Tax & legal (India only — GST/PAN/CIN don't exist for
+               global workspaces; Dubai/US tenants see a one-line note, or a
+               cleanup card if legacy Indian IDs are still on file) ───────── */}
+          {!isIndia && !hasIndianIds && (
+            <section className="card p-6">
+              <h2 className="t-h3">Tax & legal identifiers</h2>
+              <p className="t-mute mt-1">
+                GSTIN / PAN / CIN are Indian statutory IDs — not applicable for{' '}
+                {COUNTRIES.find(([c]) => c === form.countryCode)?.[1] ?? 'your country'}. Nothing to configure here.
+              </p>
+            </section>
+          )}
+          {!isIndia && hasIndianIds && (
+            <section className="card p-6">
+              <div className="mb-4">
+                <h2 className="t-h3">Tax & legal identifiers</h2>
+                <p className="t-mute mt-1">
+                  Indian statutory IDs are still on file but the workspace country is no longer India.
+                  You can keep them (e.g. an Indian entity operating abroad) or remove them.
+                </p>
+              </div>
+              <Btn
+                kind="secondary"
+                size="sm"
+                onClick={() => setForm((p) => ({ ...p, gstin: '', pan: '', cin: '' }))}
+              >
+                Remove Indian tax IDs
+              </Btn>
+            </section>
+          )}
+          {isIndia && (
           <section className="card p-6">
             <div className="mb-4">
               <h2 className="t-h3">Tax & legal identifiers</h2>
@@ -392,6 +460,7 @@ export default function OrganizationSettingsPage() {
               </Field>
             </div>
           </section>
+          )}
 
           {/* ─── Registered address ─────────────────────────────────────── */}
           <section className="card p-6">
@@ -418,43 +487,66 @@ export default function OrganizationSettingsPage() {
                   maxLength={200}
                 />
               </Field>
+              <Field label="Country" hint="Drives which statutory fields apply.">
+                <select
+                  className="input"
+                  value={form.countryCode || 'IN'}
+                  onChange={(e) => set('countryCode', e.target.value)}
+                >
+                  {COUNTRIES.map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
+              </Field>
               <Field label="City">
                 <input
                   className="input"
                   value={form.city}
                   onChange={(e) => set('city', e.target.value)}
-                  placeholder="Bengaluru"
+                  placeholder={isIndia ? 'Bengaluru' : 'Dubai'}
                   maxLength={80}
                 />
               </Field>
-              <Field label="State" hint={form.gstin ? 'From GSTIN' : 'Two-letter code'}>
-                <select
-                  className="input"
-                  value={
-                    // GSTIN's numeric prefix maps to the two-letter code; the
-                    // stored value may still be the raw digits from before the
-                    // mapping fix, so derive for display whenever GSTIN is set.
-                    form.gstin
-                      ? stateCodeFromGstin(form.gstin) ?? form.stateCode
-                      : form.stateCode
-                  }
-                  onChange={(e) => set('stateCode', e.target.value)}
-                  disabled={Boolean(form.gstin)}
-                >
-                  <option value="">Select…</option>
-                  {STATE_CODES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="PIN code">
+              {isIndia ? (
+                <Field label="State" hint={form.gstin ? 'From GSTIN' : 'Two-letter code'}>
+                  <select
+                    className="input"
+                    value={
+                      // GSTIN's numeric prefix maps to the two-letter code; the
+                      // stored value may still be the raw digits from before the
+                      // mapping fix, so derive for display whenever GSTIN is set.
+                      form.gstin
+                        ? stateCodeFromGstin(form.gstin) ?? form.stateCode
+                        : form.stateCode
+                    }
+                    onChange={(e) => set('stateCode', e.target.value)}
+                    disabled={Boolean(form.gstin)}
+                  >
+                    <option value="">Select…</option>
+                    {STATE_CODES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : (
+                <Field label="State / Province / Emirate">
+                  <input
+                    className="input"
+                    value={form.stateCode}
+                    onChange={(e) => set('stateCode', e.target.value)}
+                    placeholder="Dubai"
+                    maxLength={40}
+                  />
+                </Field>
+              )}
+              <Field label={isIndia ? 'PIN code' : 'Postal / ZIP code'}>
                 <input
                   className="input"
                   value={form.postalCode}
                   onChange={(e) => set('postalCode', e.target.value)}
-                  placeholder="560038"
+                  placeholder={isIndia ? '560038' : ''}
                   maxLength={12}
-                  inputMode="numeric"
+                  inputMode={isIndia ? 'numeric' : 'text'}
                 />
               </Field>
             </div>

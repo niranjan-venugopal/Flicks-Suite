@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
+import { locations } from './employees';
 import { employees } from './employees';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -244,13 +245,9 @@ export const holidays = pgTable(
     tenant_id: uuid('tenant_id')
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
-    location_id: uuid('location_id').references(
-      () =>
-        // Inline import reference to avoid circular — location is in employees
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ({ id: uuid('id') } as any),
-      { onDelete: 'set null' },
-    ),
+    location_id: uuid('location_id').references(() => locations.id, {
+      onDelete: 'set null',
+    }),
     holiday_date: date('holiday_date').notNull(),
     name: text('name').notNull(),
     type: holidayTypeEnum('type').notNull().default('national'),

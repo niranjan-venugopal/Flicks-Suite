@@ -7,7 +7,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { eq, and, gte, lte, isNull, or, sql, desc, asc, inArray } from 'drizzle-orm';
+import { eq, and, gte, lte, isNull, notInArray, or, sql, desc, asc, inArray } from 'drizzle-orm';
 import {
   attendanceRecords,
   attendancePunches,
@@ -882,6 +882,17 @@ export class AttendanceService {
           ),
         )
         .orderBy(asc(attendanceRegularizations.created_at));
+      // Location-scoped: company-wide rows (location_id NULL) apply to
+      // everyone; location rows only to employees at that location. Elective
+      // types (optional/restricted) don't mark the day as a holiday.
+      const [empRow] = await tx
+        .select({ locationId: employees.location_id })
+        .from(employees)
+        .where(
+          and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
+        )
+        .limit(1);
+      const empLocationId = empRow?.locationId ?? null;
       const monthHolidays = await tx
         .select({ holiday_date: holidays.holiday_date, name: holidays.name })
         .from(holidays)
@@ -890,6 +901,13 @@ export class AttendanceService {
             eq(holidays.tenant_id, tenantId),
             gte(holidays.holiday_date, first),
             lte(holidays.holiday_date, last),
+            notInArray(holidays.type, ['optional', 'restricted']),
+            empLocationId
+              ? or(
+                  isNull(holidays.location_id),
+                  eq(holidays.location_id, empLocationId),
+                )
+              : isNull(holidays.location_id),
           ),
         );
 

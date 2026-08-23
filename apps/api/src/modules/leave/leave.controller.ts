@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -23,6 +25,9 @@ import {
   CancelLeaveDto,
   ReviewLeaveDto,
   CreateLeaveTypeDto,
+  CreateHolidayDto,
+  UpdateHolidayDto,
+  ImportHolidaysDto,
   LeaveListQueryDto,
 } from './leave.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -128,14 +133,86 @@ export class LeaveController {
   }
 
   @Get('holidays')
-  @ApiOperation({ summary: 'List holidays for the tenant' })
+  @ApiOperation({
+    summary: 'List holidays for the tenant',
+    description:
+      "Default scope is the caller's own location (company-wide + their location). locationId accepts 'all' (admin screens), 'company', or a location id.",
+  })
   @ApiQuery({ name: 'year', required: false, type: Number })
+  @ApiQuery({ name: 'locationId', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Holiday list' })
   async listHolidays(
     @CurrentUser() user: JwtPayload,
     @Query('year') year?: string,
+    @Query('locationId') locationId?: string,
   ) {
     const parsedYear = year ? Number(year) : undefined;
-    return this.leaveService.listHolidays(user.tenantId, parsedYear);
+    return this.leaveService.listHolidays(user.tenantId, {
+      year: parsedYear,
+      locationScope: locationId || undefined,
+      userId: user.sub,
+    });
+  }
+
+  @Get('holidays/presets')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Curated country holiday lists that seed the import flow',
+  })
+  @ApiQuery({ name: 'country', required: true, type: String })
+  @ApiQuery({ name: 'year', required: true, type: Number })
+  async listHolidayPresets(
+    @Query('country') country: string,
+    @Query('year', ParseIntPipe) year: number,
+  ) {
+    return this.leaveService.listHolidayPresets(
+      (country ?? '').toUpperCase(),
+      year,
+    );
+  }
+
+  @Post('holidays')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Add a holiday (company-wide or per location)' })
+  @ApiResponse({ status: 201, description: 'Holiday created' })
+  async createHoliday(
+    @Body() dto: CreateHolidayDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.leaveService.createHoliday(user.tenantId, dto);
+  }
+
+  @Post('holidays/import')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk-import holidays (country presets); duplicates are skipped',
+  })
+  async importHolidays(
+    @Body() dto: ImportHolidaysDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.leaveService.importHolidays(user.tenantId, dto);
+  }
+
+  @Patch('holidays/:id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update a holiday' })
+  async updateHoliday(
+    @Param('id') id: string,
+    @Body() dto: UpdateHolidayDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.leaveService.updateHoliday(user.tenantId, id, dto);
+  }
+
+  @Delete('holidays/:id')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Delete a holiday' })
+  async deleteHoliday(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.leaveService.deleteHoliday(user.tenantId, id);
   }
 }

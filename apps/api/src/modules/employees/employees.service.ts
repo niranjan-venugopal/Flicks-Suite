@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
   Logger,
   Inject,
 } from '@nestjs/common';
@@ -32,7 +33,7 @@ const CONSENT_VERSION = '2026-05-v1';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { FieldCipher } from '../../core/common/field-cipher';
-import type { DbAdmin } from '@flicks/db';
+import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
@@ -155,6 +156,57 @@ export class EmployeesService {
     };
   }
 
+  /**
+   * FK constraints bypass RLS, so an org ref accepted from a DTO
+   * (department/designation/location/manager id) would happily point at
+   * another tenant's row. These lookups run inside the tenant transaction
+   * (RLS-scoped), so a cross-tenant id resolves to nothing and is rejected —
+   * same pattern as assertRefsInTenant in crm/deals.service.ts.
+   */
+  private async assertOrgRefsInTenant(
+    db: Db,
+    tenantId: string,
+    refs: {
+      departmentId?: string | null;
+      designationId?: string | null;
+      locationId?: string | null;
+      managerEmployeeId?: string | null;
+    },
+  ): Promise<void> {
+    if (refs.departmentId) {
+      const [row] = await db
+        .select({ id: departments.id })
+        .from(departments)
+        .where(and(eq(departments.id, refs.departmentId), eq(departments.tenant_id, tenantId)))
+        .limit(1);
+      if (!row) throw new BadRequestException('departmentId does not belong to this workspace');
+    }
+    if (refs.designationId) {
+      const [row] = await db
+        .select({ id: designations.id })
+        .from(designations)
+        .where(and(eq(designations.id, refs.designationId), eq(designations.tenant_id, tenantId)))
+        .limit(1);
+      if (!row) throw new BadRequestException('designationId does not belong to this workspace');
+    }
+    if (refs.locationId) {
+      const [row] = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.id, refs.locationId), eq(locations.tenant_id, tenantId)))
+        .limit(1);
+      if (!row) throw new BadRequestException('locationId does not belong to this workspace');
+    }
+    if (refs.managerEmployeeId) {
+      const [row] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(and(eq(employees.id, refs.managerEmployeeId), eq(employees.tenant_id, tenantId)))
+        .limit(1);
+      if (!row) throw new BadRequestException('managerId does not belong to this workspace');
+    }
+  }
+
   async inviteEmployee(
     dto: InviteEmployeeDto,
     adminId: string,
@@ -194,6 +246,14 @@ export class EmployeesService {
 
     const { employee, companyName } =
       await this.databaseService.withTenant(tenantId, async (db) => {
+        // Reject cross-tenant / dangling org refs before writing them.
+        await this.assertOrgRefsInTenant(db, tenantId, {
+          departmentId: dto.departmentId,
+          designationId: dto.designationId,
+          locationId: dto.locationId,
+          managerEmployeeId: dto.managerId,
+        });
+
         // Check for duplicate employee code within tenant
         const existing = await db
           .select({ id: employees.id })
@@ -727,6 +787,14 @@ export class EmployeesService {
     const updated = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
+        // Reject cross-tenant / dangling org refs before writing them.
+        await this.assertOrgRefsInTenant(db, tenantId, {
+          departmentId: dto.departmentId,
+          designationId: dto.designationId,
+          locationId: dto.locationId,
+          managerEmployeeId: dto.reportingManagerId,
+        });
+
         const [updated] = await db
           .update(employees)
           .set(empPatch)

@@ -163,9 +163,11 @@ export class SettingsService {
       .set({
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.legalName !== undefined && { legal_name: dto.legalName }),
-        ...(dto.gstin !== undefined && { gstin: dto.gstin }),
-        ...(dto.pan !== undefined && { pan: dto.pan }),
-        ...(dto.cin !== undefined && { cin: dto.cin }),
+        // '' clears an Indian statutory ID (global tenants) — store NULL.
+        ...(dto.gstin !== undefined && { gstin: dto.gstin || null }),
+        ...(dto.pan !== undefined && { pan: dto.pan || null }),
+        ...(dto.cin !== undefined && { cin: dto.cin || null }),
+        ...(dto.countryCode !== undefined && { country_code: dto.countryCode }),
         ...(dto.industry !== undefined && { industry: dto.industry }),
         ...(dto.sizeBand !== undefined && { size_band: dto.sizeBand }),
         ...(dto.addressLine1 !== undefined && {

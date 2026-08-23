@@ -1,7 +1,7 @@
 import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
-import { eq, and, gte, lte, or, inArray, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, or, inArray, isNull, sql } from 'drizzle-orm';
 import {
   holidays,
   leaveRequests,
@@ -51,7 +51,16 @@ export class CalendarService {
     const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
 
     return this.databaseService.withTenant(tenantId, async (tx) => {
-      // 1. Holidays in range
+      // 1. Holidays in range — scoped to the viewer: company-wide rows plus
+      // their own location's rows (a Chennai employee doesn't see Dubai's).
+      const [viewer] = await tx
+        .select({ locationId: employees.location_id })
+        .from(employees)
+        .where(
+          and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
+        )
+        .limit(1);
+      const viewerLocationId = viewer?.locationId ?? null;
       const holidayRows = await tx
         .select({
           id: holidays.id,
@@ -66,6 +75,12 @@ export class CalendarService {
             eq(holidays.tenant_id, tenantId),
             gte(holidays.holiday_date, from),
             lte(holidays.holiday_date, to),
+            viewerLocationId
+              ? or(
+                  isNull(holidays.location_id),
+                  eq(holidays.location_id, viewerLocationId),
+                )
+              : isNull(holidays.location_id),
           ),
         );
 

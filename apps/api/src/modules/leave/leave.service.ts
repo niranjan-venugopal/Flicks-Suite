@@ -3,9 +3,22 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { eq, and, desc, gte, lte, ne, or, sql, inArray } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  desc,
+  gte,
+  lte,
+  ne,
+  or,
+  sql,
+  inArray,
+  isNull,
+  notInArray,
+} from 'drizzle-orm';
 import {
   leaveTypes,
   leaveBalances,
@@ -13,19 +26,32 @@ import {
   holidays,
   memberships,
   employees,
+  locations,
   users,
   attendanceRecords,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import type { Db } from '@flicks/db';
 import type {
   ApplyLeaveDto,
   CancelLeaveDto,
   ReviewLeaveDto,
   CreateLeaveTypeDto,
+  CreateHolidayDto,
+  UpdateHolidayDto,
+  ImportHolidaysDto,
   LeaveListQueryDto,
 } from './leave.dto';
+import { getHolidayPresets, PRESET_COUNTRIES } from './holiday-presets';
+
+/**
+ * Holiday types that actually block work. 'optional'/'restricted' holidays
+ * are elective (the Keka/Zoho semantics): an employee who works that day is
+ * simply working, so they never reduce leave-day counts or mark attendance.
+ */
+const WORKING_HOLIDAY_TYPES_EXCLUDED = ['optional', 'restricted'] as const;
 
 /**
  * Yields each YYYY-MM-DD between startISO and endISO inclusive.
@@ -119,24 +145,61 @@ export class LeaveService {
     });
   }
 
-  /** Returns the set of YYYY-MM-DD holiday dates for the tenant in [from, to]. */
+  /**
+   * WHERE clause for holidays that block work in [from, to]: excludes
+   * elective types and scopes by location — company-wide rows
+   * (location_id NULL) always apply; location rows only apply to employees
+   * AT that location. An employee with no location gets company-wide only.
+   */
+  private workingHolidayFilter(
+    tenantId: string,
+    fromISO: string,
+    toISO: string,
+    employeeLocationId: string | null,
+  ) {
+    return and(
+      eq(holidays.tenant_id, tenantId),
+      gte(holidays.holiday_date, fromISO),
+      lte(holidays.holiday_date, toISO),
+      notInArray(holidays.type, [...WORKING_HOLIDAY_TYPES_EXCLUDED]),
+      employeeLocationId
+        ? or(
+            isNull(holidays.location_id),
+            eq(holidays.location_id, employeeLocationId),
+          )
+        : isNull(holidays.location_id),
+    );
+  }
+
+  /**
+   * Returns the set of YYYY-MM-DD working-holiday dates in [from, to] as they
+   * apply to one employee (location-scoped; elective types excluded).
+   */
   private async fetchHolidayDates(
     tenantId: string,
     fromISO: string,
     toISO: string,
+    employeeId?: string,
   ): Promise<Set<string>> {
-    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    const rows = await this.databaseService.withTenant(tenantId, async (tx) => {
+      let employeeLocationId: string | null = null;
+      if (employeeId) {
+        const [emp] = await tx
+          .select({ locationId: employees.location_id })
+          .from(employees)
+          .where(
+            and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)),
+          )
+          .limit(1);
+        employeeLocationId = emp?.locationId ?? null;
+      }
+      return tx
         .select({ date: holidays.holiday_date })
         .from(holidays)
         .where(
-          and(
-            eq(holidays.tenant_id, tenantId),
-            gte(holidays.holiday_date, fromISO),
-            lte(holidays.holiday_date, toISO),
-          ),
-        ),
-    );
+          this.workingHolidayFilter(tenantId, fromISO, toISO, employeeLocationId),
+        );
+    });
     return new Set(rows.map((r) => r.date));
   }
 
@@ -286,6 +349,7 @@ export class LeaveService {
       tenantId,
       dto.startDate,
       dto.endDate,
+      employeeId,
     );
     const totalDays = dto.isHalfDay
       ? 0.5
@@ -724,14 +788,25 @@ export class LeaveService {
           // PRD §7.7 acceptance #7: approved leave creates attendance_records
           // with status='on_leave' so daily/weekly reports show the day off.
           // Skip weekends and holidays (already excluded by total_days math).
+          const [reqEmp] = await tx
+            .select({ locationId: employees.location_id })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.id, req.employee_id),
+                eq(employees.tenant_id, tenantId),
+              ),
+            )
+            .limit(1);
           const holidayRows = await tx
             .select({ d: holidays.holiday_date })
             .from(holidays)
             .where(
-              and(
-                eq(holidays.tenant_id, tenantId),
-                gte(holidays.holiday_date, req.start_date),
-                lte(holidays.holiday_date, req.end_date),
+              this.workingHolidayFilter(
+                tenantId,
+                req.start_date,
+                req.end_date,
+                reqEmp?.locationId ?? null,
               ),
             );
           const holidayDates = new Set(holidayRows.map((h) => h.d));
@@ -876,31 +951,241 @@ export class LeaveService {
 
   // ─── Holidays ──────────────────────────────────────────────────────────────
 
-  async listHolidays(tenantId: string, year?: number) {
-    const targetYear = year ?? new Date().getFullYear();
+  /**
+   * Lists holidays for a year. Default scope is "as they apply to the
+   * caller": company-wide rows plus the caller's own location's rows (an
+   * employee in Chennai never sees Dubai's holidays). Admin screens pass
+   * locationScope='all' (everything, with location names), 'company'
+   * (company-wide only) or a location id.
+   */
+  async listHolidays(
+    tenantId: string,
+    opts: { year?: number; locationScope?: string; userId?: string } = {},
+  ) {
+    const targetYear = opts.year ?? new Date().getFullYear();
     const yearStart = `${targetYear}-01-01`;
     const yearEnd = `${targetYear}-12-31`;
+    const scope = opts.locationScope;
 
-    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    const rows = await this.databaseService.withTenant(tenantId, async (tx) => {
+      let locationCond;
+      if (scope === 'all') {
+        locationCond = undefined;
+      } else if (scope === 'company') {
+        locationCond = isNull(holidays.location_id);
+      } else if (scope) {
+        // Explicit location: that location's rows + company-wide rows.
+        locationCond = or(
+          isNull(holidays.location_id),
+          eq(holidays.location_id, scope),
+        );
+      } else {
+        // Caller-scoped: resolve their employee row's location. No employee
+        // row (e.g. auditor) → company-wide only.
+        let callerLocationId: string | null = null;
+        if (opts.userId) {
+          const [emp] = await tx
+            .select({ locationId: employees.location_id })
+            .from(employees)
+            .where(
+              and(
+                eq(employees.tenant_id, tenantId),
+                eq(employees.user_id, opts.userId),
+              ),
+            )
+            .limit(1);
+          callerLocationId = emp?.locationId ?? null;
+        }
+        locationCond = callerLocationId
+          ? or(
+              isNull(holidays.location_id),
+              eq(holidays.location_id, callerLocationId),
+            )
+          : isNull(holidays.location_id);
+      }
+
+      return tx
         .select({
           id: holidays.id,
           date: holidays.holiday_date,
           name: holidays.name,
           type: holidays.type,
           description: holidays.description,
+          locationId: holidays.location_id,
+          locationName: locations.name,
+          isRecurring: holidays.is_recurring,
         })
         .from(holidays)
+        .leftJoin(locations, eq(holidays.location_id, locations.id))
         .where(
           and(
             eq(holidays.tenant_id, tenantId),
             gte(holidays.holiday_date, yearStart),
             lte(holidays.holiday_date, yearEnd),
+            ...(locationCond ? [locationCond] : []),
           ),
         )
-        .orderBy(holidays.holiday_date),
-    );
+        .orderBy(holidays.holiday_date);
+    });
 
     return { year: targetYear, holidays: rows };
+  }
+
+  // ─── Holiday admin CRUD (Owner/HR) ─────────────────────────────────────────
+
+  /** locationId from a DTO must exist in this tenant (FK checks bypass RLS). */
+  private async assertLocationInTenant(
+    tx: Db,
+    tenantId: string,
+    locationId: string,
+  ) {
+    const [row] = await tx
+      .select({ id: locations.id })
+      .from(locations)
+      .where(
+        and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+      )
+      .limit(1);
+    if (!row)
+      throw new BadRequestException(
+        'locationId does not belong to this workspace',
+      );
+  }
+
+  async createHoliday(tenantId: string, dto: CreateHolidayDto) {
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      if (dto.locationId) {
+        await this.assertLocationInTenant(tx, tenantId, dto.locationId);
+      }
+      // Same date + name + scope twice is always a double-submit, not intent.
+      const [dup] = await tx
+        .select({ id: holidays.id })
+        .from(holidays)
+        .where(
+          and(
+            eq(holidays.tenant_id, tenantId),
+            eq(holidays.holiday_date, dto.date),
+            eq(holidays.name, dto.name),
+            dto.locationId
+              ? eq(holidays.location_id, dto.locationId)
+              : isNull(holidays.location_id),
+          ),
+        )
+        .limit(1);
+      if (dup) {
+        throw new ConflictException(
+          'That holiday already exists for this date and location',
+        );
+      }
+      const [row] = await tx
+        .insert(holidays)
+        .values({
+          tenant_id: tenantId,
+          holiday_date: dto.date,
+          name: dto.name,
+          type: dto.type ?? 'company',
+          description: dto.description,
+          location_id: dto.locationId ?? null,
+          is_recurring: dto.isRecurring ?? false,
+        })
+        .returning();
+      return row;
+    });
+  }
+
+  async updateHoliday(tenantId: string, id: string, dto: UpdateHolidayDto) {
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const [existing] = await tx
+        .select({ id: holidays.id })
+        .from(holidays)
+        .where(and(eq(holidays.id, id), eq(holidays.tenant_id, tenantId)))
+        .limit(1);
+      if (!existing) throw new NotFoundException('Holiday not found');
+      if (dto.locationId) {
+        await this.assertLocationInTenant(tx, tenantId, dto.locationId);
+      }
+      const [row] = await tx
+        .update(holidays)
+        .set({
+          ...(dto.date !== undefined && { holiday_date: dto.date }),
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.type !== undefined && { type: dto.type }),
+          ...(dto.description !== undefined && { description: dto.description }),
+          // null = back to company-wide; undefined = unchanged.
+          ...(dto.locationId !== undefined && { location_id: dto.locationId }),
+          ...(dto.isRecurring !== undefined && { is_recurring: dto.isRecurring }),
+        })
+        .where(and(eq(holidays.id, id), eq(holidays.tenant_id, tenantId)))
+        .returning();
+      return row;
+    });
+  }
+
+  async deleteHoliday(tenantId: string, id: string) {
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const deleted = await tx
+        .delete(holidays)
+        .where(and(eq(holidays.id, id), eq(holidays.tenant_id, tenantId)))
+        .returning({ id: holidays.id });
+      if (deleted.length === 0) throw new NotFoundException('Holiday not found');
+      return { deleted: true };
+    });
+  }
+
+  /**
+   * Bulk import (the country-preset flow). Rows whose date+name+location
+   * already exist are skipped, so re-importing a preset is harmless.
+   */
+  async importHolidays(tenantId: string, dto: ImportHolidaysDto) {
+    if (dto.holidays.length === 0) return { imported: 0, skipped: 0 };
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      if (dto.locationId) {
+        await this.assertLocationInTenant(tx, tenantId, dto.locationId);
+      }
+      const dates = dto.holidays.map((h) => h.date);
+      const existing = await tx
+        .select({
+          date: holidays.holiday_date,
+          name: holidays.name,
+          locationId: holidays.location_id,
+        })
+        .from(holidays)
+        .where(
+          and(
+            eq(holidays.tenant_id, tenantId),
+            inArray(holidays.holiday_date, dates),
+          ),
+        );
+      const seen = new Set(
+        existing.map((e) => `${e.date}|${e.name}|${e.locationId ?? ''}`),
+      );
+      const fresh = dto.holidays.filter(
+        (h) => !seen.has(`${h.date}|${h.name}|${dto.locationId ?? ''}`),
+      );
+      if (fresh.length > 0) {
+        await tx.insert(holidays).values(
+          fresh.map((h) => ({
+            tenant_id: tenantId,
+            holiday_date: h.date,
+            name: h.name,
+            type: h.type ?? 'national',
+            description: h.description,
+            location_id: dto.locationId ?? null,
+            is_recurring: false,
+          })),
+        );
+      }
+      return { imported: fresh.length, skipped: dto.holidays.length - fresh.length };
+    });
+  }
+
+  /** Curated country lists that seed the import flow (static data). */
+  listHolidayPresets(country: string, year: number) {
+    return {
+      country,
+      year,
+      countries: PRESET_COUNTRIES,
+      holidays: getHolidayPresets(country, year),
+    };
   }
 }

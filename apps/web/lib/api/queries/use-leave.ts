@@ -122,20 +122,111 @@ export function usePendingLeaveRequests() {
   })
 }
 
-export function useHolidays(year?: number) {
+export interface Holiday {
+  id: string
+  date: string
+  name: string
+  type: string
+  description: string | null
+  locationId: string | null
+  locationName: string | null
+  isRecurring: boolean
+}
+
+// Default scope = the caller's own location (company-wide + theirs).
+// locationId: 'all' → everything (admin screens), 'company' → company-wide
+// only, or a location uuid.
+export function useHolidays(year?: number, locationId?: string) {
+  const params = new URLSearchParams()
+  if (year) params.set('year', String(year))
+  if (locationId) params.set('locationId', locationId)
+  const qs = params.toString()
   return useQuery({
-    queryKey: ['leave', 'holidays', year ?? 'current'],
+    queryKey: ['leave', 'holidays', year ?? 'current', locationId ?? 'mine'],
+    queryFn: () =>
+      api.get<{ year: number; holidays: Holiday[] }>(
+        `/api/v1/leave/holidays${qs ? `?${qs}` : ''}`,
+      ),
+  })
+}
+
+// ─── Holiday admin (Owner/HR) ────────────────────────────────────────────────
+
+export interface CreateHolidayPayload {
+  date: string
+  name: string
+  type?: string
+  description?: string
+  locationId?: string
+  isRecurring?: boolean
+}
+
+const invalidateHolidays = (qc: ReturnType<typeof useQueryClient>) => {
+  qc.invalidateQueries({ queryKey: ['leave', 'holidays'] })
+  qc.invalidateQueries({ queryKey: ['calendar'] })
+  qc.invalidateQueries({ queryKey: ['attendance'] })
+}
+
+export function useCreateHoliday() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CreateHolidayPayload) =>
+      api.post<Holiday>('/api/v1/leave/holidays', payload),
+    onSuccess: () => invalidateHolidays(qc),
+  })
+}
+
+export function useUpdateHoliday() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...payload
+    }: Omit<Partial<CreateHolidayPayload>, 'locationId'> & {
+      id: string
+      // null = make company-wide again; undefined = unchanged
+      locationId?: string | null
+    }) => api.patch<Holiday>(`/api/v1/leave/holidays/${id}`, payload),
+    onSuccess: () => invalidateHolidays(qc),
+  })
+}
+
+export function useDeleteHoliday() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ deleted: boolean }>(`/api/v1/leave/holidays/${id}`),
+    onSuccess: () => invalidateHolidays(qc),
+  })
+}
+
+export function useImportHolidays() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: {
+      holidays: Array<{ date: string; name: string; type?: string; description?: string }>
+      locationId?: string
+    }) =>
+      api.post<{ imported: number; skipped: number }>(
+        '/api/v1/leave/holidays/import',
+        payload,
+      ),
+    onSuccess: () => invalidateHolidays(qc),
+  })
+}
+
+export function useHolidayPresets(country: string, year: number, enabled = true) {
+  return useQuery({
+    queryKey: ['leave', 'holiday-presets', country, year],
     queryFn: () =>
       api.get<{
+        country: string
         year: number
-        holidays: Array<{
-          id: string
-          date: string
-          name: string
-          type: string
-          description: string | null
-        }>
-      }>(`/api/v1/leave/holidays${year ? `?year=${year}` : ''}`),
+        countries: Array<{ code: string; name: string }>
+        holidays: Array<{ date: string; name: string; type: string; description?: string }>
+      }>(`/api/v1/leave/holidays/presets?country=${country}&year=${year}`),
+    enabled: enabled && !!country && !!year,
+    staleTime: Infinity,
   })
 }
 

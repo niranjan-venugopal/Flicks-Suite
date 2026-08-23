@@ -189,7 +189,7 @@ export default function DesignationsSettingsPage() {
                       {d.level ? <Pill tone="purple">L{d.level}</Pill> : <span className="text-brand-muted">—</span>}
                     </td>
                     <td className="text-sm text-brand-muted">
-                      {d.departmentName ?? '—'}
+                      {d.departmentName ?? 'All departments'}
                     </td>
                     <td>
                       <span className="inline-flex items-center gap-1.5 text-sm">
@@ -265,7 +265,7 @@ export default function DesignationsSettingsPage() {
                   value={form.departmentId}
                   onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
                 >
-                  <option value="">—</option>
+                  <option value="">All departments (common)</option>
                   {depts.filter((d) => d.isActive).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
@@ -320,7 +320,7 @@ export default function DesignationsSettingsPage() {
                   value={editForm.departmentId}
                   onChange={(e) => setEditForm({ ...editForm, departmentId: e.target.value })}
                 >
-                  <option value="">—</option>
+                  <option value="">All departments (common)</option>
                   {depts.filter((d) => d.isActive).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}

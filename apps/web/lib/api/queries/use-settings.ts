@@ -51,6 +51,7 @@ export interface UpdateOrganizationPayload {
   addressLine1?: string
   addressLine2?: string
   city?: string
+  countryCode?: string
   stateCode?: string
   postalCode?: string
 }

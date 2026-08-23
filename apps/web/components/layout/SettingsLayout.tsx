@@ -24,6 +24,7 @@ const NAV: Array<NavItem & { disabled?: boolean }> = [
   { href: '/settings/designations', label: 'Designations',         icon: 'briefcase' },
   { href: '/settings/working-hours',label: 'Working hours & shifts', icon: 'clock' },
   { href: '/settings/leave-policies', label: 'Leave policy',       icon: 'cal' },
+  { href: '/settings/holidays',     label: 'Holiday calendar',     icon: 'sun' },
   { href: '/settings/members',      label: 'Roles & permissions',  icon: 'shield' },
   { href: '/settings/billing',      label: 'Billing & plan',       icon: 'card' },
   { href: '/settings/notifications',label: 'Notifications',        icon: 'bell' },
