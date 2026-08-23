@@ -84,10 +84,13 @@ export class MagicLinkVerifyDto {
 }
 
 export class RefreshTokenDto {
-  @ApiProperty({ description: 'Current refresh token' })
+  // Optional because the browser flow sends an EMPTY body — the httpOnly
+  // refresh_token cookie is the source of truth (the controller falls back
+  // to the body for non-cookie API clients).
+  @ApiPropertyOptional({ description: 'Current refresh token (cookie clients omit this)' })
   @IsString()
-  @IsNotEmpty()
-  refreshToken: string;
+  @IsOptional()
+  refreshToken?: string;
 
   @ApiPropertyOptional()
   @IsString()

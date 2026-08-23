@@ -19,6 +19,10 @@ import {
 } from '@/lib/api/queries/use-settings'
 import { useToast } from '@/components/ui/use-toast'
 import { stateCodeFromGstin } from '@flicks/shared/constants'
+// Country decides which statutory block applies: India shows GSTIN/PAN/CIN
+// with the GST state dropdown; everywhere else those fields are hidden and
+// State is free text. Lists shared with Settings → Locations.
+import { COUNTRIES, IN_STATE_CODES as STATE_CODES } from '@/lib/countries'
 
 // ─── Static option lists (PRD §4.3) ──────────────────────────────────────────
 
@@ -45,40 +49,6 @@ const SIZE_OPTIONS = [
   '1000+',
 ] as const
 
-const STATE_CODES = [
-  'AN', 'AP', 'AR', 'AS', 'BR', 'CG', 'CH', 'DD', 'DL', 'DN',
-  'GA', 'GJ', 'HP', 'HR', 'JH', 'JK', 'KA', 'KL', 'LA', 'LD',
-  'MH', 'ML', 'MN', 'MP', 'MZ', 'NL', 'OR', 'PB', 'PY', 'RJ',
-  'SK', 'TN', 'TR', 'TS', 'UK', 'UP', 'WB',
-] as const
-
-// Country decides which statutory block applies: India shows GSTIN/PAN/CIN
-// with the GST state dropdown; everywhere else those fields are hidden and
-// State is free text. Curated list — ISO-3166 alpha-2 codes.
-const COUNTRIES = [
-  ['IN', 'India'],
-  ['AE', 'United Arab Emirates'],
-  ['US', 'United States'],
-  ['GB', 'United Kingdom'],
-  ['SG', 'Singapore'],
-  ['AU', 'Australia'],
-  ['CA', 'Canada'],
-  ['SA', 'Saudi Arabia'],
-  ['QA', 'Qatar'],
-  ['KW', 'Kuwait'],
-  ['BH', 'Bahrain'],
-  ['OM', 'Oman'],
-  ['DE', 'Germany'],
-  ['FR', 'France'],
-  ['NL', 'Netherlands'],
-  ['LK', 'Sri Lanka'],
-  ['BD', 'Bangladesh'],
-  ['NP', 'Nepal'],
-  ['ID', 'Indonesia'],
-  ['PH', 'Philippines'],
-  ['MY', 'Malaysia'],
-  ['NZ', 'New Zealand'],
-] as const
 
 // ─── Status pill helper ──────────────────────────────────────────────────────
 

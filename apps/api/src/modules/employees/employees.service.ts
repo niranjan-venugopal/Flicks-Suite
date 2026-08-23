@@ -25,6 +25,7 @@ import {
   leaveBalances,
   leaveTypes,
   dataConsents,
+  employeeChangeRequests,
 } from '@flicks/db/schema';
 
 // Bump when the privacy policy / consent copy materially changes so we can
@@ -1000,7 +1001,7 @@ export class EmployeesService {
     data: SubmitOnboardingStepDto,
     tenantId: string,
     actorUserId: string,
-    ctx?: { ip?: string; userAgent?: string },
+    ctx?: { ip?: string; userAgent?: string; isAdminEdit?: boolean },
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
@@ -1011,7 +1012,14 @@ export class EmployeesService {
         ? existingCustom.onboarding_step
         : 0;
     const nextStep = Math.max(currentStep, step);
-    const allStepsComplete = nextStep >= 5 || data.submitForReview === true;
+    // Admin edits (the "Edit details" dialog / confirmed change requests)
+    // must never re-trigger review submission: for an already-onboarded
+    // employee onboarding_step sticks at 5, so without this guard any admin
+    // tab-save recomputed allStepsComplete=true, flipped
+    // onboarding_submitted_for_review back on and re-emailed the manager.
+    const isAdminEdit = ctx?.isAdminEdit === true;
+    const allStepsComplete =
+      !isAdminEdit && (nextStep >= 5 || data.submitForReview === true);
 
     // ─── Project section data into typed employee columns ────────────────
     const updateFields: Record<string, unknown> = {};
@@ -1071,15 +1079,17 @@ export class EmployeesService {
       if (b.pfUan !== undefined) updateFields.pf_uan = b.pfUan;
     }
 
-    updateFields.custom_fields = {
-      ...existingCustom,
-      onboarding_step: nextStep,
-      onboarding_completed_at: allStepsComplete ? new Date().toISOString() : null,
-      onboarding_submitted_for_review: allStepsComplete,
-      ...(allStepsComplete
-        ? { onboarding_submitted_at: new Date().toISOString() }
-        : {}),
-    };
+    if (!isAdminEdit) {
+      updateFields.custom_fields = {
+        ...existingCustom,
+        onboarding_step: nextStep,
+        onboarding_completed_at: allStepsComplete ? new Date().toISOString() : null,
+        onboarding_submitted_for_review: allStepsComplete,
+        ...(allStepsComplete
+          ? { onboarding_submitted_at: new Date().toISOString() }
+          : {}),
+      };
+    }
     updateFields.updated_at = new Date();
 
     await this.databaseService.withTenant(tenantId, async (db) => {
@@ -1159,7 +1169,9 @@ export class EmployeesService {
       actorUserId,
       action: allStepsComplete
         ? 'employee.onboarding_submitted'
-        : 'employee.onboarding_step_saved',
+        : isAdminEdit
+          ? 'employee.details_admin_saved'
+          : 'employee.onboarding_step_saved',
       resourceType: 'employee',
       resourceId: employeeId,
       afterState: {
@@ -1224,6 +1236,389 @@ export class EmployeesService {
       onboardingStep: nextStep,
       allStepsComplete,
     };
+  }
+
+  // ─── Admin detail edits → employee confirmation (change requests) ─────────
+  // HR/Owner edits to an ACTIVE, app-joined employee's personal/identity/bank
+  // details are held as a pending change request until the employee confirms
+  // (or rejects) them — nothing touches the record behind their back. For
+  // employees who haven't joined yet (invited / still onboarding) there is
+  // nobody to confirm, so the edit applies directly as before.
+
+  private maskTail(value: string): string {
+    return value.length <= 4 ? '••••' : `••••${value.slice(-4)}`;
+  }
+
+  /** Builds the masked old→new display summary for a change request. */
+  private buildChangeSummary(
+    employee: Record<string, unknown>,
+    dto: SubmitOnboardingStepDto,
+  ): Array<{ field: string; from: string | null; to: string }> {
+    const rows: Array<{ field: string; from: string | null; to: string }> = [];
+    const push = (field: string, from: unknown, to: unknown) => {
+      if (to === undefined) return;
+      rows.push({
+        field,
+        from: from == null || from === '' ? null : String(from),
+        to: String(to),
+      });
+    };
+    const p = dto.personalInfo;
+    if (p) {
+      const addr = (employee.currentAddress as Record<string, unknown>) ?? {};
+      push('Date of birth', employee.dateOfBirth, p.dateOfBirth);
+      push('Gender', employee.gender, p.gender);
+      push('Marital status', employee.maritalStatus, p.maritalStatus);
+      push('Blood group', employee.bloodGroup, p.bloodGroup);
+      push('Address line 1', addr.line1, p.addressLine1);
+      push('Address line 2', addr.line2, p.addressLine2);
+      push('City', addr.city, p.city);
+      push('State', addr.state, p.stateCode);
+      push('Postal code', addr.postal_code, p.postalCode);
+    }
+    const i = dto.identity;
+    if (i) {
+      if (i.pan !== undefined)
+        rows.push({
+          field: 'PAN',
+          from: employee.hasPan ? 'on file' : null,
+          to: this.maskTail(i.pan),
+        });
+      push('Personal phone', employee.personalPhone, i.personalPhone);
+      push('Personal email', employee.personalEmail, i.personalEmail);
+      push('Nationality', employee.nationality, i.nationality);
+    }
+    const b = dto.bank;
+    if (b) {
+      push('Bank name', employee.bankName, b.bankName);
+      push('Branch', employee.bankBranch, b.bankBranch);
+      if (b.bankAccountNumber !== undefined)
+        rows.push({
+          field: 'Account number',
+          from: employee.hasBankAccount ? 'on file' : null,
+          to: this.maskTail(b.bankAccountNumber),
+        });
+      push('Account holder', employee.bankAccountHolder, b.bankAccountHolder);
+      push('IFSC', employee.bankIfsc, b.bankIfsc);
+      push('Account type', employee.bankAccountType, b.bankAccountType);
+      push('PF UAN', employee.pfUan, b.pfUan);
+    }
+    return rows;
+  }
+
+  /**
+   * Entry point for the admin "Edit details" dialog. Decides between the
+   * pending-confirmation flow (active, app-joined employee) and direct apply
+   * (nobody to confirm yet).
+   */
+  async adminSubmitEmployeeDetails(
+    employeeId: string,
+    step: number,
+    dto: SubmitOnboardingStepDto,
+    tenantId: string,
+    adminUserId: string,
+    ctx?: { ip?: string; userAgent?: string },
+  ) {
+    const employee = await this.getEmployee(employeeId, tenantId);
+    const confirmable = Boolean(employee.userId) && employee.status === 'active';
+
+    if (!confirmable) {
+      const result = await this.submitOnboardingStep(
+        employeeId,
+        step,
+        { ...dto, submitForReview: undefined },
+        tenantId,
+        adminUserId,
+        { ...ctx, isAdminEdit: true },
+      );
+      return { ...result, pendingConfirmation: false as const };
+    }
+
+    // Store the payload with sensitive values encrypted at rest; the masked
+    // summary is what both sides see in the UI.
+    const payload: Record<string, unknown> = { step };
+    if (dto.personalInfo) payload.personalInfo = { ...dto.personalInfo };
+    if (dto.identity) {
+      payload.identity = {
+        ...dto.identity,
+        ...(dto.identity.pan !== undefined
+          ? { pan: this.fieldCipher.encrypt(dto.identity.pan) }
+          : {}),
+      };
+    }
+    if (dto.bank) {
+      payload.bank = {
+        ...dto.bank,
+        ...(dto.bank.bankAccountNumber !== undefined
+          ? { bankAccountNumber: this.fieldCipher.encrypt(dto.bank.bankAccountNumber) }
+          : {}),
+      };
+    }
+    const summary = this.buildChangeSummary(
+      employee as unknown as Record<string, unknown>,
+      dto,
+    );
+    if (summary.length === 0) {
+      return { employeeId, step, pendingConfirmation: false as const };
+    }
+
+    const request = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        // One live request per employee+step: a re-save replaces the
+        // previous pending values instead of stacking duplicates.
+        await db
+          .update(employeeChangeRequests)
+          .set({ status: 'cancelled', reviewed_at: new Date() })
+          .where(
+            and(
+              eq(employeeChangeRequests.tenant_id, tenantId),
+              eq(employeeChangeRequests.employee_id, employeeId),
+              eq(employeeChangeRequests.step, step),
+              eq(employeeChangeRequests.status, 'pending'),
+            ),
+          );
+        const [row] = await db
+          .insert(employeeChangeRequests)
+          .values({
+            tenant_id: tenantId,
+            employee_id: employeeId,
+            requested_by_user_id: adminUserId,
+            step,
+            payload,
+            summary,
+          })
+          .returning();
+        return row;
+      },
+    );
+
+    if (employee.userId) {
+      await this.notificationsService
+        .createInAppNotification(
+          employee.userId as string,
+          'employee.details_change_requested',
+          'HR updated your details — please review and confirm the change.',
+          '/profile',
+          tenantId,
+        )
+        .catch(() => undefined);
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: adminUserId,
+      action: 'employee.details_change_requested',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      afterState: { requestId: request!.id, step, fields: summary.map((s) => s.field) },
+    });
+
+    return {
+      employeeId,
+      step,
+      pendingConfirmation: true as const,
+      requestId: request!.id,
+    };
+  }
+
+  /** Pending change requests for the calling employee (masked summary). */
+  async listMyChangeRequests(userId: string, tenantId: string) {
+    const employeeId = await this.getEmployeeIdForUserOrNull(userId, tenantId);
+    if (!employeeId) return { requests: [] };
+    const rows = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          id: employeeChangeRequests.id,
+          step: employeeChangeRequests.step,
+          summary: employeeChangeRequests.summary,
+          createdAt: employeeChangeRequests.created_at,
+          requestedByName: users.full_name,
+        })
+        .from(employeeChangeRequests)
+        .leftJoin(users, eq(employeeChangeRequests.requested_by_user_id, users.id))
+        .where(
+          and(
+            eq(employeeChangeRequests.tenant_id, tenantId),
+            eq(employeeChangeRequests.employee_id, employeeId),
+            eq(employeeChangeRequests.status, 'pending'),
+          ),
+        )
+        .orderBy(desc(employeeChangeRequests.created_at)),
+    );
+    return { requests: rows };
+  }
+
+  /** Employee decision on a pending request. Confirm applies; reject flags HR. */
+  async reviewMyChangeRequest(
+    userId: string,
+    tenantId: string,
+    requestId: string,
+    action: 'confirm' | 'reject',
+    reason?: string,
+  ) {
+    const employeeId = await this.getEmployeeIdForUserOrNull(userId, tenantId);
+    if (!employeeId) throw new NotFoundException('Employee record not found');
+
+    const request = await this.databaseService.withTenant(tenantId, async (db) => {
+      const [row] = await db
+        .select()
+        .from(employeeChangeRequests)
+        .where(
+          and(
+            eq(employeeChangeRequests.id, requestId),
+            eq(employeeChangeRequests.tenant_id, tenantId),
+            eq(employeeChangeRequests.employee_id, employeeId),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new NotFoundException('Change request not found');
+      if (row.status !== 'pending')
+        throw new ConflictException('This change request was already reviewed');
+      return row;
+    });
+
+    if (action === 'confirm') {
+      // Decrypt sensitive values back into the step-writer's shape; the
+      // writer re-encrypts them into the employee columns.
+      const payload = request.payload as {
+        personalInfo?: Record<string, unknown>;
+        identity?: { pan?: string } & Record<string, unknown>;
+        bank?: { bankAccountNumber?: string } & Record<string, unknown>;
+      };
+      const dto: Record<string, unknown> = { step: request.step };
+      if (payload.personalInfo) dto.personalInfo = payload.personalInfo;
+      if (payload.identity) {
+        dto.identity = {
+          ...payload.identity,
+          ...(payload.identity.pan !== undefined
+            ? { pan: this.fieldCipher.decrypt(payload.identity.pan) }
+            : {}),
+        };
+      }
+      if (payload.bank) {
+        dto.bank = {
+          ...payload.bank,
+          ...(payload.bank.bankAccountNumber !== undefined
+            ? { bankAccountNumber: this.fieldCipher.decrypt(payload.bank.bankAccountNumber) }
+            : {}),
+        };
+      }
+      await this.submitOnboardingStep(
+        employeeId,
+        request.step,
+        dto as unknown as SubmitOnboardingStepDto,
+        tenantId,
+        userId,
+        { isAdminEdit: true },
+      );
+    }
+
+    await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .update(employeeChangeRequests)
+        .set({
+          status: action === 'confirm' ? 'confirmed' : 'rejected',
+          reason: reason ?? null,
+          reviewed_at: new Date(),
+        })
+        .where(eq(employeeChangeRequests.id, requestId)),
+    );
+
+    if (request.requested_by_user_id) {
+      const summary = (request.summary as Array<{ field: string }>) ?? [];
+      const fields = summary.map((s) => s.field).slice(0, 3).join(', ');
+      await this.notificationsService
+        .createInAppNotification(
+          request.requested_by_user_id,
+          action === 'confirm'
+            ? 'employee.details_change_confirmed'
+            : 'employee.details_change_rejected',
+          action === 'confirm'
+            ? `Details change confirmed by the employee (${fields}).`
+            : `Details change rejected by the employee${reason ? `: ${reason}` : ''} (${fields}).`,
+          `/employees/${employeeId}`,
+          tenantId,
+        )
+        .catch(() => undefined);
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action:
+        action === 'confirm'
+          ? 'employee.details_change_confirmed'
+          : 'employee.details_change_rejected',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      metadata: { requestId, reason: reason ?? null },
+    });
+
+    return { requestId, status: action === 'confirm' ? 'confirmed' : 'rejected' };
+  }
+
+  /** Admin view of an employee's change requests (recent first). */
+  async listEmployeeChangeRequests(employeeId: string, tenantId: string) {
+    await this.getEmployee(employeeId, tenantId); // 404 for unknown/foreign ids
+    const rows = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({
+          id: employeeChangeRequests.id,
+          step: employeeChangeRequests.step,
+          summary: employeeChangeRequests.summary,
+          status: employeeChangeRequests.status,
+          reason: employeeChangeRequests.reason,
+          createdAt: employeeChangeRequests.created_at,
+          reviewedAt: employeeChangeRequests.reviewed_at,
+          requestedByName: users.full_name,
+        })
+        .from(employeeChangeRequests)
+        .leftJoin(users, eq(employeeChangeRequests.requested_by_user_id, users.id))
+        .where(
+          and(
+            eq(employeeChangeRequests.tenant_id, tenantId),
+            eq(employeeChangeRequests.employee_id, employeeId),
+          ),
+        )
+        .orderBy(desc(employeeChangeRequests.created_at))
+        .limit(20),
+    );
+    return { requests: rows };
+  }
+
+  /** Admin withdraws a pending request before the employee acts on it. */
+  async cancelChangeRequest(
+    employeeId: string,
+    requestId: string,
+    tenantId: string,
+    adminUserId: string,
+  ) {
+    const updated = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .update(employeeChangeRequests)
+        .set({ status: 'cancelled', reviewed_at: new Date() })
+        .where(
+          and(
+            eq(employeeChangeRequests.id, requestId),
+            eq(employeeChangeRequests.tenant_id, tenantId),
+            eq(employeeChangeRequests.employee_id, employeeId),
+            eq(employeeChangeRequests.status, 'pending'),
+          ),
+        )
+        .returning({ id: employeeChangeRequests.id }),
+    );
+    if (updated.length === 0)
+      throw new NotFoundException('No pending change request to cancel');
+    await this.auditService.log({
+      tenantId,
+      actorUserId: adminUserId,
+      action: 'employee.details_change_cancelled',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      metadata: { requestId },
+    });
+    return { cancelled: true };
   }
 
   async getMyOnboardingStatus(userId: string, tenantId: string) {

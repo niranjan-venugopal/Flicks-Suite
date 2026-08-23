@@ -155,7 +155,32 @@ export class UpdateLocationDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
+  addressLine2?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
   city?: string;
+
+  // 2-letter GST code for Indian offices; free text (state/province/emirate)
+  // for foreign branches. '' clears the stored value on a country switch.
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  stateCode?: string;
+
+  @ApiPropertyOptional({ example: 'AE' })
+  @IsString()
+  @IsOptional()
+  @Matches(/^[A-Z]{2}$/, { message: 'countryCode must be a 2-letter ISO code' })
+  countryCode?: string;
+
+  @ApiPropertyOptional({ example: 'Asia/Dubai' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(60)
+  timezone?: string;
 
   @ApiPropertyOptional()
   @IsString()

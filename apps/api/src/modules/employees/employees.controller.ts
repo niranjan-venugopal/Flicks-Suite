@@ -34,6 +34,7 @@ import {
   EmployeeListQueryDto,
   RejectOnboardingDto,
   ImportEmployeesDto,
+  RejectChangeRequestDto,
 } from './employees.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -185,12 +186,12 @@ export class EmployeesController {
   @Post(':id/onboarding/:step')
   @Roles('admin')
   @ApiOperation({
-    summary: 'Admin: write onboarding-step details onto an employee record',
+    summary: 'Admin: edit an employee\'s detail groups',
     description:
-      'Owner/HR variant of the self-onboarding step writer — same validation, encryption and audit pipeline, targeted at any employee in the workspace. Used by the "Edit personal & statutory" dialog. Steps 1-3 (personal / identity / bank); review flags are a self-service concern and are ignored here.',
+      'Owner/HR variant of the self-onboarding step writer — same validation and encryption, targeted at any employee. For an ACTIVE app-joined employee the edit is held as a pending change request until the employee confirms it (returns pendingConfirmation: true); for invited/onboarding employees it applies directly. Steps 1-3 (personal / identity / bank).',
   })
   @ApiParam({ name: 'step', type: Number })
-  @ApiResponse({ status: 200, description: 'Step saved' })
+  @ApiResponse({ status: 200, description: 'Saved or queued for confirmation' })
   async adminSubmitEmployeeDetails(
     @Param('id') id: string,
     @Param('step', ParseIntPipe) step: number,
@@ -198,7 +199,7 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
     @Req() req: Request,
   ) {
-    return this.employeesService.submitOnboardingStep(
+    return this.employeesService.adminSubmitEmployeeDetails(
       id,
       step,
       { ...dto, submitForReview: undefined },
@@ -208,6 +209,73 @@ export class EmployeesController {
         ip: req.ip ?? req.socket?.remoteAddress ?? undefined,
         userAgent: req.headers['user-agent'] ?? undefined,
       },
+    );
+  }
+
+  @Get('me/change-requests')
+  @ApiOperation({
+    summary: 'My pending detail-change requests (HR edits awaiting my confirmation)',
+  })
+  async listMyChangeRequests(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.listMyChangeRequests(user.sub, user.tenantId);
+  }
+
+  @Post('me/change-requests/:requestId/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm a pending detail change — applies it to my record' })
+  async confirmMyChangeRequest(
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.reviewMyChangeRequest(
+      user.sub,
+      user.tenantId,
+      requestId,
+      'confirm',
+    );
+  }
+
+  @Post('me/change-requests/:requestId/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a pending detail change — flags it back to HR' })
+  async rejectMyChangeRequest(
+    @Param('requestId') requestId: string,
+    @Body() dto: RejectChangeRequestDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.reviewMyChangeRequest(
+      user.sub,
+      user.tenantId,
+      requestId,
+      'reject',
+      dto.reason,
+    );
+  }
+
+  @Get(':id/change-requests')
+  @Roles('admin')
+  @ApiOperation({ summary: "Admin: an employee's recent detail-change requests" })
+  async listEmployeeChangeRequests(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.listEmployeeChangeRequests(id, user.tenantId);
+  }
+
+  @Post(':id/change-requests/:requestId/cancel')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Admin: withdraw a pending detail-change request' })
+  async cancelChangeRequest(
+    @Param('id') id: string,
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.cancelChangeRequest(
+      id,
+      requestId,
+      user.tenantId,
+      user.sub,
     );
   }
 

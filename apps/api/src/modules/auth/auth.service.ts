@@ -28,6 +28,7 @@ import {
   impersonationSessions,
   accountDeletionRequests,
   employees,
+  designations,
   emergencyContacts,
   dataConsents,
   leaveRequests,
@@ -1134,6 +1135,19 @@ export class AuthService {
       ? userMemberships.find((m) => m.tenantId === tenantId)
       : userMemberships[0];
 
+    // The profile chip / dropdown show the person's DESIGNATION (job title),
+    // not their workspace role — resolved from their employee record.
+    let designationTitle: string | null = null;
+    if (currentMembership?.employeeId) {
+      const [d] = await this.dbAdmin
+        .select({ title: designations.title })
+        .from(employees)
+        .leftJoin(designations, eq(employees.designation_id, designations.id))
+        .where(eq(employees.id, currentMembership.employeeId))
+        .limit(1);
+      designationTitle = d?.title ?? null;
+    }
+
     // §3.2 — policy-bump re-acceptance flag (also true for pre-ledger users).
     const requiresReacceptance =
       await this.consentService.requiresReacceptance(userId);
@@ -1162,6 +1176,7 @@ export class AuthService {
             role: currentMembership.role,
             status: currentMembership.status,
             employeeId: currentMembership.employeeId,
+            designationTitle,
             tenantLogoKey: currentMembership.tenantLogoKey,
             tenantLogoUrl: currentMembership.tenantLogoUrl,
           }

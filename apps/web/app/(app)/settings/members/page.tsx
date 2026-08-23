@@ -24,7 +24,7 @@ import { useToast } from '@/components/ui/use-toast'
 const ROLE_LABELS: Record<MembershipRole, string> = {
   fam:         'FAM Admin',
   super_admin: 'FAM Admin', // legacy alias — pre-0004 rows
-  owner:       'Owner',
+  owner:       'Admin', // displayed label (founder decision); role key stays 'owner'
   admin:       'HR Admin',
   manager:     'Manager',
   finance:     'Finance',
@@ -136,7 +136,7 @@ export default function MembersSettingsPage() {
     if (isMe) {
       toast({
         title: 'Cannot deactivate yourself',
-        description: 'Ask another Owner / HR Admin to do this for you.',
+        description: 'Ask another Admin / HR Admin to do this for you.',
         variant: 'destructive',
       })
       return

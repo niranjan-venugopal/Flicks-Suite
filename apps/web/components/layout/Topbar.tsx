@@ -123,7 +123,9 @@ export function Topbar() {
                   {currentUser?.name ?? 'User'}
                 </span>
                 <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                  {roleLabel(currentUser?.role)}
+                  {/* Designation (job title) first; workspace role only as
+                      the fallback when none is set. */}
+                  {currentUser?.designation ?? roleLabel(currentUser?.role)}
                 </span>
               </div>
               <Icon.chevD size={12} style={{ color: 'var(--text-mute)' }} />

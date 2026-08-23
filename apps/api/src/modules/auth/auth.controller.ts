@@ -11,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -173,6 +174,9 @@ export class AuthController {
 
     // Support refresh token from cookie or body
     const refreshToken = req.cookies?.['refresh_token'] ?? dto.refreshToken;
+    if (!refreshToken) {
+      throw new UnauthorizedException('No refresh token');
+    }
 
     const result = await this.authService.refreshToken(
       refreshToken,

@@ -41,6 +41,7 @@ function kindOf(type: string): Kind {
   if (type.startsWith('regularization.')) return 'regularization'
   if (type.startsWith('timesheet.')) return 'timesheet'
   if (type.startsWith('onboarding.')) return 'onboarding'
+  if (type.startsWith('employee.details_')) return 'onboarding'
   if (type.startsWith('crm.')) return 'crm'
   if (type.startsWith('invoice.') || type.startsWith('payment.')) return 'billing'
   return 'other'

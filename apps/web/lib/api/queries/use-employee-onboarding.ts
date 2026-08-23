@@ -114,13 +114,94 @@ export function useAdminSubmitEmployeeDetails() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ employeeId, ...payload }: SubmitOnboardingStepPayload & { employeeId: string }) =>
-      api.post<OnboardingStepResponse>(
+      api.post<OnboardingStepResponse & { pendingConfirmation?: boolean; requestId?: string }>(
         `/api/v1/employees/${employeeId}/onboarding/${payload.step}`,
         payload,
       ),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['employees', vars.employeeId] })
       qc.invalidateQueries({ queryKey: ['employees'] })
+      qc.invalidateQueries({ queryKey: ['employee-change-requests', vars.employeeId] })
+    },
+  })
+}
+
+// ─── Detail change requests (employee confirms HR edits) ─────────────────────
+
+export interface ChangeSummaryRow {
+  field: string
+  from: string | null
+  to: string
+}
+
+export interface MyChangeRequest {
+  id: string
+  step: number
+  summary: ChangeSummaryRow[]
+  createdAt: string
+  requestedByName: string | null
+}
+
+export function useMyChangeRequests() {
+  return useQuery({
+    queryKey: ['my-change-requests'],
+    queryFn: () =>
+      api.get<{ requests: MyChangeRequest[] }>('/api/v1/employees/me/change-requests'),
+  })
+}
+
+export function useReviewMyChangeRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      id,
+      action,
+      reason,
+    }: {
+      id: string
+      action: 'confirm' | 'reject'
+      reason?: string
+    }) =>
+      api.post<{ requestId: string; status: string }>(
+        `/api/v1/employees/me/change-requests/${id}/${action}`,
+        action === 'reject' ? { reason } : {},
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['my-change-requests'] })
+      qc.invalidateQueries({ queryKey: ['employees'] })
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
+}
+
+export interface EmployeeChangeRequest extends MyChangeRequest {
+  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled'
+  reason: string | null
+  reviewedAt: string | null
+}
+
+// Admin view — powers the "awaiting confirmation" pill on Edit details.
+export function useEmployeeChangeRequests(employeeId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['employee-change-requests', employeeId],
+    queryFn: () =>
+      api.get<{ requests: EmployeeChangeRequest[] }>(
+        `/api/v1/employees/${employeeId}/change-requests`,
+      ),
+    enabled,
+  })
+}
+
+export function useCancelChangeRequest() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ employeeId, requestId }: { employeeId: string; requestId: string }) =>
+      api.post<{ cancelled: boolean }>(
+        `/api/v1/employees/${employeeId}/change-requests/${requestId}/cancel`,
+        {},
+      ),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['employee-change-requests', vars.employeeId] })
     },
   })
 }

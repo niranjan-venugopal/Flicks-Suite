@@ -625,8 +625,48 @@ export const dataConsentsRelations = relations(dataConsents, ({ one }) => ({
   }),
 }));
 
+// ─── employee_change_requests ─────────────────────────────────────────────────
+// Owner/HR edits to an active employee's personal/identity/bank details are
+// held here as PENDING until the employee confirms (or rejects back to HR).
+// Sensitive payload values (PAN, bank account number) are stored encrypted.
+
+export const employeeChangeRequests = pgTable(
+  'employee_change_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    employee_id: uuid('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'cascade' }),
+    requested_by_user_id: uuid('requested_by_user_id').references(
+      () => users.id,
+      { onDelete: 'set null' },
+    ),
+    step: integer('step').notNull(), // 1 personal | 2 identity | 3 bank
+    payload: jsonb('payload').notNull(),
+    summary: jsonb('summary').notNull().default([]),
+    status: text('status')
+      .$type<'pending' | 'confirmed' | 'rejected' | 'cancelled'>()
+      .notNull()
+      .default('pending'),
+    reason: text('reason'),
+    reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('idx_emp_change_requests_tenant').on(t.tenant_id, t.status),
+    index('idx_emp_change_requests_employee').on(t.employee_id, t.status),
+  ],
+);
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type EmployeeChangeRequest = typeof employeeChangeRequests.$inferSelect;
+export type NewEmployeeChangeRequest = typeof employeeChangeRequests.$inferInsert;
 export type Department = typeof departments.$inferSelect;
 export type NewDepartment = typeof departments.$inferInsert;
 export type Designation = typeof designations.$inferSelect;

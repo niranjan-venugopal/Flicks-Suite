@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useAuthStore } from '@/lib/stores/auth.store'
+import { roleLabel, useAuthStore } from '@/lib/stores/auth.store'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { AvatarV4 } from '@/components/media/AvatarV4'
 import dynamic from 'next/dynamic'
@@ -26,6 +26,11 @@ import {
   useRequestDeletion,
   useCancelDeletion,
 } from '@/lib/api/queries/use-auth'
+import {
+  useMyChangeRequests,
+  useReviewMyChangeRequest,
+  type MyChangeRequest,
+} from '@/lib/api/queries/use-employee-onboarding'
 
 export default function ProfilePage() {
   const { currentUser, currentTenant } = useAuthStore()
@@ -56,7 +61,8 @@ export default function ProfilePage() {
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <Pill tone="green" dot>Active</Pill>
-                <Pill>{currentUser?.role?.replace('_', ' ').toLowerCase() ?? 'member'}</Pill>
+                {/* Designation (job title) first; role label as fallback */}
+                <Pill>{currentUser?.designation ?? roleLabel(currentUser?.role)}</Pill>
                 {currentUser?.employeeId && (
                   <Pill>
                     <span style={{ fontFamily: 'var(--font-mono)' }}>
@@ -72,6 +78,10 @@ export default function ProfilePage() {
         {/* Profile photo (PRD v4 §4, D5+) — inserted right under the identity card */}
         <ProfilePhotoCard />
 
+        {/* HR edits to my details held for MY confirmation (renders only
+            when something is pending) */}
+        <PendingChangesCard />
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
           {/* Account info */}
           <div className="card">
@@ -80,7 +90,8 @@ export default function ProfilePage() {
               <Field label="Full name" value={currentUser?.name ?? '—'} />
               <Field label="Work email" value={currentUser?.email ?? '—'} mono />
               <Field label="Workspace" value={currentTenant?.name ?? '—'} />
-              <Field label="Role" value={currentUser?.role?.replace('_', ' ').toLowerCase() ?? '—'} />
+              <Field label="Designation" value={currentUser?.designation ?? '—'} />
+              <Field label="Role" value={roleLabel(currentUser?.role)} />
             </div>
           </div>
 
@@ -397,6 +408,145 @@ function Field({ label, value, mono = false }: { label: string; value: string; m
       >
         {value}
       </div>
+    </div>
+  )
+}
+
+// ─── Pending detail changes (HR edits awaiting my confirmation) ──────────────
+
+const STEP_LABELS: Record<number, string> = {
+  1: 'Personal details',
+  2: 'Identity details',
+  3: 'Bank & statutory details',
+}
+
+function PendingChangesCard() {
+  const { toast } = useToast()
+  const { data } = useMyChangeRequests()
+  const review = useReviewMyChangeRequest()
+  const [rejecting, setRejecting] = useState<MyChangeRequest | null>(null)
+  const [reason, setReason] = useState('')
+
+  const requests = data?.requests ?? []
+  if (requests.length === 0) return null
+
+  const confirm = async (r: MyChangeRequest) => {
+    try {
+      await review.mutateAsync({ id: r.id, action: 'confirm' })
+      toast({
+        title: 'Change confirmed',
+        description: `${STEP_LABELS[r.step] ?? 'Details'} updated on your record.`,
+      })
+    } catch (err) {
+      toast({
+        title: 'Could not confirm',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const reject = async () => {
+    if (!rejecting) return
+    try {
+      await review.mutateAsync({
+        id: rejecting.id,
+        action: 'reject',
+        reason: reason.trim() || undefined,
+      })
+      toast({ title: 'Change rejected', description: 'HR has been notified.' })
+      setRejecting(null)
+      setReason('')
+    } catch (err) {
+      toast({
+        title: 'Could not reject',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  return (
+    <div
+      className="card"
+      style={{ marginBottom: 18, border: '1px solid var(--bord-2)' }}
+    >
+      <SectionHead
+        title="Pending changes from HR"
+        sub="HR updated these details on your record — nothing applies until you confirm."
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {requests.map((r) => (
+          <div
+            key={r.id}
+            style={{
+              padding: '14px 16px',
+              background: 'var(--surf-1)',
+              border: '1px solid var(--bord)',
+              borderRadius: 10,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <Icon.shield size={14} style={{ color: 'var(--yellow, #eab308)' }} />
+              <span style={{ fontSize: 13, fontWeight: 800 }}>
+                {STEP_LABELS[r.step] ?? 'Details'}
+              </span>
+              <span className="t-mute" style={{ fontSize: 11.5, fontWeight: 600 }}>
+                by {r.requestedByName ?? 'HR'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+              {r.summary.map((row) => (
+                <div key={row.field} style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
+                  <span className="t-mute" style={{ width: 140, flexShrink: 0, fontWeight: 600 }}>
+                    {row.field}
+                  </span>
+                  <span className="t-mute" style={{ textDecoration: row.from ? 'line-through' : 'none' }}>
+                    {row.from ?? '—'}
+                  </span>
+                  <span aria-hidden>→</span>
+                  <span style={{ fontWeight: 700 }}>{row.to}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn kind="primary" size="sm" onClick={() => confirm(r)} disabled={review.isPending}>
+                Confirm change
+              </Btn>
+              <Btn kind="ghost" size="sm" onClick={() => setRejecting(r)} disabled={review.isPending}>
+                Reject…
+              </Btn>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Dialog open={Boolean(rejecting)} onOpenChange={(o) => !o && setRejecting(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reject this change?</DialogTitle>
+          </DialogHeader>
+          <p className="t-mute text-sm" style={{ marginTop: 0 }}>
+            The change won't be applied and HR will be notified with your reason.
+          </p>
+          <input
+            className="input"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="What's wrong? (optional)"
+            maxLength={300}
+            style={{ width: '100%' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <Btn kind="ghost" onClick={() => setRejecting(null)} disabled={review.isPending}>
+              Cancel
+            </Btn>
+            <Btn kind="primary" onClick={reject} disabled={review.isPending}>
+              {review.isPending ? 'Rejecting…' : 'Reject change'}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

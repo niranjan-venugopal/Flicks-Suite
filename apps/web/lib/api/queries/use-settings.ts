@@ -183,7 +183,12 @@ export interface CreateLocationPayload {
 export interface UpdateLocationPayload {
   name?: string
   addressLine1?: string
+  addressLine2?: string
   city?: string
+  // '' clears the stored state (country switches)
+  stateCode?: string
+  countryCode?: string
+  timezone?: string
   postalCode?: string
   isActive?: boolean
 }
@@ -224,6 +229,45 @@ export function useUpdateLocation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['settings', 'locations'] })
       qc.invalidateQueries({ queryKey: ['settings', 'organization'] })
+    },
+  })
+}
+
+export interface LocationDeletePreview {
+  id: string
+  name: string
+  isActive: boolean
+  employees: number
+  holidays: number
+  otherLocations: Array<{ id: string; name: string; city: string | null }>
+}
+
+// Impact preview for the delete dialog — fetched when the dialog opens.
+export function useLocationDeletePreview(id: string | null) {
+  return useQuery({
+    queryKey: ['settings', 'locations', 'delete-preview', id],
+    queryFn: () =>
+      api.get<LocationDeletePreview>(
+        `/api/v1/settings/locations/${id}/delete-preview`,
+      ),
+    enabled: !!id,
+    staleTime: 0,
+  })
+}
+
+export function useDeleteLocation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, transferTo }: { id: string; transferTo?: string }) =>
+      api.delete<{ deleted: boolean; movedEmployees: number; deletedHolidays: number }>(
+        `/api/v1/settings/locations/${id}${transferTo ? `?transferTo=${transferTo}` : ''}`,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'locations'] })
+      qc.invalidateQueries({ queryKey: ['settings', 'organization'] })
+      // Transferred employees + removed holidays change these trees too.
+      qc.invalidateQueries({ queryKey: ['leave', 'holidays'] })
+      qc.invalidateQueries({ queryKey: ['employees'] })
     },
   })
 }

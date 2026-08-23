@@ -76,3 +76,60 @@ Schema untouched (columns existed since 0001). Only the Drizzle-side
 - Existing single-location tenants: nothing changes until holidays are added.
 - 2027 festival dates: import the fixed-date list, add festivals when
   announced (or ask for a preset refresh).
+
+---
+
+# Round 3 addendum (same session): location lifecycle, confirmed detail edits, sessions
+
+Status: **shipped** (gate green — both typechecks, 491/492 jest with the sole
+failure being the documented attendance-selfheal overnight-IST wall-clock
+flake reproduced on the unmodified tree, boundaries lint, web build,
+diagnose-rls 131 tenant tables / 0 leaks). New spec `founder-round3.spec.ts`
+(10 tests). **Migration 0049 (`employee_change_requests`) must be applied to
+production via the Supabase SQL-editor flow.**
+
+## Locations
+- Country (shared `apps/web/lib/countries.ts` list), state (GST dropdown for
+  IN, free text otherwise), timezone and address line 2 are now editable in
+  BOTH the create and edit dialogs; country switches suggest the local
+  timezone. `UpdateLocationDto`/`updateLocation` persist the new fields.
+- **Delete with transfer** (deactivate → Delete… on the row): impact preview
+  (`GET settings/locations/:id/delete-preview`), then
+  `DELETE settings/locations/:id?transferTo=` — refuses while active,
+  requires a transfer target when employees are assigned, moves ALL
+  employees (any status) to the chosen location in the same tx (they then
+  follow that location's holiday calendar automatically — scoping is by
+  `employees.location_id`), and **explicitly deletes the location's own
+  holidays** (the FK is SET NULL and NULL means company-wide, so a naive
+  delete would have granted them to everyone). Attendance punches keep
+  their rows; their location tag nulls.
+
+## Employee-confirmed detail edits (Edit details dialog)
+- For an ACTIVE app-joined employee, admin edits to personal/identity/bank
+  no longer write directly: they land in `employee_change_requests`
+  (payload with PAN/account FieldCipher-encrypted, masked old→new summary),
+  the employee gets an in-app ping, and a "Pending changes from HR" card on
+  /profile offers Confirm (applies via the same step writer) or Reject
+  (with reason, notifying the admin). Invited/onboarding employees still get
+  direct writes. Admin dialog shows an "Awaiting employee confirmation"
+  pill; a re-save of the same tab replaces the previous pending request.
+- **Bug fixed en route:** admin saves on an onboarded employee used to
+  recompute allStepsComplete=true (onboarding_step sticks at 5), silently
+  re-flagging onboarding_submitted_for_review and re-emailing the manager.
+  Admin-path writes now skip all onboarding bookkeeping (`isAdminEdit`).
+
+## Role/designation display
+- Topbar chip and /profile show the person's **designation** (job title),
+  falling back to the role label; `/auth/me` now carries
+  `currentMembership.designationTitle`. The role label for `owner` is
+  displayed as **"Admin"** (role key unchanged; Members page + copy
+  updated). FAM console unchanged.
+
+## Sessions (the 15-minute logout fix)
+- The web app never called `/auth/refresh`, so sessions effectively died
+  when the 15-minute access cookie lapsed. The api client now does a
+  single-flight silent refresh on the first 401 and retries once;
+  `RefreshTokenDto.refreshToken` is optional (httpOnly cookie is the
+  source; empty-body posts no longer 400). Sessions now genuinely last the
+  7-day refresh window. The 180-day trusted-device flow is deferred by
+  founder decision — this foundation makes it a TTL change later.

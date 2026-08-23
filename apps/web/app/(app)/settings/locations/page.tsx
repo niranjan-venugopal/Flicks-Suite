@@ -1,13 +1,15 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Loader2, MapPin, Plus, Users } from 'lucide-react'
+import { AlertTriangle, Loader2, MapPin, Plus, Trash2, Users } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import {
   useLocations,
   useCreateLocation,
   useUpdateLocation,
+  useDeleteLocation,
+  useLocationDeletePreview,
   type Location,
 } from '@/lib/api/queries/use-settings'
 import {
@@ -17,21 +19,25 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
+import {
+  COUNTRIES,
+  IN_STATE_CODES as STATE_CODES,
+  TIMEZONES,
+  countryName,
+} from '@/lib/countries'
 
-const TIMEZONES = [
-  'Asia/Kolkata',
-  'Asia/Dubai',
-  'Asia/Singapore',
-  'Europe/London',
-  'America/New_York',
-  'America/Los_Angeles',
-]
-
-const STATE_CODES = [
-  'AN','AP','AR','AS','BR','CG','CH','DD','DL','DN','GA','GJ','HP','HR','JH',
-  'JK','KA','KL','LA','LD','MH','ML','MN','MP','MZ','NL','OR','PB','PY','RJ',
-  'SK','TN','TR','TS','UK','UP','WB',
-]
+// Suggest the office timezone from the chosen country so a Dubai branch
+// doesn't accidentally stay on IST.
+const DEFAULT_TZ: Record<string, string> = {
+  IN: 'Asia/Kolkata', AE: 'Asia/Dubai', US: 'America/New_York',
+  GB: 'Europe/London', SG: 'Asia/Singapore', AU: 'Australia/Sydney',
+  CA: 'America/Toronto', SA: 'Asia/Riyadh', QA: 'Asia/Dubai',
+  KW: 'Asia/Riyadh', BH: 'Asia/Riyadh', OM: 'Asia/Dubai',
+  DE: 'Europe/Berlin', FR: 'Europe/Paris', NL: 'Europe/Amsterdam',
+  LK: 'Asia/Colombo', BD: 'Asia/Dhaka', NP: 'Asia/Kathmandu',
+  ID: 'Asia/Jakarta', PH: 'Asia/Manila', MY: 'Asia/Kuala_Lumpur',
+  NZ: 'Pacific/Auckland',
+}
 
 export default function LocationsSettingsPage() {
   const { data, isLoading } = useLocations()
@@ -44,6 +50,7 @@ export default function LocationsSettingsPage() {
     name: '',
     addressLine1: '',
     city: '',
+    countryCode: 'IN',
     stateCode: '',
     postalCode: '',
     timezone: 'Asia/Kolkata',
@@ -54,8 +61,12 @@ export default function LocationsSettingsPage() {
     name: '',
     addressLine1: '',
     city: '',
+    countryCode: 'IN',
+    stateCode: '',
     postalCode: '',
+    timezone: 'Asia/Kolkata',
   })
+  const [deleting, setDeleting] = useState<Location | null>(null)
 
   const items = data?.data ?? []
   const activeCount = useMemo(() => items.filter((l) => l.isActive).length, [items])
@@ -69,6 +80,7 @@ export default function LocationsSettingsPage() {
       name: '',
       addressLine1: '',
       city: '',
+      countryCode: 'IN',
       stateCode: '',
       postalCode: '',
       timezone: 'Asia/Kolkata',
@@ -82,7 +94,8 @@ export default function LocationsSettingsPage() {
         name: form.name.trim(),
         addressLine1: form.addressLine1.trim() || undefined,
         city: form.city.trim() || undefined,
-        stateCode: form.stateCode || undefined,
+        countryCode: form.countryCode,
+        stateCode: form.stateCode.trim() || undefined,
         postalCode: form.postalCode.trim() || undefined,
         timezone: form.timezone,
       })
@@ -104,7 +117,10 @@ export default function LocationsSettingsPage() {
       name: loc.name,
       addressLine1: loc.addressLine1 ?? '',
       city: loc.city ?? '',
+      countryCode: loc.countryCode || 'IN',
+      stateCode: loc.stateCode ?? '',
       postalCode: loc.postalCode ?? '',
+      timezone: loc.timezone || 'Asia/Kolkata',
     })
   }
 
@@ -118,7 +134,11 @@ export default function LocationsSettingsPage() {
           name: editForm.name.trim(),
           addressLine1: editForm.addressLine1.trim() || undefined,
           city: editForm.city.trim() || undefined,
+          countryCode: editForm.countryCode,
+          // '' clears the state (e.g. after a country switch)
+          stateCode: editForm.stateCode.trim(),
           postalCode: editForm.postalCode.trim() || undefined,
+          timezone: editForm.timezone,
         },
       })
       toast({ title: 'Location updated' })
@@ -218,7 +238,13 @@ export default function LocationsSettingsPage() {
                       </div>
                     </td>
                     <td className="text-sm text-brand-muted">
-                      {[l.addressLine1, l.city, l.stateCode, l.postalCode]
+                      {[
+                        l.addressLine1,
+                        l.city,
+                        l.stateCode,
+                        l.postalCode,
+                        l.countryCode !== 'IN' ? countryName(l.countryCode) : null,
+                      ]
                         .filter(Boolean)
                         .join(', ') || '—'}
                     </td>
@@ -249,6 +275,16 @@ export default function LocationsSettingsPage() {
                         >
                           {l.isActive ? 'Deactivate' : 'Reactivate'}
                         </Btn>
+                        {!l.isActive && (
+                          <Btn
+                            kind="ghost"
+                            size="sm"
+                            icon={<Trash2 className="w-3.5 h-3.5" />}
+                            onClick={() => setDeleting(l)}
+                          >
+                            Delete
+                          </Btn>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -287,6 +323,42 @@ export default function LocationsSettingsPage() {
                 maxLength={200}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="label">Country</label>
+                <select
+                  className="input"
+                  value={form.countryCode}
+                  onChange={(e) => {
+                    const countryCode = e.target.value
+                    setForm({
+                      ...form,
+                      countryCode,
+                      // Indian GST codes don't apply elsewhere (and vice
+                      // versa) — clear state and suggest the local timezone.
+                      stateCode: '',
+                      timezone: DEFAULT_TZ[countryCode] ?? form.timezone,
+                    })
+                  }}
+                >
+                  {COUNTRIES.map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="label">Timezone</label>
+                <select
+                  className="input"
+                  value={form.timezone}
+                  onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <label className="label">City</label>
@@ -294,44 +366,42 @@ export default function LocationsSettingsPage() {
                   className="input"
                   value={form.city}
                   onChange={(e) => setForm({ ...form, city: e.target.value })}
-                  placeholder="Bengaluru"
+                  placeholder={form.countryCode === 'IN' ? 'Bengaluru' : 'Dubai'}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="label">State</label>
-                <select
-                  className="input"
-                  value={form.stateCode}
-                  onChange={(e) => setForm({ ...form, stateCode: e.target.value })}
-                >
-                  <option value="">—</option>
-                  {STATE_CODES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                <label className="label">{form.countryCode === 'IN' ? 'State' : 'State / Emirate'}</label>
+                {form.countryCode === 'IN' ? (
+                  <select
+                    className="input"
+                    value={form.stateCode}
+                    onChange={(e) => setForm({ ...form, stateCode: e.target.value })}
+                  >
+                    <option value="">—</option>
+                    {STATE_CODES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className="input"
+                    value={form.stateCode}
+                    onChange={(e) => setForm({ ...form, stateCode: e.target.value })}
+                    placeholder="Dubai"
+                    maxLength={40}
+                  />
+                )}
               </div>
               <div className="space-y-1.5">
-                <label className="label">PIN</label>
+                <label className="label">{form.countryCode === 'IN' ? 'PIN' : 'Postal code'}</label>
                 <input
                   className="input"
                   value={form.postalCode}
                   onChange={(e) => setForm({ ...form, postalCode: e.target.value })}
-                  placeholder="560038"
-                  inputMode="numeric"
+                  placeholder={form.countryCode === 'IN' ? '560038' : ''}
+                  inputMode={form.countryCode === 'IN' ? 'numeric' : 'text'}
                 />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="label">Timezone</label>
-              <select
-                className="input"
-                value={form.timezone}
-                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
-              >
-                {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>{tz}</option>
-                ))}
-              </select>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Btn kind="ghost" type="button" onClick={() => setOpen(false)}>
@@ -373,6 +443,40 @@ export default function LocationsSettingsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
+                <label className="label">Country</label>
+                <select
+                  className="input"
+                  value={editForm.countryCode}
+                  onChange={(e) => {
+                    const countryCode = e.target.value
+                    setEditForm({
+                      ...editForm,
+                      countryCode,
+                      stateCode: '',
+                      timezone: DEFAULT_TZ[countryCode] ?? editForm.timezone,
+                    })
+                  }}
+                >
+                  {COUNTRIES.map(([code, label]) => (
+                    <option key={code} value={code}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="label">Timezone</label>
+                <select
+                  className="input"
+                  value={editForm.timezone}
+                  onChange={(e) => setEditForm({ ...editForm, timezone: e.target.value })}
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
                 <label className="label">City</label>
                 <input
                   className="input"
@@ -381,12 +485,34 @@ export default function LocationsSettingsPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="label">PIN</label>
+                <label className="label">{editForm.countryCode === 'IN' ? 'State' : 'State / Emirate'}</label>
+                {editForm.countryCode === 'IN' ? (
+                  <select
+                    className="input"
+                    value={editForm.stateCode}
+                    onChange={(e) => setEditForm({ ...editForm, stateCode: e.target.value })}
+                  >
+                    <option value="">—</option>
+                    {STATE_CODES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className="input"
+                    value={editForm.stateCode}
+                    onChange={(e) => setEditForm({ ...editForm, stateCode: e.target.value })}
+                    maxLength={40}
+                  />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <label className="label">{editForm.countryCode === 'IN' ? 'PIN' : 'Postal code'}</label>
                 <input
                   className="input"
                   value={editForm.postalCode}
                   onChange={(e) => setEditForm({ ...editForm, postalCode: e.target.value })}
-                  inputMode="numeric"
+                  inputMode={editForm.countryCode === 'IN' ? 'numeric' : 'text'}
                 />
               </div>
             </div>
@@ -401,6 +527,128 @@ export default function LocationsSettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {deleting && (
+        <DeleteLocationDialog
+          location={deleting}
+          onClose={() => setDeleting(null)}
+        />
+      )}
     </SettingsLayout>
+  )
+}
+
+// ─── Delete dialog (deactivate → delete → transfer employees) ────────────────
+
+function DeleteLocationDialog({
+  location,
+  onClose,
+}: {
+  location: Location
+  onClose: () => void
+}) {
+  const { toast } = useToast()
+  const preview = useLocationDeletePreview(location.id)
+  const del = useDeleteLocation()
+  const [transferTo, setTransferTo] = useState('')
+
+  const p = preview.data
+  const needsTransfer = (p?.employees ?? 0) > 0
+
+  const handleDelete = async () => {
+    try {
+      const res = await del.mutateAsync({
+        id: location.id,
+        transferTo: transferTo || undefined,
+      })
+      const target = p?.otherLocations.find((l) => l.id === transferTo)
+      toast({
+        title: 'Location deleted',
+        description:
+          res.movedEmployees > 0 && target
+            ? `${res.movedEmployees} employee${res.movedEmployees === 1 ? '' : 's'} moved to ${target.name} — they now follow its holiday calendar.`
+            : location.name,
+      })
+      onClose()
+    } catch (err) {
+      toast({
+        title: 'Could not delete location',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete {location.name}?</DialogTitle>
+        </DialogHeader>
+        {preview.isLoading || !p ? (
+          <div className="p-6 flex items-center justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-brand-muted" />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {needsTransfer ? (
+              <>
+                <div
+                  className="flex items-start gap-2.5 p-3 rounded-lg"
+                  style={{ background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}
+                >
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-brand-yellow" />
+                  <p className="text-sm" style={{ margin: 0 }}>
+                    <strong>{p.employees}</strong> employee{p.employees === 1 ? ' is' : 's are'} still
+                    assigned here. Choose where to move them — they'll follow that
+                    location's holiday calendar and policies from then on.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="label">Move employees to</label>
+                  <select
+                    className="input"
+                    value={transferTo}
+                    onChange={(e) => setTransferTo(e.target.value)}
+                  >
+                    <option value="">Select a location…</option>
+                    {p.otherLocations.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}{l.city ? ` · ${l.city}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <p className="t-mute text-sm" style={{ margin: 0 }}>
+                No employees are assigned to this location.
+              </p>
+            )}
+            {p.holidays > 0 && (
+              <p className="t-mute text-sm" style={{ margin: 0 }}>
+                Its {p.holidays} location-specific holiday{p.holidays === 1 ? '' : 's'} will be
+                deleted with it (they won't become company-wide).
+              </p>
+            )}
+            <p className="t-mute text-xs" style={{ margin: 0 }}>
+              This can't be undone. Attendance history keeps its records.
+            </p>
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          <Btn kind="ghost" onClick={onClose} disabled={del.isPending}>
+            Cancel
+          </Btn>
+          <Btn
+            kind="primary"
+            onClick={handleDelete}
+            disabled={del.isPending || preview.isLoading || (needsTransfer && !transferTo)}
+          >
+            {del.isPending ? 'Deleting…' : needsTransfer && transferTo ? 'Move & delete' : 'Delete location'}
+          </Btn>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

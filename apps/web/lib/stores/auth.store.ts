@@ -11,11 +11,13 @@ export type UserRole =
   | 'AUDITOR'
 
 // Human-readable label for the Topbar / surfaces showing a role.
-// HR stays uppercase; everything else is title-cased.
+// HR stays uppercase; everything else is title-cased. The workspace-owner
+// role is DISPLAYED as "Admin" (founder decision — profile surfaces show
+// the person's designation instead; role labels stay for role pickers).
 export function roleLabel(role: UserRole | string | null | undefined): string {
   switch (role) {
     case 'FAM':         return 'FAM Admin'
-    case 'OWNER':       return 'Owner'
+    case 'OWNER':       return 'Admin'
     case 'HR_ADMIN':    return 'HR Admin'
     case 'FINANCE':     return 'Finance'
     case 'MANAGER':     return 'Manager'
@@ -30,6 +32,9 @@ export interface CurrentUser {
   name: string
   email: string
   role: UserRole
+  // Job title from the employee record (designations) — what the profile
+  // chip and dropdown display; role is the fallback.
+  designation?: string
   avatarUrl?: string
   tenantId: string
   employeeId?: string

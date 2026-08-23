@@ -11,6 +11,40 @@ const AUTH_PATHS_NO_REDIRECT = [
   '/api/v1/auth/refresh',
 ]
 
+// Paths that must never trigger a silent refresh: the refresh call itself
+// (recursion) and the pre-auth login endpoints, where a 401 is a real
+// credential failure rather than an expired access token.
+const NO_SILENT_REFRESH = [
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/request-otp',
+  '/api/v1/auth/verify-otp',
+  '/api/v1/auth/magic-link',
+  '/api/v1/auth/logout',
+]
+
+// Single-flight silent refresh: a burst of parallel 401s (dashboard mount
+// after the 15-minute access cookie lapses) shares ONE rotation — the
+// refresh endpoint revokes the old token on use, so a second concurrent
+// attempt would trip the reuse detector and kill the whole session.
+let refreshInFlight: Promise<boolean> | null = null
+
+function silentRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: '{}',
+    })
+      .then((r) => r.ok)
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null
+      })
+  }
+  return refreshInFlight
+}
+
 interface RequestOptions {
   method?: string
   body?: unknown
@@ -36,12 +70,27 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...headers,
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers: requestHeaders,
-    credentials: 'include',
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  const doFetch = () =>
+    fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: requestHeaders,
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined,
+    })
+
+  let response = await doFetch()
+
+  // Access tokens live 15 minutes; the httpOnly refresh cookie lives 7 days.
+  // On the first 401, silently redeem the refresh token once and retry the
+  // original request — before this, the session effectively ended at 15
+  // minutes because nothing in the web app ever called /auth/refresh.
+  if (
+    response.status === 401 &&
+    !NO_SILENT_REFRESH.some((p) => path.startsWith(p)) &&
+    (await silentRefresh())
+  ) {
+    response = await doFetch()
+  }
 
   if (response.status === 401) {
     const isAuthEndpoint = AUTH_PATHS_NO_REDIRECT.some((p) =>

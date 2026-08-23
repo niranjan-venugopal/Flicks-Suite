@@ -4,9 +4,10 @@ import {
   Inject,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { stateCodeFromGstin } from '@flicks/shared/constants';
-import { eq, and, asc, count, sql } from 'drizzle-orm';
+import { eq, and, asc, count, ne, sql } from 'drizzle-orm';
 import {
   tenants,
   locations,
@@ -20,6 +21,7 @@ import {
   employeeShifts,
   leaveTypes,
   leaveRequests,
+  holidays,
 } from '@flicks/db';
 import {
   DB_TENANT,
@@ -411,8 +413,7 @@ export class SettingsService {
     actorUserId: string,
     dto: CreateLocationDto,
   ) {
-    const stateCode =
-      dto.stateCode ?? (dto.countryCode === 'IN' ? null : null);
+    const stateCode = dto.stateCode ?? null;
 
     const [row] = await this.dbAdmin
       .insert(locations)
@@ -491,7 +492,18 @@ export class SettingsService {
         ...(dto.addressLine1 !== undefined && {
           address_line1: dto.addressLine1,
         }),
+        ...(dto.addressLine2 !== undefined && {
+          address_line2: dto.addressLine2,
+        }),
         ...(dto.city !== undefined && { city: dto.city }),
+        // '' clears the state (country switches drop the old GST code)
+        ...(dto.stateCode !== undefined && {
+          state_code: dto.stateCode || null,
+        }),
+        ...(dto.countryCode !== undefined && {
+          country_code: dto.countryCode,
+        }),
+        ...(dto.timezone !== undefined && { timezone: dto.timezone }),
         ...(dto.postalCode !== undefined && { postal_code: dto.postalCode }),
         ...(dto.isActive !== undefined && { is_active: dto.isActive }),
       })
@@ -524,6 +536,192 @@ export class SettingsService {
       city: after.city,
       timezone: after.timezone,
       isActive: after.is_active,
+    };
+  }
+
+  /**
+   * Impact preview shown before deleting a location: how many employees
+   * would need moving, how many location-specific holidays go with it, and
+   * which locations can receive the employees (CRM §19.7 reassign pattern).
+   */
+  async locationDeletePreview(locationId: string, tenantId: string) {
+    const [loc] = await this.dbAdmin
+      .select({
+        id: locations.id,
+        name: locations.name,
+        isActive: locations.is_active,
+      })
+      .from(locations)
+      .where(
+        and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+      )
+      .limit(1);
+    if (!loc) throw new NotFoundException('Location not found');
+
+    // ALL statuses — inactive employees still reference the row.
+    const [emp] = await this.dbAdmin
+      .select({ value: count() })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.location_id, locationId),
+        ),
+      );
+    const [hol] = await this.dbAdmin
+      .select({ value: count() })
+      .from(holidays)
+      .where(
+        and(
+          eq(holidays.tenant_id, tenantId),
+          eq(holidays.location_id, locationId),
+        ),
+      );
+    const otherLocations = await this.dbAdmin
+      .select({ id: locations.id, name: locations.name, city: locations.city })
+      .from(locations)
+      .where(
+        and(
+          eq(locations.tenant_id, tenantId),
+          eq(locations.is_active, true),
+          ne(locations.id, locationId),
+        ),
+      )
+      .orderBy(asc(locations.name));
+
+    return {
+      id: loc.id,
+      name: loc.name,
+      isActive: loc.isActive,
+      employees: emp?.value ?? 0,
+      holidays: hol?.value ?? 0,
+      otherLocations,
+    };
+  }
+
+  /**
+   * Guarded hard delete. Only deactivated locations are deletable; assigned
+   * employees must be transferred to another active location as part of the
+   * same transaction (they then follow the destination's holiday calendar
+   * automatically — holidays are scoped by employees.location_id). The
+   * location's own holidays are deleted explicitly: the FK is ON DELETE SET
+   * NULL and a NULL location on a holiday means "company-wide", so leaving
+   * them behind would silently grant them to everyone. Attendance punches
+   * keep their rows (their location tag nulls — historical record intact).
+   */
+  async deleteLocation(
+    locationId: string,
+    tenantId: string,
+    actorUserId: string,
+    transferTo?: string,
+  ) {
+    const result = await this.dbAdmin.transaction(async (tx) => {
+      const [loc] = await tx
+        .select()
+        .from(locations)
+        .where(
+          and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+        )
+        .limit(1);
+      if (!loc) throw new NotFoundException('Location not found');
+      if (loc.is_active) {
+        throw new ConflictException(
+          'Deactivate the location before deleting it.',
+        );
+      }
+
+      const [emp] = await tx
+        .select({ value: count() })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            eq(employees.location_id, locationId),
+          ),
+        );
+      const assigned = emp?.value ?? 0;
+
+      let movedEmployees = 0;
+      if (assigned > 0) {
+        if (!transferTo) {
+          throw new ConflictException(
+            `${assigned} employee${assigned === 1 ? ' is' : 's are'} assigned to this location. Choose a location to move them to first.`,
+          );
+        }
+        if (transferTo === locationId) {
+          throw new BadRequestException(
+            'Pick a different location to receive the employees',
+          );
+        }
+        const [target] = await tx
+          .select({ id: locations.id, isActive: locations.is_active })
+          .from(locations)
+          .where(
+            and(
+              eq(locations.id, transferTo),
+              eq(locations.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
+        if (!target || !target.isActive) {
+          throw new BadRequestException(
+            'transferTo must be an active location in this workspace',
+          );
+        }
+        const moved = await tx
+          .update(employees)
+          .set({ location_id: transferTo, updated_at: new Date() })
+          .where(
+            and(
+              eq(employees.tenant_id, tenantId),
+              eq(employees.location_id, locationId),
+            ),
+          )
+          .returning({ id: employees.id });
+        movedEmployees = moved.length;
+      }
+
+      const deletedHolidays = await tx
+        .delete(holidays)
+        .where(
+          and(
+            eq(holidays.tenant_id, tenantId),
+            eq(holidays.location_id, locationId),
+          ),
+        )
+        .returning({ id: holidays.id });
+
+      await tx
+        .delete(locations)
+        .where(
+          and(eq(locations.id, locationId), eq(locations.tenant_id, tenantId)),
+        );
+
+      return {
+        name: loc.name,
+        movedEmployees,
+        deletedHolidays: deletedHolidays.length,
+      };
+    });
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'location.deleted',
+      resourceType: 'location',
+      resourceId: locationId,
+      beforeState: { name: result.name },
+      afterState: {
+        movedEmployees: result.movedEmployees,
+        deletedHolidays: result.deletedHolidays,
+        transferTo: transferTo ?? null,
+      },
+    });
+
+    return {
+      deleted: true,
+      movedEmployees: result.movedEmployees,
+      deletedHolidays: result.deletedHolidays,
     };
   }
 

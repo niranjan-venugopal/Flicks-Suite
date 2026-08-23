@@ -4,8 +4,10 @@ import {
   Post,
   Put,
   Patch,
+  Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -153,6 +155,40 @@ export class SettingsController {
       user.tenantId,
       user.sub,
       dto,
+    );
+  }
+
+  @Get('locations/:id/delete-preview')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Impact preview before deleting a location',
+    description:
+      'Counts the employees that would need transferring and the location-specific holidays that would be removed, plus the active locations that can receive the employees.',
+  })
+  async locationDeletePreview(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.settingsService.locationDeletePreview(id, user.tenantId);
+  }
+
+  @Delete('locations/:id')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Delete a deactivated location',
+    description:
+      'Only deactivated locations can be deleted. Assigned employees must be transferred via ?transferTo=<locationId> — they then follow the destination location’s holiday calendar automatically. The deleted location’s own holidays are removed with it.',
+  })
+  async deleteLocation(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('transferTo') transferTo?: string,
+  ) {
+    return this.settingsService.deleteLocation(
+      id,
+      user.tenantId,
+      user.sub,
+      transferTo || undefined,
     );
   }
 

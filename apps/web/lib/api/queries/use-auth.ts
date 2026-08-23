@@ -51,6 +51,7 @@ interface ApiMembership {
   role: string
   status: string
   employeeId?: string | null
+  designationTitle?: string | null
 }
 
 // Returned by /verify-otp and /magic-link
@@ -119,6 +120,7 @@ function adaptUser(
     name: user.fullName || user.email,
     email: user.email,
     role: normaliseRole(membership?.role),
+    designation: membership?.designationTitle ?? undefined,
     avatarUrl: user.avatarUrl ?? undefined,
     tenantId: membership?.tenantId ?? '',
     employeeId: membership?.employeeId ?? undefined,

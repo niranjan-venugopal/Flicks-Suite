@@ -424,3 +424,13 @@ export class EmployeeListQueryDto {
   @Type(() => Number)
   limit?: number = 20;
 }
+
+// ─── Detail change requests (employee confirmation of HR edits) ──────────────
+
+export class RejectChangeRequestDto {
+  @ApiPropertyOptional({ example: 'That is not my account number' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  reason?: string;
+}

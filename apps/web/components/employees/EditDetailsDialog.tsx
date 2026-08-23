@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Btn } from '@/components/proto'
+import { Btn, Pill } from '@/components/proto'
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,10 @@ import {
 } from '@/components/ui/dialog'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
-import { useAdminSubmitEmployeeDetails } from '@/lib/api/queries/use-employee-onboarding'
+import {
+  useAdminSubmitEmployeeDetails,
+  useEmployeeChangeRequests,
+} from '@/lib/api/queries/use-employee-onboarding'
 import type { EmployeeDetail } from '@/lib/api/queries/use-employees'
 import {
   PAN_RE,
@@ -41,6 +44,10 @@ export function EditDetailsDialog({
 }) {
   const { toast } = useToast()
   const submit = useAdminSubmitEmployeeDetails()
+  const changeRequests = useEmployeeChangeRequests(e.id, open)
+  const hasPending = (changeRequests.data?.requests ?? []).some(
+    (r) => r.status === 'pending',
+  )
   const [tab, setTab] = useState<(typeof TABS)[number]>('Personal')
 
   // Personal (step 1)
@@ -70,8 +77,9 @@ export function EditDetailsDialog({
 
   const saveTab = async () => {
     try {
+      let res: { pendingConfirmation?: boolean } | undefined
       if (tab === 'Personal') {
-        await submit.mutateAsync({
+        res = await submit.mutateAsync({
           employeeId: e.id,
           step: 1,
           personalInfo: {
@@ -91,7 +99,7 @@ export function EditDetailsDialog({
           toast({ title: 'PAN looks invalid', description: 'Format: AAAAA9999A', variant: 'destructive' })
           return
         }
-        await submit.mutateAsync({
+        res = await submit.mutateAsync({
           employeeId: e.id,
           step: 2,
           identity: {
@@ -105,7 +113,7 @@ export function EditDetailsDialog({
           toast({ title: 'IFSC looks invalid', description: 'Format: AAAA0XXXXXX', variant: 'destructive' })
           return
         }
-        await submit.mutateAsync({
+        res = await submit.mutateAsync({
           employeeId: e.id,
           step: 3,
           bank: {
@@ -119,7 +127,14 @@ export function EditDetailsDialog({
           },
         })
       }
-      toast({ title: `${tab} details saved` })
+      if (res?.pendingConfirmation) {
+        toast({
+          title: `Sent to ${e.firstName || 'the employee'} for confirmation`,
+          description: 'Nothing changes on the record until they confirm it.',
+        })
+      } else {
+        toast({ title: `${tab} details saved` })
+      }
     } catch (err) {
       toast({
         title: 'Could not save',
@@ -161,7 +176,14 @@ export function EditDetailsDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Edit personal &amp; statutory details</DialogTitle>
+          <DialogTitle>
+            Edit personal &amp; statutory details
+            {hasPending && (
+              <Pill tone="yellow" style={{ marginLeft: 10, verticalAlign: 'middle' }}>
+                Awaiting employee confirmation
+              </Pill>
+            )}
+          </DialogTitle>
         </DialogHeader>
 
         {/* Tabs */}
