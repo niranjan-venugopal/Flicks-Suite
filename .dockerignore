@@ -1,0 +1,14 @@
+# Keep the Docker build context lean and deterministic (apps/api/Dockerfile
+# builds from the repo root). node_modules exclusion also protects the
+# symlink forests the deps stages copy in from being clobbered by COPY of
+# the workspace dirs during local builds.
+.git
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+docs
+*.png
+*.md
+apps/web

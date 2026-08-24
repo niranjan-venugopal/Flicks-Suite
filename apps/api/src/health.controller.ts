@@ -6,12 +6,23 @@ import { Public } from './core/auth/decorators/public.decorator';
 import { DB_SERVICE_ROLE } from './core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 
-// Liveness + readiness probe for Better Stack (and any other uptime
-// monitor). Mounted at the root (excluded from the api/v1 prefix in
-// main.ts) so the monitor URL is simply https://api.flickssuite.com/healthz.
+// Health probes, mounted at the root (excluded from the api/v1 prefix in
+// main.ts) so the URLs are simply https://api.flickssuite.com/healthz|readyz.
+//
+//   /healthz  — LIVENESS: process up. Always 200 while Node is running.
+//               This is what Railway's deploy health check points at.
+//   /readyz   — READINESS: real `SELECT 1` against Postgres (3s cap) with
+//               dbLatencyMs. This is what the uptime monitor points at.
+//
+// The split matters operationally: /healthz used to probe the DB too, which
+// meant a Supabase outage made EVERY new Railway deploy fail its health
+// check — the platform kept the previous (equally broken) container and new
+// code could not ship until the DB recovered (2026-08-24 incident). Liveness
+// must reflect only the process so deploys always roll forward; DB health is
+// the monitor's job via /readyz.
 @ApiTags('Health')
 @Controller()
-@SkipThrottle() // uptime monitors / k8s probes poll frequently — never rate-limit
+@SkipThrottle() // uptime monitors / platform probes poll frequently — never rate-limit
 export class HealthController {
   private readonly startedAt = Date.now();
 
@@ -31,25 +42,10 @@ export class HealthController {
 
   @Public()
   @Get('healthz')
-  @ApiOperation({ summary: 'Liveness + DB readiness probe (public)' })
-  async check() {
-    try {
-      // Cap the probe at 3s. If Postgres is unreachable the driver's connect
-      // can hang far longer than any monitor's request timeout — we'd rather
-      // return a fast, explicit 503 than let the request stall.
-      await this.probeDb();
-    } catch {
-      // 503 so the monitor marks the service down when Postgres is
-      // unreachable, not just when the process is dead.
-      throw new ServiceUnavailableException({
-        status: 'error',
-        database: 'down',
-      });
-    }
-
+  @ApiOperation({ summary: 'Liveness probe — process up, no dependencies (public)' })
+  check() {
     return {
       status: 'ok',
-      database: 'up',
       uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
       timestamp: new Date().toISOString(),
     };
@@ -57,10 +53,13 @@ export class HealthController {
 
   @Public()
   @Get('readyz')
-  @ApiOperation({ summary: 'Readiness probe — reports DB query latency (public)' })
+  @ApiOperation({ summary: 'Readiness probe — DB reachability + query latency (public)' })
   async ready() {
     let latencyMs: number;
     try {
+      // Cap the probe at 3s: if Postgres is unreachable the driver's connect
+      // can hang far longer than any monitor's request timeout — return a
+      // fast, explicit 503 instead.
       latencyMs = await this.probeDb();
     } catch {
       throw new ServiceUnavailableException({ status: 'not-ready', database: 'down' });

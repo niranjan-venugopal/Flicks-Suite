@@ -72,6 +72,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The Railway Docker image runs `nest build` (tsc EMIT, not just
+      # --noEmit) — a build-only failure used to ship straight to Railway
+      # because CI never built. Keep this before tests so it fails fast.
+      - name: Build API (same tsc pass as the production image)
+        run: pnpm --filter @flicks/api build
+
       - name: Lint
         run: pnpm lint
 

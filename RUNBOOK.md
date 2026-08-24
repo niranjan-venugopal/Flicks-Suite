@@ -23,14 +23,23 @@ setup see [README.md](./README.md); for system design see
 ### Liveness / readiness probe
 
 ```
-GET https://api.flickssuite.com/healthz      # public, no auth, no api/v1 prefix
+GET https://api.flickssuite.com/healthz      # LIVENESS — public, no auth, no api/v1 prefix
+GET https://api.flickssuite.com/readyz       # READINESS — public, DB-probing
 ```
 
-- **200** `{ status: "ok", database: "up", uptimeSeconds, timestamp }` — process up **and** Postgres reachable.
-- **503** `{ status: "error", database: "down" }` — process up but Postgres unreachable. The DB check is capped at 3s, so the probe never hangs.
+- `/healthz` — **liveness only**: 200 `{ status: "ok", uptimeSeconds, timestamp }`
+  whenever the Node process is up. It deliberately does NOT touch the DB —
+  this is Railway's deploy health check, and gating deploys on the DB meant
+  a Supabase outage blocked every rollout (2026-08-24 incident: new code
+  could not ship while the old container kept serving 500s).
+- `/readyz` — **readiness**: 200 `{ status: "ready", database: "up", dbLatencyMs }`
+  when Postgres answers `SELECT 1` within 3s; 503
+  `{ status: "not-ready", database: "down" }` otherwise. The probe is capped
+  at 3s so it never hangs.
 
-Better Stack monitors this URL every 30s and pages on 2 consecutive failures.
-Keep the check interval ≥ 30s — `/healthz` runs a real `SELECT 1`.
+Better Stack must monitor **`/readyz`** (not `/healthz`) every 30s and page on
+2 consecutive failures. Keep the interval ≥ 30s — `/readyz` runs a real
+`SELECT 1`.
 
 ### Dashboards
 
@@ -85,16 +94,27 @@ re-sync a fresh/lagging database to the current schema in one run.
 
 ## 3. Common incidents
 
-### `/healthz` returns 503
+### `/readyz` returns 503 (`/healthz` still 200)
 
 Process is up, Postgres is not reachable.
+0. Supabase dashboard → is the project **PAUSED**? The free tier pauses after
+   ~1 week of database inactivity — click **Restore** and wait a few minutes.
+   (The 30s uptime monitor on `/readyz` is also what keeps the project from
+   pausing.)
 1. Supabase status: https://status.supabase.com and the project dashboard.
 2. Connection cap — Supabase pooler exhausted? Check active connections in the
    Supabase dashboard. The API uses the **session-mode pooler**; a leaked
    connection or a traffic spike can exhaust it.
 3. Rotate/refresh `DATABASE_URL` in Doppler if credentials changed.
-4. If Supabase itself is down, post to the Better Stack status page and wait;
-   there is no app-side fix.
+4. Pooler hostname drift: Supabase has been migrating poolers off the legacy
+   `aws-0-<region>.pooler.supabase.com` hosts (newer projects use
+   `aws-1-…`). If the dashboard's connection-string host differs from what
+   Railway's `DATABASE_URL` / `DATABASE_SERVICE_ROLE_URL` hold, update both
+   vars (ports/users unchanged) — a stale host presents as
+   `write CONNECT_TIMEOUT` on both :5432 and :6543 at once.
+5. If Supabase itself is down, post to the Better Stack status page and wait;
+   there is no app-side fix. Deploys still work during the outage —
+   `/healthz` is liveness-only.
 
 ### Login OTP / magic link not arriving
 

@@ -51,7 +51,7 @@ detail), [pm-beta-gate.md](pm-beta-gate.md) (PM drills).
    pnpm sync:supabase
    ```
 
-   This applies migrations 0001–0048, creates the **`flicks_app`**
+   This applies every numbered migration (0001–0049 at the time of writing), creates the **`flicks_app`**
    NOBYPASSRLS role with that password, and re-locks the per-table grants.
 
    > ⚠ **If `APP_ROLE_PASSWORD` is unset the role step is SILENTLY
@@ -94,7 +94,9 @@ detail), [pm-beta-gate.md](pm-beta-gate.md) (PM drills).
    - Leave all `RAZORPAY_*` and `GITHUB_*` blank (deferred/parked).
    - Set **neither** `WORKER_MODE` nor `INLINE_WORKER` — single instance
      runs the worker inline.
-4. Service → Settings → **Health check path**: `/healthz`.
+4. Service → Settings → **Health check path**: `/healthz` (liveness-only —
+   always 200 while the process runs, so a DB outage can never block a
+   deploy; DB health is monitored separately via `/readyz`).
 5. Service → Settings → Networking → **Custom domain** → `api.<domain>`.
    Railway shows a CNAME target — add it at your registrar in Phase 4.
 6. First deploy will already be running; it's fine that the domain isn't
@@ -200,10 +202,14 @@ Then by hand:
 - **Sentry**: one project per app; paste `SENTRY_DSN` (Railway) and
   `NEXT_PUBLIC_SENTRY_DSN` (Vercel) and redeploy.
 - **Uptime**: any free monitor (e.g. Better Stack) on
-  `https://api.<domain>/healthz` every 30s.
+  `https://api.<domain>/readyz` every 30s (NOT `/healthz` — readyz is the
+  DB-probing endpoint; it also keeps a free-tier Supabase project from
+  pausing).
 - **Log alert** on the literal string `OUTBOX STALLED` in Railway logs —
   the canary for a mis-set worker flag (events written but never
-  dispatched).
+  dispatched). Caveat: while the DB itself is unreachable the checker only
+  logs a warn (`outbox lag check failed`), so absence of this alert during
+  a DB outage means nothing.
 
 ---
 

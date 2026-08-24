@@ -1,0 +1,9 @@
+{
+  // Used by `nest build` (the Nest CLI prefers tsconfig.build.json when it
+  // exists) — i.e. the tsc pass the Railway Docker image runs. Excludes the
+  // test suites so (a) a spec-only type issue can never break a production
+  // build and (b) specs aren't shipped in dist. `pnpm typecheck` still uses
+  // tsconfig.json and covers the specs.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "test", "src/__tests__", "**/*.spec.ts"]
+}

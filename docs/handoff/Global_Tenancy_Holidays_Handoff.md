@@ -133,3 +133,38 @@ production via the Supabase SQL-editor flow.**
   source; empty-body posts no longer 400). Sessions now genuinely last the
   7-day refresh window. The 180-day trusted-device flow is deferred by
   founder decision — this foundation makes it a TTL change later.
+
+---
+
+# Incident hardening (2026-08-24): deploys must never be blocked by a DB outage
+
+Incident: Supabase pooler unreachable (`write CONNECT_TIMEOUT` on both :5432
+and :6543) → every request 500'd, AND the round-3 deploy could never go live
+because Railway's health check pointed at a DB-probing `/healthz` — the old
+container kept serving, producing version skew (new web + old API: the
+delete-preview 404 and the broken silent refresh, since the old API required
+a body `refreshToken` that the new web no longer sends).
+
+Shipped (gate green — 492/492 jest, typechecks, api `nest build`, boundaries,
+web build, RLS 0 leaks; health split verified live against a stopped local
+Postgres: /healthz 200 while /readyz 503):
+
+- **/healthz is now liveness-only** (always 200 while the process runs) so
+  Railway can always roll new code forward, even mid-DB-outage. **/readyz**
+  keeps the 3s `SELECT 1` probe + dbLatencyMs — the uptime monitor must
+  watch /readyz. prod-smoke.sh + RUNBOOK.md + go-live-runbook.md updated
+  (incl. Supabase free-tier pause playbook and the aws-0→aws-1 pooler
+  hostname drift check).
+- **Build safety**: apps/api/tsconfig.build.json excludes `src/__tests__`
+  from `nest build` (specs were compiled into prod dist; a spec-only type
+  error could brick the Docker build that CI never exercised); CI gains a
+  `pnpm --filter @flicks/api build` step; root `.dockerignore` added.
+- **Pooler safety**: `prepare: false` pinned on the tenant pool
+  (packages/db/src/client.ts) — Supavisor transaction mode (:6543) does not
+  support named prepared statements.
+
+Recovery steps (founder, dashboards): restore Supabase (check Paused state /
+pooler hostname drift vs Railway env vars) → Redeploy latest on Railway →
+apply migration 0049 in the SQL editor → verify /healthz + /readyz 200,
+delete-preview no longer 404, confirmation toast works, silent refresh keeps
+sessions alive past 15 minutes.

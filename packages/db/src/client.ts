@@ -31,7 +31,14 @@ const POOL_TUNING = {
 function createTenantClient() {
   const url = process.env['DATABASE_URL'];
   if (!url) throw new Error('DATABASE_URL environment variable is required');
-  const sql = postgres(url, { max: IS_TEST ? 4 : 10, ...POOL_TUNING });
+  // prepare: false — this pool targets the TRANSACTION-mode pooler
+  // (Supavisor :6543), which does not support named prepared statements.
+  // postgres.js defaults to prepare:true; pin it off per Supabase guidance.
+  const sql = postgres(url, {
+    max: IS_TEST ? 4 : 10,
+    prepare: false,
+    ...POOL_TUNING,
+  });
   return drizzle(sql, { schema });
 }
 

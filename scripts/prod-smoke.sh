@@ -25,11 +25,11 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); echo "  ✓ $1"; }
 bad()  { FAIL=$((FAIL+1)); echo "  ✗ $1" >&2; }
 
-echo "─── 1. /healthz ───"
+echo "─── 1. /healthz (liveness — no DB dependency) ───"
 HEALTH_CODE=$(curl -s -o /tmp/smoke-health.json -w '%{http_code}' "$API_URL/healthz" || echo 000)
 HEALTH_BODY=$(cat /tmp/smoke-health.json 2>/dev/null || true)
 if [[ "$HEALTH_CODE" == "200" ]]; then ok "healthz 200"; else bad "healthz returned $HEALTH_CODE"; fi
-if grep -q '"database":"up"' <<<"$HEALTH_BODY"; then ok "database up"; else bad "database not 'up': $HEALTH_BODY"; fi
+if grep -q '"status":"ok"' <<<"$HEALTH_BODY"; then ok "process alive"; else bad "unexpected healthz body: $HEALTH_BODY"; fi
 
 echo "─── 2. /readyz ───"
 READY_BODY=$(curl -sf "$API_URL/readyz" || true)
