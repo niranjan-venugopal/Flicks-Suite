@@ -8,6 +8,7 @@ import { Topbar } from '@/components/layout/Topbar'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ConsentLedgerSync } from '@/components/consent/ConsentLedgerSync'
 import { ReacceptanceGate } from '@/components/consent/ReacceptanceGate'
+import { TrustDevicePrompt } from '@/components/auth/TrustDevicePrompt'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
 import { NotificationsSocket } from '@/lib/notifications/NotificationsSocket'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
@@ -218,6 +219,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* PRD v4 §3: ledger the pre-login banner choice once; re-acceptance on policy bumps */}
       <ConsentLedgerSync />
       <ReacceptanceGate />
+      {/* Post-login "stay signed in for 180 days?" (trusted device) */}
+      <TrustDevicePrompt />
       {/* PRD v4 §5: live presence socket (heartbeats + status_changed) */}
       <PresenceProvider />
       {/* Real-time notifications: push the bell instead of waiting on the poll */}

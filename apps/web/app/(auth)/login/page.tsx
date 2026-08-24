@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
-import { useRequestOtp, useVerifyOtp, useCompleteTotp } from '@/lib/api/queries/use-auth'
+import { useRequestOtp, useVerifyOtp, useCompleteTotp, useCurrentUser } from '@/lib/api/queries/use-auth'
 import { APIError } from '@/lib/api/client'
 
 const emailSchema = z.object({
@@ -31,6 +31,21 @@ export default function LoginPage() {
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
   const completeTotp = useCompleteTotp()
+
+  // Already-authed visitors (reopened tab / bookmarked /login while the
+  // refresh window is still live — the api client silently redeems the
+  // refresh cookie when /me first 401s) go straight to their dashboard,
+  // enterprise-style, instead of being asked for a fresh OTP.
+  const me = useCurrentUser()
+  useEffect(() => {
+    if (step !== 'email' || !me.data) return
+    const role = (
+      me.data.currentMembership?.role ?? me.data.memberships?.[0]?.role ?? ''
+    ).toLowerCase()
+    const isPlatformAdmin =
+      !me.data.impersonatorUserId && (role === 'fam' || role === 'super_admin')
+    router.replace(isPlatformAdmin ? '/fam/overview' : '/dashboard')
+  }, [me.data, step, router])
 
   const emailForm = useForm<EmailForm>({
     resolver: zodResolver(emailSchema),

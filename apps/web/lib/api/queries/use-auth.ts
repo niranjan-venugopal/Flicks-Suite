@@ -74,6 +74,9 @@ interface MeResponse extends ApiUser {
   // User-level platform-admin flag (users.is_platform_admin) — independent
   // of which workspace is currently active.
   isPlatformAdmin?: boolean
+  // Whether this browser is a consented trusted device (drives the
+  // post-login "stay signed in for 180 days?" prompt).
+  deviceTrusted?: boolean
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
   // PRD v6 — effective runtime flags for the current tenant (e.g.
@@ -217,6 +220,20 @@ export function useVerifyMagicLink() {
     onSuccess: (data) => {
       setUser(adaptUser(data.user, null))
     },
+  })
+}
+
+// "Stay signed in on this device for 180 days" — upgrades the current
+// session in place and remembers the device for future logins.
+export function useTrustDevice() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ trusted: boolean; expiresAt: string }>(
+        '/api/v1/auth/trust-device',
+        {},
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
   })
 }
 

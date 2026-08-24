@@ -16,7 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { eq, and, gt, isNull, lt, asc, desc, sql } from 'drizzle-orm';
 import * as crypto from 'crypto';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import {
   authOtps,
   refreshTokens,
@@ -519,14 +519,15 @@ export class AuthService {
     );
     const activeMembership = sortedMemberships[0];
 
-    // Write trusted device if deviceId provided
-    if (deviceId) {
-      await this.upsertTrustedDevice(
-        currentUser.id,
-        deviceId,
-        ip,
-        userAgent,
-      );
+    // A login from a device the user previously chose to trust auto-issues
+    // the long (180-day) session — no re-prompt after a logout/login. Rows
+    // are only CREATED via the explicit trust-device consent; here we just
+    // check and refresh last-seen metadata.
+    const trustedDevice = deviceId
+      ? await this.isTrustedDevice(currentUser.id, deviceId)
+      : false;
+    if (trustedDevice && deviceId) {
+      await this.touchTrustedDevice(currentUser.id, deviceId, ip, userAgent);
     }
 
     await this.writeAuthEvent({
@@ -540,21 +541,25 @@ export class AuthService {
 
     if (!activeMembership) {
       // No tenant yet — return partial auth for onboarding
-      const { accessToken, refreshToken } = await this.issueTokenPair(
-        currentUser,
-        null,
-        null,
-        null,
-        deviceId,
-        ip,
-        userAgent,
-      );
+      const { accessToken, refreshToken, refreshTtlMs } =
+        await this.issueTokenPair(
+          currentUser,
+          null,
+          null,
+          null,
+          deviceId,
+          ip,
+          userAgent,
+          undefined,
+          { trusted: trustedDevice },
+        );
 
       return {
         requiresTenantSelection: false,
         needsOnboarding: true,
         accessToken,
         refreshToken,
+        refreshTtlMs,
         user: {
           id: currentUser.id,
           email: currentUser.email,
@@ -579,12 +584,15 @@ export class AuthService {
           deviceId,
           ip,
           userAgent,
+          undefined,
+          { trusted: trustedDevice },
         );
         return {
           requiresTenantSelection: false,
           requiresTotpEnrollment: true,
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
+          refreshTtlMs: tokens.refreshTtlMs,
           expiresIn: 900,
           user: {
             id: currentUser.id,
@@ -621,20 +629,24 @@ export class AuthService {
       };
     }
 
-    const { accessToken, refreshToken } = await this.issueTokenPair(
-      currentUser,
-      activeMembership.tenantId,
-      activeMembership.id,
-      activeMembership.role as UserRole,
-      deviceId,
-      ip,
-      userAgent,
-    );
+    const { accessToken, refreshToken, refreshTtlMs } =
+      await this.issueTokenPair(
+        currentUser,
+        activeMembership.tenantId,
+        activeMembership.id,
+        activeMembership.role as UserRole,
+        deviceId,
+        ip,
+        userAgent,
+        undefined,
+        { trusted: trustedDevice },
+      );
 
     return {
       requiresTenantSelection: false,
       accessToken,
       refreshToken,
+      refreshTtlMs,
       expiresIn: 900, // 15 minutes in seconds
       user: {
         id: currentUser.id,
@@ -748,18 +760,32 @@ export class AuthService {
       .set({ revoked_at: new Date() })
       .where(eq(refreshTokens.id, token.id));
 
+    // Rotation must not silently downgrade a trusted (180-day) session to
+    // the 7-day window — carry the old token's trusted flag forward, but
+    // re-validate the device consent first: a revoked or expired
+    // trusted_devices row quietly demotes the chain back to 7 days (the
+    // future "sign out of this device" hook).
+    const rotationDeviceId = deviceId ?? token.device_id ?? undefined;
+    let stillTrusted = token.trusted === true;
+    if (stillTrusted) {
+      stillTrusted = rotationDeviceId
+        ? await this.isTrustedDevice(token.user_id, rotationDeviceId)
+        : false;
+    }
+
     // Issue new pair — preserve the impersonator marker so the next
     // access token still surfaces the banner and audit trail.
-    const { accessToken, refreshToken: newRefreshToken } =
+    const { accessToken, refreshToken: newRefreshToken, refreshTtlMs } =
       await this.issueTokenPair(
         user[0],
         token.tenant_id,
         membershipInfo?.id ?? null,
         (membershipInfo?.role ?? null) as UserRole | null,
-        deviceId ?? token.device_id ?? undefined,
+        rotationDeviceId,
         ip,
         userAgent,
         token.impersonator_user_id ?? undefined,
+        { trusted: stillTrusted },
       );
 
     await this.writeAuthEvent({
@@ -767,12 +793,13 @@ export class AuthService {
       eventType: 'token_refreshed',
       ip,
       userAgent,
-      deviceId: deviceId ?? token.device_id ?? undefined,
+      deviceId: rotationDeviceId,
     });
 
     return {
       accessToken,
       refreshToken: newRefreshToken,
+      refreshTtlMs,
       expiresIn: 900,
     };
   }
@@ -803,7 +830,7 @@ export class AuthService {
     });
   }
 
-  async selectTenant(userId: string, tenantId: string) {
+  async selectTenant(userId: string, tenantId: string, deviceId?: string) {
     // Server-side re-verification (PRD §3.5): membership must exist, must not
     // be revoked or past its access window; pending invites are accepted on
     // switch. Shared with POST /auth/switch-company.
@@ -823,12 +850,22 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const { accessToken, refreshToken } = await this.issueTokenPair(
-      user[0],
-      tenantId,
-      membership.id,
-      membership.role as UserRole,
-    );
+    // Workspace switches keep the trusted-device session length.
+    const switchTrusted = deviceId
+      ? await this.isTrustedDevice(userId, deviceId)
+      : false;
+    const { accessToken, refreshToken, refreshTtlMs } =
+      await this.issueTokenPair(
+        user[0],
+        tenantId,
+        membership.id,
+        membership.role as UserRole,
+        deviceId,
+        undefined,
+        undefined,
+        undefined,
+        { trusted: switchTrusted },
+      );
 
     await this.writeAuthEvent({
       userId,
@@ -836,7 +873,7 @@ export class AuthService {
       metadata: { tenantId, ...(activated ? { invite_accepted: true } : {}) },
     });
 
-    return { accessToken, refreshToken, expiresIn: 900 };
+    return { accessToken, refreshToken, refreshTtlMs, expiresIn: 900 };
   }
 
   /**
@@ -1103,7 +1140,7 @@ export class AuthService {
     return { ok: true };
   }
 
-  async getMe(userId: string, tenantId?: string) {
+  async getMe(userId: string, tenantId?: string, deviceId?: string) {
     const user = await this.db
       .select()
       .from(users)
@@ -1152,6 +1189,12 @@ export class AuthService {
     const requiresReacceptance =
       await this.consentService.requiresReacceptance(userId);
 
+    // Drives the post-login "stay signed in for 180 days?" prompt — false
+    // until the user consents on this device (or after revocation/expiry).
+    const deviceTrusted = deviceId
+      ? await this.isTrustedDevice(userId, deviceId)
+      : false;
+
     return {
       id: user[0].id,
       email: user[0].email,
@@ -1166,6 +1209,7 @@ export class AuthService {
       locale: user[0].locale,
       timezone: user[0].timezone,
       requiresReacceptance,
+      deviceTrusted,
       currentMembership: currentMembership
         ? {
             id: currentMembership.id,
@@ -1233,36 +1277,71 @@ export class AuthService {
     }
   }
 
+  private cookieBase(): {
+    httpOnly: true;
+    secure: boolean;
+    sameSite: 'strict' | 'lax';
+  } {
+    const isProd =
+      this.configService.get<string>('NODE_ENV') === 'production';
+    return {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'strict' : 'lax',
+    };
+  }
+
   setAuthCookies(
     res: Response,
     accessToken: string,
     refreshToken: string,
+    // Cookie lifetime must match the refresh token actually minted (7d
+    // default, 180d trusted, 15m impersonation) — callers pass the
+    // refreshTtlMs from issueTokenPair's result.
+    refreshTtlMs: number = 7 * 24 * 60 * 60 * 1000,
   ): void {
-    const isProd =
-      this.configService.get<string>('NODE_ENV') === 'production';
     const accessExpiry = 15 * 60 * 1000; // 15 minutes
-    const refreshExpiry = 7 * 24 * 60 * 60 * 1000; // 7 days
 
     res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: isProd ? 'strict' : 'lax',
+      ...this.cookieBase(),
       maxAge: accessExpiry,
       path: '/',
     });
 
+    this.setRefreshCookie(res, refreshToken, refreshTtlMs);
+  }
+
+  setRefreshCookie(res: Response, refreshToken: string, ttlMs: number): void {
     res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: isProd,
-      sameSite: isProd ? 'strict' : 'lax',
-      maxAge: refreshExpiry,
+      ...this.cookieBase(),
+      maxAge: ttlMs,
       path: '/api/v1/auth',
     });
+  }
+
+  /**
+   * Stable per-browser device id, minted on first contact and carried as a
+   * long-lived httpOnly cookie. This is what trusted-device sessions key on.
+   */
+  ensureDeviceId(req: Request, res: Response, fallback?: string): string {
+    const existing =
+      (req.cookies?.['fs_device_id'] as string | undefined) ??
+      (req.headers['x-device-id'] as string | undefined) ??
+      fallback;
+    const deviceId = existing || crypto.randomUUID();
+    // (Re)set on every auth touch so the ~400-day window slides.
+    res.cookie('fs_device_id', deviceId, {
+      ...this.cookieBase(),
+      maxAge: 400 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+    return deviceId;
   }
 
   clearAuthCookies(res: Response): void {
     res.clearCookie('access_token', { path: '/' });
     res.clearCookie('refresh_token', { path: '/api/v1/auth' });
+    // fs_device_id survives logout on purpose — the device stays trusted.
   }
 
   /**
@@ -1347,14 +1426,15 @@ export class AuthService {
       )
       .limit(1);
 
-    const { accessToken, refreshToken } = await this.issueTokenPair(
-      user,
-      activeMembership?.tenantId ?? null,
-      activeMembership?.id ?? null,
-      (activeMembership?.role as UserRole | undefined) ?? null,
-    );
+    const { accessToken, refreshToken, refreshTtlMs } =
+      await this.issueTokenPair(
+        user,
+        activeMembership?.tenantId ?? null,
+        activeMembership?.id ?? null,
+        (activeMembership?.role as UserRole | undefined) ?? null,
+      );
 
-    this.setAuthCookies(res, accessToken, refreshToken);
+    this.setAuthCookies(res, accessToken, refreshToken, refreshTtlMs);
 
     return {
       tenantId: activeMembership?.tenantId ?? null,
@@ -1371,7 +1451,8 @@ export class AuthService {
     ip?: string,
     userAgent?: string,
     impersonatorUserId?: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+    opts: { trusted?: boolean } = {},
+  ): Promise<{ accessToken: string; refreshToken: string; refreshTtlMs: number }> {
     // iss/aud are set globally by JwtModule.registerAsync in app.module.ts —
     // including them in the payload conflicts with sign() options.
     const payload: Omit<JwtPayload, 'iat' | 'exp' | 'iss' | 'aud'> = {
@@ -1389,11 +1470,17 @@ export class AuthService {
 
     const rawRefreshToken = generateSecureToken(48);
     const refreshTokenHash = sha256(rawRefreshToken);
-    // Impersonation refreshes are short-lived (15 min cap matches the
-    // access token); normal sessions get the standard 7-day window.
-    const refreshExpiry = impersonatorUserId
-      ? new Date(Date.now() + 15 * 60 * 1000)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Refresh lifetime: impersonation is short-lived (15 min cap matches
+    // the access token); a session on a TRUSTED device gets the long
+    // Zoho-style window (default 180 days); everything else the standard
+    // 7-day window.
+    const trusted = !impersonatorUserId && opts.trusted === true;
+    const refreshTtlMs = impersonatorUserId
+      ? 15 * 60 * 1000
+      : trusted
+        ? this.trustedSessionDays() * 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000;
+    const refreshExpiry = new Date(Date.now() + refreshTtlMs);
 
     await this.db.insert(refreshTokens).values({
       user_id: user.id,
@@ -1404,10 +1491,18 @@ export class AuthService {
       user_agent: userAgent,
       expires_at: refreshExpiry,
       last_used_at: new Date(),
+      trusted,
       impersonator_user_id: impersonatorUserId ?? null,
     });
 
-    return { accessToken, refreshToken: rawRefreshToken };
+    return { accessToken, refreshToken: rawRefreshToken, refreshTtlMs };
+  }
+
+  /** Configured trusted-session length in days (Zoho-style long session). */
+  private trustedSessionDays(): number {
+    return Number(
+      this.configService.get<string>('TRUSTED_SESSION_EXPIRY_DAYS', '180'),
+    );
   }
 
   // ─── FAM TOTP enrolment + challenge (PRD §11.6) ───────────────────────────
@@ -1603,15 +1698,22 @@ export class AuthService {
         .where(eq(users.id, user.id));
     }
 
-    const { accessToken, refreshToken } = await this.issueTokenPair(
-      user,
-      payload.tenantId || null,
-      payload.membershipId || null,
-      (payload.role as UserRole) ?? null,
-      deviceId ?? payload.deviceId,
-      ip,
-      userAgent,
-    );
+    const totpDeviceId = deviceId ?? payload.deviceId;
+    const totpTrusted = totpDeviceId
+      ? await this.isTrustedDevice(user.id, totpDeviceId)
+      : false;
+    const { accessToken, refreshToken, refreshTtlMs } =
+      await this.issueTokenPair(
+        user,
+        payload.tenantId || null,
+        payload.membershipId || null,
+        (payload.role as UserRole) ?? null,
+        totpDeviceId,
+        ip,
+        userAgent,
+        undefined,
+        { trusted: totpTrusted },
+      );
 
     await this.writeAuthEvent({
       email: user.email,
@@ -1626,6 +1728,7 @@ export class AuthService {
       requiresTenantSelection: false,
       accessToken,
       refreshToken,
+      refreshTtlMs,
       expiresIn: 900,
       user: {
         id: user.id,
@@ -1642,9 +1745,12 @@ export class AuthService {
     ip?: string,
     userAgent?: string,
   ): Promise<void> {
-    const expiryDays = this.configService.get<number>(
-      'TRUSTED_DEVICE_EXPIRY_DAYS',
-      30,
+    // Device-trust window = trusted-session window (default 180 days).
+    const expiryDays = Number(
+      this.configService.get<string | number>(
+        'TRUSTED_DEVICE_EXPIRY_DAYS',
+        this.trustedSessionDays(),
+      ),
     );
     const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000);
 
@@ -1657,6 +1763,7 @@ export class AuthService {
         user_agent: userAgent,
         last_used_at: new Date(),
         expires_at: expiresAt,
+        device_name: this.deviceNameFromUa(userAgent),
       })
       .onConflictDoUpdate({
         target: [trustedDevices.user_id, trustedDevices.device_id],
@@ -1665,8 +1772,121 @@ export class AuthService {
           ip_address: ip,
           user_agent: userAgent,
           expires_at: expiresAt,
+          revoked_at: null,
+          device_name: this.deviceNameFromUa(userAgent),
         },
       });
+  }
+
+  /** "Chrome · macOS"-style label parsed from the user-agent, for device lists. */
+  private deviceNameFromUa(ua?: string): string | null {
+    if (!ua) return null;
+    const browser = /Edg\//.test(ua)
+      ? 'Edge'
+      : /OPR\//.test(ua)
+        ? 'Opera'
+        : /Chrome\//.test(ua)
+          ? 'Chrome'
+          : /Safari\//.test(ua) && /Version\//.test(ua)
+            ? 'Safari'
+            : /Firefox\//.test(ua)
+              ? 'Firefox'
+              : 'Browser';
+    const os = /Windows/.test(ua)
+      ? 'Windows'
+      : /Mac OS X|Macintosh/.test(ua)
+        ? 'macOS'
+        : /Android/.test(ua)
+          ? 'Android'
+          : /iPhone|iPad|iOS/.test(ua)
+            ? 'iOS'
+            : /Linux/.test(ua)
+              ? 'Linux'
+              : 'Unknown OS';
+    return `${browser} · ${os}`;
+  }
+
+  /** Live consent check: an unrevoked, unexpired trusted_devices row. */
+  async isTrustedDevice(userId: string, deviceId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: trustedDevices.id })
+      .from(trustedDevices)
+      .where(
+        and(
+          eq(trustedDevices.user_id, userId),
+          eq(trustedDevices.device_id, deviceId),
+          isNull(trustedDevices.revoked_at),
+          gt(trustedDevices.expires_at, new Date()),
+        ),
+      )
+      .limit(1);
+    return !!row;
+  }
+
+  /**
+   * Login-time touch: refresh last-seen metadata on an EXISTING device row
+   * without ever creating one — a trusted_devices row only comes into
+   * existence through the user's explicit "stay signed in" consent
+   * (trustDevice below), never as a side effect of logging in.
+   */
+  private async touchTrustedDevice(
+    userId: string,
+    deviceId: string,
+    ip?: string,
+    userAgent?: string,
+  ): Promise<void> {
+    await this.db
+      .update(trustedDevices)
+      .set({ last_used_at: new Date(), ip_address: ip, user_agent: userAgent })
+      .where(
+        and(
+          eq(trustedDevices.user_id, userId),
+          eq(trustedDevices.device_id, deviceId),
+        ),
+      );
+  }
+
+  /**
+   * The user said "stay signed in on this device for 180 days": record the
+   * device consent and upgrade the CURRENT session in place — the active
+   * refresh token is marked trusted and its expiry extended, so no re-login
+   * is needed and the caller just re-sets the refresh cookie with the long
+   * maxAge. Future logins on this device auto-issue trusted sessions.
+   */
+  async trustDevice(
+    userId: string,
+    deviceId: string,
+    rawRefreshToken: string | undefined,
+    ip?: string,
+    userAgent?: string,
+  ): Promise<{ trusted: true; refreshTtlMs: number; expiresAt: Date }> {
+    await this.upsertTrustedDevice(userId, deviceId, ip, userAgent);
+
+    const refreshTtlMs = this.trustedSessionDays() * 24 * 60 * 60 * 1000;
+    const expiresAt = new Date(Date.now() + refreshTtlMs);
+    if (rawRefreshToken) {
+      await this.db
+        .update(refreshTokens)
+        .set({ trusted: true, expires_at: expiresAt })
+        .where(
+          and(
+            eq(refreshTokens.token_hash, sha256(rawRefreshToken)),
+            eq(refreshTokens.user_id, userId),
+            isNull(refreshTokens.revoked_at),
+          ),
+        );
+    }
+
+    await this.writeAuthEvent({
+      userId,
+      eventType: 'login_success',
+      ip,
+      userAgent,
+      deviceId,
+      metadata: { trustedDevice: true, days: this.trustedSessionDays() },
+    });
+
+    return { trusted: true, refreshTtlMs, expiresAt };
   }
 
   private async writeAuthEvent(params: {

@@ -57,8 +57,7 @@ export class TotpController {
   ) {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const deviceId =
-      (req.headers['x-device-id'] as string | undefined) ?? dto.deviceId;
+    const deviceId = this.authService.ensureDeviceId(req, res, dto.deviceId);
 
     const result = await this.authService.completeTotpChallenge(
       dto.challengeToken,
@@ -69,7 +68,12 @@ export class TotpController {
     );
 
     if (result.accessToken && result.refreshToken) {
-      this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+      this.authService.setAuthCookies(
+        res,
+        result.accessToken,
+        result.refreshToken,
+        (result as { refreshTtlMs?: number }).refreshTtlMs,
+      );
     }
     return result;
   }

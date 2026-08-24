@@ -61,6 +61,9 @@ export const configValidationSchema = Joi.object({
   // AES-256-GCM key for employee PAN/bank-account columns at rest
   // (openssl rand -hex 32). Blank = plaintext (dev only — set in prod).
   EMPLOYEE_DATA_ENC_KEY: Joi.string().allow('').optional(),
+  // Trusted-device ("stay signed in") session length in days. Applied to
+  // refresh tokens minted on a device the user explicitly trusted.
+  TRUSTED_SESSION_EXPIRY_DAYS: Joi.number().min(1).max(365).default(180),
   TOTP_SECRET: Joi.string().allow('').optional(),
 
   // Chromium binary for invoice PDFs. Unset in dev (puppeteer's own cached
@@ -80,7 +83,7 @@ export const configValidationSchema = Joi.object({
   MAGIC_LINK_EXPIRY_MINUTES: Joi.number().default(30),
   MAX_OTP_ATTEMPTS: Joi.number().default(5),
   MAX_OTP_PER_HOUR: Joi.number().default(5),
-  TRUSTED_DEVICE_EXPIRY_DAYS: Joi.number().default(30),
+  TRUSTED_DEVICE_EXPIRY_DAYS: Joi.number().default(180),
 
   // ─── Platform billing (PRD v4 §8B — Specflicks' OWN Razorpay merchant) ─────
   // Distinct from the partner-OAuth keys below: these charge tenants for

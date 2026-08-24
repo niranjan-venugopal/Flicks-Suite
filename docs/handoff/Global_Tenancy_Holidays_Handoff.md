@@ -168,3 +168,58 @@ pooler hostname drift vs Railway env vars) → Redeploy latest on Railway →
 apply migration 0049 in the SQL editor → verify /healthz + /readyz 200,
 delete-preview no longer 404, confirmation toast works, silent refresh keeps
 sessions alive past 15 minutes.
+
+---
+
+# Round 4 addendum (2026-08-25): year picker, session restore, 180-day trusted devices
+
+## Calendar year selection (all pickers)
+- `MonthYearPanel` (`apps/web/components/ui/date-picker.tsx`) — the shared
+  popover behind BOTH the day-picker's month view and the month toolbars
+  (`month-nav.tsx`) — now has a year view: the year header is a button that
+  opens a 12-year grid (same blue-pill design, prev/next pages by 12,
+  "2016–2027" range label); picking a year returns to the month grid. Day →
+  month → year, every level clickable. One native `<input type="month">`
+  remains on crm/reports (functional, untouched).
+
+## Session restore on tab reopen
+- Cold reopen already worked after the silent-refresh fix (open app →
+  /dashboard → /me 401 → silent refresh → restored). The missing piece:
+  `/login` had no already-authed redirect — a user reopening a bookmarked
+  login page stayed there despite a live session. The login page now fires
+  the `me` query on mount and `router.replace`s to /dashboard (platform
+  admins → /fam/overview), mirroring the app-layout guard.
+
+## 180-day trusted devices ("stay signed in" — previously deferred, now live)
+- **Migration `0050_trusted_sessions.sql`** (⚠ apply in the Supabase SQL
+  editor): adds `refresh_tokens.trusted boolean NOT NULL DEFAULT false`.
+  Service-role-only table — no policy changes.
+- **Device identity**: httpOnly `fs_device_id` cookie (uuid, ~400d, path /),
+  minted by the auth controllers (verify-otp / magic-link / TOTP verify /
+  refresh / select-tenant) when absent; `x-device-id` header still honoured.
+  Logout keeps the cookie (device identity ≠ session).
+- **Consent-only device rows**: `trusted_devices` rows are created ONLY by
+  `POST /auth/trust-device` (login-time upsert became touch-only). The
+  endpoint upserts the device row (180d expiry, `device_name` like
+  "Chrome · macOS"), marks the CURRENT refresh token trusted + extends it
+  to 180d, and re-sets the refresh cookie — session upgrades in place.
+- **TTL decision** (`issueTokenPair`): 15m impersonation · 180d trusted
+  (`TRUSTED_SESSION_EXPIRY_DAYS`, default 180, max 365; optional block in
+  .env.production.example) · 7d default. Cookie maxAge follows the token
+  (`refreshTtlMs` threaded through every setAuthCookies call site).
+- **Trust survives logout/login** (a login carrying a trusted device id
+  auto-issues 180d) **and rotation** (refresh re-validates the device row
+  first; a revoked/expired row silently downgrades the chain to 7d — the
+  future "sign out of this device" hook).
+- **Prompt UX** (founder-chosen): `/auth/me` carries `deviceTrusted`;
+  `TrustDevicePrompt` (mounted in the app shell) asks once per browser
+  session after login — accept → /auth/trust-device + toast; "Not now" →
+  sessionStorage dismissal, re-asks after the next sign-in. Skipped for
+  impersonation and FAM sessions.
+- **Tests**: `founder-round4.spec.ts` (6 specs) — untrusted login stays 7d,
+  consent upgrades in place to ~180d + device row with name, rotation
+  preserves 180d, trusted-device login re-issues 180d, other-device login
+  stays 7d, revoked device downgrades rotation to 7d. Gate green: api
+  typecheck + `nest build`, jest 499/500 (the one failure = the documented
+  attendance-selfheal IST-midnight flake, run at 00:23 IST), boundaries,
+  web typecheck + build, diagnose-rls 0 leaks.

@@ -91,8 +91,9 @@ export class AuthController {
   ) {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const deviceId =
-      (req.headers['x-device-id'] as string | undefined) ?? dto.deviceId;
+    // Stable per-browser device id (httpOnly cookie, minted on first
+    // contact) — the key for trusted-device 180-day sessions.
+    const deviceId = this.authService.ensureDeviceId(req, res, dto.deviceId);
 
     const result = await this.authService.verifyOtp(
       dto.email,
@@ -109,7 +110,12 @@ export class AuthController {
       result.accessToken &&
       result.refreshToken
     ) {
-      this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+      this.authService.setAuthCookies(
+        res,
+        result.accessToken,
+        result.refreshToken,
+        (result as { refreshTtlMs?: number }).refreshTtlMs,
+      );
     }
 
     return result;
@@ -133,7 +139,7 @@ export class AuthController {
   ) {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const deviceId = req.headers['x-device-id'] as string | undefined;
+    const deviceId = this.authService.ensureDeviceId(req, res);
 
     const result = await this.authService.verifyMagicLink(
       token,
@@ -147,7 +153,12 @@ export class AuthController {
       result.accessToken &&
       result.refreshToken
     ) {
-      this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+      this.authService.setAuthCookies(
+        res,
+        result.accessToken,
+        result.refreshToken,
+        (result as { refreshTtlMs?: number }).refreshTtlMs,
+      );
     }
 
     return result;
@@ -169,8 +180,7 @@ export class AuthController {
   ) {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const deviceId =
-      (req.headers['x-device-id'] as string | undefined) ?? dto.deviceId;
+    const deviceId = this.authService.ensureDeviceId(req, res, dto.deviceId);
 
     // Support refresh token from cookie or body
     const refreshToken = req.cookies?.['refresh_token'] ?? dto.refreshToken;
@@ -185,9 +195,53 @@ export class AuthController {
       userAgent,
     );
 
-    this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+    // Cookie lifetime must track the rotated token's actual TTL (7d, or
+    // 180d for trusted-device chains).
+    this.authService.setAuthCookies(
+      res,
+      result.accessToken,
+      result.refreshToken,
+      result.refreshTtlMs,
+    );
 
     return result;
+  }
+
+  @Post('trust-device')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Stay signed in on this device for ~180 days',
+    description:
+      'Records the user\'s explicit trust for the current device and upgrades the ACTIVE session in place: the refresh token is marked trusted and its expiry extended, so future silent refreshes keep the long window. Later logins on this device auto-issue trusted sessions.',
+  })
+  async trustDevice(
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const ip = req.ip ?? req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    const deviceId = this.authService.ensureDeviceId(req, res);
+    const rawRefreshToken = req.cookies?.['refresh_token'] as
+      | string
+      | undefined;
+
+    const result = await this.authService.trustDevice(
+      user.sub,
+      deviceId,
+      rawRefreshToken,
+      ip,
+      userAgent,
+    );
+
+    // Same refresh token, longer life — re-set the cookie with the 180-day
+    // maxAge so the browser keeps it as long as the DB row lives.
+    if (rawRefreshToken) {
+      this.authService.setRefreshCookie(res, rawRefreshToken, result.refreshTtlMs);
+    }
+
+    return { trusted: true, expiresAt: result.expiresAt };
   }
 
   @Post('logout')
@@ -227,8 +281,11 @@ export class AuthController {
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get current user', description: 'Returns current user info and memberships.' })
   @ApiResponse({ status: 200, description: 'Current user data' })
-  async getMe(@CurrentUser() user: JwtPayload) {
-    const raw = await this.authService.getMe(user.sub, user.tenantId);
+  async getMe(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    const deviceId =
+      (req.cookies?.['fs_device_id'] as string | undefined) ??
+      (req.headers['x-device-id'] as string | undefined);
+    const raw = await this.authService.getMe(user.sub, user.tenantId, deviceId);
     // §4 media pipeline — serialization-level swap: signed URL from *_key,
     // legacy *_url fallback; the raw keys never reach the client.
     const { avatarKey, ...rest } = raw as typeof raw & { avatarKey?: string | null };
@@ -315,10 +372,17 @@ export class AuthController {
   async selectTenant(
     @Body() dto: SelectTenantDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.selectTenant(user.sub, dto.tenantId);
-    this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+    const deviceId = this.authService.ensureDeviceId(req, res);
+    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId);
+    this.authService.setAuthCookies(
+      res,
+      result.accessToken,
+      result.refreshToken,
+      result.refreshTtlMs,
+    );
     return result;
   }
 
@@ -337,10 +401,17 @@ export class AuthController {
   async switchCompany(
     @Body() dto: SelectTenantDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.selectTenant(user.sub, dto.tenantId);
-    this.authService.setAuthCookies(res, result.accessToken, result.refreshToken);
+    const deviceId = this.authService.ensureDeviceId(req, res);
+    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId);
+    this.authService.setAuthCookies(
+      res,
+      result.accessToken,
+      result.refreshToken,
+      result.refreshTtlMs,
+    );
     return result;
   }
 

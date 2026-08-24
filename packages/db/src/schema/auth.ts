@@ -6,7 +6,9 @@ import {
   timestamp,
   char,
   jsonb,
+  boolean,
   index,
+  uniqueIndex,
   pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
@@ -85,6 +87,10 @@ export const refreshTokens = pgTable(
     impersonator_user_id: uuid('impersonator_user_id').references(() => users.id, {
       onDelete: 'cascade',
     }),
+    // Trusted-device session: minted with (or upgraded to) the long
+    // ~180-day expiry after explicit user consent; rotation reads this to
+    // preserve the window (migration 0050).
+    trusted: boolean('trusted').notNull().default(false),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -120,11 +126,9 @@ export const trustedDevices = pgTable(
       .defaultNow(),
   },
   (t) => [
-    {
-      name: 'trusted_devices_user_device_unique',
-      columns: [t.user_id, t.device_id],
-      unique: true,
-    },
+    // Real builder (was a plain object literal drizzle-kit couldn't see);
+    // the SQL index has existed since 0001.
+    uniqueIndex('trusted_devices_user_device_unique').on(t.user_id, t.device_id),
     index('trusted_devices_user_id_idx').on(t.user_id),
     index('trusted_devices_device_id_idx').on(t.device_id),
   ],

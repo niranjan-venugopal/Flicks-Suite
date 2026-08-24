@@ -48,14 +48,66 @@ function RoundNav({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => void 
  * Month + year chooser (same design language): round year nav, 3×4 month
  * grid, the selected month as the glowing blue pill. Used inside
  * CalendarPanel (click the month label) and by MonthNav toolbars.
+ * Clicking the YEAR label opens a 12-year grid (same pill styling) so users
+ * can jump years directly instead of tapping the arrow once per year.
  */
 export function MonthYearPanel({ cursor, onPick }: { cursor: Date; onPick: (d: Date) => void }) {
   const [year, setYear] = useState(cursor.getFullYear())
+  const [view, setView] = useState<'months' | 'years'>('months')
+  // 12-year page aligned so the current selection sits inside it.
+  const [yearBase, setYearBase] = useState(() => Math.floor(cursor.getFullYear() / 12) * 12)
+
+  if (view === 'years') {
+    const years = Array.from({ length: 12 }, (_, i) => yearBase + i)
+    return (
+      <div style={{ width: 316, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+          <RoundNav dir="prev" onClick={() => setYearBase((b) => b - 12)} />
+          <span style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800 }}>
+            {yearBase}–{yearBase + 11}
+          </span>
+          <RoundNav dir="next" onClick={() => setYearBase((b) => b + 12)} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+          {years.map((y) => {
+            const isSel = y === year
+            return (
+              <button
+                key={y}
+                type="button"
+                onClick={() => { setYear(y); setView('months') }}
+                style={{
+                  height: 40, border: 'none', cursor: 'pointer', borderRadius: 999,
+                  background: isSel ? 'var(--blue)' : 'transparent',
+                  color: isSel ? '#fff' : 'var(--text)',
+                  fontSize: 12.5, fontWeight: isSel ? 800 : 600,
+                  boxShadow: isSel ? '0 0 14px rgba(62,123,250,.35)' : 'none',
+                }}
+              >
+                {y}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ width: 316, padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
         <RoundNav dir="prev" onClick={() => setYear((y) => y - 1)} />
-        <span style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800 }}>{year}</span>
+        <button
+          type="button"
+          onClick={() => { setYearBase(Math.floor(year / 12) * 12); setView('years') }}
+          title="Choose year"
+          style={{
+            flex: 1, textAlign: 'center', fontSize: 15, fontWeight: 800, cursor: 'pointer',
+            background: 'transparent', border: 'none', color: 'var(--text)', fontFamily: 'inherit',
+          }}
+        >
+          {year}
+        </button>
         <RoundNav dir="next" onClick={() => setYear((y) => y + 1)} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
