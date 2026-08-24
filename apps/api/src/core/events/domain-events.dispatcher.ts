@@ -26,6 +26,12 @@ const MAX_ATTEMPTS = 10;
 export class DomainEventsDispatcher {
   private readonly logger = new Logger(DomainEventsDispatcher.name);
   private draining = false;
+  // Backoff state: with the DB unreachable, a 2s cadence produced a
+  // continuous error stream that helped trip Railway's 500 logs/sec cap
+  // (2026-08-24 incident). Consecutive failures back the cron off
+  // exponentially (4s → 8s → … → 60s cap); any success resets it.
+  private consecutiveFailures = 0;
+  private nextAttemptAt = 0;
 
   constructor(
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
@@ -36,6 +42,7 @@ export class DomainEventsDispatcher {
   async tick(): Promise<void> {
     if (!runsWorkloads()) return; // API-only replica with a dedicated worker declared
     if (this.draining) return; // no overlapping drains
+    if (Date.now() < this.nextAttemptAt) return; // backing off after failures
     this.draining = true;
     try {
       for (;;) {
@@ -44,9 +51,17 @@ export class DomainEventsDispatcher {
         await this.dispatch(claimed);
         if (claimed.length < BATCH) break;
       }
+      this.consecutiveFailures = 0;
+      this.nextAttemptAt = 0;
     } catch (err) {
+      this.consecutiveFailures += 1;
+      const delayMs = Math.min(
+        60_000,
+        2_000 * 2 ** Math.min(this.consecutiveFailures, 5),
+      );
+      this.nextAttemptAt = Date.now() + delayMs;
       this.logger.error(
-        `outbox drain failed: ${err instanceof Error ? err.message : err}`,
+        `outbox drain failed (attempt ${this.consecutiveFailures}, retrying in ${Math.round(delayMs / 1000)}s): ${err instanceof Error ? err.message : err}`,
       );
     } finally {
       this.draining = false;
