@@ -3,9 +3,14 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import { useAdminOverview, type AdminOverview } from '@/lib/api/queries/use-dashboard'
 import { useReviewLeave } from '@/lib/api/queries/use-leave'
 import { useReviewRegularization } from '@/lib/api/queries/use-attendance'
+import {
+  useApproveOnboarding,
+  useRejectOnboarding,
+} from '@/lib/api/queries/use-employees'
 import { Btn, Icon, Pill, type PillTone } from '@/components/proto'
 import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { usePresence } from '@/lib/api/queries/use-presence'
@@ -17,10 +22,10 @@ import { useToast } from '@/components/ui/use-toast'
 // box, approve/reject. Extracted unchanged from the old /inbox page.
 // ─────────────────────────────────────────────────────────
 
-type FilterKey = 'all' | 'leave' | 'regularization'
+type FilterKey = 'all' | 'leave' | 'regularization' | 'onboarding'
 
 interface InboxItem {
-  kind: 'leave' | 'regularization'
+  kind: 'leave' | 'regularization' | 'onboarding'
   id: string
   who: string
   userId: string | null
@@ -31,6 +36,7 @@ interface InboxItem {
   raw:
     | AdminOverview['pending']['leaves'][number]
     | AdminOverview['pending']['regularizations'][number]
+    | AdminOverview['pending']['onboarding'][number]
 }
 
 function relativeTime(iso: string | undefined | null): string {
@@ -81,6 +87,23 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       raw: r,
     })
   }
+  // Onboarding reviews (admin+ only; the API returns an empty list for
+  // other roles and never includes the viewer's own row).
+  for (const ob of o.pending.onboarding ?? []) {
+    items.push({
+      kind: 'onboarding',
+      id: ob.employeeId,
+      who: ob.employeeName || 'New joiner',
+      userId: ob.userId,
+      what:
+        [ob.designationTitle, ob.employeeCode].filter(Boolean).join(' · ') ||
+        'Onboarding review',
+      when: relativeTime(ob.submittedAt),
+      reason: null,
+      tone: 'yellow',
+      raw: ob,
+    })
+  }
   return items
 }
 
@@ -94,6 +117,8 @@ export function ApprovalsTab() {
   const { toast } = useToast()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
+  const approveOnb = useApproveOnboarding()
+  const rejectOnb = useRejectOnboarding()
 
   const items = useMemo(() => buildItems(overview.data), [overview.data])
   // D9 — seed the presence batch once so inbox rows show the status dot.
@@ -107,6 +132,7 @@ export function ApprovalsTab() {
     all: items.length,
     leave: items.filter((i) => i.kind === 'leave').length,
     regularization: items.filter((i) => i.kind === 'regularization').length,
+    onboarding: items.filter((i) => i.kind === 'onboarding').length,
   }
 
   const selected = filtered.find((i) => i.id === selectedId) ?? filtered[0] ?? null
@@ -122,8 +148,13 @@ export function ApprovalsTab() {
     try {
       if (selected.kind === 'leave') {
         await reviewLeave.mutateAsync({ id: selected.id, action, comment: comment || undefined })
-      } else {
+      } else if (selected.kind === 'regularization') {
         await reviewReg.mutateAsync({ id: selected.id, action, comment: comment || undefined })
+      } else if (action === 'approve') {
+        await approveOnb.mutateAsync(selected.id)
+      } else {
+        // "Send back" — the comment doubles as the reason the joiner sees.
+        await rejectOnb.mutateAsync({ id: selected.id, reason: comment || undefined })
       }
       setComment('')
       setSelectedId(null)
@@ -132,7 +163,14 @@ export function ApprovalsTab() {
       // Decisions notify the requester, so this is feedback rather than a
       // rollback handle — the toast states plainly what the other side saw.
       toast({
-        title: action === 'approve' ? `Approved — ${who} notified` : `Rejected — ${who} notified`,
+        title:
+          selected.kind === 'onboarding'
+            ? action === 'approve'
+              ? `Approved — ${who}'s profile is now active`
+              : `Sent back to ${who} for changes`
+            : action === 'approve'
+              ? `Approved — ${who} notified`
+              : `Rejected — ${who} notified`,
       })
     } catch {
       setExiting(null)
@@ -148,6 +186,7 @@ export function ApprovalsTab() {
           { k: 'all' as const, l: 'All', c: counts.all },
           { k: 'leave' as const, l: 'Leave', c: counts.leave },
           { k: 'regularization' as const, l: 'Regularization', c: counts.regularization },
+          { k: 'onboarding' as const, l: 'Onboarding', c: counts.onboarding },
         ].map((t) => (
           <button
             key={t.k}
@@ -255,7 +294,13 @@ export function ApprovalsTab() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{a.who}</span>
-                      <Pill tone={a.tone}>{a.kind === 'leave' ? 'Leave' : 'Regularize'}</Pill>
+                      <Pill tone={a.tone}>
+                        {a.kind === 'leave'
+                          ? 'Leave'
+                          : a.kind === 'regularization'
+                            ? 'Regularize'
+                            : 'Onboarding'}
+                      </Pill>
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 2 }}>
                       {a.what}
@@ -277,7 +322,12 @@ export function ApprovalsTab() {
               onCommentChange={setComment}
               onApprove={() => handleAction('approve')}
               onReject={() => handleAction('reject')}
-              isPending={reviewLeave.isPending || reviewReg.isPending}
+              isPending={
+                reviewLeave.isPending ||
+                reviewReg.isPending ||
+                approveOnb.isPending ||
+                rejectOnb.isPending
+              }
             />
           ) : (
             <div
@@ -371,6 +421,46 @@ function ApprovalDetail({
           )
         })()}
 
+        {item.kind === 'onboarding' && (() => {
+          const ob = item.raw as AdminOverview['pending']['onboarding'][number]
+          return (
+            <>
+              <div
+                style={{
+                  padding: '14px',
+                  background: 'rgba(255,199,89,.06)',
+                  border: '1px solid rgba(255,199,89,.25)',
+                  borderRadius: 10,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--text-2)',
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ color: '#fff' }}>{item.who}</strong> finished
+                self-onboarding and is waiting for approval. Approving activates
+                their profile; &ldquo;Send back&rdquo; returns it for changes
+                (your comment becomes the reason they see).
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <Field label="Designation" value={ob.designationTitle ?? '—'} />
+                <Field label="Employee code" value={ob.employeeCode ?? '—'} />
+              </div>
+              <Link
+                href={`/employees/${ob.employeeId}`}
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color: 'var(--blue)',
+                  textDecoration: 'none',
+                }}
+              >
+                Review full profile →
+              </Link>
+            </>
+          )
+        })()}
+
         {item.kind === 'regularization' && (() => {
           const r = item.raw as AdminOverview['pending']['regularizations'][number]
           return (
@@ -440,7 +530,7 @@ function ApprovalDetail({
         }}
       >
         <Btn kind="danger" icon={<Icon.x size={14} />} onClick={onReject} disabled={isPending}>
-          Reject
+          {item.kind === 'onboarding' ? 'Send back' : 'Reject'}
         </Btn>
         <div style={{ flex: 1 }} />
         <Btn kind="primary" icon={<Icon.check size={14} />} onClick={onApprove} disabled={isPending}>

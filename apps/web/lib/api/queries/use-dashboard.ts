@@ -27,6 +27,16 @@ export interface AdminOverview {
   pending: {
     leaveCount: number
     regularizationCount: number
+    // Admin+-only (empty for lower roles); never includes the caller's own row
+    onboardingCount: number
+    onboarding: Array<{
+      employeeId: string
+      userId: string | null
+      employeeName: string
+      employeeCode: string | null
+      designationTitle: string | null
+      submittedAt: string | null
+    }>
     leaves: Array<{
       id: string
       employeeId: string

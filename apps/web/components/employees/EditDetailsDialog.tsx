@@ -22,6 +22,8 @@ import {
   MARITAL_STATUSES,
   GENDERS,
   BANK_ACCOUNT_TYPES,
+  BANKS,
+  OTHER_BANK,
 } from '@/lib/employee-details'
 
 const TABS = ['Personal', 'Identity', 'Bank & statutory'] as const
@@ -66,8 +68,19 @@ export function EditDetailsDialog({
   const [personalEmail, setPersonalEmail] = useState(e.personalEmail ?? '')
   const [nationality, setNationality] = useState(e.nationality ?? '')
 
-  // Bank & statutory (step 3)
-  const [bankName, setBankName] = useState(e.bankName ?? '')
+  // Bank & statutory (step 3). The select maps onto the shared BANKS list;
+  // a stored value that's not on the list (legacy free-typed names) shows as
+  // "Other" with the text pre-filled, so an untouched save round-trips the
+  // identical string — never blanks it.
+  const savedBank = e.bankName ?? ''
+  const savedBankListed =
+    savedBank !== '' &&
+    savedBank !== OTHER_BANK &&
+    (BANKS as readonly string[]).includes(savedBank)
+  const [bankSelect, setBankSelect] = useState(
+    savedBank === '' ? '' : savedBankListed ? savedBank : OTHER_BANK,
+  )
+  const [bankName, setBankName] = useState(savedBank)
   const [bankBranch, setBankBranch] = useState(e.bankBranch ?? '')
   const [bankAccountNumber, setBankAccountNumber] = useState('')
   const [bankAccountHolder, setBankAccountHolder] = useState(e.bankAccountHolder ?? '')
@@ -245,9 +258,27 @@ export function EditDetailsDialog({
           {tab === 'Bank & statutory' && (
             <>
               <div style={{ display: 'flex', gap: 12 }}>
-                {field('Bank name', input(bankName, setBankName, { maxLength: 80 }))}
+                {field(
+                  'Bank name',
+                  select(bankSelect, (v) => {
+                    setBankSelect(v)
+                    if (v === OTHER_BANK) {
+                      // Keep whatever's typed (legacy value stays pre-filled).
+                    } else {
+                      setBankName(v)
+                    }
+                  }, BANKS),
+                )}
                 {field('Branch', input(bankBranch, setBankBranch, { maxLength: 80 }))}
               </div>
+              {bankSelect === OTHER_BANK &&
+                field(
+                  'Bank name (type it in)',
+                  input(bankName, setBankName, {
+                    maxLength: 80,
+                    placeholder: "Enter the bank's name",
+                  }),
+                )}
               <div style={{ display: 'flex', gap: 12 }}>
                 {field(
                   'Account number',

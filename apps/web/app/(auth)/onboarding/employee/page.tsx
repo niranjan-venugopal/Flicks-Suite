@@ -13,7 +13,7 @@ import {
   useSubmitOnboardingStep,
   type SubmitOnboardingStepPayload,
 } from '@/lib/api/queries/use-employee-onboarding'
-import { PAN_RE, IFSC_RE } from '@/lib/employee-details'
+import { PAN_RE, IFSC_RE, BANKS, OTHER_BANK } from '@/lib/employee-details'
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
@@ -789,31 +789,46 @@ function BankStep({
   form: FormState
   set: <K extends keyof FormState>(k: K, v: FormState[K]) => void
 }) {
+  // "Other" opens a free-text field; the typed name is what's stored in the
+  // single bankName string (nothing new is POSTed — the API takes free text).
+  const [otherBank, setOtherBank] = useState(false)
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-      <div style={{ gridColumn: 'span 2' }}>
+      <div style={{ gridColumn: otherBank ? 'span 1' : 'span 2' }}>
         <label className="label">Bank name</label>
         <select
           className="input"
-          value={form.bankName}
-          onChange={(e) => set('bankName', e.target.value)}
+          value={otherBank ? OTHER_BANK : form.bankName}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === OTHER_BANK) {
+              setOtherBank(true)
+              set('bankName', '')
+            } else {
+              setOtherBank(false)
+              set('bankName', v)
+            }
+          }}
         >
           <option value="">Select…</option>
-          {[
-            'HDFC Bank',
-            'ICICI Bank',
-            'Axis Bank',
-            'State Bank of India',
-            'Kotak Mahindra Bank',
-            'IDFC First Bank',
-            'Yes Bank',
-            'IndusInd Bank',
-            'Other',
-          ].map((b) => (
+          {BANKS.map((b) => (
             <option key={b} value={b}>{b}</option>
           ))}
         </select>
       </div>
+      {otherBank && (
+        <div>
+          <label className="label">Bank name (type it in)</label>
+          <input
+            className="input"
+            value={form.bankName}
+            onChange={(e) => set('bankName', e.target.value)}
+            placeholder="Enter your bank's name"
+            maxLength={80}
+            autoFocus
+          />
+        </div>
+      )}
       <div>
         <label className="label">Account number</label>
         <input

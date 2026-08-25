@@ -337,6 +337,21 @@ export function useOnboardingQueue() {
   })
 }
 
+/**
+ * An onboarding decision touches more than the employee list: the Inbox badge
+ * + approvals bucket (dashboard), the reviewer's bell (notifications), and —
+ * when the approved person has this tab open — their own session state
+ * (auth/me + onboarding-status). The socket 'employees_changed' broadcast
+ * covers other users' tabs; this is the approver's own-tab backstop.
+ */
+function invalidateOnboardingScopes(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['employees'] })
+  queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  queryClient.invalidateQueries({ queryKey: ['notifications'] })
+  queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+  queryClient.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
+}
+
 export function useApproveOnboarding() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -345,9 +360,7 @@ export function useApproveOnboarding() {
         `/api/v1/employees/${id}/approve-onboarding`,
         {},
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['employees'] })
-    },
+    onSuccess: () => invalidateOnboardingScopes(queryClient),
   })
 }
 
@@ -359,9 +372,7 @@ export function useRejectOnboarding() {
         `/api/v1/employees/${id}/reject-onboarding`,
         { reason },
       ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['employees'] })
-    },
+    onSuccess: () => invalidateOnboardingScopes(queryClient),
   })
 }
 

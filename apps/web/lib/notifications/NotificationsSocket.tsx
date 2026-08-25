@@ -51,6 +51,17 @@ export function NotificationsSocket() {
       void qc.invalidateQueries({ queryKey: ['notifications'] })
     })
 
+    // Tenant-wide HRMS data push (onboarding submitted/approved/rejected):
+    // refresh the directory, org chart, Inbox approvals + dashboard badge, and
+    // — when this session IS the person who just got approved — their own /me
+    // and onboarding-status so the app unlocks without a reload.
+    socket.on('employees_changed', () => {
+      void qc.invalidateQueries({ queryKey: ['employees'] })
+      void qc.invalidateQueries({ queryKey: ['dashboard'] })
+      void qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+      void qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
+    })
+
     return () => {
       socket.disconnect()
       socketRef.current = null

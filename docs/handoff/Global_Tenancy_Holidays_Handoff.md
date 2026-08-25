@@ -223,3 +223,72 @@ sessions alive past 15 minutes.
   typecheck + `nest build`, jest 499/500 (the one failure = the documented
   attendance-selfheal IST-midnight flake, run at 00:23 IST), boundaries,
   web typecheck + build, diagnose-rls 0 leaks.
+
+---
+
+# Round 5 addendum (2026-08-25): bank list, approval integrity, Inbox, live refresh, select styling
+
+## Bank details (wizard + admin dialog)
+- Shared `BANKS` list (31 major Indian banks incl. Indian Overseas Bank,
+  alphabetized, "Other" last) now lives in `apps/web/lib/employee-details.ts`.
+  Picking **Other** opens a free-text field; the typed name collapses into
+  the single `bankName` string (API already free-text — no DTO change, and
+  nothing new is POSTed past the whitelist pipe).
+- The admin Edit-details dialog uses the same select+Other; a stored legacy
+  value not on the list maps to Other with the text pre-filled, so an
+  untouched save round-trips the identical string (never blanks it).
+
+## Onboarding approval integrity (the second-owner bug)
+- **Self-approval blocked at four layers**: `approveOnboarding` and
+  `rejectOnboarding` throw ForbiddenException when the target employee's
+  user is the caller; `getOnboardingQueue(tenantId, callerUserId)` and the
+  new dashboard bucket exclude the caller's own row via
+  `user_id IS DISTINCT FROM caller` (invited NULL-user rows stay visible);
+  and the submit fan-out never notifies the submitter.
+- **In-app notifications now fire**: final submit pings every active
+  owner/admin (except the submitter) with `onboarding.submitted` →
+  `/employees/onboarding`; approve pings the employee with
+  `onboarding.approved` (reject already did). Preference mapping fixed so
+  `onboarding.submitted` gates on the dedicated `onboarding_submitted`
+  preference.
+- **Inbox → Approvals** gains an *Onboarding* kind: dashboard admin overview
+  returns `pending.onboarding[]` + `onboardingCount` (rolled into
+  `stats.pendingApprovals`), server-gated to owner/admin via
+  `includeOnboarding` (the endpoint stays open to all roles for leave/reg).
+  ApprovalsTab renders the rows with Approve / **Send back** (comment =
+  reason) + a "Review full profile" link.
+
+## Real-time refresh
+- New broadcast: services emit `employees.directory.changed` {tenantId} on
+  submit/approve/reject → NotificationsGateway emits `employees_changed` to
+  the `tenant:<id>` room (clients already join it) → web NotificationsSocket
+  invalidates `['employees']` (directory, org chart, queue), `['dashboard']`
+  (Inbox badge + bucket), `['auth','me']` and
+  `['employee','onboarding-status']` — the just-approved user's own session
+  unlocks live. Approver's own tab also invalidates via the widened
+  approve/reject mutation hooks (single-instance socket caveat unchanged).
+
+## Native-select "silver layer" (13" MacBooks)
+- Root cause: `.input` never reset `appearance`, so WebKit painted the OS
+  aqua gradient under ~100 dropdowns; no `color-scheme` meant light native
+  popups. Fixes in `globals.css`: `color-scheme: dark` on `:root`;
+  `select.input` gets `appearance:none` + an inline-SVG chevron
+  (`Icon.chevD` path, white @50%); `.input:focus` switched to
+  `background-color` so focus can't erase the chevron. Scoped to
+  `select.input` so time/month/datetime-local indicators survive.
+- Invoicing's inline-styled selects get the same via `invoSelectReset` /
+  `invoSelect()` in `components/invoicing/invo.tsx`; all 11
+  `<option style={{color:'#000'}}>` hacks removed (would be black-on-dark
+  under color-scheme dark).
+
+## Tests / gate
+- `founder-round5.spec.ts` (8 specs): fan-out recipients + self-exclusion,
+  self-approve/reject Forbidden, queue + bucket scoping (incl. NULL-user
+  rows), approve/reject side-effects + broadcasts, preference mapping.
+- Gate green: api typecheck + `nest build`, jest 508/508, boundaries, web
+  typecheck + build, diagnose-rls 0 leaks. **No migration this round.**
+- Known accepted: dashboard overview HTTP cache (max-age=15) can delay the
+  Inbox badge up to 15s post-approve; socket fan-out is single-instance (no
+  Redis adapter) with react-query staleTime as backstop; the overview
+  endpoint's missing @Roles predates this round (new bucket is server-gated;
+  leave/reg exposure noted as follow-up).

@@ -142,7 +142,7 @@ export class EmployeesController {
   })
   @ApiResponse({ status: 200, description: 'Pending onboarding queue' })
   async getOnboardingQueue(@CurrentUser() user: JwtPayload) {
-    return this.employeesService.getOnboardingQueue(user.tenantId);
+    return this.employeesService.getOnboardingQueue(user.tenantId, user.sub);
   }
 
   @Put('me')

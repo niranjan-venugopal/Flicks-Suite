@@ -7,6 +7,11 @@
    Single source of truth for brand + surface + type
    ───────────────────────────────────────────────────────── */
 :root {
+  /* The app is dark-only: tell the browser so native control chrome
+     (select popups, date/time pickers, scrollbars) renders dark instead of
+     the default light "silver" widgets some WebKit builds paint. */
+  color-scheme: dark;
+
   /* Brand */
   --bg: #01010D;
   --bg-2: #0A0A18;
@@ -162,8 +167,24 @@ button { background: none; border: none; cursor: pointer; }
   color: var(--text); font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
   outline: none; transition: border-color .2s, background .2s;
 }
-.input:focus { border-color: rgba(62, 123, 250, 0.6); background: rgba(62, 123, 250, 0.06); }
+/* background-color, NOT the background shorthand: the shorthand would reset
+   background-image and erase the select chevron below on focus. */
+.input:focus { border-color: rgba(62, 123, 250, 0.6); background-color: rgba(62, 123, 250, 0.06); }
 .input.with-icon { padding-left: 38px; }
+/* Native selects: kill the OS "silver" gradient control (no appearance reset
+   = WebKit paints its aqua widget under our translucent surface on some
+   Macs) and draw our own chevron (Icon.chevD path, white @ 50% ≈
+   --text-mute). Scoped to select.input — a bare-.input reset would strip the
+   indicator icons off time/month/datetime-local inputs sharing the class. */
+select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='.5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px 16px;
+}
 .label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 7px; letter-spacing: -0.01em; }
 
 /* ─── Buttons ─── */

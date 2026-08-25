@@ -115,7 +115,7 @@ export function BankAccountModal({
             <label className="t-caption block mb-1.5">Account type</label>
             <select className="input w-full" value={form.account_type ?? 'Current'} onChange={set('account_type')}>
               {['Current', 'Savings', 'EEFC'].map((t) => (
-                <option key={t} value={t} style={{ color: '#000' }}>
+                <option key={t} value={t}>
                   {t}
                 </option>
               ))}

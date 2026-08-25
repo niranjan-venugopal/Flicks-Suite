@@ -23,6 +23,7 @@ import {
   InvoBreadcrumb,
   InvoIcons,
   invoField,
+  invoSelect,
   invoLabel,
 } from '@/components/invoicing/invo'
 import { TDS_CODES, isGstCurrency, taxLabel } from '@/lib/invoicing/constants'
@@ -321,10 +322,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                     {addingClient ? 'Cancel' : '+ New client'}
                   </button>
                 </div>
-                <select style={invoField()} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                <select style={invoSelect()} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
                   <option value="">Select a client…</option>
                   {customers.map((c) => (
-                    <option key={c.id} value={c.id} style={{ color: '#000' }}>
+                    <option key={c.id} value={c.id}>
                       {c.display_name} ({c.customer_code})
                     </option>
                   ))}
@@ -385,9 +386,9 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               </div>
               <div>
                 <label style={invoLabel}>Currency</label>
-                <select style={invoField()} value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                <select style={invoSelect()} value={currency} onChange={(e) => setCurrency(e.target.value)}>
                   {CURRENCIES.map((c) => (
-                    <option key={c} style={{ color: '#000' }}>
+                    <option key={c}>
                       {c}
                     </option>
                   ))}
@@ -486,13 +487,13 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 <div>
                   <label style={invoLabel}>Discount</label>
                   <select
-                    style={invoField()}
+                    style={invoSelect()}
                     value={discountType}
                     onChange={(e) => setDiscountType(e.target.value as 'percent' | 'fixed' | '')}
                   >
-                    <option value="" style={{ color: '#000' }}>None</option>
-                    <option value="percent" style={{ color: '#000' }}>Percent %</option>
-                    <option value="fixed" style={{ color: '#000' }}>Fixed</option>
+                    <option value="">None</option>
+                    <option value="percent">Percent %</option>
+                    <option value="fixed">Fixed</option>
                   </select>
                 </div>
                 <div>
@@ -511,10 +512,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               {isDomestic && (
                 <div>
                   <label style={invoLabel}>TDS · Section 393 (payment code)</label>
-                  <select style={invoField()} value={tdsCode} onChange={(e) => applyTdsCode(e.target.value)}>
-                    <option value="" style={{ color: '#000' }}>No TDS</option>
+                  <select style={invoSelect()} value={tdsCode} onChange={(e) => applyTdsCode(e.target.value)}>
+                    <option value="">No TDS</option>
                     {TDS_CODES.map((c) => (
-                      <option key={c.code} value={c.code} style={{ color: '#000' }}>
+                      <option key={c.code} value={c.code}>
                         {c.label}
                       </option>
                     ))}
@@ -544,12 +545,12 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
               <div>
                 <label style={invoLabel}>Account</label>
-                <select style={invoField()} value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)}>
-                  <option value="" style={{ color: '#000' }}>
+                <select style={invoSelect()} value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)}>
+                  <option value="">
                     Auto ({currency} default)
                   </option>
                   {bankAccounts.map((b) => (
-                    <option key={b.id} value={b.id} style={{ color: '#000' }}>
+                    <option key={b.id} value={b.id}>
                       {b.bank_name} …{b.account_number.slice(-4)}
                       {b.is_default ? ' (default)' : ''}
                     </option>

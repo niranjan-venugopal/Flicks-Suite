@@ -74,6 +74,7 @@ function eventForInAppType(type: string): NotificationEvent | null {
   if (type.startsWith('leave.')) return 'leave_reviewed';
   if (type === 'regularization.requested') return 'regularization_requested';
   if (type.startsWith('regularization.')) return 'regularization_reviewed';
+  if (type === 'onboarding.submitted') return 'onboarding_submitted';
   if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
   if (type.startsWith('crm.digest')) return 'crm_digest';
   if (type.startsWith('crm.')) return 'crm_activity';

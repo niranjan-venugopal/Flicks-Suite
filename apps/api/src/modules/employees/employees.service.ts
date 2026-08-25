@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Logger,
   Inject,
 } from '@nestjs/common';
@@ -854,7 +855,7 @@ export class EmployeesService {
     return updated;
   }
 
-  async getOnboardingQueue(tenantId: string) {
+  async getOnboardingQueue(tenantId: string, callerUserId: string) {
     const rows = await this.databaseService.withTenant(tenantId, (db) =>
       db
         .select({
@@ -877,6 +878,10 @@ export class EmployeesService {
             eq(employees.tenant_id, tenantId),
             sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
             ne(employees.status, 'active'),
+            // Nobody reviews their own profile — hide the caller's row (a
+            // second owner would otherwise see and approve himself). IS
+            // DISTINCT FROM keeps invited rows (user_id NULL) visible.
+            sql`${employees.user_id} IS DISTINCT FROM ${callerUserId}`,
           ),
         )
         .orderBy(asc(employees.created_at)),
@@ -892,6 +897,12 @@ export class EmployeesService {
     tenantId: string,
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
+
+    if (employee.userId && employee.userId === adminId) {
+      throw new ForbiddenException(
+        'You cannot review your own onboarding — another admin must approve or send it back.',
+      );
+    }
 
     // Clear the review flag so the employee can edit + resubmit, and record
     // the reason in custom_fields for the wizard to surface.
@@ -953,6 +964,9 @@ export class EmployeesService {
       resourceId: employeeId,
       metadata: { reason: reason ?? null },
     });
+
+    // Every other admin's queue/inbox just changed — broadcast the refresh.
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
 
     return { employeeId, status: employee.status, rejectedBy: adminId };
   }
@@ -1182,14 +1196,14 @@ export class EmployeesService {
     });
 
     if (allStepsComplete) {
-      this.eventEmitter.emit('employee.onboarding.submitted', {
-        employeeId,
-        tenantId,
-        step,
-      });
+      // Tenant-wide "employees data changed" broadcast (queue rows appear on
+      // every admin's screen without a reload).
+      this.eventEmitter.emit('employees.directory.changed', { tenantId });
 
-      // Notify the reporting manager (best-effort) that there's an onboarding
-      // to approve. The People → Onboarding queue is the canonical surface.
+      // Notify reviewers (best-effort): the reporting manager by email, and
+      // every active owner/admin in-app — EXCLUDING the submitter (a second
+      // owner must never be invited to review their own profile). The
+      // People → Onboarding queue is the canonical surface.
       try {
         const info = await this.databaseService.withTenant(
           tenantId,
@@ -1223,9 +1237,36 @@ export class EmployeesService {
             },
           );
         }
+
+        // In-app ping for every active owner/admin except the submitter.
+        // dbAdmin (memberships are cross-tenant-invisible under RLS at this
+        // point) — tenant predicate is mandatory.
+        const reviewers = await this.dbAdmin
+          .select({ userId: memberships.user_id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.status, 'active'),
+              inArray(memberships.role, ['owner', 'admin']),
+              ne(memberships.user_id, actorUserId),
+            ),
+          );
+        const recipientIds = [...new Set(reviewers.map((r) => r.userId))];
+        for (const reviewerId of recipientIds) {
+          await this.notificationsService
+            .createInAppNotification(
+              reviewerId,
+              'onboarding.submitted',
+              `${info?.employeeName || 'A new hire'} submitted onboarding for review.`,
+              '/employees/onboarding',
+              tenantId,
+            )
+            .catch(() => undefined);
+        }
       } catch (e) {
         this.logger.warn(
-          `Could not send onboarding-submitted email: ${(e as Error).message}`,
+          `Could not send onboarding-submitted notifications: ${(e as Error).message}`,
         );
       }
     }
@@ -1659,6 +1700,12 @@ export class EmployeesService {
   ) {
     const employee = await this.getEmployee(employeeId, tenantId);
 
+    if (employee.user_id && employee.user_id === adminId) {
+      throw new ForbiddenException(
+        'You cannot approve your own onboarding — another admin must review it.',
+      );
+    }
+
     const user = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
@@ -1691,12 +1738,23 @@ export class EmployeesService {
     );
 
     if (employee.user_id && user) {
+      await this.notificationsService
+        .createInAppNotification(
+          employee.user_id,
+          'onboarding.approved',
+          'Your onboarding was approved — your profile is now active. Welcome aboard!',
+          '/dashboard',
+          tenantId,
+        )
+        .catch(() => undefined);
+
       const loginUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-      await this.notificationsService.sendEmail(
-        'onboarding-approved',
-        user.email,
-        { employeeName: user.full_name, loginUrl },
-      );
+      await this.notificationsService
+        .sendEmail('onboarding-approved', user.email, {
+          employeeName: user.full_name,
+          loginUrl,
+        })
+        .catch(() => undefined);
     }
 
     await this.auditService.log({
@@ -1706,6 +1764,10 @@ export class EmployeesService {
       resourceType: 'employee',
       resourceId: employeeId,
     });
+
+    // The approved employee just became visible in the directory/org chart —
+    // push a tenant-wide refresh so every open screen updates live.
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
 
     return { employeeId, status: 'active', approvedBy: adminId };
   }

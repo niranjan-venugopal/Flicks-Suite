@@ -110,6 +110,19 @@ export class NotificationsGateway
     this.logger.debug(`Pushed notification to ${room} (type=${payload.type})`);
   }
 
+  /**
+   * Tenant-wide "employees data changed" push (onboarding submitted /
+   * approved / rejected). Clients already sit in the `tenant:<id>` room from
+   * the handshake; the web app reacts by invalidating its employees /
+   * dashboard query caches so org chart, directory and the approvals inbox
+   * refresh live for everyone — mirrors CrmGateway's board_changed pattern.
+   */
+  @OnEvent('employees.directory.changed')
+  handleDirectoryChanged(payload: { tenantId?: string }): void {
+    if (!payload?.tenantId) return;
+    this.server.to(`tenant:${payload.tenantId}`).emit('employees_changed', {});
+  }
+
   // ─── helpers ─────────────────────────────────────────────────────────────
 
   private extractToken(client: Socket): string | null {

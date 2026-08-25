@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq, gte, lt, lte, sql, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt, lte, ne, sql, isNull } from 'drizzle-orm';
 import {
   employees,
   attendanceRecords,
@@ -9,6 +9,7 @@ import {
   holidays,
   auditLog,
   users,
+  designations,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import type { AdminOverviewDto, ActivityItemDto } from './dashboard.dto';
@@ -25,7 +26,10 @@ export class DashboardService {
    * tenant-scoped transaction so RLS context is set once per request
    * (PRD §10.6: dashboard must load <1.5s for a 50-employee tenant).
    */
-  async getAdminOverview(tenantId: string): Promise<AdminOverviewDto> {
+  async getAdminOverview(
+    tenantId: string,
+    opts: { callerUserId: string; includeOnboarding: boolean },
+  ): Promise<AdminOverviewDto> {
     const today = todayISO();
     const thirtyDaysAgo = isoDaysAgo(30);
 
@@ -42,6 +46,7 @@ export class DashboardService {
         joinersExitsRow,
         avgHoursRow,
         holidayTodayRow,
+        pendingOnboardingRows,
       ] = await Promise.all([
         // Headcount by employee_status
         tx
@@ -212,6 +217,47 @@ export class DashboardService {
               eq(holidays.holiday_date, today),
             ),
           ),
+
+        // Pending onboarding reviews (Inbox → Approvals). Admin+-only — the
+        // endpoint has no @Roles, so the controller gates via
+        // includeOnboarding; lower roles get an empty bucket. The caller's
+        // own row is excluded (nobody reviews their own profile) with
+        // IS DISTINCT FROM so invited rows (user_id NULL) stay visible.
+        opts.includeOnboarding
+          ? tx
+              .select({
+                employeeId: employees.id,
+                userId: employees.user_id,
+                employeeName: sql<string>`COALESCE(NULLIF(TRIM(COALESCE(${employees.first_name},'') || ' ' || COALESCE(${employees.last_name},'')), ''), ${users.full_name}, '')`,
+                employeeCode: employees.employee_code,
+                designationTitle: designations.title,
+                submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
+              })
+              .from(employees)
+              .leftJoin(users, eq(employees.user_id, users.id))
+              .leftJoin(
+                designations,
+                eq(employees.designation_id, designations.id),
+              )
+              .where(
+                and(
+                  eq(employees.tenant_id, tenantId),
+                  sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
+                  ne(employees.status, 'active'),
+                  sql`${employees.user_id} IS DISTINCT FROM ${opts.callerUserId}`,
+                ),
+              )
+              .orderBy(asc(employees.created_at))
+          : Promise.resolve(
+              [] as Array<{
+                employeeId: string;
+                userId: string | null;
+                employeeName: string;
+                employeeCode: string | null;
+                designationTitle: string | null;
+                submittedAt: string | null;
+              }>,
+            ),
       ]);
 
       // ── Aggregate the headcount rows by status enum ──
@@ -278,13 +324,16 @@ export class DashboardService {
           onLeaveToday: att.onLeave,
           pendingApprovals:
             (pendingLeaveCountRow[0]?.count ?? 0) +
-            (pendingRegCountRow[0]?.count ?? 0),
+            (pendingRegCountRow[0]?.count ?? 0) +
+            pendingOnboardingRows.length,
         },
         headcount,
         attendanceToday: att,
         pending: {
           leaveCount: pendingLeaveCountRow[0]?.count ?? 0,
           regularizationCount: pendingRegCountRow[0]?.count ?? 0,
+          onboardingCount: pendingOnboardingRows.length,
+          onboarding: pendingOnboardingRows,
           leaves: pendingLeaveRows.map((r) => ({
             id: r.id,
             employeeId: r.employeeId,

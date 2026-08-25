@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
-import { InvoBtn } from '@/components/invoicing/invo'
+import { InvoBtn, invoSelectReset } from '@/components/invoicing/invo'
 import { useRecordPayment, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
 import { DateField } from '@/components/ui/date-picker'
 
@@ -143,9 +143,9 @@ export function PaymentModal({
           </div>
           <div>
             <label style={LABEL}>Method</label>
-            <select style={FIELD} value={method} onChange={(e) => setMethod(e.target.value)}>
+            <select style={{ ...FIELD, ...invoSelectReset }} value={method} onChange={(e) => setMethod(e.target.value)}>
               {METHODS.map(([v, l]) => (
-                <option key={v} value={v} style={{ color: '#000' }}>
+                <option key={v} value={v}>
                   {l}
                 </option>
               ))}

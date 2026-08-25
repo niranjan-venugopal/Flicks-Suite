@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { InvoBtn } from '@/components/invoicing/invo'
+import { InvoBtn, invoSelectReset } from '@/components/invoicing/invo'
 import {
   Dialog,
   DialogContent,
@@ -124,7 +124,7 @@ export function ItemModal({
           </div>
           <div>
             <label style={LABEL}>Currency</label>
-            <select style={FIELD} value={form.currency ?? 'INR'} onChange={set('currency')}>
+            <select style={{ ...FIELD, ...invoSelectReset }} value={form.currency ?? 'INR'} onChange={set('currency')}>
               {['INR', 'USD', 'EUR', 'GBP'].map((c) => (
                 <option key={c} value={c}>
                   {c}
