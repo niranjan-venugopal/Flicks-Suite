@@ -5,7 +5,7 @@ import {
   Logger,
   Inject,
 } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import {
@@ -221,16 +221,24 @@ export class OnboardingService {
       throw new BadRequestException('User not found — sign in before creating a workspace.');
     }
 
-    // Don't let a single user own multiple tenants from this flow — they can
-    // be a member of many tenants, but each tenant gets its own signup path.
-    const existingMembership = await this.db
+    // Don't let a single user OWN multiple tenants from this flow — but
+    // being a guest/employee/auditor somewhere else must NOT block creating
+    // your own first workspace (round 7, founder decision: the guest →
+    // customer path). Only an existing owner membership blocks.
+    const existingOwner = await this.db
       .select({ id: memberships.id })
       .from(memberships)
-      .where(eq(memberships.user_id, userId))
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.role, 'owner'),
+          inArray(memberships.status, ['active', 'invited']),
+        ),
+      )
       .limit(1);
-    if (existingMembership[0]) {
+    if (existingOwner[0]) {
       throw new ConflictException(
-        'You already belong to a workspace. Sign out first to create a new one.',
+        'You already own a workspace. Open it from the company switcher instead.',
       );
     }
 

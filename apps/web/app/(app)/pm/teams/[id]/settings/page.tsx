@@ -220,7 +220,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
             </div>
           )}
           <div style={{ padding: '9px 14px', fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
-            Members come from the workspace directory · guest seats are v1.5 · Owner/Admin self-adds to private teams are audit-logged
+            Members come from the workspace directory · guests are invited per project from a project page · Owner/Admin self-adds to private teams are audit-logged
           </div>
         </div>
       )}

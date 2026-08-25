@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 
 export const metadata: Metadata = {
-  title: 'Privacy Policy · Flicks Suite',
+  title: 'Privacy Policy',
   description:
     'How Flicks Suite collects, processes, stores and protects personal data — DPDP (India), GDPR (EU/UK) and CCPA (California) in one policy.',
 }

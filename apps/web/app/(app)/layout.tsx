@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Skeleton } from '@/components/proto'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
@@ -81,6 +81,7 @@ function AppShellSkeleton() {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const pathname = usePathname() ?? '/'
   const { isAuthenticated, currentUser } = useAuthStore()
   const me = useCurrentUser()
   const { isLoading, isError, error: meError, data: meData } = me
@@ -117,10 +118,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     !isImpersonating && (freshRole === 'fam' || freshRole === 'super_admin')
   // Self-onboarding applies to EVERY tenant role (owner/HR/finance included
   // — statutory + banking details are needed regardless of seniority).
-  // External auditors have no employee row (employeeId null skips them) and
+  // External auditors have no employee row (employeeId null skips them),
+  // GUESTS are project-scoped externals with no employee record at all, and
   // FAM sessions are redirected to the console before this check.
   const isJoiningEmployee =
-    !!freshRole && !['auditor', 'fam', 'super_admin'].includes(freshRole)
+    !!freshRole && !['auditor', 'guest', 'fam', 'super_admin'].includes(freshRole)
   const onboarding = useEmployeeOnboardingStatus()
   const needsOnboarding =
     isJoiningEmployee &&
@@ -161,6 +163,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.replace('/onboarding/employee')
       return
     }
+    // Guests land on their project list — the dashboard/HRMS surfaces are
+    // not theirs (login's hardcoded /dashboard redirect gets re-routed here
+    // once /me resolves).
+    if (
+      freshRole === 'guest' &&
+      !isImpersonating &&
+      (pathname === '/' || pathname === '/dashboard')
+    ) {
+      router.replace('/pm/projects')
+      return
+    }
     // Recover from a revoked/expired current tenant exactly once per load.
     if (currentTenantRevoked && !recoveryFired.current) {
       recoveryFired.current = true
@@ -170,7 +183,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         // Re-scope the JWT into the only company they can still use.
         switchCompany.mutate({
           tenantId: soleActive.tenantId,
-          redirectTo: freshRole === 'auditor' ? '/invoicing' : '/dashboard',
+          redirectTo:
+            freshRole === 'auditor'
+              ? '/invoicing'
+              : freshRole === 'guest'
+                ? '/pm/projects'
+                : '/dashboard',
         })
       } else {
         // None left, several to choose from, or a membership without a usable
@@ -188,6 +206,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     currentTenantRevoked,
     activeMemberships,
     freshRole,
+    isImpersonating,
+    pathname,
     switchCompany,
     router,
   ])

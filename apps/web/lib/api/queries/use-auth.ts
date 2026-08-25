@@ -60,6 +60,9 @@ interface VerifyAuthResponse {
   refreshToken?: string
   expiresIn?: number
   user: ApiUser
+  // True when the account has NO memberships yet (fresh signup) — the wizard
+  // goes straight to workspace creation; existing users see their workspaces.
+  needsOnboarding?: boolean
   // FAM second factor (PRD §11.6). When the user is an enrolled platform
   // admin, no session is issued yet — the client must complete the TOTP step.
   requiresTotp?: boolean
@@ -109,6 +112,8 @@ function normaliseRole(role: string | undefined | null): UserRole {
       return 'FINANCE'
     case 'auditor':
       return 'AUDITOR'
+    case 'guest':
+      return 'GUEST' // project-scoped PM seat — must NOT fall through to EMPLOYEE
     default:
       return 'EMPLOYEE'
   }

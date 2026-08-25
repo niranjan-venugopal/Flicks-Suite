@@ -8,6 +8,24 @@ import { PmProjectsService } from '../projects.service';
 import { PmSyncGateway } from '../../../gateways/pm-sync.gateway';
 import { PmSyncService } from './sync.service';
 
+// Ops a project-scoped guest may attempt (round 7). Per-resource scoping
+// (their projects only) is enforced inside PmIssuesService on top of this.
+const GUEST_ALLOWED_OPS = new Set([
+  'issue.create',
+  'issue.update',
+  'issue.move_state',
+  'issue.set_priority',
+  'issue.assign',
+  'issue.rank',
+  'issue.set_labels',
+  'issue.relate',
+  'issue.unrelate',
+  'issue.subscribe',
+  'issue.unsubscribe',
+  'issue.set_project',
+  'comment.create',
+]);
+
 /**
  * FSE mutation executor (PRD v6 §3.5). Per item: idempotency check against
  * sync_mutations → delegate to the SAME domain-service method the REST path
@@ -57,6 +75,18 @@ export class PmMutationExecutor {
     let anyApplied = false;
 
     for (const item of items) {
+      // Guests hold an issue-level op whitelist; per-resource scoping is
+      // enforced again inside the services (defense in depth). Everything
+      // else — team/project/cycle/settings ops — is rejected per item.
+      if (role === 'guest' && !GUEST_ALLOWED_OPS.has(item.op)) {
+        await this.ledger(tenantId, userId, item.clientMutationId, 'rejected', 'E403').catch(() => undefined);
+        results.push({
+          clientMutationId: item.clientMutationId,
+          status: 'rejected',
+          errorCode: 'E403:guest seats are project-scoped',
+        });
+        continue;
+      }
       // Idempotency: an already-recorded clientMutationId is a no-op replay.
       const seen = await this.db.withTenant(
         tenantId,

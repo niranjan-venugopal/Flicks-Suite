@@ -14,7 +14,7 @@ interface AuthLayoutProps {
 
 /**
  * Auth flow wrapper — full-bleed page with the brand glow blobs, a slim
- * header (LogoMark + "Flicks Suite · HRMS · India" + optional step pill +
+ * header (LogoMark + "Flicks Suite · by Specflicks" + optional step pill +
  * "Need help?"), and a centered body for the AuthCard.
  *
  * Mirrors the prototype's AuthLayout in repo/project/ui_kits/flicks-hrms-pro/
@@ -70,7 +70,7 @@ export function AuthLayout({
               Flicks Suite
             </div>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
-              HRMS · India
+              by Specflicks
             </div>
           </div>
         </div>

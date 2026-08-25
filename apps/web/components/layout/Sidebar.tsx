@@ -365,6 +365,21 @@ function auditorNavFor(grants: ModuleGrant[]): NavSection[] {
   ]
 }
 
+// Guest nav (round 7): a project-scoped external seat sees only their PM
+// surface, the shared inbox, and the cross-company switcher page.
+function guestNavFor(): NavSection[] {
+  return [
+    {
+      section: 'main',
+      items: [
+        { id: 'projects', label: 'Projects', icon: 'target', href: '/pm/projects' },
+        { id: 'inbox', label: 'Inbox', icon: 'inbox', href: '/inbox' },
+        { id: 'my-companies', label: 'My companies', icon: 'grid', href: '/my-companies' },
+      ],
+    },
+  ]
+}
+
 // Manager/Employee see Invoicing ONLY if the Owner granted it (membership_grants).
 // Their base HRMS nav stays; the granted invoicing section is appended.
 function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSection[] {
@@ -397,6 +412,7 @@ export function Sidebar() {
   }, [grantDriven, myCompanies.data, currentUser?.tenantId])
 
   const nav = useMemo(() => {
+    if (role === 'GUEST') return guestNavFor()
     if (role === 'AUDITOR') return withoutParkedCrm(auditorNavFor(activeGrants))
     if (role === 'MANAGER') return withoutParkedCrm(withGrantedInvoicing(MANAGER_NAV, activeGrants))
     if (role === 'EMPLOYEE') return withoutParkedCrm(withGrantedInvoicing(EMPLOYEE_NAV, activeGrants))

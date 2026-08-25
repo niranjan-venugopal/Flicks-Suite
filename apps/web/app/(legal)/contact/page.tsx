@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 
 export const metadata: Metadata = {
-  title: 'Contact & Grievance Officer · Flicks Suite',
+  title: 'Contact & Grievance Officer',
   description:
     'Reach the Flicks Suite Grievance Officer for data-protection queries under the DPDP Act 2023.',
 }

@@ -50,7 +50,7 @@ const config = new ConfigService();
 const notificationsSvc = new NotificationsService(db as never, dbAdmin as never, config, emitter);
 const visibility = new PmVisibilityService(dbSvc);
 const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
-const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
+const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
 const importSvc = new PmImportService(dbSvc, audit, domainEventsSvc);
 
 const redisStub = (() => {

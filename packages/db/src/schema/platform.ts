@@ -36,6 +36,11 @@ export const membershipRoleEnum = pgEnum('membership_role', [
   // Invoicing v3: finance-scoped, grant-driven, multi-company, non-billable.
   // Added to the DB enum via migration (ALTER TYPE … ADD VALUE 'auditor').
   'auditor',
+  // PM guest seats (round 7): project-scoped external collaborator.
+  // Non-hierarchical like auditor; PM access is grant-row-driven and
+  // visibility is limited to pm_project_members rows. Non-billable.
+  // Added via 0051 (ALTER TYPE … ADD VALUE 'guest').
+  'guest',
 ]);
 
 export const membershipStatusEnum = pgEnum('membership_status', [

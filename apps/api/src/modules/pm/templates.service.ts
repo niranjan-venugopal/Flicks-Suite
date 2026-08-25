@@ -28,6 +28,8 @@ export class PmTemplatesService {
    * settings rights as the rest of the team's configuration.
    */
   private async assertTeamVisible(tx: Db, tenantId: string, userId: string, teamId: string) {
+    // Templates are team configuration — not part of a guest's project scope.
+    await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'issue templates');
     const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
     if (!visible.includes(teamId)) throw new NotFoundException('team not found');
   }

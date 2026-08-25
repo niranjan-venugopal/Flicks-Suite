@@ -8,6 +8,7 @@ import {
   pmLabels,
   pmIssues,
   pmProjects,
+  pmProjectMembers,
   memberships,
   tenants,
   users,
@@ -152,6 +153,50 @@ export class PmTeamsService {
 
   /** Teams visible to the user (public ∪ member) + own memberships. */
   async list(tenantId: string, userId: string) {
+    // Guest branch first: no workspace seeding (guests never bootstrap a
+    // tenant's PM), teams limited to the render set from their projects,
+    // and NO rosters — a guest can't enumerate who works here.
+    const guestScope = await this.db.withTenant(tenantId, (tx) =>
+      this.visibility.guestScopeTx(tx, tenantId, userId),
+    );
+    if (guestScope) {
+      return this.db.withTenant(
+        tenantId,
+        async (tx) => {
+          const teams = guestScope.teamIds.length
+            ? await tx
+                .select()
+                .from(pmTeams)
+                .where(
+                  and(
+                    eq(pmTeams.tenant_id, tenantId),
+                    isNull(pmTeams.deleted_at),
+                    inArray(pmTeams.id, guestScope.teamIds),
+                  ),
+                )
+                .orderBy(asc(pmTeams.created_at))
+            : [];
+          const teamIds = teams.map((t) => t.id);
+          const states = teamIds.length
+            ? (
+                await tx
+                  .select()
+                  .from(pmWorkflowStates)
+                  .where(eq(pmWorkflowStates.tenant_id, tenantId))
+                  .orderBy(asc(pmWorkflowStates.position))
+              ).filter((s) => teamIds.includes(s.team_id))
+            : [];
+          const labels = (
+            await tx.select().from(pmLabels).where(eq(pmLabels.tenant_id, tenantId))
+          ).filter((l) => !l.team_id || teamIds.includes(l.team_id));
+          return {
+            data: { teams, memberships: [], memberships_all: [], states, labels },
+          };
+        },
+        userId,
+      );
+    }
+
     await this.ensureWorkspace(tenantId, userId);
     return this.db.withTenant(
       tenantId,
@@ -493,12 +538,62 @@ export class PmTeamsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Guests never see the whole directory — only people connected to
+        // their projects (fellow project members, assignees/creators of
+        // in-project issues, members of the render-set teams). Enough for
+        // avatars + pickers, nothing more.
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        let allowedIds: Set<string> | null = null;
+        if (guestScope) {
+          allowedIds = new Set<string>([userId]);
+          if (guestScope.projectIds.length) {
+            const projMembers = await tx
+              .select({ user_id: pmProjectMembers.user_id })
+              .from(pmProjectMembers)
+              .where(
+                and(
+                  eq(pmProjectMembers.tenant_id, tenantId),
+                  inArray(pmProjectMembers.project_id, guestScope.projectIds),
+                ),
+              );
+            for (const r of projMembers) allowedIds.add(r.user_id);
+            const issuePeople = await tx
+              .select({
+                assignee: pmIssues.assignee_user_id,
+                creator: pmIssues.creator_user_id,
+              })
+              .from(pmIssues)
+              .where(
+                and(
+                  eq(pmIssues.tenant_id, tenantId),
+                  inArray(pmIssues.project_id, guestScope.projectIds),
+                ),
+              );
+            for (const r of issuePeople) {
+              if (r.assignee) allowedIds.add(r.assignee);
+              if (r.creator) allowedIds.add(r.creator);
+            }
+          }
+          if (guestScope.teamIds.length) {
+            const teamMembers = await tx
+              .select({ user_id: pmTeamMemberships.user_id })
+              .from(pmTeamMemberships)
+              .where(
+                and(
+                  eq(pmTeamMemberships.tenant_id, tenantId),
+                  inArray(pmTeamMemberships.team_id, guestScope.teamIds),
+                ),
+              );
+            for (const r of teamMembers) allowedIds.add(r.user_id);
+          }
+        }
+
         const rows = await tx
           .select({ id: users.id, name: users.full_name, avatar_url: users.avatar_url })
           .from(users)
           .innerJoin(memberships, eq(memberships.user_id, users.id))
           .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
-        return rows;
+        return allowedIds ? rows.filter((r) => allowedIds.has(r.id)) : rows;
       },
       userId,
     );
@@ -588,6 +683,7 @@ export class PmTeamsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'joining teams');
         const [team] = await tx
           .select({ is_private: pmTeams.is_private })
           .from(pmTeams)
@@ -644,6 +740,12 @@ export class PmTeamsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Guests get an empty restore list: their team render-set could
+        // otherwise surface deleted issues from OUTSIDE their projects
+        // (deleted rows filter by team, and a deleted issue's project link
+        // no longer proves anything).
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        if (guestScope) return { data: { issues: [], projects: [] } };
         const cutoff = new Date(Date.now() - 30 * 86_400_000);
         // §16 — the restore list is a read like any other: private-team rows
         // (titles included) must never surface to non-members.

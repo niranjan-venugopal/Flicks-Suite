@@ -24,6 +24,7 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PmVisibilityService } from './sync/visibility.service';
 
 /**
  * PM issues (PRD v6 §5) — ONE service, TWO transports. The REST controller
@@ -45,6 +46,9 @@ export interface CreateIssueInput {
   parent_issue_id?: string | null;
   due_date?: string | null;
   source?: string;
+  // Optional at-create project link (validated in-tenant). REQUIRED for
+  // guests — their issues must live inside one of their invited projects.
+  project_id?: string | null;
 }
 
 export interface UpdateIssueInput {
@@ -63,6 +67,7 @@ export class PmIssuesService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
     private readonly notifications: NotificationsService,
+    private readonly visibility: PmVisibilityService,
   ) {}
 
   /**
@@ -116,13 +121,25 @@ export class PmIssuesService {
     return team;
   }
 
-  private async loadIssue(tx: Db, tenantId: string, id: string) {
+  /**
+   * Load an issue, enforcing the caller's GUEST scope when userId is passed:
+   * a guest asking for anything outside their invited projects gets the same
+   * NotFound as a nonexistent id (existence is never revealed). Non-guest
+   * team semantics (private-team checks etc.) stay with assertTeamAccess.
+   */
+  private async loadIssue(tx: Db, tenantId: string, id: string, userId?: string) {
     const [issue] = await tx
       .select()
       .from(pmIssues)
       .where(and(eq(pmIssues.id, id), eq(pmIssues.tenant_id, tenantId), isNull(pmIssues.deleted_at)))
       .limit(1);
     if (!issue) throw new NotFoundException('Issue not found');
+    if (userId) {
+      const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+      if (guestScope && !this.visibility.issueVisible(guestScope, issue)) {
+        throw new NotFoundException('Issue not found');
+      }
+    }
     return issue;
   }
 
@@ -173,6 +190,35 @@ export class PmIssuesService {
       async (tx) => {
         const team = await this.assertTeamAccess(tx, tenantId, userId, input.team_id);
 
+        // Guests create issues ONLY inside one of their invited projects,
+        // in a team already tied to that project (else the issue would be
+        // invisible to its own creator).
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        if (guestScope) {
+          if (!input.project_id || !guestScope.projectIds.includes(input.project_id)) {
+            throw new ForbiddenException('Guests can only create issues inside their projects');
+          }
+          if (!guestScope.teamIds.includes(team.id)) {
+            throw new ForbiddenException('Guests can only create issues in teams linked to their projects');
+          }
+        }
+        // In-tenant existence check for the optional at-create project link
+        // (FK checks bypass RLS — house rule #2).
+        if (input.project_id) {
+          const [project] = await tx
+            .select({ id: pmProjects.id })
+            .from(pmProjects)
+            .where(
+              and(
+                eq(pmProjects.id, input.project_id),
+                eq(pmProjects.tenant_id, tenantId),
+                isNull(pmProjects.deleted_at),
+              ),
+            )
+            .limit(1);
+          if (!project) throw new BadRequestException('project_id does not belong to this workspace');
+        }
+
         // §8 triage entry rule: an issue created by a NON-member in a public
         // team (or API-intake sources) lands in Triage — the intake gate.
         let stateId = input.state_id ?? team.default_state_id;
@@ -209,7 +255,7 @@ export class PmIssuesService {
           stateId = backlog.id;
         }
 
-        if (input.parent_issue_id) await this.loadIssue(tx, tenantId, input.parent_issue_id);
+        if (input.parent_issue_id) await this.loadIssue(tx, tenantId, input.parent_issue_id, userId);
 
         // Atomic per-team number (row-locked counter).
         const [counter] = await tx
@@ -230,7 +276,7 @@ export class PmIssuesService {
         let assignee = input.assignee_user_id ?? null;
         let priority = input.priority ?? 0;
         if (input.parent_issue_id && input.assignee_user_id === undefined && input.priority === undefined) {
-          const parent = await this.loadIssue(tx, tenantId, input.parent_issue_id);
+          const parent = await this.loadIssue(tx, tenantId, input.parent_issue_id, userId);
           assignee = parent.assignee_user_id;
           priority = parent.priority;
         }
@@ -250,6 +296,7 @@ export class PmIssuesService {
             assignee_user_id: assignee,
             creator_user_id: userId,
             parent_issue_id: input.parent_issue_id ?? null,
+            project_id: input.project_id ?? null,
             due_date: input.due_date ?? null,
             board_rank: rankBetween(last?.board ?? null, null),
             backlog_rank: rankBetween(last?.backlog ?? null, null),
@@ -281,6 +328,20 @@ export class PmIssuesService {
           },
           tx,
         );
+
+        // Creating an issue already assigned to someone must ping them the
+        // same way a later assign() would (Linear/ClickUp parity — this was
+        // silent before round 7). Self-assign stays quiet.
+        if (assignee && assignee !== userId) {
+          this.notifyInbox(
+            tenantId,
+            issue!.id,
+            [assignee],
+            'pm.issue.assigned',
+            `${team.key}-${number} assigned to you — ${input.title.trim()}`,
+          );
+        }
+
         return { data: issue! };
       },
       userId,
@@ -291,7 +352,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
 
         const patch: Record<string, unknown> = { updated_at: new Date() };
@@ -331,7 +392,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [next] = await tx
           .select()
@@ -418,7 +479,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         if (issue.priority === priority) return { data: issue };
         const [updated] = await tx
@@ -448,7 +509,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         if (assigneeUserId) {
           const [m] = await tx
@@ -519,7 +580,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [updated] = await tx
           .update(pmIssues)
@@ -546,7 +607,8 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'cycle planning');
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         if (input.cycle_id) {
           const [cycle] = await tx
@@ -582,7 +644,14 @@ export class PmIssuesService {
 
   /** Shift+T — send to the team's Triage state (clears lifecycle stamps). */
   async sendToTriage(tenantId: string, userId: string, id: string) {
-    const issue = await this.db.withTenant(tenantId, (tx) => this.loadIssue(tx, tenantId, id), userId);
+    const issue = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'triage');
+        return this.loadIssue(tx, tenantId, id, userId);
+      },
+      userId,
+    );
     const triageState = await this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -614,7 +683,8 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'triage');
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         let targetStateId = team.default_state_id;
         if (!targetStateId) {
@@ -656,7 +726,8 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'triage');
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [canceled] = await tx
           .select({ id: pmWorkflowStates.id, name: pmWorkflowStates.name })
@@ -694,7 +765,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [updated] = await tx
           .update(pmIssues)
@@ -726,8 +797,18 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        // Guests may re-home an issue only BETWEEN their own projects —
+        // never to null / an outside project (either would strand it out of
+        // their own visibility).
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        if (
+          guestScope &&
+          (!input.project_id || !guestScope.projectIds.includes(input.project_id))
+        ) {
+          throw new ForbiddenException('Guests can only move issues between their own projects');
+        }
         let milestoneId: string | null = input.milestone_id === undefined ? issue.milestone_id : input.milestone_id;
         if (input.project_id) {
           const [project] = await tx
@@ -774,7 +855,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         // Validate labels: workspace labels or this team's.
         if (labelIds.length) {
@@ -825,9 +906,9 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
-        const related = await this.loadIssue(tx, tenantId, input.related_issue_id);
+        const related = await this.loadIssue(tx, tenantId, input.related_issue_id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, related.team_id);
         const [row] = await tx
           .insert(pmIssueRelations)
@@ -887,7 +968,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         await tx
           .delete(pmIssueRelations)
@@ -923,7 +1004,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         if (subscribed) {
           await tx
@@ -961,7 +1042,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [comments, history, children, relations, subscribers, gitLinks] = await Promise.all([
           tx
@@ -1026,7 +1107,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, issueId);
+        const issue = await this.loadIssue(tx, tenantId, issueId, userId);
         const team = await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         // Fan-out audience = people ALREADY following, captured before this
         // comment's auto-subscribes (mentioned users get the mention notice).
@@ -1113,7 +1194,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [updated] = await tx
           .update(pmIssues)
@@ -1185,7 +1266,8 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'moving issues between teams');
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         if (issue.team_id === targetTeamId) return { data: issue };
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const target = await this.assertTeamAccess(tx, tenantId, userId, targetTeamId);
@@ -1259,15 +1341,34 @@ export class PmIssuesService {
         const page = Math.max(1, query.page ?? 1);
         const limit = Math.min(200, Math.max(1, query.limit ?? 100));
         const where = [eq(pmIssues.tenant_id, tenantId), isNull(pmIssues.deleted_at)];
-        if (query.project_id) where.push(eq(pmIssues.project_id, query.project_id));
-        if (query.team_id) {
-          await this.assertTeamAccess(tx, tenantId, userId, query.team_id);
-          where.push(eq(pmIssues.team_id, query.team_id));
+        // Central scope (guest-aware) — replaces the old private duplicate
+        // of visibleTeamIds, which guests would have leaked through.
+        const scope = await this.visibility.scopeTx(tx, tenantId, userId);
+        if (scope.guest) {
+          // Guests: ALWAYS pinned to their invited projects, regardless of
+          // any supplied filters (a supplied project outside scope yields
+          // an empty page rather than a probe signal).
+          if (!scope.projectIds.length) return { data: [], pagination: { page, limit, total: 0 } };
+          const projectFilter =
+            query.project_id && scope.projectIds.includes(query.project_id)
+              ? [query.project_id]
+              : query.project_id
+                ? []
+                : scope.projectIds;
+          if (!projectFilter.length) return { data: [], pagination: { page, limit, total: 0 } };
+          where.push(inArray(pmIssues.project_id, projectFilter));
+          if (query.team_id) where.push(eq(pmIssues.team_id, query.team_id));
         } else {
-          // Without a team filter: restrict to visible teams.
-          const visible = await this.visibleTeamIds(tx, tenantId, userId);
-          if (!visible.length) return { data: [], pagination: { page, limit, total: 0 } };
-          where.push(sql`${pmIssues.team_id} IN (${sql.join(visible.map((t) => sql`${t}::uuid`), sql`, `)})` as never);
+          if (query.project_id) where.push(eq(pmIssues.project_id, query.project_id));
+          if (query.team_id) {
+            await this.assertTeamAccess(tx, tenantId, userId, query.team_id);
+            where.push(eq(pmIssues.team_id, query.team_id));
+          } else {
+            // Without a team filter: restrict to visible teams.
+            const visible = scope.teamIds;
+            if (!visible.length) return { data: [], pagination: { page, limit, total: 0 } };
+            where.push(sql`${pmIssues.team_id} IN (${sql.join(visible.map((t) => sql`${t}::uuid`), sql`, `)})` as never);
+          }
         }
         const rows = await tx
           .select()
@@ -1286,7 +1387,7 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const issue = await this.loadIssue(tx, tenantId, id);
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         return { data: issue };
       },
@@ -1294,17 +1395,4 @@ export class PmIssuesService {
     );
   }
 
-  /** Shared with sync bootstrap/delta via PmVisibilityService — kept here for REST list. */
-  private async visibleTeamIds(tx: Db, tenantId: string, userId: string): Promise<string[]> {
-    const teams = await tx
-      .select({ id: pmTeams.id, is_private: pmTeams.is_private })
-      .from(pmTeams)
-      .where(and(eq(pmTeams.tenant_id, tenantId), isNull(pmTeams.deleted_at)));
-    const mine = await tx
-      .select({ team_id: pmTeamMemberships.team_id })
-      .from(pmTeamMemberships)
-      .where(and(eq(pmTeamMemberships.tenant_id, tenantId), eq(pmTeamMemberships.user_id, userId)));
-    const mineIds = new Set(mine.map((m) => m.team_id));
-    return teams.filter((t) => !t.is_private || mineIds.has(t.id)).map((t) => t.id);
-  }
 }

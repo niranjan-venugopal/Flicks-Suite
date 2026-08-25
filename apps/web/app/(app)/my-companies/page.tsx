@@ -78,7 +78,17 @@ export default function MyCompaniesPage() {
                 type="button"
                 disabled={switchCompany.isPending}
                 onClick={() => {
-                  if (!active) switchCompany.mutate({ tenantId: c.tenantId, redirectTo: '/invoicing' })
+                  if (!active)
+                    switchCompany.mutate({
+                      tenantId: c.tenantId,
+                      // Land where the role held IN THAT company makes sense.
+                      redirectTo:
+                        c.role === 'guest'
+                          ? '/pm/projects'
+                          : c.role === 'auditor'
+                            ? '/invoicing'
+                            : '/dashboard',
+                    })
                 }}
                 style={{
                   display: 'flex',
@@ -149,23 +159,46 @@ export default function MyCompaniesPage() {
               </button>
             )
           })}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: '14px',
-              borderRadius: 14,
-              background: 'transparent',
-              border: '1px dashed var(--bord-2)',
-              color: 'var(--text-mute)',
-              fontSize: 12.5,
-              fontWeight: 800,
-            }}
-          >
-            <Icon.info size={14} /> New links appear here when a company invites you
-          </div>
+          {companies.data?.canCreateWorkspace ? (
+            <button
+              type="button"
+              onClick={() => (window.location.href = '/onboarding')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                padding: '14px',
+                borderRadius: 14,
+                background: 'transparent',
+                border: '1px dashed var(--bord-2)',
+                color: 'var(--blue)',
+                fontSize: 12.5,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              <Icon.plus size={14} /> Create your own workspace →
+            </button>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                padding: '14px',
+                borderRadius: 14,
+                background: 'transparent',
+                border: '1px dashed var(--bord-2)',
+                color: 'var(--text-mute)',
+                fontSize: 12.5,
+                fontWeight: 800,
+              }}
+            >
+              <Icon.info size={14} /> New links appear here when a company invites you
+            </div>
+          )}
         </div>
       )}
     </div>

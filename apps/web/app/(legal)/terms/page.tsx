@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 
 export const metadata: Metadata = {
-  title: 'Terms of Service · Flicks Suite',
+  title: 'Terms of Service',
   description: 'The terms that govern access to and use of Flicks Suite.',
 }
 

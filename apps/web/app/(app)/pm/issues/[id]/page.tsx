@@ -69,6 +69,10 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const [editingDesc, setEditingDesc] = useState(false)
   const [desc, setDesc] = useState('')
   const [comment, setComment] = useState('')
+  // @-mentions (round 7): tokens picked from the dropdown; on submit only the
+  // ones still present in the text are sent as mentioned_user_ids.
+  const [mentioned, setMentioned] = useState<Array<{ id: string; name: string }>>([])
+  const [mentionIdx, setMentionIdx] = useState(0)
   const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | null>(null)
 
   useEffect(() => {
@@ -92,8 +96,21 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
   })
   const postComment = useMutation({
-    mutationFn: (body: string) => api.post(`/api/v1/pm/issues/${id}/comments`, { body }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }); setComment('') },
+    mutationFn: (payload: { body: string; mentioned_user_ids: string[] }) =>
+      api.post(`/api/v1/pm/issues/${id}/comments`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] })
+      setComment('')
+      setMentioned([])
+    },
+  })
+  // Kill-switch (no engine) fallback for avatars + the @-mention picker —
+  // also fixes the previously-empty assignee menu in REST mode.
+  const usersQ = useQuery({
+    queryKey: ['pm', 'users'],
+    queryFn: () => api.get<Array<{ id: string; name: string | null; avatar_url: string | null }>>('/api/v1/pm/users'),
+    staleTime: 300_000,
+    enabled: !engine,
   })
 
   const restProject = useMutation({
@@ -162,9 +179,36 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const team = store?.teams.get(issue.team_id)
   const states = store ? store.statesForTeam(issue.team_id) : []
   const state = states.find((s) => s.id === issue.state_id)
-  const users = store ? [...store.users.values()] : []
+  // Uniform {id, name, avatar_url} regardless of source (engine store or the
+  // REST fallback) — the mention picker + avatar lookups need non-null names.
+  const users = (store ? [...store.users.values()] : (usersQ.data ?? [])).map((u) => ({
+    id: u.id,
+    name: u.name ?? '—',
+    avatar_url: u.avatar_url ?? null,
+  }))
   const assignee = issue.assignee_user_id ? users.find((u) => u.id === issue.assignee_user_id) : null
   const doneChildren = (d?.sub_issues ?? []).filter((s) => s.completed_at).length
+
+  // ── @-mention dropdown state (derived from the composer text) ──
+  const mentionMatch = comment.match(/@([\w .-]*)$/)
+  const mentionQuery = mentionMatch?.[1]?.toLowerCase() ?? null
+  const mentionOptions =
+    mentionQuery !== null
+      ? users
+          .filter((u) => u.id !== me?.id && u.name.toLowerCase().includes(mentionQuery))
+          .slice(0, 6)
+      : []
+  const pickMention = (u: { id: string; name: string }) => {
+    setComment(comment.replace(/@([\w .-]*)$/, `@${u.name} `))
+    setMentioned((prev) => (prev.some((m) => m.id === u.id) ? prev : [...prev, { id: u.id, name: u.name }]))
+    setMentionIdx(0)
+  }
+  const submitComment = () => {
+    const body = comment.trim()
+    if (!body || postComment.isPending) return
+    const ids = [...new Set(mentioned.filter((m) => body.includes(`@${m.name}`)).map((m) => m.id))]
+    postComment.mutate({ body, mentioned_user_ids: ids })
+  }
 
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 1120, margin: '0 auto' }}>
@@ -302,16 +346,64 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 9, padding: 12 }}>
+            <div style={{ display: 'flex', gap: 9, padding: 12, position: 'relative' }}>
+              {mentionOptions.length > 0 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% - 4px)',
+                    left: 12,
+                    width: 240,
+                    zIndex: 60,
+                    background: 'rgba(18,18,30,.98)',
+                    border: '1px solid var(--bord-2)',
+                    borderRadius: 10,
+                    padding: 4,
+                    boxShadow: '0 16px 40px rgba(0,0,0,.55)',
+                  }}
+                >
+                  {mentionOptions.map((u, i) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); pickMention(u) }}
+                      onMouseEnter={() => setMentionIdx(i)}
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 8px',
+                        borderRadius: 7,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: i === mentionIdx ? 'var(--surf-2)' : 'transparent',
+                        color: '#fff',
+                      }}
+                    >
+                      <MiniAv name={u.name} size={18} />
+                      <span style={{ fontSize: 12, fontWeight: 700 }}>{u.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <input
                 className="input"
                 value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && comment.trim()) postComment.mutate(comment.trim()) }}
-                placeholder="Leave a comment… (⌘↵ to send)"
+                onChange={(e) => { setComment(e.target.value); setMentionIdx(0) }}
+                onKeyDown={(e) => {
+                  if (mentionOptions.length > 0) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionOptions.length); return }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionOptions.length) % mentionOptions.length); return }
+                    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickMention(mentionOptions[mentionIdx] ?? mentionOptions[0]!); return }
+                    if (e.key === 'Escape') { e.preventDefault(); setComment(comment.replace(/@([\w .-]*)$/, '')); return }
+                  }
+                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitComment()
+                }}
+                placeholder="Leave a comment… @ to mention (⌘↵ to send)"
                 style={{ flex: 1, height: 36 }}
               />
-              <Btn kind="secondary" size="sm" disabled={!comment.trim() || postComment.isPending} onClick={() => postComment.mutate(comment.trim())}>
+              <Btn kind="secondary" size="sm" disabled={!comment.trim() || postComment.isPending} onClick={submitComment}>
                 Comment
               </Btn>
             </div>

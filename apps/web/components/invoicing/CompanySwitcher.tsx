@@ -24,15 +24,22 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
   const switchCompany = useSwitchCompany()
 
   const isAuditor = currentUser?.role === 'AUDITOR'
+  const isGuest = currentUser?.role === 'GUEST'
   const linked = companies.data?.data ?? []
+  const canCreateWorkspace = companies.data?.canCreateWorkspace === true
   // Allow the dropdown whenever there's a company to switch INTO — i.e. more
   // than one linked company, OR a single linked company that isn't the one the
   // session is currently scoped to (the revoked-current-tenant case, where the
-  // active tenant has dropped out of `linked` entirely).
+  // active tenant has dropped out of `linked` entirely) — OR (round 7) a
+  // guest who can create their own workspace: the dropdown is where the
+  // "Create your own workspace" CTA lives for them.
   const canSwitch =
     linked.length > 1 ||
-    (linked.length === 1 && linked[0]!.tenantId !== currentUser?.tenantId)
-  const landingPath = isAuditor ? '/invoicing' : '/dashboard'
+    (linked.length === 1 && linked[0]!.tenantId !== currentUser?.tenantId) ||
+    (isGuest && canCreateWorkspace)
+  // Where a switch lands depends on the role held IN THE TARGET company.
+  const landingFor = (role: string) =>
+    role === 'guest' ? '/pm/projects' : role === 'auditor' ? '/invoicing' : '/dashboard'
   const tenantName = currentTenant?.name ?? 'Workspace'
   const tenantLogo = currentTenant?.logoUrl
   // D7 (PRD v4 §4): uploaded logo renders in a circular mask; initials fallback.
@@ -60,7 +67,9 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
   )
   const subtitle = isAuditor
     ? `Auditor · ${linked.length || 1} ${linked.length === 1 ? 'company' : 'companies'}`
-    : (currentTenant?.plan ?? 'free')
+    : isGuest
+      ? 'Guest access'
+      : (currentTenant?.plan ?? 'free')
 
   // Close on outside click.
   useEffect(() => {
@@ -161,7 +170,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
                 disabled={switchCompany.isPending}
                 onClick={() => {
                   setOpen(false)
-                  if (!active) switchCompany.mutate({ tenantId: c.tenantId, redirectTo: landingPath })
+                  if (!active) switchCompany.mutate({ tenantId: c.tenantId, redirectTo: landingFor(c.role) })
                 }}
                 style={{
                   width: '100%',
@@ -206,7 +215,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
               </button>
             )
           })}
-          {isAuditor && (
+          {(isAuditor || isGuest) && (
             <button
               type="button"
               onClick={() => {
@@ -230,6 +239,32 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
             >
               <Icon.grid size={14} />
               <span style={{ fontSize: 11.5, fontWeight: 700 }}>View all companies</span>
+            </button>
+          )}
+          {canCreateWorkspace && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                router.push('/onboarding')
+              }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px',
+                borderRadius: 8,
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--blue)',
+                marginTop: 2,
+                borderTop: '1px solid var(--bord)',
+              }}
+            >
+              <Icon.plus size={14} />
+              <span style={{ fontSize: 11.5, fontWeight: 700 }}>Create your own workspace</span>
             </button>
           )}
         </div>

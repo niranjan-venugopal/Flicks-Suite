@@ -174,6 +174,188 @@ export class MembersService {
     return { data: { membership, grants } };
   }
 
+  // ─── PM guest seats (round 7) ──────────────────────────────────────────────
+  // Project-scoped external collaborators. Same mechanics as auditors
+  // (find-or-create user, external membership, grant-row-driven module
+  // access, magic-link invite) but the grant is {pm: edit} and per-project
+  // visibility is enforced by PmVisibilityService. Non-billable.
+
+  async inviteGuest(
+    tenantId: string,
+    actorUserId: string,
+    input: { email: string; fullName?: string; projectName: string },
+  ): Promise<{
+    userId: string;
+    membershipId: string;
+    status: 'invited' | 'active';
+    magicLinkSent: boolean;
+  }> {
+    const normalizedEmail = input.email.toLowerCase().trim();
+
+    let [user] = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.email, normalizedEmail))
+      .limit(1);
+    if (!user) {
+      [user] = await this.dbAdmin
+        .insert(users)
+        .values({
+          email: normalizedEmail,
+          full_name: input.fullName ?? normalizedEmail.split('@')[0],
+        })
+        .returning();
+    }
+
+    const [existing] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, user.id),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+
+    // A real member of this workspace never becomes a guest — add their
+    // team to the project instead.
+    if (
+      existing &&
+      existing.status !== 'deactivated' &&
+      existing.role !== 'guest'
+    ) {
+      throw new ConflictException(
+        `${normalizedEmail} is already a member of this workspace — add their team to the project instead`,
+      );
+    }
+
+    let membership = existing;
+    let magicLinkSent = false;
+
+    if (existing && existing.status !== 'deactivated') {
+      // Existing guest (active or invited): membership untouched — the
+      // caller just adds another pm_project_members row. Re-send the invite
+      // email only while they haven't joined yet.
+      magicLinkSent = existing.status === 'invited';
+    } else if (existing) {
+      // Previously revoked guest — reuse the row (tenant+user is unique).
+      [membership] = await this.dbAdmin
+        .update(memberships)
+        .set({
+          role: 'guest',
+          status: 'invited',
+          is_external: true,
+          invited_by: actorUserId,
+          invited_at: new Date(),
+          accepted_at: null,
+        })
+        .where(eq(memberships.id, existing.id))
+        .returning();
+      magicLinkSent = true;
+    } else {
+      [membership] = await this.dbAdmin
+        .insert(memberships)
+        .values({
+          tenant_id: tenantId,
+          user_id: user.id,
+          role: 'guest',
+          status: 'invited',
+          is_external: true,
+          invited_by: actorUserId,
+          invited_at: new Date(),
+        })
+        .returning();
+      magicLinkSent = true;
+    }
+
+    // Grant-row-driven PM access (PmGrantGuard default for guests is 'none').
+    await this.replaceGrants(tenantId, membership!.id, [
+      { module: 'pm', access_level: 'edit', capabilities: {} },
+    ]);
+
+    if (magicLinkSent) {
+      try {
+        const [tenant] = await this.dbAdmin
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, tenantId))
+          .limit(1);
+        const [inviter] = await this.dbAdmin
+          .select({ name: users.full_name, email: users.email })
+          .from(users)
+          .where(eq(users.id, actorUserId))
+          .limit(1);
+        const magicLinkUrl = await this.authService.issueInviteMagicLink(
+          user.id,
+          normalizedEmail,
+        );
+        await this.notificationsService.sendEmail(
+          'pm-guest-invite',
+          normalizedEmail,
+          {
+            projectName: input.projectName,
+            companyName: tenant?.name ?? 'a company',
+            inviterName: inviter?.name ?? inviter?.email ?? 'A teammate',
+            magicLinkUrl,
+          },
+        );
+      } catch {
+        magicLinkSent = false; // best-effort — the guest can still sign in by email
+      }
+    }
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'membership.guest_invited',
+      resourceType: 'membership',
+      resourceId: membership!.id,
+      afterState: { email: normalizedEmail, project: input.projectName },
+    });
+
+    return {
+      userId: user.id,
+      membershipId: membership!.id,
+      status: membership!.status === 'active' ? 'active' : 'invited',
+      magicLinkSent,
+    };
+  }
+
+  /** Deactivate a guest membership (their last project link was removed). */
+  async revokeGuestMembership(
+    tenantId: string,
+    actorUserId: string,
+    guestUserId: string,
+  ): Promise<void> {
+    const [membership] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, guestUserId),
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.role, 'guest'),
+        ),
+      )
+      .limit(1);
+    if (!membership) return; // not a guest here — nothing to revoke
+
+    await this.dbAdmin
+      .update(memberships)
+      .set({ status: 'deactivated' })
+      .where(eq(memberships.id, membership.id));
+    await this.replaceGrants(tenantId, membership.id, []);
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'membership.guest_revoked',
+      resourceType: 'membership',
+      resourceId: membership.id,
+    });
+  }
+
   // ─── Grants ────────────────────────────────────────────────────────────────
 
   async updateGrants(
@@ -261,13 +443,14 @@ export class MembersService {
       .join(' · ');
   }
 
-  // ─── Seats (PRD §13.3 Q3 — auditors are non-billable) ─────────────────────
+  // ─── Seats (PRD §13.3 Q3 — auditors & guests are non-billable) ─────────────
 
   async seats(tenantId: string) {
     const [row] = await this.dbAdmin
       .select({
-        billable: sql<number>`count(*) filter (where ${memberships.role} <> 'auditor' and ${memberships.status} = 'active')`,
+        billable: sql<number>`count(*) filter (where ${memberships.role} not in ('auditor', 'guest') and ${memberships.status} = 'active')`,
         auditors: sql<number>`count(*) filter (where ${memberships.role} = 'auditor' and ${memberships.status} = 'active')`,
+        guests: sql<number>`count(*) filter (where ${memberships.role} = 'guest' and ${memberships.status} = 'active')`,
         pendingInvites: sql<number>`count(*) filter (where ${memberships.status} = 'invited')`,
       })
       .from(memberships)
@@ -277,6 +460,7 @@ export class MembersService {
       data: {
         billable: Number(row?.billable ?? 0),
         auditors: Number(row?.auditors ?? 0),
+        guests: Number(row?.guests ?? 0),
         pendingInvites: Number(row?.pendingInvites ?? 0),
       },
     };
@@ -310,7 +494,12 @@ export class MembersService {
       )
       .orderBy(memberships.created_at);
 
-    if (rows.length === 0) return { data: [] };
+    // Anyone who doesn't already OWN a workspace may create their own
+    // (guests/employees/auditors exploring the product — round 7). Server
+    // enforcement lives in onboarding.createTenant; this drives the CTAs.
+    const canCreateWorkspace = !rows.some((r) => r.role === 'owner');
+
+    if (rows.length === 0) return { data: [], canCreateWorkspace };
 
     const membershipIds = rows.map((r) => r.membershipId);
     const tenantIds = rows.map((r) => r.tenantId);
@@ -346,6 +535,7 @@ export class MembersService {
     }
 
     return {
+      canCreateWorkspace,
       data: rows.map((r) => {
         const stats = statsByTenant.get(r.tenantId);
         return {

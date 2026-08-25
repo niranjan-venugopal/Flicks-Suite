@@ -114,14 +114,21 @@ export class PmSyncService {
 
   /** Bootstrap payload as NDJSON lines (§3.3). */
   async bootstrap(tenantId: string, userId: string): Promise<string[]> {
-    await this.teams.ensureWorkspace(tenantId, userId);
+    // Guests never seed a tenant's PM workspace.
+    const guestProbe = await this.db.withTenant(
+      tenantId,
+      (tx) => this.visibility.guestScopeTx(tx, tenantId, userId),
+      userId,
+    );
+    if (!guestProbe) await this.teams.ensureWorkspace(tenantId, userId);
     const latestSeq = await this.latestSeq(tenantId); // BEFORE the snapshot reads
     const horizon = await this.minSeqHorizon(tenantId);
 
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+        const scope = await this.visibility.scopeTx(tx, tenantId, userId);
+        const visible = scope.teamIds;
         const lines: string[] = [];
         const push = (model: string, rows: unknown[]) =>
           lines.push(JSON.stringify({ model, rows }));
@@ -143,7 +150,8 @@ export class PmSyncService {
           : [];
         push('pm_teams', teams);
 
-        const memberships_ = visible.length
+        // Guests never receive team rosters.
+        const memberships_ = !scope.guest && visible.length
           ? await tx
               .select({
                 team_id: pmTeamMemberships.team_id, user_id: pmTeamMemberships.user_id,
@@ -179,8 +187,15 @@ export class PmSyncService {
 
         push('pm_users_lite', await this.teams.usersLite(tenantId, userId));
 
-        // Issues: registry projection (NO description), most-recent 2000/team.
-        for (const teamId of visible) {
+        // Issues: registry projection (NO description). Members stream the
+        // most-recent 2000 per TEAM; guests stream per invited PROJECT —
+        // never a whole team's backlog.
+        const issueBuckets = scope.guest
+          ? scope.projectIds.map((projectId) =>
+              and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, projectId), isNull(pmIssues.deleted_at)))
+          : visible.map((teamId) =>
+              and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.team_id, teamId), isNull(pmIssues.deleted_at)));
+        for (const bucket of issueBuckets) {
           const rows = await tx
             .select({
               id: pmIssues.id, team_id: pmIssues.team_id, number: pmIssues.number,
@@ -197,7 +212,7 @@ export class PmSyncService {
               updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
             })
             .from(pmIssues)
-            .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.team_id, teamId), isNull(pmIssues.deleted_at)))
+            .where(bucket)
             .orderBy(desc(pmIssues.updated_at))
             .limit(2000);
           if (rows.length) push('pm_issues', rows);
@@ -233,7 +248,7 @@ export class PmSyncService {
 
         // Projects layer (§6): projects/milestones/initiatives are instant
         // models; project-update BODIES ride along (small text, latest 10/project).
-        const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+        const visibleProjects = scope.projectIds;
         if (visibleProjects.length) {
           push(
             'pm_projects',
@@ -278,32 +293,39 @@ export class PmSyncService {
           `);
           push('pm_project_updates', updates as unknown as unknown[]);
         }
-        const initiatives = await tx
-          .select()
-          .from(pmInitiatives)
-          .where(and(eq(pmInitiatives.tenant_id, tenantId), isNull(pmInitiatives.deleted_at)));
-        push(
-          'pm_initiatives',
-          initiatives.map((i) => ({
-            id: i.id, name: i.name, description: i.description, status: i.status,
-            owner_user_id: i.owner_user_id, target_quarter: i.target_quarter,
-            created_at: i.created_at, updated_at: i.updated_at, deleted_at: i.deleted_at,
-          })),
-        );
-        push(
-          'pm_initiative_projects',
-          await tx
-            .select({
-              initiative_id: pmInitiativeProjects.initiative_id,
-              project_id: pmInitiativeProjects.project_id,
-              position: pmInitiativeProjects.position,
-            })
-            .from(pmInitiativeProjects)
-            .where(eq(pmInitiativeProjects.tenant_id, tenantId)),
-        );
+        // Initiatives are a portfolio surface — guests get empty models.
+        if (scope.guest) {
+          push('pm_initiatives', []);
+          push('pm_initiative_projects', []);
+        } else {
+          const initiatives = await tx
+            .select()
+            .from(pmInitiatives)
+            .where(and(eq(pmInitiatives.tenant_id, tenantId), isNull(pmInitiatives.deleted_at)));
+          push(
+            'pm_initiatives',
+            initiatives.map((i) => ({
+              id: i.id, name: i.name, description: i.description, status: i.status,
+              owner_user_id: i.owner_user_id, target_quarter: i.target_quarter,
+              created_at: i.created_at, updated_at: i.updated_at, deleted_at: i.deleted_at,
+            })),
+          );
+          push(
+            'pm_initiative_projects',
+            await tx
+              .select({
+                initiative_id: pmInitiativeProjects.initiative_id,
+                project_id: pmInitiativeProjects.project_id,
+                position: pmInitiativeProjects.position,
+              })
+              .from(pmInitiativeProjects)
+              .where(eq(pmInitiativeProjects.tenant_id, tenantId)),
+          );
+        }
 
-        // Cycles (§7): current + upcoming + recent history for visible teams.
-        if (visible.length) {
+        // Cycles (§7): current + upcoming + recent history for visible teams
+        // (never for guests — cycle stats aggregate whole-team workload).
+        if (!scope.guest && visible.length) {
           const cutoff = new Date(Date.now() - 60 * 86_400_000);
           const cycles = await tx
             .select({
@@ -364,7 +386,8 @@ export class PmSyncService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
+        const scope = await this.visibility.scopeTx(tx, tenantId, userId);
+        const visible = scope.teamIds;
         const upserts: Partial<Record<PmSyncTable, unknown[]>> = {};
         const tombstones: Partial<Record<PmSyncTable, string[]>> = {};
 
@@ -387,6 +410,8 @@ export class PmSyncService {
             }
             case 'pm_team_memberships': {
               // ref id = team id; ship the full roster for that team.
+              // Guests never receive rosters.
+              if (scope.guest) break;
               const teamIds = ids.filter((i) => visible.includes(i));
               const rows = teamIds.length
                 ? await tx.select().from(pmTeamMemberships).where(and(eq(pmTeamMemberships.tenant_id, tenantId), inArray(pmTeamMemberships.team_id, teamIds)))
@@ -422,10 +447,13 @@ export class PmSyncService {
                   })
                 .from(pmIssues)
                 .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, ids), isNull(pmIssues.deleted_at)));
-              record('pm_issues', idSet, rows.filter((r) => visible.includes(r.team_id)));
+              // Central scope rule (guest = project-based) — a miss becomes a
+              // tombstone, which is exactly how visibility loss propagates.
+              record('pm_issues', idSet, rows.filter((r) => this.visibility.issueVisible(scope, r)));
               break;
             }
             case 'pm_cycles': {
+              if (scope.guest) break; // never bootstrapped for guests
               const rows = await tx
                 .select({
                   id: pmCycles.id, team_id: pmCycles.team_id, number: pmCycles.number,
@@ -439,7 +467,7 @@ export class PmSyncService {
               break;
             }
             case 'pm_projects': {
-              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const visibleProjects = scope.projectIds;
               const rows = await tx
                 .select(PM_PROJECT_PROJECTION)
                 .from(pmProjects)
@@ -448,7 +476,7 @@ export class PmSyncService {
               break;
             }
             case 'pm_project_milestones': {
-              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const visibleProjects = scope.projectIds;
               const rows = await tx
                 .select({
                   id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
@@ -461,7 +489,7 @@ export class PmSyncService {
               break;
             }
             case 'pm_project_updates': {
-              const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+              const visibleProjects = scope.projectIds;
               const rows = await tx
                 .select({
                   id: pmProjectUpdates.id, project_id: pmProjectUpdates.project_id,
@@ -474,6 +502,7 @@ export class PmSyncService {
               break;
             }
             case 'pm_initiatives': {
+              if (scope.guest) break; // portfolio surface — not for guests
               const rows = await tx
                 .select({
                   id: pmInitiatives.id, name: pmInitiatives.name, description: pmInitiatives.description,
@@ -488,6 +517,7 @@ export class PmSyncService {
             }
             case 'pm_initiative_projects': {
               // ref id = INITIATIVE id; ship the full ordered set + scope.
+              if (scope.guest) break;
               const rows = await tx
                 .select({
                   initiative_id: pmInitiativeProjects.initiative_id,
@@ -503,7 +533,7 @@ export class PmSyncService {
             default: {
               if (PROJECT_SCOPED.has(table)) {
                 // ref id = PROJECT id; full current set for visible projects.
-                const visibleProjects = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
+                const visibleProjects = scope.projectIds;
                 const scopeIds = ids.filter((i) => visibleProjects.includes(i));
                 if (!scopeIds.length) break;
                 if (table === 'pm_project_teams') {
@@ -524,10 +554,12 @@ export class PmSyncService {
                 // ref id = issue id; ship the issue's full current set (only
                 // for issues in visible teams).
                 const issueRows = await tx
-                  .select({ id: pmIssues.id, team_id: pmIssues.team_id })
+                  .select({ id: pmIssues.id, team_id: pmIssues.team_id, project_id: pmIssues.project_id })
                   .from(pmIssues)
                   .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, ids)));
-                const visibleIssueIds = issueRows.filter((r) => visible.includes(r.team_id)).map((r) => r.id);
+                const visibleIssueIds = issueRows
+                  .filter((r) => this.visibility.issueVisible(scope, r))
+                  .map((r) => r.id);
                 if (!visibleIssueIds.length) break;
                 if (table === 'pm_issue_labels') {
                   upserts.pm_issue_labels = await tx

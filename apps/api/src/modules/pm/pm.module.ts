@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { CrmModule } from '../crm/crm.module';
+import { MembersModule } from '../members/members.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
@@ -21,6 +22,7 @@ import { GithubAppService } from './github-app.service';
 import { PmImportService } from './import.service';
 import { PmTemplatesService } from './templates.service';
 import { PmPublicService } from './public';
+import { PmGuestsService } from './guests.service';
 import { PmGithubService } from './github.service';
 import { GithubWebhookController } from './github-webhook.controller';
 
@@ -30,7 +32,7 @@ import { GithubWebhookController } from './github-webhook.controller';
  * `pm_sync_engine` FAM flag (kill-switch → the same UI on plain REST).
  */
 @Module({
-  imports: [AuditModule, CrmModule, NotificationsModule],
+  imports: [AuditModule, CrmModule, MembersModule, NotificationsModule],
   controllers: [PmController, PmSyncController, GithubWebhookController],
   providers: [
     PmGrantGuard,
@@ -51,6 +53,7 @@ import { GithubWebhookController } from './github-webhook.controller';
     PmImportService,
     PmTemplatesService,
     PmPublicService,
+    PmGuestsService,
   ],
   exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService, PmPublicService],
 })

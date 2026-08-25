@@ -409,6 +409,9 @@ export class PmCyclesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Cycle stats aggregate a team's WHOLE workload — off-limits to
+        // project-scoped guests even when the team is in their render set.
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'cycles');
         const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
         if (!visible.includes(teamId)) throw new NotFoundException('Team not found');
         const cycles = await tx

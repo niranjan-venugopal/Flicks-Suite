@@ -72,6 +72,8 @@ const config: NextConfig = {
     return [
       { source: '/pm/inbox', destination: '/inbox', permanent: false },
       { source: '/notifications', destination: '/inbox', permanent: false },
+      // /signup is the URL people type; the wizard lives at /onboarding.
+      { source: '/signup', destination: '/onboarding', permanent: true },
     ]
   },
 }

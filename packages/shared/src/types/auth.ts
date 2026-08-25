@@ -5,7 +5,10 @@
 // 'auditor' (Invoicing v3): finance-scoped, grant-driven, multi-company,
 // non-billable. It is orthogonal to the role hierarchy — invoicing access is
 // resolved by membership_grants via the grant guard, not the role rank.
-export type UserRole = 'fam' | 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee' | 'auditor';
+// 'guest' (PM v1.5, round 7): project-scoped external collaborator —
+// orthogonal like auditor; PM access via membership_grants, visibility via
+// pm_project_members. Non-billable.
+export type UserRole = 'fam' | 'super_admin' | 'owner' | 'admin' | 'manager' | 'finance' | 'employee' | 'auditor' | 'guest';
 
 export type TenantStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended';
 

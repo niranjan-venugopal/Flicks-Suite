@@ -57,7 +57,7 @@ const notificationsSvc = new NotificationsService(
   new ConfigService(),
   emitter,
 );
-const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc);
+const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const gatewayStub = { emitSeq: jest.fn() };

@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsIn,
   IsInt,
   IsObject,
@@ -13,6 +14,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Throttle } from '@nestjs/throttler';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -29,6 +31,12 @@ import { PmGithubService } from './github.service';
 import { PmImportService } from './import.service';
 import { PmTemplatesService } from './templates.service';
 import { PmPublicService } from './public';
+import { PmGuestsService } from './guests.service';
+
+class InviteGuestDto {
+  @IsEmail() @MaxLength(320) email!: string;
+  @IsOptional() @IsString() @MaxLength(120) full_name?: string;
+}
 
 class CreateTeamDto {
   @IsString() @MaxLength(6) key!: string;
@@ -48,6 +56,8 @@ class CreateIssueDto {
   @IsOptional() @IsUUID() assignee_user_id?: string;
   @IsOptional() @IsUUID() parent_issue_id?: string;
   @IsOptional() @IsString() due_date?: string;
+  // At-create project link (validated in-tenant; REQUIRED for guest callers)
+  @IsOptional() @IsUUID() project_id?: string;
 }
 
 class UpdateIssueDto {
@@ -227,6 +237,7 @@ export class PmController {
     private readonly import_: PmImportService,
     private readonly templates: PmTemplatesService,
     private readonly pub: PmPublicService,
+    private readonly guests: PmGuestsService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -488,6 +499,36 @@ export class PmController {
     return this.projects.restore(user.tenantId, user.sub, id);
   }
 
+  // ─── Guest seats (round 7) — admin+ (it mints a workspace membership,
+  //     mirroring invite-auditor) ─────────────────────────────────────────────
+
+  @Post('projects/:id/guests')
+  @RequireGrant('pm', 'edit')
+  @Roles('admin')
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiOperation({ summary: 'Invite an external guest to exactly this project' })
+  inviteGuest(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: InviteGuestDto) {
+    return this.guests.invite(user.tenantId, user.sub, id, dto);
+  }
+
+  @Get('projects/:id/guests')
+  @RequireGrant('pm', 'view')
+  @Roles('admin')
+  listGuests(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.guests.list(user.tenantId, id);
+  }
+
+  @Post('projects/:id/guests/:userId/remove')
+  @RequireGrant('pm', 'edit')
+  @Roles('admin')
+  revokeGuest(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.guests.revoke(user.tenantId, user.sub, id, userId);
+  }
+
   @Post('milestones')
   @RequireGrant('pm', 'edit')
   createMilestone(@CurrentUser() user: JwtPayload, @Body() dto: CreateMilestoneDto) {
@@ -606,6 +647,7 @@ export class PmController {
 
   @Get('github/status')
   @RequireGrant('pm', 'view')
+  @Roles('employee') // members only — not part of a guest's project scope
   githubStatus(@CurrentUser() user: JwtPayload) {
     return this.github.status(user.tenantId, user.sub);
   }
@@ -685,6 +727,7 @@ export class PmController {
 
   @Get('import/batches')
   @RequireGrant('pm', 'view')
+  @Roles('employee') // members only — not part of a guest's project scope
   importBatches(@CurrentUser() user: JwtPayload) {
     return this.import_.batches(user.tenantId, user.sub);
   }
@@ -727,6 +770,7 @@ export class PmController {
 
   @Get('projects/by-deal/:dealId')
   @RequireGrant('pm', 'view')
+  @Roles('employee') // members only — not part of a guest's project scope
   projectByDeal(@CurrentUser() user: JwtPayload, @Param('dealId') dealId: string) {
     return this.pub.projectForDeal(user.tenantId, user.sub, dealId);
   }

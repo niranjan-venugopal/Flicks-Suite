@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { LogoMark } from '@/components/proto'
 
 export const metadata: Metadata = {
-  title: 'Legal · Flicks Suite',
+  title: 'Legal',
 }
 
 /**

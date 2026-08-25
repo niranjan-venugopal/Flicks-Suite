@@ -67,8 +67,12 @@ export class OnboardingController {
     // tenantId='' because the user had no membership yet — every subsequent
     // tenant-scoped query would explode with 'invalid input syntax for type
     // uuid: ""'. Now that we've inserted the membership, mint a fresh pair
-    // with the real tenantId / membershipId / role and set them.
-    const refreshed = await this.authService.refreshAuthForUser(user.sub, res);
+    // with the real tenantId / membershipId / role and set them. Prefer the
+    // tenant that was JUST created — a guest/employee creating their own
+    // workspace must land in it, not back in the workspace they came from.
+    const refreshed = await this.authService.refreshAuthForUser(user.sub, res, {
+      preferTenantId: result.id,
+    });
     return { ...result, refreshed };
   }
 

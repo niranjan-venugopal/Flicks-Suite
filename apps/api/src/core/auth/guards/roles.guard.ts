@@ -55,6 +55,10 @@ export class RolesGuard implements CanActivate {
       // @Roles(...) requirement (HRMS routes). Invoicing access is resolved by
       // the InvoicingGrantGuard via membership_grants instead.
       auditor: 0,
+      // Guest (PM project seat) is orthogonal the same way: level 0 blocks
+      // every ranked route; PM access flows through PmGrantGuard via the
+      // membership_grants row the invite writes.
+      guest: 0,
     };
 
     const userLevel = roleHierarchy[user.role] ?? 0;

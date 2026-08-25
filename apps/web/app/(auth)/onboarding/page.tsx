@@ -7,8 +7,11 @@ import { Btn, Icon } from '@/components/proto'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { useToast } from '@/components/ui/use-toast'
 import { useDebounce } from '@/lib/hooks/use-debounce'
-import { useRequestOtp, useVerifyOtp } from '@/lib/api/queries/use-auth'
+import { useRequestOtp, useVerifyOtp, useCurrentUser } from '@/lib/api/queries/use-auth'
 import { useCheckSlug, useCreateTenant } from '@/lib/api/queries/use-onboarding'
+import { useSwitchCompany, type MyCompany } from '@/lib/api/queries/use-members'
+import { roleLabel } from '@/lib/stores/auth.store'
+import { api } from '@/lib/api/client'
 
 // ─── Static option sets ─────────────────────────────────────────────────────
 
@@ -42,7 +45,10 @@ function toSlug(name: string): string {
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3
+// 'existing' (round 7): a registered email lands on an interstitial listing
+// the workspaces they already have access to — no more filling the whole
+// form only to hit "you already belong to a workspace".
+type Step = 1 | 2 | 'existing' | 3
 
 // useSearchParams needs a Suspense boundary in Next 15 static builds
 // (house pattern: verify/page.tsx).
@@ -73,6 +79,38 @@ function OnboardingWizard() {
 
   // Step 2 state
   const [otp, setOtp] = useState(['', '', '', '', '', ''])
+
+  // 'existing' interstitial state (registered emails)
+  const [myWorkspaces, setMyWorkspaces] = useState<MyCompany[]>([])
+  const [canCreateWorkspace, setCanCreateWorkspace] = useState(true)
+  const switchCompany = useSwitchCompany()
+
+  // Already signed in (e.g. a guest clicking "Create your own workspace"):
+  // skip the email/OTP steps entirely — they've proven the mailbox already.
+  const me = useCurrentUser()
+  const authedJumped = useRef(false)
+  useEffect(() => {
+    if (step !== 1 || !me.data || authedJumped.current) return
+    authedJumped.current = true
+    // Seed the name for the create step (the server only uses it to replace
+    // placeholder names on the employee row).
+    const parts = (me.data.fullName ?? '').trim().split(/\s+/)
+    if (parts[0] && !firstName) setFirstName(parts[0])
+    if (parts.length > 1 && !lastName) setLastName(parts.slice(1).join(' '))
+    void (async () => {
+      try {
+        const companies = await api.get<{ data: MyCompany[]; canCreateWorkspace: boolean }>(
+          '/api/v1/me/companies',
+        )
+        setMyWorkspaces(companies.data)
+        setCanCreateWorkspace(companies.canCreateWorkspace)
+        setStep(companies.data.length ? 'existing' : 3)
+      } catch {
+        /* not signed in after all — stay on step 1 */
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, me.data])
 
   // Step 3 state
   const [workspaceName, setWorkspaceName] = useState('')
@@ -152,7 +190,7 @@ function OnboardingWizard() {
       return
     }
     try {
-      await verifyOtp.mutateAsync({
+      const result = await verifyOtp.mutateAsync({
         email: email.trim().toLowerCase(),
         code,
         // §3.4 — the clickwrap rides the user-creation moment; the ledger rows
@@ -162,7 +200,24 @@ function OnboardingWizard() {
           { type: 'marketing_email', granted: marketingOptIn },
         ],
       })
-      setStep(3)
+      if (result.needsOnboarding) {
+        // Fresh account, no memberships — straight to workspace creation.
+        setStep(3)
+      } else {
+        // Registered email (guest/employee/owner somewhere): show what they
+        // already have + the create path when eligible, instead of letting
+        // them fill the whole form into a guaranteed 409.
+        try {
+          const companies = await api.get<{ data: MyCompany[]; canCreateWorkspace: boolean }>(
+            '/api/v1/me/companies',
+          )
+          setMyWorkspaces(companies.data)
+          setCanCreateWorkspace(companies.canCreateWorkspace)
+          setStep('existing')
+        } catch {
+          setStep(3) // listing failed — let the server guard decide
+        }
+      }
     } catch (e: any) {
       toast({
         title: 'Invalid code',
@@ -225,9 +280,9 @@ function OnboardingWizard() {
 
   return (
     <AuthLayout
-      step={step >= 2 ? step + 1 : undefined}
+      step={step === 2 ? 3 : step === 'existing' ? 3 : step === 3 ? 4 : undefined}
       total={4}
-      label={step === 2 ? 'OTP' : step === 3 ? 'Workspace' : undefined}
+      label={step === 2 ? 'OTP' : step === 'existing' ? 'Your access' : step === 3 ? 'Workspace' : undefined}
     >
       {step === 1 && (
         <SignupStep
@@ -259,6 +314,21 @@ function OnboardingWizard() {
             toast({ title: 'New code sent', description: 'Check your inbox.' })
           }}
           submitting={verifyOtp.isPending}
+        />
+      )}
+
+      {step === 'existing' && (
+        <ExistingWorkspacesStep
+          workspaces={myWorkspaces}
+          canCreate={canCreateWorkspace}
+          switching={switchCompany.isPending}
+          onOpen={(w) =>
+            switchCompany.mutate({
+              tenantId: w.tenantId,
+              redirectTo: w.role === 'guest' ? '/pm/projects' : '/dashboard',
+            })
+          }
+          onCreate={() => setStep(3)}
         />
       )}
 
@@ -720,6 +790,94 @@ function OtpStep(props: {
 }
 
 // ─── Step 3: Workspace setup ────────────────────────────────────────────────
+
+// Round 7: a registered email sees what it already has — plus a
+// create-your-own path when the account doesn't own a workspace yet.
+function ExistingWorkspacesStep(props: {
+  workspaces: MyCompany[]
+  canCreate: boolean
+  switching: boolean
+  onOpen: (w: MyCompany) => void
+  onCreate: () => void
+}) {
+  const owned = props.workspaces.find((w) => w.role === 'owner')
+  return (
+    <AuthCard>
+      <div style={{ marginBottom: 18 }}>
+        <div className="t-h2" style={{ marginBottom: 6 }}>
+          You already have access to {props.workspaces.length === 1 ? 'a workspace' : 'these workspaces'}
+        </div>
+        <div className="t-mute" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+          This email is already registered on Flicks Suite. Open one of your
+          workspaces{props.canCreate ? ' — or create your own' : ''}.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+        {props.workspaces.map((w) => (
+          <div
+            key={w.tenantId}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: 'var(--surf-1)',
+              border: '1px solid var(--bord)',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {w.name}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
+                {roleLabel(
+                  w.role === 'admin'
+                    ? 'HR_ADMIN'
+                    : w.role === 'super_admin'
+                      ? 'FAM'
+                      : (w.role.toUpperCase() as never),
+                )}
+                {w.status === 'invited' ? ' · Invite pending' : ''}
+              </div>
+            </div>
+            <Btn
+              kind="secondary"
+              size="sm"
+              disabled={props.switching}
+              onClick={() => props.onOpen(w)}
+            >
+              Open
+            </Btn>
+          </div>
+        ))}
+      </div>
+
+      {props.canCreate ? (
+        <Btn kind="primary" style={{ width: '100%' }} onClick={props.onCreate}>
+          Create my own workspace →
+        </Btn>
+      ) : (
+        <div
+          style={{
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: 'var(--surf-1)',
+            border: '1px dashed var(--bord-2)',
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: 'var(--text-mute)',
+            lineHeight: 1.6,
+          }}
+        >
+          You already own {owned ? <strong style={{ color: '#fff' }}>{owned.name}</strong> : 'a workspace'} —
+          open it instead. One account owns one workspace.
+        </div>
+      )}
+    </AuthCard>
+  )
+}
 
 function WorkspaceStep(props: {
   workspaceName: string

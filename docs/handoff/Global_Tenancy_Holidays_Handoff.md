@@ -330,3 +330,103 @@ Fixes shipped:
 - Tests: `explicit-throttler.spec.ts` (burst passes on plain routes; explicit
   @Throttle still trips). Gate green: 510/510 jest, typechecks, api build,
   boundaries, web build, RLS 0 leaks. No migration.
+
+---
+
+# Round 7 addendum (2026-08-25): PM guest seats · workspace discovery · PM emails · Specflicks SEO
+
+## A. PM guest seats (the "v1.5" deferral — now shipped)
+- **Migration 0051**: `membership_role` gains `'guest'` (own file, value never
+  used in-file — 0013 precedent) + `idx_pm_project_members_user`. RLS/grants
+  for `pm_project_members` already shipped in 0042.
+- **Model**: a guest is a real tenant membership (`role:'guest'`,
+  `is_external`, non-billable — `seats()` excludes auditors AND guests) whose
+  PM access comes from a `membership_grants {pm:edit}` row (PmGrantGuard
+  default stays 'none'), and whose VISIBILITY is exactly their
+  `pm_project_members` rows. RolesGuard: `guest: 0` (auditor tier) so every
+  ranked `@Roles` route rejects them; PM view/edit routes gate via
+  PmGrantGuard only.
+- **API**: `POST/GET /pm/projects/:id/guests`,
+  `POST /pm/projects/:id/guests/:userId/remove` (`@Roles('admin')` — it mints
+  a membership, mirroring invite-auditor; invite throttled 10/min).
+  `PmGuestsService` owns the project rows; membership mechanics live behind
+  the NEW `modules/members/public.ts` facade (`MembersPublicService`).
+  Revoking the last project deactivates the membership (ModuleGrantGuard's
+  per-request liveness check then kills live sessions immediately).
+- **Scoping — the security class**: `PmVisibilityService` is now THE scope
+  authority — `scopeTx()` (role read from the DB, not the JWT, so
+  promotion/revocation is immediate), `issueVisible()` (guest ⇒
+  `project_id ∈ projects`; project-less issues invisible), `assertNotGuestTx()`.
+  A duplicate `visibleTeamIds` inside issues.service was deleted (it would
+  have leaked). Applied to: issues list/get/detail, search, projects
+  list/detail, teams list (rosters empty), usersLite (only people connected
+  to their projects), initiatives/cycles/templates/recently-deleted (empty or
+  403), sync **bootstrap** (issues streamed per project; no rosters, cycles
+  or initiatives) and sync **delta** (both the `pm_issues` case and the
+  ISSUE_SCOPED default now filter via `issueVisible`), plus the mutate op
+  whitelist. Writes: `assertIssueWritable` via a scope-aware `loadIssue` on
+  every issue mutation, guests must create inside one of their projects, and
+  `setProject` can only move between their own projects.
+  ⚠ **Doctrine: every NEW PM read path must consult `scopeTx`/`issueVisible`,
+  every NEW mutation must call the guest asserts** — module-level pm:edit
+  alone does NOT scope a guest.
+- **Web**: `GUEST` role added to the store + `normaliseRole` (an unknown role
+  used to fall through to the FULL employee nav); `guestNavFor()` (Projects ·
+  Inbox · My companies); guests skip employee self-onboarding and land on
+  `/pm/projects`; `ProjectGuestsCard` (invite/list/revoke) in the project
+  rail for Owner/Admin; `GuestWorkspaceNudge` on the project list.
+
+## B. Workspace discovery (guest → customer)
+- **Login auto-select** now ranks memberships: own (non-guest) first, the
+  Specflicks platform tenant last, oldest within each class — users always
+  land in their own workspace; guest-only users land in the guest workspace.
+  No login-time picker (founder decision); the sidebar switcher covers the rest.
+- **`refreshAuthForUser` bug fixed**: it picked an ARBITRARY membership
+  (`.limit(1)`, unordered) — a guest creating their own workspace could be
+  re-scoped straight back into the guest tenant. It now takes
+  `preferTenantId` (create-tenant passes the new tenant) + the same rank.
+- **Create-tenant unblocked**: `onboarding.service` now rejects only an
+  existing **OWNER** membership ("You already own a workspace…"), so
+  guests/employees/auditors can create their first workspace and become its
+  owner. `GET /me/companies` returns `canCreateWorkspace`.
+- **Signup wizard**: a registered email no longer dead-ends at a 409 after
+  filling the whole form — after OTP it shows **"You already have access to
+  these workspaces"** (name + role + invite-pending, Open → role-aware
+  landing) plus "Create my own workspace →" when eligible. An
+  already-signed-in visitor skips email/OTP entirely. `/my-companies`'s
+  dead-end card became the same CTA; the switcher gained a permanent
+  "Create your own workspace" row.
+
+## C. PM notification emails (audit + fixes)
+- Audit result: assignment → in-app + urgent email worked; **comments were
+  in-app only** (pm_comment email default off); **mentions had a complete
+  server path but no client ever sent `mentioned_user_ids`** (no @-picker);
+  **creating an issue WITH an assignee notified nobody**.
+- Shipped: `pm_comment` defaults to `{in_app:true, email:true}` (folds into
+  the existing hourly/daily digest — user overrides win; mentions +
+  assignments stay on the 5-min urgent sweep); `create()` now pings the
+  assignee (self-assign silent); an inline **@-mention picker** in the issue
+  composer (↑/↓/Enter/Esc, sends `mentioned_user_ids`) with a `/pm/users`
+  REST fallback that also fixes the empty assignee menu in kill-switch mode.
+
+## D. Specflicks branding + SEO
+- Auth tagline "HRMS · India" → **"by Specflicks"** (one shared AuthLayout).
+- Root metadata: `metadataBase` from `NEXT_PUBLIC_APP_URL` (fallback
+  `https://app.flickssuite.com`), title template `%s · Flicks Suite`,
+  Specflicks keywords/description, OpenGraph + `/og.png`; `app/icon.png` is
+  the auto-favicon (the old `/favicon.ico` 404'd). Legal titles trimmed so
+  the template doesn't double-suffix.
+- Per-route metadata via server layouts: `/login` ("Sign in — Flicks Suite by
+  Specflicks", canonical, "Specflicks Flicks Suite login" keywords),
+  `/onboarding` ("Create your workspace — …"), and
+  `/onboarding/employee` (`robots: noindex` — it nests under the signup URL).
+- New `app/robots.ts` (allow /, disallow /api, sitemap link) + `app/sitemap.ts`
+  (/login, /onboarding, legal). `/signup` → `/onboarding` permanent redirect.
+
+## Gate
+532/532 jest (22 new in `founder-round7.spec.ts`, incl. the guest leak suite:
+list/get/search/bootstrap/delta cross-project + cross-tenant assertions),
+api typecheck + `nest build`, boundaries (322 modules), web typecheck +
+build, diagnose-rls 0 leaks. **Migration 0051 must be applied in Supabase.**
+Founder note: the pm_comment default flip emails existing subscribers who
+never opted out (approved) — their per-user overrides still win.

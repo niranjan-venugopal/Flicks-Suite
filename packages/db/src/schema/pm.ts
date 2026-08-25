@@ -487,7 +487,11 @@ export const pmProjectMembers = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.project_id, t.user_id] })],
+  (t) => [
+    primaryKey({ columns: [t.project_id, t.user_id] }),
+    // Guest visibility walks this table by (tenant, user) — 0051.
+    index('idx_pm_project_members_user').on(t.tenant_id, t.user_id),
+  ],
 );
 
 export const pmProjectMilestones = pgTable(

@@ -505,17 +505,15 @@ export class AuthService {
     // Deterministic auto-select. The old behavior returned
     // requiresTenantSelection (a token-less response) for >1 membership, but
     // no client surface ever implemented that branch — a platform admin or
-    // multi-company user hit a silent dead-end at login. Instead: pick the
-    // OLDEST membership, preferring real workspaces over the Specflicks
-    // platform tenant (the FAM membership every platform admin carries).
-    // In-app switching (CompanySwitcher → /auth/select-tenant) still lets
-    // the user move between workspaces afterwards.
-    // (stable sort: SQL already ordered oldest-first, so this only moves the
-    // platform tenant to the back)
+    // multi-company user hit a silent dead-end at login. Instead (round 7,
+    // founder decision + Linear/ClickUp/Microsoft convention): always land
+    // the user in their OWN workspace — non-guest memberships first, the
+    // Specflicks platform tenant last, oldest within each class. Guest-only
+    // users land in their oldest guest workspace. In-app switching
+    // (CompanySwitcher → /auth/switch-company) covers the rest.
+    // (stable sort: SQL already ordered oldest-first)
     const sortedMemberships = [...userMemberships].sort(
-      (a, b) =>
-        (a.tenantId === SPECFLICKS_TENANT_ID ? 1 : 0) -
-        (b.tenantId === SPECFLICKS_TENANT_ID ? 1 : 0),
+      (a, b) => this.membershipRank(a) - this.membershipRank(b),
     );
     const activeMembership = sortedMemberships[0];
 
@@ -1400,6 +1398,7 @@ export class AuthService {
   async refreshAuthForUser(
     userId: string,
     res: Response,
+    opts: { preferTenantId?: string } = {},
   ): Promise<{ tenantId: string | null; role: string | null }> {
     const [user] = await this.db
       .select()
@@ -1411,7 +1410,11 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const [activeMembership] = await this.dbAdmin
+    // Fetch ALL active memberships and pick deterministically: the caller's
+    // preferred tenant first (e.g. the workspace they just CREATED — the old
+    // unordered .limit(1) could re-scope a guest right back into the guest
+    // tenant), else the same own-workspace-first rank as login auto-select.
+    const activeRows = await this.dbAdmin
       .select({
         id: memberships.id,
         tenantId: memberships.tenant_id,
@@ -1424,7 +1427,14 @@ export class AuthService {
           eq(memberships.status, 'active'),
         ),
       )
-      .limit(1);
+      .orderBy(asc(memberships.created_at));
+    const activeMembership =
+      (opts.preferTenantId
+        ? activeRows.find((m) => m.tenantId === opts.preferTenantId)
+        : undefined) ??
+      [...activeRows].sort(
+        (a, b) => this.membershipRank(a) - this.membershipRank(b),
+      )[0];
 
     const { accessToken, refreshToken, refreshTtlMs } =
       await this.issueTokenPair(
@@ -1440,6 +1450,18 @@ export class AuthService {
       tenantId: activeMembership?.tenantId ?? null,
       role: activeMembership?.role ?? null,
     };
+  }
+
+  /**
+   * Auto-select rank (round 7): own (non-guest) workspaces first, the
+   * Specflicks platform tenant last within each class; ties keep the
+   * caller's oldest-first ordering (stable sort).
+   */
+  private membershipRank(m: { role: string; tenantId: string }): number {
+    return (
+      (m.role === 'guest' ? 2 : 0) +
+      (m.tenantId === SPECFLICKS_TENANT_ID ? 1 : 0)
+    );
   }
 
   async issueTokenPair(

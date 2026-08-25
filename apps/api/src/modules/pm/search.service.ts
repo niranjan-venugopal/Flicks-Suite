@@ -28,14 +28,23 @@ export class PmSearchService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const visible = await this.visibility.visibleTeamIdsTx(tx, tenantId, userId);
-        if (!visible.length) return { data: { issues: [] } };
+        const scope = await this.visibility.scopeTx(tx, tenantId, userId);
+        if (!scope.teamIds.length) return { data: { issues: [] } };
+        if (scope.guest && !scope.projectIds.length) return { data: { issues: [] } };
 
-        const base = and(
-          eq(pmIssues.tenant_id, tenantId),
-          inArray(pmIssues.team_id, visible),
-          isNull(pmIssues.deleted_at),
-        );
+        // Guests search only inside their invited projects; members inside
+        // their visible teams — the SAME rule as list/bootstrap/delta.
+        const base = scope.guest
+          ? and(
+              eq(pmIssues.tenant_id, tenantId),
+              inArray(pmIssues.project_id, scope.projectIds),
+              isNull(pmIssues.deleted_at),
+            )
+          : and(
+              eq(pmIssues.tenant_id, tenantId),
+              inArray(pmIssues.team_id, scope.teamIds),
+              isNull(pmIssues.deleted_at),
+            );
         const pick = {
           id: pmIssues.id,
           team_id: pmIssues.team_id,

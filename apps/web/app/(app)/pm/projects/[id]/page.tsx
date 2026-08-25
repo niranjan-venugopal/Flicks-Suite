@@ -8,6 +8,7 @@ import { Btn, Icon } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
+import { ProjectGuestsCard } from '@/components/pm/ProjectGuestsCard'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import type { PmSyncEngine } from '@/lib/pm/engine'
@@ -286,6 +287,9 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             Leads are nudged in the Inbox when stale &gt; 7 days — never auto-generated.
           </div>
         </div>
+
+        {/* Round 7: project-scoped guest seats (Owner/Admin only) */}
+        <ProjectGuestsCard projectId={id} />
       </div>
     </div>
   )

@@ -53,6 +53,6 @@ Sign-off starts the 2-week dogfood clock.
 
 - i18n string catalog (hi/es/pt-BR fast-follow) — strings are inline today.
 - Timesheet `hourly_rate_snapshot` — no compensation model to source it.
-- Guest seats, label groups, recurring templates, project-template starter
+- ~~Guest seats~~ (SHIPPED round 7: per-project guest invites), label groups, recurring templates, project-template starter
   issue sets — reserved columns exist ("v1.5" in the UI copy).
 - CRDT/Yjs collaborative editing — markdown v1 shipped by design.

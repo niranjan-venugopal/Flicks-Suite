@@ -221,6 +221,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const teamIds = [...new Set(input.team_ids ?? [])];
         await this.assertTeamsInTenant(tx, tenantId, teamIds);
         await this.assertActiveMember(tx, tenantId, input.lead_user_id ? [input.lead_user_id] : []);
@@ -272,6 +273,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
         const project = await this.loadProject(tx, tenantId, id);
         const clean: Record<string, unknown> = {};
@@ -324,6 +326,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
         await this.loadProject(tx, tenantId, id);
         const clean = [...new Set(teamIds)];
@@ -354,6 +357,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
         const project = await this.loadProject(tx, tenantId, id);
         const [update] = await tx
@@ -401,6 +405,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
         await this.loadProject(tx, tenantId, id);
         await tx
@@ -429,6 +434,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const project = await this.loadProject(tx, tenantId, id, { withDeleted: true });
         // Restore is a write like every sibling op — a private team's project
         // must not be un-deleted by someone who can't even see it.
@@ -460,6 +466,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, input.project_id);
         await this.loadProject(tx, tenantId, input.project_id);
         const [row] = await tx
@@ -497,6 +504,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const [ms] = await tx
           .select()
           .from(pmProjectMilestones)
@@ -536,6 +544,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const [ms] = await tx
           .select()
           .from(pmProjectMilestones)
@@ -566,6 +575,9 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Initiatives are a portfolio surface — empty for guests.
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        if (guestScope) return { data: { initiatives: [], projects: {} } };
         const initiatives = await tx
           .select()
           .from(pmInitiatives)
@@ -595,6 +607,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertActiveMember(tx, tenantId, input.owner_user_id ? [input.owner_user_id] : []);
         const [row] = await tx
           .insert(pmInitiatives)
@@ -628,6 +641,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const [init] = await tx
           .select()
           .from(pmInitiatives)
@@ -670,6 +684,7 @@ export class PmProjectsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         const [init] = await tx
           .select({ id: pmInitiatives.id })
           .from(pmInitiatives)

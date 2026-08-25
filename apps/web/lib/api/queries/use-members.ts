@@ -45,6 +45,7 @@ export interface MyCompany {
 export interface SeatCounts {
   billable: number
   auditors: number
+  guests: number
   pendingInvites: number
 }
 
@@ -61,7 +62,10 @@ export interface InviteAuditorPayload {
 export function useMyCompanies(enabled = true) {
   return useQuery({
     queryKey: ['me', 'companies'],
-    queryFn: () => api.get<{ data: MyCompany[] }>('/api/v1/me/companies'),
+    queryFn: () =>
+      api.get<{ data: MyCompany[]; canCreateWorkspace: boolean }>(
+        '/api/v1/me/companies',
+      ),
     staleTime: 60_000,
     enabled,
   })

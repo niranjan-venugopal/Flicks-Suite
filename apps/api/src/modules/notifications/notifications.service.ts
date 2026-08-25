@@ -55,7 +55,9 @@ const PREFERENCE_DEFAULTS: Record<
   // only. Email cadence is further shaped by users.notification_email_digest.
   pm_assigned: { in_app: true, email: true },
   pm_mention: { in_app: true, email: true },
-  pm_comment: { in_app: true, email: false },
+  // Round 7 (founder decision, Linear parity): comment emails default ON for
+  // subscribers, folded into the hourly/daily digest — user overrides win.
+  pm_comment: { in_app: true, email: true },
   pm_status: { in_app: true, email: false },
   pm_cycle_digest: { in_app: true, email: true },
   pm_project_nudge: { in_app: true, email: false },
@@ -172,7 +174,9 @@ type EmailTemplate =
   | 'impersonation-started'
   // PM Inbox (PRD v6 §11)
   | 'pm-inbox-urgent'
-  | 'pm-inbox-digest';
+  | 'pm-inbox-digest'
+  // PM guest seats (round 7)
+  | 'pm-guest-invite';
 
 @Injectable()
 export class NotificationsService {
@@ -464,6 +468,25 @@ export class NotificationsService {
             <strong>sign in at ${appName} with this email address</strong> — your access to
             <strong>${props.companyName}</strong> activates automatically, and the company
             appears under <strong>My companies</strong>.</p>
+          `,
+        };
+      }
+
+      case 'pm-guest-invite': {
+        return {
+          subject: `You're invited to ${props.projectName} on ${appName}`,
+          html: `
+            <p>Hi,</p>
+            <p><strong>${props.inviterName}</strong> invited you as a <strong>guest</strong>
+            on the project <strong>${props.projectName}</strong>
+            (${props.companyName}) on ${appName}.</p>
+            <p>As a guest you can view and work on this project's issues —
+            nothing else in the workspace is visible to you.</p>
+            <p style="margin:24px 0;">
+              <a href="${props.magicLinkUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">Accept invite &amp; sign in</a>
+            </p>
+            <p>If the button doesn't work, just <strong>sign in at ${appName} with this
+            email address</strong> — your access activates automatically.</p>
           `,
         };
       }

@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MembersService } from './members.service';
+import { MembersPublicService } from './public';
 import { MeCompaniesController, MembersController } from './members.controller';
 
 /**
@@ -13,7 +14,7 @@ import { MeCompaniesController, MembersController } from './members.controller';
 @Module({
   imports: [AuditModule, AuthModule, NotificationsModule],
   controllers: [MembersController, MeCompaniesController],
-  providers: [MembersService],
-  exports: [MembersService],
+  providers: [MembersService, MembersPublicService],
+  exports: [MembersService, MembersPublicService],
 })
 export class MembersModule {}

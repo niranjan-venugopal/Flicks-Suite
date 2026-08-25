@@ -400,6 +400,8 @@ export const DOMAIN_EVENTS = [
   'pm.project.created', 'pm.project.updated', 'pm.project.status_changed',
   'pm.project.health_updated', 'pm.project.milestone_changed', 'pm.project.completed',
   'pm.project.created_from_deal',
+  // Guest seats (round 7)
+  'pm.project.member_added', 'pm.project.member_removed',
   'pm.initiative.created', 'pm.initiative.updated',
   'pm.template.saved',
   'pm.view.saved', 'pm.view.favorited',

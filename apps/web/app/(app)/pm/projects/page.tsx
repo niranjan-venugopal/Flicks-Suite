@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
 import { PmAv, ProjectCreateModal, TeamKeyChips } from '@/components/pm/projects'
+import { GuestWorkspaceNudge } from '@/components/pm/GuestWorkspaceNudge'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -45,6 +46,8 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
 
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
+      {/* Round 7: guest-only users get the "create your own workspace" strip */}
+      <GuestWorkspaceNudge />
       <SectionHead
         title="Projects"
         sub="Projects group issues toward an outcome — one lead, a target date, honest health updates."
