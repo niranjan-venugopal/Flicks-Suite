@@ -17,6 +17,7 @@ import { NpsCard } from '@/components/feedback/NpsCard'
 import { BillingBanners, BillingWall } from '@/components/billing/BillingGate'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
+import { APIError } from '@/lib/api/client'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
 
@@ -82,7 +83,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { isAuthenticated, currentUser } = useAuthStore()
   const me = useCurrentUser()
-  const { isLoading, isError, data: meData } = me
+  const { isLoading, isError, error: meError, data: meData } = me
+  // Only a settled 401 means "signed out" — the api client has already tried
+  // the silent refresh by then. A transient failure (429 from a rate limiter,
+  // 5xx, network blip) must NOT eject a session holding a valid 7/180-day
+  // refresh cookie; we keep the skeleton and let the retry/refetch recover.
+  const authRejected =
+    isError && meError instanceof APIError && meError.status === 401
 
   // Employees who haven't finished self-onboarding go to the wizard. Owners
   // and HR Admins skip this check — they're managing the workspace, not
@@ -142,7 +149,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     (!currentMembership || currentMembership.status !== 'active')
 
   useEffect(() => {
-    if (!isLoading && (isError || !isAuthenticated)) {
+    if (!isLoading && (authRejected || !isAuthenticated)) {
       router.replace('/login')
       return
     }
@@ -174,7 +181,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [
     isLoading,
-    isError,
+    authRejected,
     isAuthenticated,
     isPlatformAdmin,
     needsOnboarding,

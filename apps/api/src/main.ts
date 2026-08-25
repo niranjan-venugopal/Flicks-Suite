@@ -18,6 +18,14 @@ async function bootstrap() {
   // HMAC over the exact bytes Razorpay signed — re-serialized JSON would not match.
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
+  // One reverse proxy in front (Railway). Without this, req.ip is the
+  // proxy's address — every user shared one per-IP rate-limit bucket and
+  // auth events logged the proxy IP instead of the client's.
+  (app.getHttpAdapter().getInstance() as import('express').Express).set(
+    'trust proxy',
+    1,
+  );
+
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 4000);
   const corsOrigins = configService

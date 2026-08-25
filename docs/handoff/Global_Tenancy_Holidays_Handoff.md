@@ -292,3 +292,41 @@ sessions alive past 15 minutes.
   Redis adapter) with react-query staleTime as backstop; the overview
   endpoint's missing @Roles predates this round (new bucket is server-gated;
   leave/reg exposure noted as follow-up).
+
+---
+
+# Round 6 addendum (2026-08-25): refresh-logout root cause (rate limiter) fixed
+
+Symptom: refreshing the browser (or reopening a tab) bounced a LIVE session
+to /login — even trusted 180-day sessions. Root cause chain (introduced by
+the "security & stability hardening" commit that wired ThrottlerGuard as a
+global APP_GUARD):
+
+1. The stock guard applied the module DEFAULTS (short 10 req/1s per IP) to
+   EVERY route. An F5 of the dashboard fires 10-15 API calls in one second →
+   the tail got 429s. A 429 on /auth/me (or on /auth/refresh mid
+   silent-refresh) was treated as "signed out" by the web shell.
+2. main.ts never set `trust proxy`, so behind Railway req.ip was the
+   proxy's address — ALL users shared one 10/s bucket (and the per-IP OTP
+   limits were effectively cross-user; auth events logged the proxy IP).
+3. The (app)/(fam) layouts redirected to /login on ANY settled /me error,
+   not just 401.
+
+Fixes shipped:
+- **ExplicitThrottlerGuard** (`core/common/explicit-throttler.guard.ts`)
+  replaces ThrottlerGuard as APP_GUARD: rate-limits ONLY routes that
+  explicitly declare @Throttle (request-otp 5/hr, verify-otp 15/min,
+  magic-link 20/min, feedback/fam/public endpoints) — the SPA's own
+  authenticated traffic is no longer throttled. Verified live: 20-request
+  concurrent burst → zero 429s; 18 rapid verify-otp posts → 429 from #16.
+  Follow-up (optional): a Redis-backed generous default for the whole
+  surface once multi-instance lands.
+- **`trust proxy = 1`** in main.ts — req.ip is the real client IP behind
+  Railway (correct per-IP throttle keys + correct IPs in auth_events/audit).
+- **Web resilience**: layouts bounce to /login only on a settled **401**
+  (APIError.status); 429/5xx/network keep the skeleton and recover.
+  `useCurrentUser` retries transient failures twice (401 still fails fast);
+  `silentRefresh` retries once after 750ms on 429/5xx.
+- Tests: `explicit-throttler.spec.ts` (burst passes on plain routes; explicit
+  @Throttle still trips). Gate green: 510/510 jest, typechecks, api build,
+  boundaries, web build, RLS 0 leaks. No migration.

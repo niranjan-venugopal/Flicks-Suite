@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../client'
+import { api, APIError } from '../client'
 import { resetAnalytics } from '@/lib/analytics/posthog'
 import {
   useAuthStore,
@@ -167,7 +167,15 @@ export function useCurrentUser() {
     // redirected to /login before hydration finished. Keeping /me always-on
     // means isLoading stays true until it resolves, so the guard waits. Logout
     // safety is handled by useLogout doing a hard teardown instead.
-    retry: false,
+    //
+    // Retry transient failures (429 from a rate limiter, 5xx, network blip) —
+    // the app layout treats a settled /me error as "signed out", so giving up
+    // on the first hiccup ejected real sessions. A 401 is definitive (the
+    // silent refresh already ran inside the api client): fail fast.
+    retry: (failureCount, error) => {
+      if (error instanceof APIError && error.status === 401) return false
+      return failureCount < 2
+    },
     staleTime: 5 * 60 * 1000,
   })
 }

@@ -2,7 +2,8 @@ import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { SentryModule, SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ExplicitThrottlerGuard } from './core/common/explicit-throttler.guard';
 import { ClsModule } from 'nestjs-cls';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -192,7 +193,11 @@ import { PmJobs } from './jobs/pm.jobs';
     // APP_GUARD (rather than main.ts useGlobalGuards) so they participate in DI
     // — ThrottlerGuard needs the throttler storage/options, and the auth guards
     // gain DI for audit logging of denials.
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Explicit-only: rate-limits just the routes that declare @Throttle
+    // (OTP/magic-link brute force, public forms). The stock guard's default
+    // limits 429'd the SPA's own F5 burst and bounced live sessions to
+    // /login — see ExplicitThrottlerGuard's doc comment.
+    { provide: APP_GUARD, useClass: ExplicitThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     // Billing paywall LAST: needs req.user + role, blocks mutations on locked

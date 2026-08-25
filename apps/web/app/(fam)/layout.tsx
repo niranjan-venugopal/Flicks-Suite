@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
+import { APIError } from '@/lib/api/client'
 
 /**
  * Specflicks-internal FAM console layout. Only role='fam' members are
@@ -20,7 +21,11 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { isAuthenticated } = useAuthStore()
   const me = useCurrentUser()
-  const { isLoading, isError, data: meData } = me
+  const { isLoading, isError, error: meError, data: meData } = me
+  // Same rule as the (app) layout: only a settled 401 is "signed out" —
+  // transient failures (429/5xx/network) keep the loader, never eject.
+  const authRejected =
+    isError && meError instanceof APIError && meError.status === 401
 
   const freshRole =
     (meData?.currentMembership?.role ?? meData?.memberships?.[0]?.role ?? '').toLowerCase()
@@ -34,7 +39,7 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return
-    if (isError || !isAuthenticated) {
+    if (authRejected || !isAuthenticated) {
       router.replace('/login')
       return
     }
@@ -43,7 +48,7 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
       // customer shell. The (app) layout will then onward-route as needed.
       router.replace('/dashboard')
     }
-  }, [isLoading, isError, isAuthenticated, meData, isPlatformAdmin, router])
+  }, [isLoading, authRejected, isAuthenticated, meData, isPlatformAdmin, router])
 
   if (!isAuthenticated || isLoading || !meData || !isPlatformAdmin) {
     return (

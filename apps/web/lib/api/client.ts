@@ -30,13 +30,24 @@ let refreshInFlight: Promise<boolean> | null = null
 
 function silentRefresh(): Promise<boolean> {
   if (!refreshInFlight) {
-    refreshInFlight = fetch(`${BASE_URL}/api/v1/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: '{}',
-    })
-      .then((r) => r.ok)
+    const attempt = () =>
+      fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: '{}',
+      })
+    refreshInFlight = attempt()
+      .then(async (r) => {
+        // A throttled or transiently-failing refresh is NOT an invalid
+        // session — retry once after a beat instead of letting a healthy
+        // 7/180-day cookie read as "logged out".
+        if (r.status === 429 || r.status >= 500) {
+          await new Promise((resolve) => setTimeout(resolve, 750))
+          r = await attempt()
+        }
+        return r.ok
+      })
       .catch(() => false)
       .finally(() => {
         refreshInFlight = null
