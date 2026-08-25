@@ -332,7 +332,7 @@ export class LeadsService {
       const roster = await tx
         .select({ user_id: memberships.user_id })
         .from(memberships)
-        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} <> 'auditor'`))
+        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} NOT IN ('auditor', 'guest')`))
         .orderBy(asc(memberships.created_at));
       if (roster.length === 0) return null;
 

@@ -430,3 +430,42 @@ api typecheck + `nest build`, boundaries (322 modules), web typecheck +
 build, diagnose-rls 0 leaks. **Migration 0051 must be applied in Supabase.**
 Founder note: the pm_comment default flip emails existing subscribers who
 never opted out (approved) — their per-user overrides still win.
+
+## Round 7 post-audit fixes (same day)
+
+A self-audit against the plan + live browser verification (the plan's own
+verification step) caught five things the unit tests didn't:
+
+1. **Guests were billable.** `billing.service.NON_BILLABLE_ROLES` still read
+   `['auditor','fam','super_admin']`, so every guest would have added ₹499/mo
+   to the host's subscription (the `seats()` change alone wasn't enough —
+   billing has its own predicate). Fixed there and in the FAM console count.
+2. **`issues.restore()` bypassed guest scoping** — it loads a SOFT-DELETED
+   row so it can't use the scoped `loadIssue`; a guest could have restored
+   any deleted issue in a public team. Explicit check added.
+3. **CRM pools included guests**: `pickRoundRobinOwner` could auto-assign a
+   lead to a guest (who has no CRM access at all — the lead would be
+   stranded), and the activity leaderboard listed them. Both now exclude
+   guests alongside auditors.
+4. **PM workspace seeding** auto-added guests to the default team.
+5. **UI**: guests saw the HOST company's trial/billing banner (someone
+   else's commercial state) and dead-end "New project" / "Load sample data"
+   / "Led by me" controls the server 403s. All hidden for guests.
+
+Live verification (headless Chromium, dev server + built API) now asserts the
+whole flow end to end: invite → guest sign-in → sees only their project (list,
+detail, search, sync bootstrap all clean) → `/employees` 403 → lands on
+/pm/projects with the guest nav → nudge shown, no billing banner, no dead-end
+actions → signup shows the existing-workspaces interstitial → guest creates
+their OWN workspace (201) and the session lands in it as owner → the original
+owner is still blocked from a second workspace (409) → seats billable=1,
+guests=1, subscription user_count excludes the guest.
+
+Gate after fixes: **535/535** jest, typechecks, api build, boundaries, web
+build, RLS 0 leaks.
+
+**Note for local dev:** the production CSP (`connect-src 'self' https:`)
+blocks `http://localhost:4000`, so `pnpm --filter @flicks/web start` (a
+production build) can't reach a local API — use `dev`. Production is
+unaffected (the API is https). Also, `request-otp` is capped at 5/hour/IP by
+design, so repeated scripted sign-ins must seed `auth_otps` directly.

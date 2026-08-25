@@ -28,8 +28,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RazorpayPlatformService } from './razorpay-platform.service';
 
 const SPECFLICKS_TENANT_ID = '00000000-0000-0000-0000-000000000001';
-/** Roles that occupy a paid seat (§8B.2): auditors and platform staff don't. */
-const NON_BILLABLE_ROLES = ['auditor', 'fam', 'super_admin'];
+/**
+ * Roles that occupy a paid seat (§8B.2): auditors, project-scoped guests
+ * (round 7) and platform staff don't.
+ */
+const NON_BILLABLE_ROLES = ['auditor', 'guest', 'fam', 'super_admin'];
 const COUPON_ATTEMPTS_PER_DAY = 10;
 
 /**

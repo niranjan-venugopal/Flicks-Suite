@@ -125,7 +125,7 @@ export class PmTeamsService {
             actorUserId;
           await tx.insert(pmTeamMemberships).values(
             activeMembers
-              .filter((m) => m.role !== 'auditor')
+              .filter((m) => m.role !== 'auditor' && m.role !== 'guest')
               .map((m) => ({
                 team_id: team!.id,
                 tenant_id: tenantId,

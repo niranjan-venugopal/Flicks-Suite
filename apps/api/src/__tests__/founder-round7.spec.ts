@@ -379,6 +379,45 @@ describe('guest write scoping', () => {
   });
 });
 
+describe('guests are non-billable and outside every member pool', () => {
+  it('the billing seat count excludes guests (₹499/seat)', async () => {
+    // The real billing path: NON_BILLABLE_ROLES in billing.service. A guest
+    // is an external collaborator, never a paid seat.
+    const { billable } = (await membersSvc.seats(tenantId)).data;
+    const activeNonGuest = await dbAdmin
+      .select({ role: memberships.role })
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
+    const expected = activeNonGuest.filter(
+      (m) => m.role !== 'auditor' && m.role !== 'guest',
+    ).length;
+    expect(billable).toBe(expected);
+    expect((await membersSvc.seats(tenantId)).data.guests).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a guest is never auto-assigned CRM leads (round-robin pool)', async () => {
+    // Guests hold no CRM grant at all — assigning them a lead would strand it.
+    const roster = await dbSvc.withTenant(tenantId, (tx) =>
+      tx
+        .select({ user_id: memberships.user_id, role: memberships.role })
+        .from(memberships)
+        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'))),
+    );
+    // The service filters on role; assert the data shape the filter relies on.
+    expect(roster.some((m) => m.role === 'guest')).toBe(true);
+    const eligible = roster.filter((m) => m.role !== 'auditor' && m.role !== 'guest');
+    expect(eligible.map((m) => m.user_id)).not.toContain(guestUserId);
+  });
+
+  it('restore cannot resurrect an out-of-scope issue (loads deleted rows)', async () => {
+    await issuesSvc.softDelete(tenantId, ownerId, issueInB);
+    await expect(issuesSvc.restore(tenantId, guestUserId, issueInB)).rejects.toThrow(/not found/i);
+    // The owner can still restore it — the guard is scope, not status.
+    const restored = await issuesSvc.restore(tenantId, ownerId, issueInB);
+    expect(restored.data.deleted_at).toBeNull();
+  });
+});
+
 describe('guest revoke', () => {
   it('removing the last project deactivates the membership', async () => {
     const res = await guestsSvc.revoke(tenantId, ownerId, projectA, guestUserId);

@@ -41,6 +41,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
   const [openNew, setOpenNew] = useState(false)
 
   const me = currentUser?.id ?? ''
+  const isGuest = currentUser?.role === 'GUEST'
   const projects = store.projectList().filter((p) => (tab === 'mine' ? p.lead_user_id === me : true))
   const sorted = [...projects].sort((a, b) => (a.target_date ?? '9999') < (b.target_date ?? '9999') ? -1 : 1)
 
@@ -55,7 +56,10 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
       />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
-          {([['all', 'All projects'], ['mine', 'Led by me']] as const).map(([k, l]) => (
+          {(isGuest
+            ? ([['all', 'All projects']] as const)
+            : ([['all', 'All projects'], ['mine', 'Led by me']] as const)
+          ).map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
               style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
               {l}
@@ -63,12 +67,18 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
           ))}
         </div>
         <div style={{ flex: 1 }} />
-        <SampleDataButton onAfterChange={() => { void engine.pullDelta() }} />
-        <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
+        {/* Guests are project-scoped: creating projects / seeding sample data
+            is a server-side 403 for them, so never offer the button. */}
+        {!isGuest && (
+          <>
+            <SampleDataButton onAfterChange={() => { void engine.pullDelta() }} />
+            <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
+          </>
+        )}
       </div>
 
       {sorted.length === 0 ? (
-        <EmptyProjects onCta={() => setOpenNew(true)} />
+        <EmptyProjects onCta={() => setOpenNew(true)} hideCta={isGuest} />
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {sorted.map((p) => (
@@ -134,7 +144,7 @@ function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen }: {
   )
 }
 
-function EmptyProjects({ onCta }: { onCta: () => void }) {
+function EmptyProjects({ onCta, hideCta = false }: { onCta: () => void; hideCta?: boolean }) {
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 24px', gap: 12 }}>
       <div style={{ width: 46, height: 46, borderRadius: 12, background: 'var(--surf-2)', border: '1px solid var(--bord)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>
@@ -143,7 +153,9 @@ function EmptyProjects({ onCta }: { onCta: () => void }) {
       <div className="t-mute" style={{ fontSize: 12.5, textAlign: 'center', maxWidth: 380, lineHeight: 1.6 }}>
         Projects group issues toward an outcome — one lead, a target date, honest health updates.
       </div>
-      <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={onCta}>New project</Btn>
+      {!hideCta && (
+        <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={onCta}>New project</Btn>
+      )}
     </div>
   )
 }
@@ -162,6 +174,7 @@ function RestProjects() {
   const router = useRouter()
   const qc = useQueryClient()
   const { currentUser } = useAuthStore()
+  const isGuest = currentUser?.role === 'GUEST'
   const [openNew, setOpenNew] = useState(false)
   const projectsQ = useQuery({
     queryKey: ['pm', 'projects'],
@@ -182,14 +195,19 @@ function RestProjects() {
   const d = projectsQ.data?.data
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
+      <GuestWorkspaceNudge />
       <SectionHead title="Projects" sub="One lead, a target date, honest health updates." right={<Pill tone="yellow" dot>rest</Pill>} />
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <div style={{ flex: 1 }} />
-        <SampleDataButton />
-        <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
+        {!isGuest && (
+          <>
+            <SampleDataButton />
+            <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setOpenNew(true)}>New project</Btn>
+          </>
+        )}
       </div>
       {!d || d.projects.length === 0 ? (
-        <EmptyProjects onCta={() => setOpenNew(true)} />
+        <EmptyProjects onCta={() => setOpenNew(true)} hideCta={isGuest} />
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {d.projects.map((p) => (

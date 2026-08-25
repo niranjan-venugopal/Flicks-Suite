@@ -197,7 +197,7 @@ export class ReportsService {
         .select({ user_id: memberships.user_id, name: users.full_name })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.user_id))
-        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} <> 'auditor'`));
+        .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} NOT IN ('auditor', 'guest')`));
       const actRows = await tx
         .select({ assignee: activities.assignee_user_id, type: activities.type, n: sql<number>`count(*)::int` })
         .from(activities)

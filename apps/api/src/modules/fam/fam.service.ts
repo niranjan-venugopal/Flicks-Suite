@@ -1861,7 +1861,7 @@ export class FamService {
   async getTenantSeats(tenantId: string) {
     const [row] = await this.dbAdmin
       .select({
-        billable: sql<number>`count(*) filter (where ${memberships.role} <> 'auditor' and ${memberships.status} = 'active')::int`,
+        billable: sql<number>`count(*) filter (where ${memberships.role} not in ('auditor', 'guest') and ${memberships.status} = 'active')::int`,
         auditors: sql<number>`count(*) filter (where ${memberships.role} = 'auditor' and ${memberships.status} = 'active')::int`,
         pending: sql<number>`count(*) filter (where ${memberships.status} = 'invited')::int`,
       })

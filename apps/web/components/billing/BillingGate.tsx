@@ -49,7 +49,9 @@ export function BillingBanners() {
   }, [])
 
   const b = billing.data?.data
-  if (!b || b.locked || currentUser?.role === 'FAM') return null
+  // Guests are external collaborators: the host workspace's trial/billing
+  // state is commercial information that isn't theirs to see (round 7).
+  if (!b || b.locked || currentUser?.role === 'FAM' || currentUser?.role === 'GUEST') return null
   const canManage = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
 
   // Past-due grace: not dismissible — money problems don't snooze.
@@ -146,7 +148,7 @@ export function BillingWall() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const b = billing.data?.data
-  if (!b?.locked || currentUser?.role === 'FAM') return null
+  if (!b?.locked || currentUser?.role === 'FAM' || currentUser?.role === 'GUEST') return null
   if (WALL_ALLOWED.some((p) => pathname.startsWith(p))) return null
   const canManage = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
 

@@ -1227,12 +1227,20 @@ export class PmIssuesService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Restore loads a SOFT-DELETED row, so it can't use the scoped
+        // loadIssue (which filters deleted_at) — the guest check is applied
+        // explicitly here instead. Without it a guest could restore any
+        // deleted issue in a public team, including other projects'.
         const [issue] = await tx
           .select()
           .from(pmIssues)
           .where(and(eq(pmIssues.id, id), eq(pmIssues.tenant_id, tenantId)))
           .limit(1);
         if (!issue) throw new NotFoundException('Issue not found');
+        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+        if (guestScope && !this.visibility.issueVisible(guestScope, issue)) {
+          throw new NotFoundException('Issue not found');
+        }
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
         const [updated] = await tx
           .update(pmIssues)
