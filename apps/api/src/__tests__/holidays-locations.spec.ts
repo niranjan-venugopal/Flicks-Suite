@@ -59,6 +59,8 @@ const employeesService = new EmployeesService(
   new EventEmitter2(),
   new ConfigService({ NODE_ENV: 'test' }),
   {} as unknown as AuthService,
+  // MediaService stub: echo the key so specs can assert the avatar pipeline.
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as unknown as MediaService,
 );
 const settingsService = new SettingsService(
   db as never,

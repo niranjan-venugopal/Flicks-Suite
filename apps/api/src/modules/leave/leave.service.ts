@@ -498,56 +498,107 @@ export class LeaveService {
         .select({
           firstName: employees.first_name,
           lastName: employees.last_name,
+          userId: employees.user_id,
           managerId: employees.reporting_manager_id,
         })
         .from(employees)
         .where(eq(employees.id, employeeId))
         .limit(1),
     );
-
-    if (!employee?.managerId) return; // No manager → silently skip.
-
-    const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
-        .select({
-          email: employees.work_email,
-          firstName: employees.first_name,
-          userId: employees.user_id,
-        })
-        .from(employees)
-        .where(eq(employees.id, employee.managerId!))
-        .limit(1),
-    );
-    if (!manager) return;
+    if (!employee) return;
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
 
-    // Real-time in-app ping to the approver — surfaces in the Topbar bell even
-    // when the email lands in spam or is disabled. Best-effort.
-    if (manager.userId) {
-      await this.notificationsService
-        .createInAppNotification(
-          manager.userId,
-          'leave.requested',
-          `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'}).`,
-          '/team/leave',
-          tenantId,
-        )
-        .catch((err) =>
-          this.logger.warn(`Leave-apply in-app notification failed: ${err}`),
-        );
+    // Who gets pinged: the reporting manager when there is one, otherwise
+    // every OTHER owner/admin. Owners typically have no reporting manager, so
+    // without the fan-out an owner's leave request notified nobody while still
+    // sitting in everyone else's queue — a dead end (house rule 8).
+    const reviewers = await this.resolveLeaveReviewers(
+      tenantId,
+      employee.managerId,
+      employee.userId,
+    );
+    if (reviewers.length === 0) return;
+
+    for (const reviewer of reviewers) {
+      // Real-time in-app ping to the approver — surfaces in the Topbar bell
+      // even when the email lands in spam or is disabled. Best-effort.
+      if (reviewer.userId) {
+        await this.notificationsService
+          .createInAppNotification(
+            reviewer.userId,
+            'leave.requested',
+            `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'}).`,
+            '/team/leave',
+            tenantId,
+          )
+          .catch((err) =>
+            this.logger.warn(`Leave-apply in-app notification failed: ${err}`),
+          );
+      }
+
+      if (!reviewer.email) continue;
+
+      await this.notificationsService.sendEmail('leave-requested', reviewer.email, {
+        employeeName,
+        leaveType: leaveTypeName,
+        startDate: dates.startDate,
+        endDate: dates.endDate,
+        days: dates.days,
+      });
+      this.logger.log(
+        `Leave-apply email queued to ${reviewer.email} (req=${requestId})`,
+      );
+    }
+  }
+
+  /**
+   * Approvers to notify for a request: the reporting manager if one is set,
+   * otherwise the workspace's owners/admins. The applicant is always excluded
+   * — they can never review their own request (see reviewLeave).
+   */
+  private async resolveLeaveReviewers(
+    tenantId: string,
+    managerId: string | null,
+    applicantUserId: string | null,
+  ): Promise<{ email: string | null; userId: string | null }[]> {
+    if (managerId) {
+      const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
+        tx
+          .select({ email: employees.work_email, userId: employees.user_id })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, managerId),
+              eq(employees.tenant_id, tenantId),
+            ),
+          )
+          .limit(1),
+      );
+      // A manager who happens to be the applicant (self-referencing row) is
+      // no reviewer — fall through to the owner/admin fan-out.
+      if (manager && manager.userId !== applicantUserId) return [manager];
     }
 
-    if (!manager.email) return;
-
-    await this.notificationsService.sendEmail('leave-requested', manager.email, {
-      employeeName,
-      leaveType: leaveTypeName,
-      startDate: dates.startDate,
-      endDate: dates.endDate,
-      days: dates.days,
-    });
-    this.logger.log(`Leave-apply email queued to ${manager.email} (req=${requestId})`);
+    // Fan out to owners/admins, minus the applicant. Runs inside the tenant
+    // transaction (RLS on memberships) with an explicit tenant predicate as
+    // defence in depth.
+    return this.databaseService.withTenant(tenantId, (tx) =>
+      tx
+        .select({ email: users.email, userId: users.id })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.user_id))
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            inArray(memberships.role, ['owner', 'admin']),
+            applicantUserId
+              ? ne(memberships.user_id, applicantUserId)
+              : sql`true`,
+          ),
+        ),
+    );
   }
 
   // ─── List ──────────────────────────────────────────────────────────────────
@@ -706,6 +757,12 @@ export class LeaveService {
           and(
             eq(leaveRequests.tenant_id, tenantId),
             eq(leaveRequests.status, 'pending'),
+            // Nobody reviews their own request. An owner/admin applying for
+            // leave must be approved by ANOTHER approver, so their own row
+            // never enters their queue (mirrors the onboarding-queue rule in
+            // employees.service.ts). IS DISTINCT FROM keeps rows whose
+            // employee has no linked user account.
+            sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
           ),
         )
         .orderBy(desc(leaveRequests.applied_at))
@@ -746,6 +803,26 @@ export class LeaveService {
         if (req.status !== 'pending') {
           throw new BadRequestException(
             `Cannot review a ${req.status} request`,
+          );
+        }
+
+        // Separation of duties: an approver may never approve their own leave.
+        // Owner/admin clear the @Roles('manager') gate on the route, so
+        // without this an owner could self-approve. Same rule as onboarding
+        // review (employees.service.ts) — another approver must act.
+        const [applicant] = await tx
+          .select({ userId: employees.user_id })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, req.employee_id),
+              eq(employees.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
+        if (applicant?.userId && applicant.userId === reviewerUserId) {
+          throw new ForbiddenException(
+            'You cannot approve your own leave request — another approver must review it.',
           );
         }
 

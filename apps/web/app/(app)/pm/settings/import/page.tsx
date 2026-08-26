@@ -122,7 +122,7 @@ export default function PmImportPage() {
           <Icon.lock size={20} style={{ color: 'var(--text-faint)', marginBottom: 10 }} />
           <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>Imports need Manager or above</div>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)' }}>
-            Bulk writes are restricted (§16) — ask a manager or admin.
+            Importing creates issues in bulk, so it’s limited to managers and admins — ask one of them to run it.
           </div>
         </div>
       </div>

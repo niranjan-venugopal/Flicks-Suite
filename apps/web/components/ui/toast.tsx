@@ -17,7 +17,7 @@ const ToastViewport = React.forwardRef<
     className={cn(
       // Catalog: toasts are BOTTOM-CENTER, one at a time, above everything
       // except the palette/keymap layers.
-      'fixed bottom-0 left-1/2 z-[400] flex max-h-screen w-full -translate-x-1/2 flex-col items-center p-4 sm:max-w-[520px]',
+      'fixed bottom-0 left-1/2 z-[2000] flex max-h-screen w-full -translate-x-1/2 flex-col items-center p-4 sm:max-w-[520px]',
       className
     )}
     {...props}

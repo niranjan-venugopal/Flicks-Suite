@@ -35,6 +35,7 @@ export interface AdminOverview {
       employeeName: string
       employeeCode: string | null
       designationTitle: string | null
+      avatarUrl: string | null
       submittedAt: string | null
     }>
     leaves: Array<{
@@ -50,6 +51,7 @@ export interface AdminOverview {
       totalDays: number
       reason: string | null
       appliedAt: string
+      avatarUrl: string | null
     }>
     regularizations: Array<{
       id: string
@@ -61,6 +63,7 @@ export interface AdminOverview {
       requestType: string
       reason: string
       requestedAt: string
+      avatarUrl: string | null
     }>
   }
   trends: {

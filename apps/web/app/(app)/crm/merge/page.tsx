@@ -166,7 +166,6 @@ function ReassignCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 4 }}>
         <Icon.userPlus size={15} style={{ color: 'var(--yellow)' }} />
         <span style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>Offboarding — reassign work</span>
-        <Pill tone="">§19.7</Pill>
       </div>
       <div className="t-mute" style={{ fontSize: 11.5, marginBottom: 14 }}>
         Before deactivating a member, move their open deals, activities and leads to a teammate. Completed work keeps its history.

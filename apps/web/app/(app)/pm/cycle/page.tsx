@@ -42,7 +42,7 @@ export default function PmCyclePage() {
   if (mode === 'rest' || !engine) {
     return (
       <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>
-        The cycle page needs the sync engine — the REST fallback lists everything under Issues.
+        Cycles aren’t available in this workspace right now — you’ll find every issue under Issues.
       </div>
     )
   }
@@ -123,7 +123,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
           <Btn kind="primary" size="sm" onClick={() => enableCycles.mutate()} disabled={enableCycles.isPending}>
             Enable cycles for {team.key}
           </Btn>
-          <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>The scheduler creates the first cycle at the next {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][team.cycle_start_dow ?? 1]} midnight ({team.timezone ?? 'tenant tz'}).</div>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>The scheduler creates the first cycle at the next {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][team.cycle_start_dow ?? 1]} midnight ({team.timezone ?? 'your workspace timezone'}).</div>
         </div>
       </div>
     )
@@ -165,7 +165,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
         )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>
-          {team.timezone ?? 'tenant tz'} boundaries · cooldown {team.cooldown_days ?? 0}d after
+          {team.timezone ?? 'workspace timezone'} boundaries · cooldown {team.cooldown_days ?? 0}d after
         </span>
       </div>
 
@@ -280,7 +280,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
           })}
           {d?.stats.completion_rate != null && (
             <div style={{ padding: '9px 13px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>
-              completion {d.stats.completion_rate}% avg · full Insights = v1.5 on the same snapshots
+              completion {d.stats.completion_rate}% average across recent cycles
             </div>
           )}
         </div>

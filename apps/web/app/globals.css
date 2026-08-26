@@ -60,6 +60,25 @@
   /* Glass */
   --glass-bg: linear-gradient(140deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
   --glass-blur: blur(22px) saturate(1.4);
+
+  /* ─── Layering scale ───────────────────────────────────────────────────
+     Overlays and floating panels live in two different <body> portals, so
+     the ONLY thing that decides what paints on top is the number. Keep new
+     surfaces inside these bands:
+
+       0 –  99   in-flow page content
+     100 – 499   page chrome that sticks (topbar, banners, bulk bars)
+     500 – 899   ambient floats (feedback launcher, NPS card)
+     900 – 1299  overlays: full-screen scrims + modals (proto Modal 1000,
+                 QuickAdd 1100, CRM kit 1200, ad-hoc PM/inbox confirms 1150)
+     --z-float   date pickers, dropdowns, native-ish selects — MUST sit above
+                 every overlay, since they open from inside modals
+     --z-toast   confirmations, always the topmost thing on screen
+
+     Anything that opens *inside* a modal belongs at --z-float or higher; a
+     lower number renders behind the blurred glass pane. */
+  --z-float: 1500;
+  --z-toast: 2000;
 }
 
 /* ─── Font faces ─── */

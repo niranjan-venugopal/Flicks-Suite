@@ -32,6 +32,7 @@ import { PmImportService } from './import.service';
 import { PmTemplatesService } from './templates.service';
 import { PmPublicService } from './public';
 import { PmGuestsService } from './guests.service';
+import { MediaService } from '../media/media.service';
 
 class InviteGuestDto {
   @IsEmail() @MaxLength(320) email!: string;
@@ -238,6 +239,7 @@ export class PmController {
     private readonly templates: PmTemplatesService,
     private readonly pub: PmPublicService,
     private readonly guests: PmGuestsService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -266,8 +268,17 @@ export class PmController {
 
   @Get('users')
   @RequireGrant('pm', 'view')
-  usersLite(@CurrentUser() user: JwtPayload) {
-    return this.teams.usersLite(user.tenantId, user.sub).then((rows) => ({ data: rows }));
+  async usersLite(@CurrentUser() user: JwtPayload) {
+    const rows = await this.teams.usersLite(user.tenantId, user.sub);
+    // Avatars are stored as a key; sign them here so every PM face (assignee
+    // chips, comment authors, the mention picker) renders the real photo.
+    const data = await Promise.all(
+      rows.map(async ({ avatar_key, ...r }) => ({
+        ...r,
+        avatar_url: await this.media.servedUrl(avatar_key ?? null, r.avatar_url, 64),
+      })),
+    );
+    return { data };
   }
 
   // ─── Issues (REST list/detail/CRUD — kill-switch path) ────────────────────

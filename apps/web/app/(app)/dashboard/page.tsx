@@ -861,10 +861,10 @@ function ManagerDashboard() {
                 fontWeight: 600,
               }}
             >
-              Team roster renders once the /team endpoint lands (PRD §5.6).
+              Your team roster will appear here.
               <br />
               <span style={{ color: 'var(--text-faint)' }}>
-                Use Approvals queue (right) for the actions you can take today.
+                Use the Approvals queue on the right for the actions you can take today.
               </span>
             </div>
           </div>
@@ -1072,7 +1072,7 @@ function EmployeeHome() {
                   fontWeight: 600,
                 }}
               >
-                No leave types configured for your tenant yet.
+                No leave types configured for your workspace yet.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -28,7 +28,7 @@ export default function PmTriagePage() {
   if (mode === 'rest' || !engine) {
     return (
       <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>
-        The triage conveyor needs the sync engine — REST users can move issues out of Triage from the list.
+        The triage view isn’t available in this workspace right now — you can still move issues out of Triage from the Issues list.
       </div>
     )
   }
@@ -173,7 +173,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                 )}
                 {focus.assignee_user_id && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: 'var(--text-2)' }}>
-                    <PmAv name={store.users.get(focus.assignee_user_id)?.name ?? '?'} size={15} />
+                    <PmAv name={store.users.get(focus.assignee_user_id)?.name ?? '?'} src={store.users.get(focus.assignee_user_id)?.avatar_url} size={15} />
                     {store.users.get(focus.assignee_user_id)?.name}
                   </span>
                 )}
@@ -203,7 +203,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                 <DropBtn onClick={() => act((id) => engine.assignIssue(id, null))}>Unassigned</DropBtn>
                 {users.map((u) => (
                   <DropBtn key={u.id} onClick={() => { engine.assignIssue(focus.id, u.id); setMenu(null) }}>
-                    <PmAv name={u.name ?? '?'} size={14} /> {u.name}
+                    <PmAv name={u.name ?? '?'} src={u.avatar_url} size={14} /> {u.name}
                   </DropBtn>
                 ))}
               </ToolDrop>

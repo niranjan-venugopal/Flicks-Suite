@@ -787,8 +787,7 @@ function TimelinePlaceholder({ e }: { e: EmployeeDetail }) {
           color: 'var(--text-mute)',
         }}
       >
-        Role changes, transfers, and pay revisions will appear here once those flows ship — they
-        write to the <code>employment_history</code> table which we read from today.
+        Role changes, transfers and pay revisions will appear here as they happen.
       </div>
     </div>
   )

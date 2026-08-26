@@ -131,7 +131,7 @@ function ComposeModal({ deal, onClose }: { deal: DealDetail; onClose: () => void
           <input autoFocus className="input" value={subject} onChange={(e) => setSubject(e.target.value)} style={{ width: '100%' }} />
         </div>
         <div>
-          <div className="label">Body <span style={{ color: 'var(--text-faint)' }}>· HTML, your signature (§19.4) is appended automatically</span></div>
+          <div className="label">Body <span style={{ color: 'var(--text-faint)' }}>· HTML, your signature is appended automatically</span></div>
           <textarea className="input" value={body} onChange={(e) => setBody(e.target.value)} style={{ width: '100%', height: 180, padding: 12, fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }} />
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

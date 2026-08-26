@@ -13,8 +13,44 @@ import { useAuthStore } from '@/lib/stores/auth.store'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type GrantModule = 'invoicing' | 'reports' | 'org_financial' | 'payroll' | 'expenses'
+export type GrantModule =
+  | 'invoicing'
+  | 'reports'
+  | 'org_financial'
+  | 'payroll'
+  | 'expenses'
+  | 'crm'
+  | 'pm'
 export type GrantLevel = 'none' | 'view' | 'edit'
+
+/** The three modules an Owner administers from Settings → Module access. */
+export const MANAGED_MODULES = ['crm', 'invoicing', 'pm'] as const
+export type ManagedModule = (typeof MANAGED_MODULES)[number]
+
+export const MODULE_LABELS: Record<ManagedModule, string> = {
+  crm: 'CRM',
+  invoicing: 'Invoicing',
+  pm: 'Projects',
+}
+
+/** Roles a workspace policy can set — owner/admin hold everything by role. */
+export const POLICY_ROLES = ['manager', 'employee', 'finance', 'auditor'] as const
+export type PolicyRole = (typeof POLICY_ROLES)[number]
+
+export const POLICY_ROLE_LABELS: Record<PolicyRole, string> = {
+  manager: 'Manager',
+  employee: 'Employee',
+  finance: 'Finance',
+  auditor: 'Auditor',
+}
+
+export interface RoleDefaultRow {
+  role: PolicyRole
+  module: ManagedModule
+  access_level: GrantLevel
+  /** true when this workspace overrode the shipped default. */
+  is_custom: boolean
+}
 
 export interface ModuleGrant {
   module: GrantModule
@@ -167,6 +203,74 @@ export function useUpdateGrants() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['settings', 'members'] })
       qc.invalidateQueries({ queryKey: ['me', 'companies'] })
+    },
+  })
+}
+
+// ─── Module access (Settings → Module access) ────────────────────────────────
+
+/**
+ * Set ONE module on ONE member. Deliberately not the replace-all endpoint: a
+ * partial screen posting the full set silently revokes every module it doesn't
+ * know about (an auditor's org_financial row, a PM guest's pm:edit row).
+ */
+export function useUpsertMemberGrant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      membershipId,
+      module,
+      accessLevel,
+    }: {
+      membershipId: string
+      module: ManagedModule
+      accessLevel: GrantLevel
+    }) =>
+      api.patch(`/api/v1/settings/members/${membershipId}/grants/${module}`, {
+        access_level: accessLevel,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] })
+      qc.invalidateQueries({ queryKey: ['me', 'companies'] })
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
+}
+
+/** Drop a member's override so they follow their role again. */
+export function useClearMemberGrant() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ membershipId, module }: { membershipId: string; module: ManagedModule }) =>
+      api.delete(`/api/v1/settings/members/${membershipId}/grants/${module}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] })
+      qc.invalidateQueries({ queryKey: ['me', 'companies'] })
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
+}
+
+export function useRoleDefaults(enabled = true) {
+  return useQuery({
+    queryKey: ['settings', 'role-defaults'],
+    queryFn: () =>
+      api.get<{ data: { defaults: RoleDefaultRow[] } }>(
+        '/api/v1/settings/members/role-defaults',
+      ),
+    enabled,
+  })
+}
+
+export function useUpdateRoleDefaults() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (defaults: Array<Pick<RoleDefaultRow, 'role' | 'module' | 'access_level'>>) =>
+      api.patch('/api/v1/settings/members/role-defaults', { defaults }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'role-defaults'] })
+      qc.invalidateQueries({ queryKey: ['settings', 'members'] })
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
     },
   })
 }

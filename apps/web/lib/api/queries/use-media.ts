@@ -38,11 +38,32 @@ async function del(path: string): Promise<void> {
   }
 }
 
+/**
+ * Every cached payload that carries a face. Invalidating only ['auth','me']
+ * left the topbar correct and every other screen showing the OLD photo for the
+ * global 5-minute staleTime (focus refetch is off) — so the change looked like
+ * it "didn't apply everywhere".
+ */
+const AVATAR_QUERY_KEYS = [
+  ['auth', 'me'],
+  ['employees'],
+  ['settings', 'members'],
+  ['reports'],
+  ['pm', 'users'],
+  ['dashboard'],
+] as const
+
+function invalidateAvatarSurfaces(qc: ReturnType<typeof useQueryClient>) {
+  for (const key of AVATAR_QUERY_KEYS) {
+    qc.invalidateQueries({ queryKey: [...key] })
+  }
+}
+
 export function useUploadAvatar() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (blob: Blob) => uploadFile('/api/v1/media/avatar', blob),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+    onSuccess: () => invalidateAvatarSurfaces(qc),
   })
 }
 
@@ -50,7 +71,7 @@ export function useRemoveAvatar() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => del('/api/v1/media/avatar'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+    onSuccess: () => invalidateAvatarSurfaces(qc),
   })
 }
 

@@ -914,7 +914,7 @@ function WorkspaceStep(props: {
           Set up your company
         </div>
         <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
-          This becomes your tenant. You can invite teammates after.
+          This becomes your workspace. You can invite teammates after.
         </div>
       </div>
 

@@ -6,7 +6,8 @@ work, and the **PRD v5 CRM** module.
 
 | Document | Purpose |
 |----------|---------|
-| [`2026-08-25_Live_Ops_Session_Handoff.md`](./2026-08-25_Live_Ops_Session_Handoff.md) | **Start here.** Everything shipped AFTER the CRM MVP (2026-08-22 → 08-25): global tenancy + holiday calendars, employee-confirmed edits, the production incident + hardening, 180-day trusted devices, onboarding-approval integrity + Inbox, and the rate-limiter refresh-logout fix — plus current conventions, invariants, and open follow-ups. |
+| [`2026-08-26_Round8_Access_Approvals_Handoff.md`](./2026-08-26_Round8_Access_Approvals_Handoff.md) | **Start here.** Round 8 (2026-08-26): nobody approves their own leave/regularization, profile photos reach every screen, per-module access (CRM · Invoicing · Projects) from Settings with real revocation, customer-facing copy sweep, house date+time/month pickers in CRM, and a documented z-index scale so pickers open above modals. |
+| [`2026-08-25_Live_Ops_Session_Handoff.md`](./2026-08-25_Live_Ops_Session_Handoff.md) | Rounds 3–7: Everything shipped AFTER the CRM MVP (2026-08-22 → 08-25): global tenancy + holiday calendars, employee-confirmed edits, the production incident + hardening, 180-day trusted devices, onboarding-approval integrity + Inbox, and the rate-limiter refresh-logout fix — plus current conventions, invariants, and open follow-ups. |
 | [`Global_Tenancy_Holidays_Handoff.md`](./Global_Tenancy_Holidays_Handoff.md) | The detailed per-round addenda (rounds 2–6) behind the live-ops session doc above. |
 | [`PRD_v5_Completion_Handoff.md`](./PRD_v5_Completion_Handoff.md) | Where we are against the CRM **PRD v5** and the MVP release — sprint map, post-gate hardening passes, parked/deferred items, ops checklist, how to run & verify. |
 | [`CRM_Launch_Actions.md`](./CRM_Launch_Actions.md) | User-side day-1 external actions for the CRM launch (OAuth verifications, DNS, Resend, keys). |

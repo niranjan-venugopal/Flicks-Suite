@@ -112,7 +112,7 @@ export default function PmWorkspacePage() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12.5, fontWeight: 800 }}>Projects module</div>
           <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-            Toggle-gated (FAM `pm`) · requires a user pm grant · default ON for new tenants
+            Available to everyone with Projects access · on by default for new workspaces
           </div>
         </div>
         <Toggle on onChange={() => undefined} />
@@ -202,7 +202,7 @@ export default function PmWorkspacePage() {
           <div>
             <div style={{ fontSize: 12.5, fontWeight: 800 }}>Sync status</div>
             <div style={{ fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
-              {engine ? `cursor seq ${cursor.toLocaleString()} · horizon 90d · IndexedDB` : 'REST mode (sync engine off)'}
+              {engine ? `Up to date · ${cursor.toLocaleString()} changes applied on this device` : 'Working online — nothing cached on this device'}
             </div>
           </div>
         </div>

@@ -954,9 +954,9 @@ function DocumentsStep() {
           style={{ color: 'var(--yellow)', marginTop: 1, flexShrink: 0 }}
         />
         <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
-          <strong style={{ color: '#fff' }}>Uploads coming soon.</strong> We&apos;re
-          wiring R2 file storage in Sprint 4. For now, save & continue — HR will
-          collect documents over email.
+          <strong style={{ color: '#fff' }}>Uploads coming soon.</strong> You can
+          finish onboarding without them — HR will collect your documents over
+          email in the meantime.
         </div>
       </div>
 
@@ -1072,7 +1072,7 @@ function ReviewStep({
     },
     {
       title: 'Documents',
-      value: '0 of 6 uploaded · will be collected by HR (Sprint 4)',
+      value: '0 of 6 uploaded · HR will collect these over email',
     },
   ]
 

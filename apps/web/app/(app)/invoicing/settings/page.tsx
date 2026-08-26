@@ -164,7 +164,7 @@ export default function InvoicingSettingsPage() {
     <InvoPage>
       <SectionHead
         title="Invoice settings"
-        sub="Numbering, template, email, payments, currencies, tax codes and compliance — per PRD §7.1."
+        sub="Numbering, template, email, payments, currencies, tax codes and compliance."
       />
 
       <div
@@ -195,7 +195,7 @@ export default function InvoicingSettingsPage() {
           <div className="card">
             <div className="t-h3" style={{ marginBottom: 18 }}>Template &amp; branding</div>
             <div style={{ ...GRID_2, alignItems: 'start' }}>
-              <Field label="Active template" hint="One polished default ships in v3">
+              <Field label="Active template" hint="More templates are on the way">
                 <Pill tone="blue" dot>Default · Classic</Pill>
               </Field>
               <Field label="Brand color" hint="Used for accents on the invoice">

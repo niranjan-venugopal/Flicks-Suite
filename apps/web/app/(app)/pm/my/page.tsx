@@ -29,7 +29,7 @@ export default function MyIssuesPage() {
   if (mode === 'rest' || !engine) {
     return (
       <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>
-        My Issues needs the sync engine — the REST fallback lists everything under Projects → Issues.
+        My Issues isn’t available in this workspace right now — you’ll find everything assigned to you under Projects → Issues.
       </div>
     )
   }

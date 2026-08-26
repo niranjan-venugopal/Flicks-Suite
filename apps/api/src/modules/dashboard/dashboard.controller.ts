@@ -25,14 +25,20 @@ export class DashboardController {
   @Header('Cache-Control', 'private, max-age=15')
   async getAdminOverview(@CurrentUser() user: JwtPayload) {
     // The endpoint itself is open to every tenant member (the Inbox calls it
-    // for all roles), so the admin-only onboarding-review bucket is gated
-    // here rather than with @Roles — mirrors the @Roles('admin') gate on the
-    // onboarding-queue endpoint.
+    // for all roles), so the review buckets are gated here rather than with
+    // @Roles — mirrors the @Roles('admin') gate on the onboarding-queue
+    // endpoint. Approvals follow the @Roles('manager') gate on the leave and
+    // regularization review routes: a plain employee has no queue and must not
+    // receive the whole workspace's pending requests.
+    const isPlatformAdmin = user.isPlatformAdmin === true;
     return this.dashboardService.getAdminOverview(user.tenantId, {
       callerUserId: user.sub,
       includeOnboarding:
-        user.isPlatformAdmin === true ||
+        isPlatformAdmin ||
         ['owner', 'admin', 'fam', 'super_admin'].includes(user.role),
+      includeApprovals:
+        isPlatformAdmin ||
+        ['owner', 'admin', 'manager', 'fam', 'super_admin'].includes(user.role),
     });
   }
 

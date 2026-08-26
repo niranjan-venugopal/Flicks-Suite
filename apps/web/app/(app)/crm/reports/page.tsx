@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
+import { MonthField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { FEATURES } from '@/lib/feature-flags'
 import {
@@ -163,7 +164,7 @@ function Dashboard() {
         <div className="t-caption">₹ per day of expected won value</div>
       </RptCard>
 
-      <RptCard title="Activity leaderboard" sub={`completed in the last ${d.window_days}d · goal progress where set (§19.6)`} wide>
+      <RptCard title="Activity leaderboard" sub={`completed in the last ${d.window_days}d · goal progress where set`} wide>
         <table className="tbl" style={{ margin: '0 -20px', width: 'calc(100% + 40px)' }}>
           <thead><tr><th>Rep</th><th style={{ textAlign: 'right' }}>Calls</th><th style={{ textAlign: 'right' }}>Meetings</th><th style={{ textAlign: 'right' }}>Tasks done</th>{FEATURES.crm_email && <th style={{ textAlign: 'right' }}>Emails</th>}<th style={{ width: 200 }}>Goal progress</th></tr></thead>
           <tbody>
@@ -330,7 +331,7 @@ function Goals() {
       <div className="t-caption" style={{ marginTop: 10 }}>Team goals draw the dashed line on the forecast; per-rep goals fill the leaderboard progress bars.</div>
 
       {open && (
-        <Modal open onClose={() => setOpen(false)} width={440} title="Set a goal" sub="Monthly won-revenue target in base currency (§19.6)"
+        <Modal open onClose={() => setOpen(false)} width={440} title="Set a goal" sub="Monthly won-revenue target in your base currency"
           footer={<>
             <Btn kind="ghost" onClick={() => setOpen(false)}>Cancel</Btn>
             <Btn kind="primary" icon={<Icon.check size={14} />} disabled={!target || !(parseFloat(target) > 0) || setGoal.isPending} onClick={() => void submit()}>
@@ -338,7 +339,7 @@ function Goals() {
             </Btn>
           </>}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div><div className="label">Month</div><input className="input" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: '100%', height: 38 }} /></div>
+            <div><div className="label">Month</div><MonthField value={period} onChange={setPeriod} style={{ height: 38, fontSize: 12.5 }} /></div>
             <div>
               <div className="label">Who</div>
               <select className="input" value={userId} onChange={(e) => setUserId(e.target.value)} style={{ width: '100%', height: 38 }}>

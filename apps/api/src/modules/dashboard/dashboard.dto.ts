@@ -55,8 +55,9 @@ export interface AdminOverviewDto {
   pending: {
     leaveCount: number;
     regularizationCount: number;
-    // Onboarding reviews are admin+-only: the service returns an empty list
-    // for lower roles, and the caller's own row is never included.
+    // Approvals are approver-only (manager+): the service returns empty
+    // lists and zero counts for lower roles. In every bucket the caller's own
+    // request is excluded — nobody approves themselves.
     onboardingCount: number;
     onboarding: Array<{
       employeeId: string;
@@ -64,11 +65,14 @@ export interface AdminOverviewDto {
       employeeName: string;
       employeeCode: string | null;
       designationTitle: string | null;
+      avatarUrl: string | null;
       submittedAt: string | null;
     }>;
     leaves: Array<{
       id: string;
       employeeId: string;
+      /** Requester's user id — drives the Inbox presence dot. */
+      userId: string | null;
       employeeName: string;
       employeeCode: string | null;
       leaveTypeName: string | null;
@@ -78,16 +82,19 @@ export interface AdminOverviewDto {
       totalDays: number;
       reason: string | null;
       appliedAt: string;
+      avatarUrl: string | null;
     }>;
     regularizations: Array<{
       id: string;
       employeeId: string;
+      userId: string | null;
       employeeName: string;
       employeeCode: string | null;
       attendanceDate: string;
       requestType: string;
       reason: string;
       requestedAt: string;
+      avatarUrl: string | null;
     }>;
   };
 

@@ -1233,6 +1233,7 @@ export class SettingsService {
         email: users.email,
         fullName: users.full_name,
         avatarUrl: users.avatar_url,
+        avatarKey: users.avatar_key,
         // employee (optional — invited-but-not-onboarded users may not have one)
         employeeCode: employees.employee_code,
         firstName: employees.first_name,
@@ -1269,14 +1270,23 @@ export class SettingsService {
       grantsByMembership.set(g.membershipId, list);
     }
 
-    const data = rows.map((r) => ({
-      ...r,
-      grants: (grantsByMembership.get(r.id) ?? []).map((g) => ({
-        module: g.module,
-        access_level: g.accessLevel,
-        capabilities: g.capabilities ?? {},
+    const data = await Promise.all(
+      rows.map(async ({ avatarKey, ...r }) => ({
+        ...r,
+        // Photos live in users.avatar_key — resolve to a signed URL, falling
+        // back to the legacy column (§4 media pipeline).
+        avatarUrl: await this.mediaService.servedUrl(
+          avatarKey ?? null,
+          r.avatarUrl,
+          64,
+        ),
+        grants: (grantsByMembership.get(r.id) ?? []).map((g) => ({
+          module: g.module,
+          access_level: g.accessLevel,
+          capabilities: g.capabilities ?? {},
+        })),
       })),
-    }));
+    );
 
     return { data, total: data.length };
   }

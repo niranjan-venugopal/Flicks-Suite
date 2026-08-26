@@ -464,7 +464,7 @@ export default function InviteEmployeePage() {
                   value={form.shiftTemplateId}
                   onChange={(e) => set('shiftTemplateId', e.target.value)}
                 >
-                  <option value="">Use tenant default</option>
+                  <option value="">Use workspace default</option>
                   {(shifts.data?.data ?? [])
                     .filter((s) => s.isActive)
                     .map((s) => (

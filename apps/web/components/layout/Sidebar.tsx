@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuthStore, type UserRole } from '@/lib/stores/auth.store'
 import { useAdminOverview } from '@/lib/api/queries/use-dashboard'
+import { useModuleAccess } from '@/lib/api/queries/use-auth'
 import { useMyCompanies, type ModuleGrant } from '@/lib/api/queries/use-members'
+import type { ModuleAccessMap } from '@/lib/api/queries/use-auth'
 import { CompanySwitcher } from '@/components/invoicing/CompanySwitcher'
 import { Icon, LogoMark } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
@@ -380,6 +382,36 @@ function guestNavFor(): NavSection[] {
   ]
 }
 
+/**
+ * Drop the sections for modules this member has no access to, and add CRM back
+ * when they DO have it (CRM has never been in the manager/employee nav, so a
+ * granted manager could not reach it even though the API allowed them).
+ * `undefined` = /me hasn't answered yet: change nothing.
+ */
+function withModuleAccess(
+  sections: NavSection[],
+  access: ModuleAccessMap | undefined,
+): NavSection[] {
+  if (!access) return sections
+  const drop = new Set<string>()
+  if (access.crm === 'none') drop.add('crm')
+  if (access.pm === 'none') drop.add('projects')
+  if (access.invoicing === 'none') drop.add('invoicing')
+
+  const pruned = sections
+    .map((sec) => ({ ...sec, items: sec.items.filter((it) => !drop.has(it.id)) }))
+    .filter((sec) => sec.items.length > 0)
+
+  const hasCrm = pruned.some((sec) => sec.items.some((it) => it.id === 'crm'))
+  if (access.crm !== 'none' && !hasCrm) {
+    const crmItem = ADMIN_NAV.flatMap((sec) => sec.items).find((it) => it.id === 'crm')
+    if (crmItem) {
+      return [...pruned, { section: 'main', items: [crmItem] }]
+    }
+  }
+  return pruned
+}
+
 // Manager/Employee see Invoicing ONLY if the Owner granted it (membership_grants).
 // Their base HRMS nav stays; the granted invoicing section is appended.
 function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSection[] {
@@ -394,7 +426,7 @@ function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSec
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { currentUser, currentTenant } = useAuthStore()
+  const { currentUser } = useAuthStore()
   const pathname = usePathname() ?? '/'
   const role = currentUser?.role
 
@@ -411,13 +443,22 @@ export function Sidebar() {
     )
   }, [grantDriven, myCompanies.data, currentUser?.tenantId])
 
+  // Effective module access from /me — the same resolution the API guards use,
+  // so the nav shows exactly what the member can actually open. Undefined
+  // while /me is in flight: show the role's nav rather than flicker.
+  const moduleAccess = useModuleAccess()
+
   const nav = useMemo(() => {
     if (role === 'GUEST') return guestNavFor()
     if (role === 'AUDITOR') return withoutParkedCrm(auditorNavFor(activeGrants))
-    if (role === 'MANAGER') return withoutParkedCrm(withGrantedInvoicing(MANAGER_NAV, activeGrants))
-    if (role === 'EMPLOYEE') return withoutParkedCrm(withGrantedInvoicing(EMPLOYEE_NAV, activeGrants))
-    return withoutParkedCrm(navFor(role))
-  }, [role, activeGrants])
+    const base =
+      role === 'MANAGER'
+        ? withGrantedInvoicing(MANAGER_NAV, activeGrants)
+        : role === 'EMPLOYEE'
+          ? withGrantedInvoicing(EMPLOYEE_NAV, activeGrants)
+          : navFor(role)
+    return withoutParkedCrm(withModuleAccess(base, moduleAccess))
+  }, [role, activeGrants, moduleAccess])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.
   // FAM admins live under /fam/* and have no tenant approvals queue.
@@ -486,12 +527,15 @@ export function Sidebar() {
 
   const isFam = role === 'FAM'
   // Brand area: customer workspaces see the Flicks Suite mark with the
-  // tenant name underneath; FAM operators see "FAM Console · Specflicks
-  // Internal" since they're not inside any single tenant.
+  // product byline underneath — the same "by Specflicks" the sign-in screen
+  // shows. The workspace name is NOT repeated here: the CompanySwitcher
+  // directly below already names (and switches) the active workspace.
+  // FAM operators see "FAM Console · Specflicks Internal" since they're not
+  // inside any single tenant.
   const brandTitle = isFam ? 'FAM Console' : 'Flicks Suite'
   const brandSub = isFam
     ? 'Specflicks Internal · admin.flickssuite.com'
-    : currentTenant?.name ?? 'Workspace'
+    : 'by Specflicks'
 
   return (
     <aside

@@ -39,6 +39,7 @@ import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
+import { MediaService } from '../media/media.service';
 import type {
   InviteEmployeeDto,
   UpdateEmployeeDto,
@@ -94,6 +95,10 @@ export class EmployeesService {
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService,
     private readonly authService: AuthService,
+    // Resolves users.avatar_key into a signed URL. Every read surface that
+    // renders a face must go through this: the upload path writes ONLY
+    // avatar_key, so the legacy avatar_url columns stay null forever.
+    private readonly mediaService: MediaService,
   ) {}
 
   // AES-256-GCM for sensitive at-rest columns (PAN, bank account number).
@@ -536,6 +541,7 @@ export class EmployeesService {
           // Status + avatar
           status: employees.status,
           avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+          avatarKey: users.avatar_key,
           customFields: employees.custom_fields,
           createdAt: employees.created_at,
           updatedAt: employees.updated_at,
@@ -643,8 +649,16 @@ export class EmployeesService {
         onLeave: 0,
       };
 
+      const { avatarKey, ...rest } = row;
       return {
-        ...row,
+        ...rest,
+        // The photo lives in users.avatar_key (the upload path never writes
+        // the legacy avatar_url columns), so resolve it to a signed URL here.
+        avatarUrl: await this.mediaService.servedUrl(
+          avatarKey ?? null,
+          row.avatarUrl,
+          256,
+        ),
         // Synthesise the "this month" card from the aggregate.
         thisMonth: {
           daysPresent: Number(month.daysPresent ?? 0),
@@ -727,6 +741,7 @@ export class EmployeesService {
           locationId: employees.location_id,
           locationName: locations.name,
           avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
+          avatarKey: users.avatar_key,
           userId: employees.user_id, // D9 presence keying
           // Submitted-for-review flag — managers should see which of their
           // reports have finished self-onboarding.
@@ -745,10 +760,11 @@ export class EmployeesService {
         )
         .orderBy(asc(employees.first_name));
 
+      const data = await this.withAvatars(rows);
       return {
         managerEmployeeId,
-        data: rows,
-        total: rows.length,
+        data,
+        total: data.length,
       };
     });
   }
@@ -855,6 +871,27 @@ export class EmployeesService {
     return updated;
   }
 
+  /**
+   * Swaps `avatarKey` for a signed URL on a row set, falling back to the
+   * legacy `avatarUrl` column. Every avatar-bearing read goes through this —
+   * the upload path writes `users.avatar_key` only, so a surface that reads
+   * the legacy column alone shows initials forever.
+   */
+  private async withAvatars<
+    T extends { avatarKey?: string | null; avatarUrl?: string | null },
+  >(rows: T[], size: 256 | 64 = 64): Promise<Omit<T, 'avatarKey'>[]> {
+    return Promise.all(
+      rows.map(async ({ avatarKey, ...row }) => ({
+        ...(row as Omit<T, 'avatarKey'>),
+        avatarUrl: await this.mediaService.servedUrl(
+          avatarKey ?? null,
+          (row as { avatarUrl?: string | null }).avatarUrl ?? null,
+          size,
+        ),
+      })),
+    );
+  }
+
   async getOnboardingQueue(tenantId: string, callerUserId: string) {
     const rows = await this.databaseService.withTenant(tenantId, (db) =>
       db
@@ -864,6 +901,7 @@ export class EmployeesService {
           fullName: users.full_name,
           email: users.email,
           avatarUrl: users.avatar_url,
+          avatarKey: users.avatar_key,
           designationTitle: designations.title,
           departmentName: departments.name,
           status: employees.status,
@@ -887,7 +925,8 @@ export class EmployeesService {
         .orderBy(asc(employees.created_at)),
     );
 
-    return { data: rows, total: rows.length };
+    const data = await this.withAvatars(rows);
+    return { data, total: data.length };
   }
 
   async rejectOnboarding(
@@ -1917,6 +1956,7 @@ export class EmployeesService {
           fullName: users.full_name,
           email: users.email,
           avatarUrl: users.avatar_url,
+          avatarKey: users.avatar_key,
           userId: employees.user_id, // D9 presence keying
           designationTitle: designations.title,
           departmentName: departments.name,
@@ -1935,15 +1975,19 @@ export class EmployeesService {
         ),
     );
 
-    type OrgNode = (typeof allEmployees)[number] & { children: OrgNode[] };
+    // Resolve photos before the tree is assembled — the nodes are what the
+    // chart renders, and they must carry a usable avatarUrl.
+    const withPhotos = await this.withAvatars(allEmployees);
+
+    type OrgNode = (typeof withPhotos)[number] & { children: OrgNode[] };
 
     const nodeMap = new Map<string, OrgNode>();
-    for (const emp of allEmployees) {
+    for (const emp of withPhotos) {
       nodeMap.set(emp.id, { ...emp, children: [] });
     }
 
     const roots: OrgNode[] = [];
-    for (const emp of allEmployees) {
+    for (const emp of withPhotos) {
       const node = nodeMap.get(emp.id)!;
       if (emp.managerId && nodeMap.has(emp.managerId)) {
         nodeMap.get(emp.managerId)!.children.push(node);

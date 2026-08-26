@@ -398,7 +398,7 @@ export default function OrganizationSettingsPage() {
           <section className="card p-6">
             <div className="mb-4">
               <h2 className="t-h3">Tax & legal identifiers</h2>
-              <p className="t-mute mt-1">Indian statutory IDs used for compliance and payroll exports (PRD §4.3).</p>
+              <p className="t-mute mt-1">Indian statutory IDs used for compliance and payroll exports.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Field label="GSTIN" hint="15 characters. State code auto-detected.">

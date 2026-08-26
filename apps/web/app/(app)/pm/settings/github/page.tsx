@@ -350,7 +350,7 @@ function PmGithubSettingsPageInner() {
               </div>
             ))}
             <div style={{ padding: '9px 14px', fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
-              installation-scoped — a repo in tenant A can never link issues in tenant B
+              scoped to this workspace — a repo linked here can never touch another workspace’s issues
             </div>
           </div>
 

@@ -28,7 +28,7 @@ export default function PmRoadmapPage() {
   if (mode === 'rest' || !engine) {
     return (
       <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>
-        The roadmap needs the sync engine — the REST fallback lists projects under Projects.
+        The roadmap isn’t available in this workspace right now — you’ll find your projects under Projects.
       </div>
     )
   }

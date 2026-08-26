@@ -9,6 +9,7 @@ import {
   invoices,
   membershipGrants,
   memberships,
+  tenantRoleModuleDefaults,
   tenants,
   users,
 } from '@flicks/db/schema';
@@ -18,7 +19,18 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
-import type { GrantInputDto, InviteAuditorDto, UpdateGrantsDto } from './members.dto';
+import { ModuleAccessService } from '../../core/auth/module-access.service';
+import type { UserRole } from '@flicks/shared/types';
+import type { GrantModule } from '../../core/auth/decorators/require-grant.decorator';
+import {
+  MANAGED_MODULES,
+  POLICY_ROLES,
+  type GrantInputDto,
+  type InviteAuditorDto,
+  type UpdateGrantsDto,
+  type UpdateRoleDefaultsDto,
+  type UpsertGrantDto,
+} from './members.dto';
 
 /**
  * Auditor membership + grants (PRD §3, §4.4).
@@ -50,6 +62,7 @@ export class MembersService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly authService: AuthService,
+    private readonly moduleAccess: ModuleAccessService,
   ) {}
 
   // ─── Invite ────────────────────────────────────────────────────────────────
@@ -400,6 +413,232 @@ export class MembersService {
     return { data: { grants } };
   }
 
+  /**
+   * Set ONE module for one member (Settings → Module access).
+   *
+   * Deliberately not the replace-all endpoint: that one deletes every row it
+   * is not told about, so a screen showing three modules would silently revoke
+   * an auditor's org_financial row or a PM guest's pm:edit row. Writing 'none'
+   * stores an explicit row — that is how revocation is expressed now that a
+   * row wins over the role default.
+   */
+  async upsertGrant(
+    membershipId: string,
+    module: string,
+    dto: UpsertGrantDto,
+    actorUserId: string,
+    tenantId: string,
+  ) {
+    const membership = await this.assertGrantTarget(membershipId, tenantId);
+
+    const [before] = await this.dbAdmin
+      .select()
+      .from(membershipGrants)
+      .where(
+        and(
+          eq(membershipGrants.membership_id, membershipId),
+          eq(membershipGrants.module, module),
+        ),
+      )
+      .limit(1);
+
+    // 'none' clears capabilities too: a stale {record_payments:true} left on a
+    // revoked row would still light up the sidebar's Payments item.
+    const capabilities =
+      dto.access_level === 'none' ? {} : (dto.capabilities ?? before?.capabilities ?? {});
+
+    const [row] = await this.db.withTenant(tenantId, (tx) =>
+      tx
+        .insert(membershipGrants)
+        .values({
+          tenant_id: tenantId,
+          membership_id: membershipId,
+          module,
+          access_level: dto.access_level,
+          capabilities,
+        })
+        .onConflictDoUpdate({
+          target: [membershipGrants.membership_id, membershipGrants.module],
+          set: {
+            access_level: dto.access_level,
+            capabilities,
+            updated_at: new Date(),
+          },
+        })
+        .returning(),
+    );
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'membership.grants_changed',
+      resourceType: 'membership',
+      resourceId: membershipId,
+      beforeState: {
+        grants: before ? [`${before.module}:${before.access_level}`] : [],
+      },
+      afterState: { grants: [`${module}:${dto.access_level}`] },
+      metadata: { module, role: membership.role },
+    });
+
+    return { data: { grant: row } };
+  }
+
+  /**
+   * Drop a member's explicit row for a module — they fall back to whatever
+   * their role gets in this workspace ("Reset to role default").
+   */
+  async clearGrant(
+    membershipId: string,
+    module: string,
+    actorUserId: string,
+    tenantId: string,
+  ) {
+    await this.assertGrantTarget(membershipId, tenantId);
+    await this.db.withTenant(tenantId, (tx) =>
+      tx
+        .delete(membershipGrants)
+        .where(
+          and(
+            eq(membershipGrants.membership_id, membershipId),
+            eq(membershipGrants.module, module),
+          ),
+        ),
+    );
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'membership.grants_changed',
+      resourceType: 'membership',
+      resourceId: membershipId,
+      afterState: { grants: [`${module}:role-default`] },
+      metadata: { module, cleared: true },
+    });
+    return { data: { ok: true } };
+  }
+
+  /**
+   * Members whose grants may be edited here. Guests are excluded on purpose:
+   * their pm:edit row IS their project access, it is written by the project
+   * invite, and clearing it from Settings would strand them with no way back
+   * in except a re-invite.
+   */
+  private async assertGrantTarget(membershipId: string, tenantId: string) {
+    const [membership] = await this.dbAdmin
+      .select()
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.id, membershipId),
+          eq(memberships.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+    if (!membership) throw new NotFoundException('Member not found');
+    if (membership.role === 'guest') {
+      throw new ConflictException(
+        'Guest access is managed from the project they were invited to, not from module access.',
+      );
+    }
+    return membership;
+  }
+
+  // ─── Workspace role policy (Settings → Module access → By role) ────────────
+
+  /** Current per-role module policy, including the shipped defaults. */
+  async getRoleDefaults(tenantId: string, userId: string) {
+    const rows = await this.db.withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .select({
+            role: tenantRoleModuleDefaults.role,
+            module: tenantRoleModuleDefaults.module,
+            accessLevel: tenantRoleModuleDefaults.access_level,
+          })
+          .from(tenantRoleModuleDefaults)
+          .where(eq(tenantRoleModuleDefaults.tenant_id, tenantId)),
+      userId,
+    );
+    const explicit = new Map(
+      rows.map((r) => [`${r.role}|${r.module}`, r.accessLevel]),
+    );
+
+    const defaults = [];
+    for (const role of POLICY_ROLES) {
+      for (const module of MANAGED_MODULES) {
+        const key = `${role}|${module}`;
+        const level = await this.moduleAccess.defaultLevel(
+          tenantId,
+          role as UserRole,
+          module as GrantModule,
+          userId,
+        );
+        defaults.push({
+          role,
+          module,
+          access_level: level,
+          is_custom: explicit.has(key),
+        });
+      }
+    }
+    return { data: { defaults } };
+  }
+
+  /** Replace the workspace's role policy for the modules it names. */
+  async updateRoleDefaults(
+    dto: UpdateRoleDefaultsDto,
+    actorUserId: string,
+    tenantId: string,
+  ) {
+    await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        for (const d of dto.defaults) {
+          await tx
+            .insert(tenantRoleModuleDefaults)
+            .values({
+              tenant_id: tenantId,
+              role: d.role,
+              module: d.module,
+              access_level: d.access_level,
+              updated_by: actorUserId,
+            })
+            .onConflictDoUpdate({
+              target: [
+                tenantRoleModuleDefaults.tenant_id,
+                tenantRoleModuleDefaults.role,
+                tenantRoleModuleDefaults.module,
+              ],
+              set: {
+                access_level: d.access_level,
+                updated_by: actorUserId,
+                updated_at: new Date(),
+              },
+            });
+        }
+      },
+      actorUserId,
+    );
+    // The resolver caches the policy for 30s — a Settings save must bite now.
+    this.moduleAccess.invalidateTenant(tenantId);
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId,
+      action: 'tenant.role_module_defaults_changed',
+      resourceType: 'tenant',
+      resourceId: tenantId,
+      afterState: {
+        defaults: dto.defaults.map(
+          (d) => `${d.role}:${d.module}:${d.access_level}`,
+        ),
+      },
+    });
+
+    return this.getRoleDefaults(tenantId, actorUserId);
+  }
+
   /** Replace the full grant set for a membership inside the tenant context. */
   private async replaceGrants(
     tenantId: string,
@@ -437,8 +676,14 @@ export class MembersService {
       org_financial: 'Financial details',
       payroll: 'Payroll',
       expenses: 'Expenses',
+      crm: 'CRM',
+      pm: 'Projects',
     };
-    return grants
+    // 'none' rows are explicit revocations, not scopes — an invite email that
+    // reads "Invoicing (none)" is worse than saying nothing.
+    const granted = grants.filter((g) => g.access_level !== 'none');
+    if (granted.length === 0) return 'No modules yet';
+    return granted
       .map((g) => `${label[g.module] ?? g.module} (${g.access_level})`)
       .join(' · ');
   }

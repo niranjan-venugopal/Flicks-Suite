@@ -8,8 +8,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 // House date picker (design ref: dark popover — centered "April 2023" with
 // round prev/next buttons, Mo–Su headers, 6 rows, adjacent-month days
 // dimmed; range selection renders as ONE rounded blue pill spanning the
-// days). Values are house YYYY-MM-DD strings ('' = empty). Replaces the
-// native <input type="date"> everywhere; datetime-local/month stay native.
+// days). Values are house YYYY-MM-DD strings ('' = empty). Replaces every
+// native calendar input in the app: DateField for dates, DateRangeField for
+// ranges, DateTimeField for 'YYYY-MM-DDTHH:mm', MonthField for 'YYYY-MM'.
+// (Only <input type="time"> stays native — it renders a clock, not a
+// calendar, and has no house equivalent.)
 // ─────────────────────────────────────────────────────────
 
 const WEEK = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
@@ -275,6 +278,130 @@ export function DateField({
           max={max}
           initialCursor={value ? parse(value) : new Date()}
           onPick={(iso) => { onChange(iso); setOpen(false) }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
+const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'))
+
+/**
+ * Date + time in one popover. Value = 'YYYY-MM-DDTHH:mm' | '' — byte-identical
+ * to what <input type="datetime-local"> produced, so callers keep their format.
+ * The calendar is the house one; the clock is two native selects (styled by
+ * `select.input`), which is the house pattern for dropdowns.
+ */
+export function DateTimeField({
+  value, onChange, min, placeholder = 'Pick date & time', id, disabled, required, style,
+}: {
+  value: string
+  onChange: (v: string) => void
+  /** Earliest selectable DATE (YYYY-MM-DD). */
+  min?: string
+  placeholder?: string
+  id?: string
+  disabled?: boolean
+  required?: boolean
+  style?: CSSProperties
+}) {
+  const [open, setOpen] = useState(false)
+  const datePart = value.slice(0, 10)
+  // Default to the next round hour so "schedule an activity" opens usable.
+  const timePart = value.length >= 16 ? value.slice(11, 16) : '09:00'
+  const [hh, mm] = timePart.split(':')
+
+  const commit = (d: string, t: string) => onChange(d ? `${d}T${t}` : '')
+
+  return (
+    <Popover open={open} onOpenChange={disabled ? () => undefined : setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" id={id} disabled={disabled} aria-required={required} style={{ ...triggerStyle, opacity: disabled ? 0.55 : 1, ...style }}>
+          <Icon.cal size={14} style={{ color: 'var(--text-mute)', flexShrink: 0 }} />
+          <span style={{ flex: 1, color: datePart ? 'var(--text)' : 'var(--text-faint)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            {datePart ? `${fmtShort(datePart)} · ${timePart}` : placeholder}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" style={{ padding: 0 }}>
+        <CalendarPanel
+          mode="single"
+          selStart={datePart}
+          selEnd={null}
+          min={min}
+          initialCursor={datePart ? parse(datePart) : new Date()}
+          onPick={(iso) => commit(iso, timePart)}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 14px' }}>
+          <Icon.clock size={14} style={{ color: 'var(--text-mute)', flexShrink: 0 }} />
+          <select
+            className="input"
+            aria-label="Hour"
+            value={hh}
+            onChange={(e) => commit(datePart || toISO(new Date()), `${e.target.value}:${mm}`)}
+            style={{ height: 34, width: 74, fontSize: 12.5 }}
+          >
+            {HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
+          </select>
+          <span style={{ color: 'var(--text-mute)', fontWeight: 800 }}>:</span>
+          <select
+            className="input"
+            aria-label="Minute"
+            value={MINUTES.includes(mm) ? mm : '00'}
+            onChange={(e) => commit(datePart || toISO(new Date()), `${hh}:${e.target.value}`)}
+            style={{ height: 34, width: 74, fontSize: 12.5 }}
+          >
+            {MINUTES.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            style={{
+              marginLeft: 'auto', height: 34, padding: '0 14px', borderRadius: 999,
+              background: 'var(--blue)', border: 'none', color: '#fff',
+              fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            Done
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/** Month + year in one popover. Value = 'YYYY-MM' | '' (replaces type="month"). */
+export function MonthField({
+  value, onChange, placeholder = 'Pick a month', id, disabled, style,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  id?: string
+  disabled?: boolean
+  style?: CSSProperties
+}) {
+  const [open, setOpen] = useState(false)
+  const cursor = value ? new Date(`${value}-01T00:00:00`) : new Date()
+
+  return (
+    <Popover open={open} onOpenChange={disabled ? () => undefined : setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" id={id} disabled={disabled} style={{ ...triggerStyle, opacity: disabled ? 0.55 : 1, ...style }}>
+          <Icon.cal size={14} style={{ color: 'var(--text-mute)', flexShrink: 0 }} />
+          <span style={{ flex: 1, color: value ? 'var(--text)' : 'var(--text-faint)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            {value ? monthLabel(cursor) : placeholder}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" style={{ padding: 0 }}>
+        <MonthYearPanel
+          cursor={cursor}
+          onPick={(d) => {
+            onChange(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+            setOpen(false)
+          }}
         />
       </PopoverContent>
     </Popover>

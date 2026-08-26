@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -19,7 +21,13 @@ import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { MembersService } from './members.service';
-import { InviteAuditorDto, UpdateGrantsDto } from './members.dto';
+import {
+  InviteAuditorDto,
+  MANAGED_MODULES,
+  UpdateGrantsDto,
+  UpdateRoleDefaultsDto,
+  UpsertGrantDto,
+} from './members.dto';
 
 /**
  * Auditor management endpoints (PRD §3, §4.4). Lives under /settings/members
@@ -62,6 +70,69 @@ export class MembersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.membersService.updateGrants(id, dto, user.sub, user.tenantId);
+  }
+
+  @Patch(':id/grants/:module')
+  @Roles('admin')
+  @ApiOperation({
+    summary: "Set ONE module on a member's access",
+    description:
+      'Partial, additive write used by Settings → Module access. Unlike the ' +
+      'replace-all endpoint it never touches the modules it was not told ' +
+      'about. access_level "none" stores an explicit revocation, which now ' +
+      'beats the role default.',
+  })
+  @ApiResponse({ status: 200, description: 'Module access updated' })
+  @ApiResponse({ status: 409, description: 'Guest access is managed per project' })
+  async upsertGrant(
+    @Param('id') id: string,
+    @Param('module') module: string,
+    @Body() dto: UpsertGrantDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!(MANAGED_MODULES as readonly string[]).includes(module)) {
+      throw new BadRequestException(`Unknown module: ${module}`);
+    }
+    return this.membersService.upsertGrant(id, module, dto, user.sub, user.tenantId);
+  }
+
+  @Delete(':id/grants/:module')
+  @Roles('admin')
+  @ApiOperation({ summary: "Reset one module to the member's role default" })
+  @ApiResponse({ status: 200, description: 'Module reset to role default' })
+  async clearGrant(
+    @Param('id') id: string,
+    @Param('module') module: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!(MANAGED_MODULES as readonly string[]).includes(module)) {
+      throw new BadRequestException(`Unknown module: ${module}`);
+    }
+    return this.membersService.clearGrant(id, module, user.sub, user.tenantId);
+  }
+
+  @Get('role-defaults')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Per-role module policy for this workspace',
+    description:
+      'What each role gets with no per-person override. Owner/Admin are absent ' +
+      'on purpose — they hold every module by role.',
+  })
+  @ApiResponse({ status: 200, description: 'Role policy' })
+  async getRoleDefaults(@CurrentUser() user: JwtPayload) {
+    return this.membersService.getRoleDefaults(user.tenantId, user.sub);
+  }
+
+  @Patch('role-defaults')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Set the per-role module policy for this workspace' })
+  @ApiResponse({ status: 200, description: 'Role policy updated' })
+  async updateRoleDefaults(
+    @Body() dto: UpdateRoleDefaultsDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.membersService.updateRoleDefaults(dto, user.sub, user.tenantId);
   }
 
   @Get('seats')

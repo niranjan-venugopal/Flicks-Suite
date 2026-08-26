@@ -27,7 +27,7 @@ function ScoreBadge({ v }: { v: number }) {
   const c = v >= 30 ? 'var(--green)' : v >= 15 ? 'var(--yellow)' : 'var(--text-faint)'
   const bg = v >= 30 ? 'rgba(39,210,128,.14)' : v >= 15 ? 'rgba(254,216,0,.12)' : 'rgba(255,255,255,.06)'
   return (
-    <span title="Lead score — rule-based (§5.3)" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 30, height: 20, padding: '0 7px', borderRadius: 99, background: bg, color: c, fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
+    <span title="Lead score — calculated from the lead’s details and activity" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 30, height: 20, padding: '0 7px', borderRadius: 99, background: bg, color: c, fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
       {v}
     </span>
   )
@@ -126,7 +126,7 @@ export default function LeadsPage() {
           </table>
         </div>
       )}
-      <div className="t-caption" style={{ marginTop: 10 }}>A lead is a lightweight triage row — converting creates/links directory records + a deal (§5.1). Discard needs no reason.</div>
+      <div className="t-caption" style={{ marginTop: 10 }}>A lead is a lightweight triage row — converting creates or links the company and contact, plus a deal. Discard needs no reason.</div>
 
       {addOpen && <AddLeadModal onClose={() => setAddOpen(false)} />}
       {convertFor && <ConvertModal lead={convertFor} onClose={() => setConvertFor(null)} />}

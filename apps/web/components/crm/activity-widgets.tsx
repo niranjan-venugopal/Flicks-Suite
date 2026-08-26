@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Btn, Icon, Modal } from '@/components/proto'
+import { DateTimeField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCreateActivity, useCompleteActivity, useReps, type Activity } from '@/lib/api/queries/use-crm'
@@ -20,7 +21,7 @@ export const ACT_META: Record<Activity['type'], { icon: keyof typeof Icon; color
 
 const CALL_OUTCOMES = ['connected', 'no_answer', 'busy', 'voicemail', 'wrong_number'] as const
 
-/** Local-timezone default for datetime-local inputs (tomorrow 10:00). */
+/** Local-timezone default for the house date+time field (tomorrow 10:00). */
 function defaultWhen(): string {
   const d = new Date(Date.now() + 24 * 3600_000)
   d.setHours(10, 0, 0, 0)
@@ -103,7 +104,7 @@ export function ScheduleActivityModal({ open, onClose, dealId, title = 'Schedule
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <div className="label">When</div>
-          <input className="input" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} style={{ height: 38, width: '100%' }} />
+          <DateTimeField value={when} onChange={setWhen} style={{ height: 38, fontSize: 12.5 }} />
         </div>
         <div>
           <div className="label">Subject</div>

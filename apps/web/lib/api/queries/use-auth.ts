@@ -72,6 +72,9 @@ interface VerifyAuthResponse {
   requiresTotpEnrollment?: boolean
 }
 
+export type ModuleAccessLevel = 'none' | 'view' | 'edit'
+export type ModuleAccessMap = Record<'crm' | 'invoicing' | 'pm', ModuleAccessLevel>
+
 // Returned by /me
 interface MeResponse extends ApiUser {
   // User-level platform-admin flag (users.is_platform_admin) — independent
@@ -85,6 +88,11 @@ interface MeResponse extends ApiUser {
   // PRD v6 — effective runtime flags for the current tenant (e.g.
   // 'pm_sync_engine'); the PM data-source facade picks its transport off this.
   effectiveFlags?: string[]
+  // Round 8 — effective module access for the active workspace, resolved by
+  // the same service the API guards use. The sidebar gates CRM / Invoicing /
+  // Projects on this so a granted member sees the link and a revoked one
+  // doesn't (previously the nav was role-only and could disagree with the API).
+  moduleAccess?: ModuleAccessMap
   // Set only when the current session is a FAM impersonation. The web
   // app shows the ImpersonationBanner whenever this is present.
   impersonatorUserId?: string
@@ -195,6 +203,16 @@ export function useCurrentUser() {
 export function useEffectiveFlags(): { flags: string[]; loaded: boolean; failed: boolean } {
   const { data, isError } = useCurrentUser()
   return { flags: data?.effectiveFlags ?? [], loaded: data !== undefined, failed: isError }
+}
+
+/**
+ * Effective module access for the active workspace. Undefined while /me is in
+ * flight — callers should treat that as "don't hide anything yet" so the nav
+ * doesn't flicker on every load.
+ */
+export function useModuleAccess(): ModuleAccessMap | undefined {
+  const { data } = useCurrentUser()
+  return data?.moduleAccess
 }
 
 export function useRequestOtp() {

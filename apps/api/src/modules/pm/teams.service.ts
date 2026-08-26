@@ -589,7 +589,13 @@ export class PmTeamsService {
         }
 
         const rows = await tx
-          .select({ id: users.id, name: users.full_name, avatar_url: users.avatar_url })
+          .select({
+            id: users.id,
+            name: users.full_name,
+            avatar_url: users.avatar_url,
+            // Signed by the controller — the upload path writes only the key.
+            avatar_key: users.avatar_key,
+          })
           .from(users)
           .innerJoin(memberships, eq(memberships.user_id, users.id))
           .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));

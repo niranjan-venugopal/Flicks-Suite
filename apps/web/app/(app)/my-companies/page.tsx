@@ -57,7 +57,7 @@ export default function MyCompaniesPage() {
       >
         <Icon.info size={15} style={{ color: 'var(--purple)', flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>
-          Each company is an isolated tenant. There is no cross-company roll-up — selecting one
+          Each company is a separate workspace. There is no cross-company roll-up — selecting one
           enters its scoped workspace with exactly your granted access.
         </span>
       </div>

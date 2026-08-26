@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { and, asc, desc, eq, gte, lt, lte, ne, sql, isNull } from 'drizzle-orm';
+import type { AnyColumn, SQL } from 'drizzle-orm';
 import {
   employees,
   attendanceRecords,
@@ -12,13 +13,31 @@ import {
   designations,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
+import { MediaService } from '../media/media.service';
 import type { AdminOverviewDto, ActivityItemDto } from './dashboard.dto';
 
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    // Approval rows in the Inbox render faces; the photo lives in
+    // users.avatar_key and has to be signed before it reaches the client.
+    private readonly mediaService: MediaService,
+  ) {}
+
+  /** Signed-URL swap for a row set carrying `avatarKey` (§4 media pipeline). */
+  private async withAvatars<
+    T extends { avatarKey: string | null; avatarUrl: string | null },
+  >(rows: T[]): Promise<Omit<T, 'avatarKey'>[]> {
+    return Promise.all(
+      rows.map(async ({ avatarKey, ...row }) => ({
+        ...(row as Omit<T, 'avatarKey'>),
+        avatarUrl: await this.mediaService.servedUrl(avatarKey, row.avatarUrl, 64),
+      })),
+    );
+  }
 
   /**
    * Returns everything the customer admin dashboard renders, in one
@@ -28,10 +47,42 @@ export class DashboardService {
    */
   async getAdminOverview(
     tenantId: string,
-    opts: { callerUserId: string; includeOnboarding: boolean },
+    opts: {
+      callerUserId: string;
+      includeOnboarding: boolean;
+      /** Approver roles only — a plain employee has no approvals queue. */
+      includeApprovals: boolean;
+    },
   ): Promise<AdminOverviewDto> {
     const today = todayISO();
     const thirtyDaysAgo = isoDaysAgo(30);
+
+    /**
+     * Approvals a caller may act on: never their own. An owner/admin clears
+     * the review guard by role, so their own leave/regularization must be kept
+     * out of their queue and counts — another approver has to act on it (the
+     * same rule the onboarding bucket below already applies).
+     *
+     * The employee↔user link exists in two places (employees.user_id and the
+     * active membership), so both are checked: a request is "mine" if either
+     * points at the caller.
+     */
+    const notOwnRequest = (employeeIdCol: SQL | AnyColumn) =>
+      opts.includeApprovals
+        ? sql`NOT EXISTS (
+              SELECT 1 FROM employees e
+               WHERE e.id = ${employeeIdCol}
+                 AND e.tenant_id = ${tenantId}
+                 AND e.user_id = ${opts.callerUserId}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM memberships m
+               WHERE m.employee_id = ${employeeIdCol}
+                 AND m.tenant_id = ${tenantId}
+                 AND m.status = 'active'
+                 AND m.user_id = ${opts.callerUserId}
+            )`
+        : sql`false`;
 
     return this.databaseService.withTenant(tenantId, async (tx) => {
       const [
@@ -81,6 +132,7 @@ export class DashboardService {
             and(
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
+              notOwnRequest(leaveRequests.employee_id),
             ),
           ),
 
@@ -92,6 +144,7 @@ export class DashboardService {
             and(
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
+              notOwnRequest(attendanceRegularizations.employee_id),
             ),
           ),
 
@@ -110,16 +163,20 @@ export class DashboardService {
             totalDays: leaveRequests.total_days,
             reason: leaveRequests.reason,
             appliedAt: leaveRequests.applied_at,
+            avatarUrl: users.avatar_url,
+            avatarKey: users.avatar_key,
             leaveTypeName: leaveTypes.name,
             leaveTypeCode: leaveTypes.code,
           })
           .from(leaveRequests)
           .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
           .where(
             and(
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
+              notOwnRequest(leaveRequests.employee_id),
             ),
           )
           .orderBy(desc(leaveRequests.applied_at))
@@ -138,16 +195,20 @@ export class DashboardService {
             requestType: attendanceRegularizations.request_type,
             reason: attendanceRegularizations.reason,
             requestedAt: attendanceRegularizations.created_at,
+            avatarUrl: users.avatar_url,
+            avatarKey: users.avatar_key,
           })
           .from(attendanceRegularizations)
           .leftJoin(
             employees,
             eq(attendanceRegularizations.employee_id, employees.id),
           )
+          .leftJoin(users, eq(employees.user_id, users.id))
           .where(
             and(
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
+              notOwnRequest(attendanceRegularizations.employee_id),
             ),
           )
           .orderBy(desc(attendanceRegularizations.created_at))
@@ -231,6 +292,8 @@ export class DashboardService {
                 employeeName: sql<string>`COALESCE(NULLIF(TRIM(COALESCE(${employees.first_name},'') || ' ' || COALESCE(${employees.last_name},'')), ''), ${users.full_name}, '')`,
                 employeeCode: employees.employee_code,
                 designationTitle: designations.title,
+                avatarUrl: users.avatar_url,
+                avatarKey: users.avatar_key,
                 submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
               })
               .from(employees)
@@ -255,6 +318,8 @@ export class DashboardService {
                 employeeName: string;
                 employeeCode: string | null;
                 designationTitle: string | null;
+                avatarUrl: string | null;
+                avatarKey: string | null;
                 submittedAt: string | null;
               }>,
             ),
@@ -333,10 +398,13 @@ export class DashboardService {
           leaveCount: pendingLeaveCountRow[0]?.count ?? 0,
           regularizationCount: pendingRegCountRow[0]?.count ?? 0,
           onboardingCount: pendingOnboardingRows.length,
-          onboarding: pendingOnboardingRows,
-          leaves: pendingLeaveRows.map((r) => ({
+          onboarding: await this.withAvatars(pendingOnboardingRows),
+          leaves: await Promise.all(pendingLeaveRows.map(async (r) => ({
             id: r.id,
             employeeId: r.employeeId,
+            // The requester's user id drives the Inbox presence dot — it is
+            // selected above, so ship it instead of dropping it here.
+            userId: r.userId,
             employeeName: r.employeeName,
             employeeCode: r.employeeCode,
             leaveTypeName: r.leaveTypeName,
@@ -349,10 +417,12 @@ export class DashboardService {
               r.appliedAt instanceof Date
                 ? r.appliedAt.toISOString()
                 : String(r.appliedAt),
-          })),
-          regularizations: pendingRegRows.map((r) => ({
+            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+          }))),
+          regularizations: await Promise.all(pendingRegRows.map(async (r) => ({
             id: r.id,
             employeeId: r.employeeId,
+            userId: r.userId,
             employeeName: r.employeeName,
             employeeCode: r.employeeCode,
             attendanceDate: r.attendanceDate,
@@ -362,7 +432,8 @@ export class DashboardService {
               r.requestedAt instanceof Date
                 ? r.requestedAt.toISOString()
                 : String(r.requestedAt),
-          })),
+            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+          }))),
         },
         trends: {
           attendanceCompliancePct: compliance,

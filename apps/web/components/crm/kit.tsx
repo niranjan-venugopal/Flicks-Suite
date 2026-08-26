@@ -54,10 +54,10 @@ export function CurVal({ v, cur, base, baseValue, size = 13 }: { v: number; cur:
 }
 
 // ── Owner avatar (AvP without live presence for now — presence wires per-page) ──
-export function OwnerAv({ name, size = 20, title }: { name: string | null; size?: number; title?: string }) {
+export function OwnerAv({ name, src, size = 20, title }: { name: string | null; src?: string | null; size?: number; title?: string }) {
   return (
     <span title={title ?? name ?? undefined} style={{ display: 'inline-flex', lineHeight: 0 }}>
-      <Avatar name={name ?? '?'} style={{ width: size, height: size, fontSize: Math.max(8, size * 0.36) }} />
+      <Avatar name={name ?? '?'} src={src ?? undefined} style={{ width: size, height: size, fontSize: Math.max(8, size * 0.36) }} />
     </span>
   )
 }

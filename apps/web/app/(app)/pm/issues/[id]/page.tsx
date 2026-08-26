@@ -335,7 +335,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               ))}
               {(d?.comments ?? []).map((c) => (
                 <div key={c.id} style={{ display: 'flex', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--bord)', marginLeft: c.parent_comment_id ? 26 : 0 }}>
-                  <MiniAv name={users.find((u) => u.id === c.author_user_id)?.name ?? '?'} size={22} />
+                  <MiniAv name={users.find((u) => u.id === c.author_user_id)?.name ?? '?'} src={users.find((u) => u.id === c.author_user_id)?.avatar_url} size={22} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                       <span style={{ fontSize: 11.5, fontWeight: 800 }}>{users.find((u) => u.id === c.author_user_id)?.name ?? '—'}</span>
@@ -381,7 +381,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                         color: '#fff',
                       }}
                     >
-                      <MiniAv name={u.name} size={18} />
+                      <MiniAv name={u.name} src={u.avatar_url} size={18} />
                       <span style={{ fontSize: 12, fontWeight: 700 }}>{u.name}</span>
                     </button>
                   ))}
@@ -437,14 +437,14 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             </RailMenu>
           )}
           <RailRow label="Assignee" onClick={() => setMenu(menu === 'assignee' ? null : 'assignee')}>
-            {assignee?.name ? <><MiniAv name={assignee.name} size={16} /> <span>{assignee.name}</span></> : <span className="t-mute">Unassigned</span>}
+            {assignee?.name ? <><MiniAv name={assignee.name} src={assignee.avatar_url} size={16} /> <span>{assignee.name}</span></> : <span className="t-mute">Unassigned</span>}
           </RailRow>
           {menu === 'assignee' && (
             <RailMenu>
               <button onClick={() => { doAssign(null); setMenu(null) }} style={railMenuRow(!issue.assignee_user_id)}>Unassigned</button>
               {users.map((u) => (
                 <button key={u.id} onClick={() => { doAssign(u.id); setMenu(null) }} style={railMenuRow(u.id === issue.assignee_user_id)}>
-                  <MiniAv name={u.name ?? '?'} size={15} /> {u.name}
+                  <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
                 </button>
               ))}
             </RailMenu>
@@ -494,7 +494,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             <span className="t-caption">Subscribers</span>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {(d?.subscriber_ids ?? []).map((uid) => (
-                <MiniAv key={uid} name={users.find((u) => u.id === uid)?.name ?? '?'} size={18} />
+                <MiniAv key={uid} name={users.find((u) => u.id === uid)?.name ?? '?'} src={users.find((u) => u.id === uid)?.avatar_url} size={18} />
               ))}
             </div>
           </div>
@@ -537,9 +537,15 @@ function railMenuRow(active: boolean): React.CSSProperties {
   }
 }
 
-function MiniAv({ name, size = 18 }: { name: string; size?: number }) {
+// Signed avatar when the workspace roster has one, initials otherwise.
+function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
+  const [broken, setBroken] = useState(false)
+  const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
+  if (src && !broken) {
+    return <img src={src} alt={name} onError={() => setBroken(true)} style={{ ...box, objectFit: 'cover', display: 'inline-block' }} />
+  }
   return (
-    <span style={{ width: size, height: size, borderRadius: '50%', background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em', flexShrink: 0 }}>
+    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
       {initials(name)}
     </span>
   )

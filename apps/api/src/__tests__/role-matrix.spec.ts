@@ -28,6 +28,7 @@ import type { AuditService } from '../modules/audit/audit.service';
 import type { GrantRequirement } from '../core/auth/decorators/require-grant.decorator';
 import type { ExecutionContext } from '@nestjs/common';
 import type { JwtPayload } from '@flicks/shared/types';
+import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const rid = () => Math.random().toString(36).slice(2, 8);
 const audit = { log: async () => {} } as unknown as AuditService;
@@ -36,7 +37,8 @@ const authStub = { issueInviteMagicLink: async () => 'http://x/verify?token=t' }
 const configStub = { get: (_k: string, f?: unknown) => f } as never;
 
 const dbSvc = new DatabaseService();
-const members = new MembersService(dbSvc, dbAdmin as never, audit, notificationsStub, authStub);
+const moduleAccess = new ModuleAccessService(dbSvc);
+const members = new MembersService(dbSvc, dbAdmin as never, audit, notificationsStub, authStub, moduleAccess);
 const numbering = new NumberingService(dbSvc, audit);
 const customers = new CustomersService(dbSvc, audit);
 const orgFinancial = new OrgFinancialService(dbSvc, audit);
@@ -48,6 +50,7 @@ const guard = new InvoicingGrantGuard(
   { getAllAndOverride: () => guardReq } as never,
   dbSvc,
   audit,
+  moduleAccess,
 );
 let guardReq: GrantRequirement;
 const allows = async (req: GrantRequirement, user: Partial<JwtPayload>) => {

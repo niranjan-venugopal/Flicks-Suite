@@ -30,6 +30,7 @@ const ROLE_LABELS: Record<MembershipRole, string> = {
   finance:     'Finance',
   employee:    'Employee',
   auditor:     'Auditor',
+  guest:       'Project guest',
 }
 
 // Roles a customer admin can assign (fam is Specflicks-internal only;
@@ -43,12 +44,21 @@ const GRANT_LABELS: Record<string, string> = {
   org_financial: 'Financial',
   payroll:       'Payroll',
   expenses:      'Expenses',
+  crm:           'CRM',
+  pm:            'Projects',
+}
+
+const GRANT_LEVEL_LABELS: Record<string, string> = {
+  view: 'view only',
+  edit: 'full access',
 }
 
 function grantPills(m: Member): string[] {
-  return (m.grants ?? []).map((g) => {
+  // 'none' rows are explicit revocations (Settings → Module access) — they are
+  // the absence of a scope, so they must not render as a granted pill.
+  return (m.grants ?? []).filter((g) => g.access_level !== 'none').map((g) => {
     const caps = Object.keys(g.capabilities ?? {}).filter((k) => g.capabilities[k])
-    const base = `${GRANT_LABELS[g.module] ?? g.module}: ${g.access_level}`
+    const base = `${GRANT_LABELS[g.module] ?? g.module}: ${GRANT_LEVEL_LABELS[g.access_level] ?? g.access_level}`
     return caps.length ? `${base} +${caps.length}` : base
   })
 }

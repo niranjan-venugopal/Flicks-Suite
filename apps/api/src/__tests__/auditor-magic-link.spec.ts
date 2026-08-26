@@ -15,6 +15,7 @@ import { ConsentService } from '../modules/consent/consent.service';
 import { MembersService } from '../modules/members/members.service';
 import type { AuditService } from '../modules/audit/audit.service';
 import type { NotificationsService } from '../modules/notifications/notifications.service';
+import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const rid = () => Math.random().toString(36).slice(2, 8);
 const audit = { log: async () => {} } as unknown as AuditService;
@@ -60,7 +61,8 @@ const authService = new AuthService(
 );
 
 const dbSvc = new DatabaseService();
-const members = new MembersService(dbSvc, dbAdmin as never, audit, notifications, authService);
+const moduleAccess = new ModuleAccessService(dbSvc);
+const members = new MembersService(dbSvc, dbAdmin as never, audit, notifications, authService, moduleAccess);
 
 describe('Auditor invite magic link (real verify path)', () => {
   let tenantId: string;

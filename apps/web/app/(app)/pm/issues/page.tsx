@@ -357,7 +357,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
                 </button>
                 {[...store.users.values()].map((u) => (
                   <button key={u.id} onClick={() => { engine.bulkApply(targets, (id) => engine.assignIssue(id, u.id)); setBulkMenu(null); setSel(new Set()) }} style={menuRowStyle(false)}>
-                    <MiniAv name={u.name ?? '?'} size={15} /> {u.name}
+                    <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
                   </button>
                 ))}
               </BulkMenu>
@@ -421,9 +421,15 @@ function engineUserId(engine: PmSyncEngine): string {
   return (engine as unknown as { userId: string }).userId
 }
 
-function MiniAv({ name, size = 18 }: { name: string; size?: number }) {
+// Signed avatar when the workspace roster has one, initials otherwise.
+function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
+  const [broken, setBroken] = useState(false)
+  const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
+  if (src && !broken) {
+    return <img src={src} alt={name} onError={() => setBroken(true)} style={{ ...box, objectFit: 'cover', display: 'inline-block' }} />
+  }
   return (
-    <span style={{ width: size, height: size, borderRadius: '50%', background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em', flexShrink: 0 }}>
+    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
       {initials(name)}
     </span>
   )
@@ -497,7 +503,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       <button onClick={(e) => { e.stopPropagation(); onFocus(); openMenu('assignee') }} title={assignee?.name ?? 'Unassigned'}
         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}>
         {assignee?.name ? (
-          <MiniAv name={assignee.name} size={18} />
+          <MiniAv name={assignee.name} src={assignee.avatar_url} size={18} />
         ) : (
           <span style={{ width: 18, height: 18, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
         )}
@@ -521,7 +527,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
           {[...store.users.values()].map((u) => (
             <button key={u.id} onClick={(e) => { e.stopPropagation(); engine.assignIssue(issue.id, u.id); closeMenu() }}
               style={menuRowStyle(u.id === issue.assignee_user_id)}>
-              <MiniAv name={u.name ?? '?'} size={15} /> {u.name}
+              <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
             </button>
           ))}
         </RowMenu>
@@ -649,9 +655,9 @@ function RestIssues() {
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 1060, margin: '0 auto' }}>
       <SectionHead
-        title={`${team?.key ?? 'PM'} · Issues (REST fallback)`}
-        sub="Kill-switch mode — plain react-query against conventional endpoints"
-        right={<Pill tone="yellow" dot>rest</Pill>}
+        title={`${team?.key ?? 'PM'} · Issues`}
+        sub="Create, assign and track the work for this team"
+        right={<Pill tone="yellow" dot>basic view</Pill>}
       />
       <div style={{ display: 'flex', gap: 9, marginBottom: 16 }}>
         <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}

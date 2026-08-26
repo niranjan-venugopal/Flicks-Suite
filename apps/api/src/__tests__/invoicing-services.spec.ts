@@ -14,9 +14,11 @@ import { ItemsService } from '../modules/invoicing/items.service';
 import { HsnSacService } from '../modules/invoicing/hsn-sac.service';
 import { NumberingService } from '../modules/invoicing/numbering.service';
 import type { AuditService } from '../modules/audit/audit.service';
+import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const audit = { log: async () => {} } as unknown as AuditService;
 const dbSvc = new DatabaseService();
+const moduleAccess = new ModuleAccessService(dbSvc);
 const customers = new CustomersService(dbSvc, audit);
 const items = new ItemsService(dbSvc, audit);
 const hsnSac = new HsnSacService(dbSvc, audit);
@@ -1375,7 +1377,8 @@ describe('Members & auditor role (Sprint 8)', () => {
     audit,
     notificationsStub,
     authStub,
-  );
+  moduleAccess,
+);
 
   // Two isolated companies + an owner; the auditor is invited into both.
   let tenantA: string;
@@ -1423,7 +1426,7 @@ describe('Members & auditor role (Sprint 8)', () => {
     const reflector = {
       getAllAndOverride: () => req,
     } as unknown as Reflector;
-    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
+    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit, moduleAccess);
     const ctx = {
       switchToHttp: () => ({ getRequest: () => ({ user }) }),
       getHandler: () => function handler() {},
@@ -1719,7 +1722,7 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
 
   const guardFor = (tid: string, uid: string, membershipId: string) => {
     const reflector = { getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }) } as never;
-    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
+    const guard = new InvoicingGrantGuard(reflector, dbSvc, audit, moduleAccess);
     const ctx = {
       switchToHttp: () => ({
         getRequest: () => ({
@@ -1787,7 +1790,7 @@ describe('Invoicing guard — membership liveness on every request (Sprint 10 §
   const reflector = {
     getAllAndOverride: () => ({ module: 'invoicing', level: 'view' }),
   } as never;
-  const guard = new InvoicingGrantGuard(reflector, dbSvc, audit);
+  const guard = new InvoicingGrantGuard(reflector, dbSvc, audit, moduleAccess);
   const canActivate = (membershipId: string) => {
     const ctx = {
       switchToHttp: () => ({
@@ -1863,7 +1866,7 @@ describe('Invoicing guard — membership liveness on every request (Sprint 10 §
 
   it('writes an authz.denied audit entry on denial (Sprint 13 D)', async () => {
     const logSpy = jest.fn(async () => {});
-    const spyGuard = new InvoicingGrantGuard(reflector, dbSvc, { log: logSpy } as never);
+    const spyGuard = new InvoicingGrantGuard(reflector, dbSvc, { log: logSpy } as never, moduleAccess);
     await dbAdmin
       .update(membershipsTable)
       .set({ status: 'deactivated' })

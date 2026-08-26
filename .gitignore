@@ -34,3 +34,7 @@ coverage/
 
 # Misc
 *.tsbuildinfo
+
+# Local Redis snapshots written by a dev server run
+dump.rdb
+apps/api/dump.rdb

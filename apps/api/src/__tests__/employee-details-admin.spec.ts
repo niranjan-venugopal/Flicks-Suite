@@ -18,6 +18,7 @@ import { EmployeesService } from '../modules/employees/employees.service';
 import type { AuditService } from '../modules/audit/audit.service';
 import type { NotificationsService } from '../modules/notifications/notifications.service';
 import type { AuthService } from '../modules/auth/auth.service';
+import type { MediaService } from '../modules/media/media.service';
 
 const rid = () => crypto.randomBytes(4).toString('hex');
 const audit = { log: async () => {} } as unknown as AuditService;
@@ -36,6 +37,8 @@ const service = new EmployeesService(
   new EventEmitter2(),
   config,
   auth,
+  // MediaService stub: echo the key so specs can assert the avatar pipeline.
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as unknown as MediaService,
 );
 
 let tenantId: string;

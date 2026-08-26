@@ -12,9 +12,23 @@ import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
 // UI runs on the engine (sync) or plain REST (kill-switch).
 // ─────────────────────────────────────────────────────────
 
-export function PmAv({ name, size = 18 }: { name: string; size?: number }) {
+// `src` is the signed avatar URL from /pm/users — when it is missing (or the
+// image 404s) the initials chip is the fallback, so callers can always pass it.
+export function PmAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
+  const [broken, setBroken] = useState(false)
+  const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
+  if (src && !broken) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        onError={() => setBroken(true)}
+        style={{ ...box, objectFit: 'cover', display: 'inline-block' }}
+      />
+    )
+  }
   return (
-    <span style={{ width: size, height: size, borderRadius: '50%', background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em', flexShrink: 0 }}>
+    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
       {initials(name)}
     </span>
   )

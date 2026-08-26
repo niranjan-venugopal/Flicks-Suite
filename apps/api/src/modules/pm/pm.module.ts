@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { CrmModule } from '../crm/crm.module';
 import { MembersModule } from '../members/members.module';
+import { MediaModule } from '../media/media.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
 import { PmSyncGateway } from '../../gateways/pm-sync.gateway';
@@ -32,7 +33,7 @@ import { GithubWebhookController } from './github-webhook.controller';
  * `pm_sync_engine` FAM flag (kill-switch → the same UI on plain REST).
  */
 @Module({
-  imports: [AuditModule, CrmModule, MembersModule, NotificationsModule],
+  imports: [AuditModule, CrmModule, MembersModule, NotificationsModule, MediaModule],
   controllers: [PmController, PmSyncController, GithubWebhookController],
   providers: [
     PmGrantGuard,

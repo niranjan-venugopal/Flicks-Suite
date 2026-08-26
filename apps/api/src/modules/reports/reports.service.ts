@@ -11,6 +11,7 @@ import {
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
+import { MediaService } from '../media/media.service';
 import type { ReportRangeDto } from './reports.dto';
 
 // Default lookback windows when the caller doesn't pass from/to.
@@ -27,7 +28,12 @@ function rangeOrDefault(dto: ReportRangeDto, defaultDays: number) {
 
 @Injectable()
 export class ReportsService {
-  constructor(@Inject(DB_SERVICE_ROLE) private readonly db: DbAdmin) {}
+  constructor(
+    @Inject(DB_SERVICE_ROLE) private readonly db: DbAdmin,
+    // Report rows show faces; the photo lives in users.avatar_key, so it has
+    // to be signed here rather than read from the legacy avatar_url column.
+    private readonly mediaService: MediaService,
+  ) {}
 
   // ─── Attendance compliance ────────────────────────────────────────────────
   //
@@ -97,6 +103,7 @@ export class ReportsService {
         name: users.full_name,
         departmentName: departments.name,
         avatarUrl: users.avatar_url,
+        avatarKey: users.avatar_key,
         recordCount: sql<number>`COUNT(*)::int`,
         presentCount: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.attendance_status} = 'present')::int`,
         lateCount: sql<number>`COUNT(*) FILTER (WHERE ${attendanceRecords.is_late} = true)::int`,
@@ -113,6 +120,7 @@ export class ReportsService {
         employees.employee_code,
         users.full_name,
         users.avatar_url,
+        users.avatar_key,
         departments.name,
       )
       .orderBy(desc(sql`COUNT(*)`))
@@ -156,11 +164,11 @@ export class ReportsService {
         absent: Number(r.absent),
         wfh: Number(r.wfh),
       })),
-      byEmployee: byEmployee.map((r) => ({
+      byEmployee: await Promise.all(byEmployee.map(async (r) => ({
         employeeId: r.employeeId,
         employeeCode: r.employeeCode,
         name: r.name,
-        avatarUrl: r.avatarUrl,
+        avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
         departmentName: r.departmentName,
         recordCount: Number(r.recordCount),
         presentCount: Number(r.presentCount),
@@ -171,7 +179,7 @@ export class ReportsService {
           Number(r.recordCount) > 0
             ? Number(r.presentCount) / Number(r.recordCount)
             : 0,
-      })),
+      }))),
     };
   }
 
@@ -284,6 +292,7 @@ export class ReportsService {
         name: users.full_name,
         employeeCode: employees.employee_code,
         avatarUrl: users.avatar_url,
+        avatarKey: users.avatar_key,
         departmentName: departments.name,
         approvedDays: sql<string>`COALESCE(SUM(${leaveRequests.total_days}), 0)::text`,
         requestCount: sql<number>`COUNT(*)::int`,
@@ -305,6 +314,7 @@ export class ReportsService {
         users.full_name,
         employees.employee_code,
         users.avatar_url,
+        users.avatar_key,
         departments.name,
       )
       .orderBy(desc(sql`COALESCE(SUM(${leaveRequests.total_days}), 0)`))
@@ -323,15 +333,15 @@ export class ReportsService {
         pendingRequests: Number(t.pendingRequests),
       })),
       monthlyTrend,
-      topConsumers: topConsumers.map((c) => ({
+      topConsumers: await Promise.all(topConsumers.map(async (c) => ({
         employeeId: c.employeeId,
         name: c.name,
         employeeCode: c.employeeCode,
-        avatarUrl: c.avatarUrl,
+        avatarUrl: await this.mediaService.servedUrl(c.avatarKey, c.avatarUrl, 64),
         departmentName: c.departmentName,
         approvedDays: Number(c.approvedDays),
         requestCount: Number(c.requestCount),
-      })),
+      }))),
     };
   }
 

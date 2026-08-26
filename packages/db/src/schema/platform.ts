@@ -324,6 +324,43 @@ export const membershipGrants = pgTable(
   ],
 );
 
+// ─── tenant_role_module_defaults (Round 8 — per-ROLE module access) ────────────
+// The middle layer of module access: an explicit membership_grants row wins,
+// then this table ("Employees get no CRM in this workspace"), then the built-in
+// role default baked into the guard subclass. Full-access roles (owner/admin/
+// fam/super_admin, plus finance for invoicing) short-circuit before this is
+// read, so rows for them are rejected by the API.
+
+export const tenantRoleModuleDefaults = pgTable(
+  'tenant_role_module_defaults',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(), // manager | employee | finance | auditor | guest
+    module: text('module').notNull(), // crm | invoicing | pm | …
+    access_level: text('access_level').notNull().default('edit'), // none | view | edit
+    updated_by: uuid('updated_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('tenant_role_module_defaults_unique').on(
+      t.tenant_id,
+      t.role,
+      t.module,
+    ),
+    index('tenant_role_module_defaults_tenant_idx').on(t.tenant_id),
+  ],
+);
+
 // ─── tenant_module_toggles (Invoicing v3 — FAM per-module enablement) ───────────
 
 export const tenantModuleToggles = pgTable(

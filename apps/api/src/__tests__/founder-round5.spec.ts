@@ -34,6 +34,7 @@ import { emailEventForInAppType } from '../modules/notifications/notifications.s
 import type { AuditService } from '../modules/audit/audit.service';
 import type { NotificationsService } from '../modules/notifications/notifications.service';
 import type { AuthService } from '../modules/auth/auth.service';
+import type { MediaService } from '../modules/media/media.service';
 
 const rid = () => crypto.randomBytes(4).toString('hex');
 const audit = { log: async () => {} } as unknown as AuditService;
@@ -57,8 +58,13 @@ const employeesService = new EmployeesService(
   emitter,
   new ConfigService({ NODE_ENV: 'test' }),
   {} as unknown as AuthService,
+  // MediaService stub: echo the key so specs can assert the avatar pipeline.
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as unknown as MediaService,
 );
-const dashboardService = new DashboardService(dbSvc);
+const dashboardService = new DashboardService(
+  dbSvc,
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as unknown as MediaService,
+);
 
 let tenantId: string;
 let ownerAUserId: string; // existing owner — the reviewer
@@ -232,6 +238,7 @@ describe('dashboard approvals bucket (Inbox)', () => {
     const forA = await dashboardService.getAdminOverview(tenantId, {
       callerUserId: ownerAUserId,
       includeOnboarding: true,
+      includeApprovals: true,
     });
     const ids = forA.pending.onboarding.map((o) => o.employeeId);
     expect(ids).toContain(empCId);
@@ -248,6 +255,7 @@ describe('dashboard approvals bucket (Inbox)', () => {
     const forC = await dashboardService.getAdminOverview(tenantId, {
       callerUserId: ownerCUserId,
       includeOnboarding: true,
+      includeApprovals: true,
     });
     const idsC = forC.pending.onboarding.map((o) => o.employeeId);
     expect(idsC).not.toContain(empCId);
@@ -258,6 +266,7 @@ describe('dashboard approvals bucket (Inbox)', () => {
     const overview = await dashboardService.getAdminOverview(tenantId, {
       callerUserId: ownerAUserId,
       includeOnboarding: false,
+      includeApprovals: true,
     });
     expect(overview.pending.onboarding).toEqual([]);
     expect(overview.pending.onboardingCount).toBe(0);

@@ -50,6 +50,7 @@ import { DomainEventsModule } from './core/events/events.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { FlagsModule } from './core/flags/flags.module';
+import { ModuleAccessModule } from './core/auth/module-access.module';
 import { PmModule } from './modules/pm/pm.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
@@ -181,6 +182,7 @@ import { PmJobs } from './jobs/pm.jobs';
     CrmModule,
     // PRD v6 — runtime feature-flag evaluation (kill-switch) + PM module.
     FlagsModule,
+    ModuleAccessModule,
     PmModule,
   ],
   controllers: [HealthController],

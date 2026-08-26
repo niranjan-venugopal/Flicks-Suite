@@ -25,6 +25,7 @@ import { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { MediaService } from '../media/media.service';
+import { ModuleAccessService } from '../../core/auth/module-access.service';
 import { FlagEvalService } from '../../core/flags/flag-eval.service';
 import {
   RequestOtpDto,
@@ -46,6 +47,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly mediaService: MediaService,
+    private readonly moduleAccess: ModuleAccessService,
     private readonly flagEval: FlagEvalService,
   ) {}
 
@@ -294,6 +296,17 @@ export class AuthController {
       // PRD v6 — effective runtime flags for this tenant (pm_sync_engine
       // kill-switch etc.); the web data-source facade reads this.
       effectiveFlags: user.tenantId ? await this.flagEval.effectiveFlags(user.tenantId) : [],
+      // Round 8 — effective module access (CRM / Invoicing / Projects) so the
+      // sidebar shows exactly what this member can open. Resolved by the same
+      // service the guards use, so the nav can never disagree with the API.
+      moduleAccess: user.tenantId
+        ? await this.moduleAccess.moduleAccessMap(
+            user.tenantId,
+            user.membershipId,
+            user.role,
+            user.sub,
+          )
+        : { crm: 'none' as const, invoicing: 'none' as const, pm: 'none' as const },
       avatarUrl: await this.mediaService.servedUrl(avatarKey ?? null, raw.avatarUrl),
       currentMembership: raw.currentMembership
         ? {

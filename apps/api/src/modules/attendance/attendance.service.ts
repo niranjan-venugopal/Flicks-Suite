@@ -1086,26 +1086,25 @@ export class AttendanceService {
         .select({
           firstName: employees.first_name,
           lastName: employees.last_name,
+          userId: employees.user_id,
           managerId: employees.reporting_manager_id,
         })
         .from(employees)
         .where(eq(employees.id, employeeId))
         .limit(1),
     );
-    if (!employee?.managerId) return;
-    const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
-        .select({
-          email: employees.work_email,
-          firstName: employees.first_name,
-          lastName: employees.last_name,
-          userId: employees.user_id,
-        })
-        .from(employees)
-        .where(eq(employees.id, employee.managerId!))
-        .limit(1),
+    if (!employee) return;
+
+    // Reporting manager when there is one, otherwise every OTHER owner/admin.
+    // Owners have no reporting manager, so without the fan-out an owner's
+    // regularization notified nobody while still sitting in everyone else's
+    // queue — a dead end (house rule 8).
+    const reviewers = await this.resolveRegularizationReviewers(
+      tenantId,
+      employee.managerId,
+      employee.userId,
     );
-    if (!manager) return;
+    if (reviewers.length === 0) return;
 
     const [reg] = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
@@ -1121,37 +1120,102 @@ export class AttendanceService {
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
 
-    // Real-time in-app ping to the approver (Topbar bell). Best-effort.
-    if (manager.userId) {
-      await this.notificationsService
-        .createInAppNotification(
-          manager.userId,
-          'regularization.requested',
-          `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}.`,
-          '/team/attendance',
-          tenantId,
-        )
-        .catch((err) =>
-          this.logger.warn(`Regularization in-app notification failed: ${err}`),
-        );
+    for (const reviewer of reviewers) {
+      // Real-time in-app ping to the approver (Topbar bell). Best-effort.
+      if (reviewer.userId) {
+        await this.notificationsService
+          .createInAppNotification(
+            reviewer.userId,
+            'regularization.requested',
+            `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}.`,
+            '/team/attendance',
+            tenantId,
+          )
+          .catch((err) =>
+            this.logger.warn(`Regularization in-app notification failed: ${err}`),
+          );
+      }
+
+      if (!reviewer.email) continue;
+
+      await this.notificationsService.sendEmail(
+        'attendance-regularization-requested',
+        reviewer.email,
+        {
+          managerName: reviewer.name || 'there',
+          employeeName,
+          attendanceDate: reg?.attendanceDate ?? '',
+          requestType: reg?.requestType,
+          reason: reg?.reason ?? undefined,
+        },
+      );
+      this.logger.log(
+        `Regularization email queued to ${reviewer.email} (reg=${regId})`,
+      );
+    }
+  }
+
+  /**
+   * Approvers to notify for a regularization: the reporting manager if one is
+   * set, otherwise the workspace's owners/admins. The applicant is always
+   * excluded — they can never review their own request.
+   */
+  private async resolveRegularizationReviewers(
+    tenantId: string,
+    managerId: string | null,
+    applicantUserId: string | null,
+  ): Promise<{ email: string | null; userId: string | null; name: string }[]> {
+    if (managerId) {
+      const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
+        tx
+          .select({
+            email: employees.work_email,
+            userId: employees.user_id,
+            firstName: employees.first_name,
+            lastName: employees.last_name,
+          })
+          .from(employees)
+          .where(
+            and(eq(employees.id, managerId), eq(employees.tenant_id, tenantId)),
+          )
+          .limit(1),
+      );
+      if (manager && manager.userId !== applicantUserId) {
+        return [
+          {
+            email: manager.email,
+            userId: manager.userId,
+            name: `${manager.firstName} ${manager.lastName}`.trim(),
+          },
+        ];
+      }
     }
 
-    if (!manager.email) return;
-
-    await this.notificationsService.sendEmail(
-      'attendance-regularization-requested',
-      manager.email,
-      {
-        managerName: `${manager.firstName} ${manager.lastName}`.trim() || 'there',
-        employeeName,
-        attendanceDate: reg?.attendanceDate ?? '',
-        requestType: reg?.requestType,
-        reason: reg?.reason ?? undefined,
-      },
+    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
+      tx
+        .select({
+          email: users.email,
+          userId: users.id,
+          fullName: users.full_name,
+        })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.user_id))
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            inArray(memberships.role, ['owner', 'admin']),
+            applicantUserId
+              ? sql`${memberships.user_id} <> ${applicantUserId}`
+              : sql`true`,
+          ),
+        ),
     );
-    this.logger.log(
-      `Regularization email queued to ${manager.email} (reg=${regId})`,
-    );
+    return rows.map((r) => ({
+      email: r.email,
+      userId: r.userId,
+      name: r.fullName ?? '',
+    }));
   }
 
   async listPendingRegularizations(
@@ -1186,6 +1250,11 @@ export class AttendanceService {
           and(
             eq(attendanceRegularizations.tenant_id, tenantId),
             eq(attendanceRegularizations.status, 'pending'),
+            // Nobody reviews their own request — the caller's own row never
+            // enters their queue (same rule as the leave queue and the
+            // onboarding queue). IS DISTINCT FROM keeps rows whose employee
+            // has no linked user account.
+            sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
           ),
         )
         .orderBy(desc(attendanceRegularizations.created_at))
@@ -1223,6 +1292,25 @@ export class AttendanceService {
         if (!reg) throw new NotFoundException('Regularization not found');
         if (reg.status !== 'pending') {
           throw new BadRequestException(`Cannot review a ${reg.status} request`);
+        }
+
+        // Separation of duties: an approver may never approve their own
+        // regularization. Owner/admin clear the @Roles('manager') gate on the
+        // route, so without this an owner could self-approve.
+        const [applicant] = await tx
+          .select({ userId: employees.user_id })
+          .from(employees)
+          .where(
+            and(
+              eq(employees.id, reg.employee_id),
+              eq(employees.tenant_id, tenantId),
+            ),
+          )
+          .limit(1);
+        if (applicant?.userId && applicant.userId === reviewerUserId) {
+          throw new ForbiddenException(
+            'You cannot approve your own regularization request — another approver must review it.',
+          );
         }
 
         const newStatus =

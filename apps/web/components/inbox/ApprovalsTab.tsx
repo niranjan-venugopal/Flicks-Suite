@@ -29,6 +29,8 @@ interface InboxItem {
   id: string
   who: string
   userId: string | null
+  /** Signed avatar URL from the API; falls back to initials when null. */
+  avatarUrl: string | null
   what: string
   when: string
   reason: string | null
@@ -67,6 +69,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       id: l.id,
       who: l.employeeName,
       userId: l.userId,
+      avatarUrl: l.avatarUrl,
       what: `${l.leaveTypeCode ?? l.leaveTypeName ?? 'Leave'} · ${l.totalDays}d (${fmtRange(l.startDate, l.endDate)})`,
       when: relativeTime(l.appliedAt),
       reason: l.reason,
@@ -80,6 +83,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       id: r.id,
       who: r.employeeName,
       userId: r.userId,
+      avatarUrl: r.avatarUrl,
       what: `${r.requestType} · ${r.attendanceDate}`,
       when: relativeTime(r.requestedAt),
       reason: r.reason,
@@ -95,6 +99,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       id: ob.employeeId,
       who: ob.employeeName || 'New joiner',
       userId: ob.userId,
+      avatarUrl: ob.avatarUrl,
       what:
         [ob.designationTitle, ob.employeeCode].filter(Boolean).join(' · ') ||
         'Onboarding review',
@@ -290,7 +295,7 @@ export function ApprovalsTab() {
                       }}
                     />
                   )}
-                  <RowPresenceAvatar name={a.who} userId={a.userId} size={26} />
+                  <RowPresenceAvatar name={a.who} src={a.avatarUrl} userId={a.userId} size={26} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{a.who}</span>
@@ -371,7 +376,7 @@ function ApprovalDetail({
           alignItems: 'flex-start',
         }}
       >
-        <RowPresenceAvatar name={item.who} userId={item.userId} size={48} />
+        <RowPresenceAvatar name={item.who} src={item.avatarUrl} userId={item.userId} size={48} />
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <Pill tone={item.tone}>{item.kind.toUpperCase()}</Pill>

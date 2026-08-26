@@ -297,7 +297,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
             </div>
           )}
           <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
-            Workspace-level labels are managed in Workspace settings · label groups = v1.5
+            Labels shared across every team are managed in Workspace settings.
           </div>
         </div>
       )}
@@ -347,7 +347,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
                   onBlur={(e) => { if (e.target.value !== (tmpl.description_md ?? '')) saveTemplate.mutate({ id: tmpl.id, name: tmpl.name, description_md: e.target.value || null }) }}
                   style={{ width: '100%', fontSize: 12, fontFamily: 'var(--font-mono)', padding: 10 }} />
                 <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)', marginTop: 8 }}>
-                  C create honors the default template · project templates carry a starter issue set · recurring = v1.5 (schedule reserved)
+                  New issues start from the default template · project templates also carry a starter set of issues.
                 </div>
               </>
             ) : (

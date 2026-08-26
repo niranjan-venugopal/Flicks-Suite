@@ -528,6 +528,9 @@ export type MembershipRole =
   | 'finance'
   | 'employee'
   | 'auditor'
+  // Round 7 project-scoped external seat. Guests DO appear in the members
+  // list, so the union has to admit them.
+  | 'guest'
 
 export type MembershipStatus = 'invited' | 'active' | 'deactivated'
 

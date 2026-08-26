@@ -26,7 +26,7 @@ export default function PmTimelinePage() {
   if (mode === 'rest' || !engine) {
     return (
       <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>
-        The timeline needs the sync engine — the REST fallback lists projects under Projects.
+        The timeline isn’t available in this workspace right now — you’ll find your projects under Projects.
       </div>
     )
   }

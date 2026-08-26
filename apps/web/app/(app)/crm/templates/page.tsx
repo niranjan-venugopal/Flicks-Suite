@@ -151,7 +151,6 @@ function SignatureCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
         <Icon.edit size={15} style={{ color: 'var(--purple, #a78bfa)' }} />
         <span style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>Your signature</span>
-        <Pill tone="">§19.4</Pill>
       </div>
       <textarea className="input" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={isLoading}
         placeholder={'<p>—<br/>Sara · Flicks Suite<br/>+91 …</p>'}
@@ -176,7 +175,7 @@ function BccCard() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
         <Icon.inbox size={15} style={{ color: 'var(--blue)' }} />
         <span style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>BCC dropbox — live today</span>
-        <Pill tone="green" dot>Phase A</Pill>
+        <Pill tone="green" dot>Live</Pill>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <input className="input" readOnly value={address} style={{ flex: 1, height: 38, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
@@ -207,7 +206,7 @@ function ConnectedAccountsCard() {
         <Pill tone="yellow">Coming soon</Pill>
       </div>
       <div className="t-caption" style={{ marginTop: 10 }}>
-        Google & Microsoft verifications are in review — this switches on per tenant the moment they clear. BCC keeps everything logged meanwhile.
+        Google & Microsoft verifications are in review — this switches on for your workspace the moment they clear. BCC keeps everything logged meanwhile.
       </div>
     </div>
   )

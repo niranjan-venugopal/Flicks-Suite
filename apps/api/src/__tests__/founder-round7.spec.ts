@@ -49,9 +49,11 @@ import { PmGuestsService } from '../modules/pm/guests.service';
 import { MembersService } from '../modules/members/members.service';
 import { MembersPublicService } from '../modules/members/public';
 import type { AuthService } from '../modules/auth/auth.service';
+import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const rid = () => crypto.randomBytes(4).toString('hex');
 const dbSvc = new DatabaseService();
+const moduleAccess = new ModuleAccessService(dbSvc);
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
@@ -84,6 +86,7 @@ const membersSvc = new MembersService(
   audit,
   notificationsSvc,
   authStub,
+  moduleAccess,
 );
 const guestsSvc = new PmGuestsService(
   dbSvc,
