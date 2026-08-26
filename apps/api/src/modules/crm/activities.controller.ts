@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
+import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { ActivitiesService } from './activities.service';
@@ -22,6 +23,11 @@ class CreateActivityDto {
 class CompleteActivityDto {
   @IsOptional() @IsString() outcome?: string;
   @IsOptional() @IsString() @MaxLength(2000) note?: string;
+}
+
+class PurgeActivitiesDto {
+  @IsNumber() days!: number;
+  @IsOptional() @IsBoolean() completed_only?: boolean;
 }
 
 /** Activities & the follow-up loop (PRD v5 §6, C8). */
@@ -72,7 +78,46 @@ export class ActivitiesController {
 
   @Delete('activities/:id')
   @RequireGrant('crm', 'edit')
+  @Roles('owner', 'admin', 'manager') // §13: delete = manager-and-up (was ungated — round 9)
   remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.activities.remove(user.tenantId, user.sub, id);
   }
+
+  @Get('activities/purge-preview')
+  @RequireGrant('crm', 'edit')
+  @Roles('owner', 'admin') // bulk destruction is an admin action, not a manager one
+  @ApiOperation({ summary: 'Count what "clear old activities" would remove' })
+  purgePreview(
+    @Query('days') days: string | undefined,
+    @Query('completed_only') completedOnly: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.activities.purgePreview(
+      user.tenantId,
+      parsePurgeDays(days),
+      completedOnly !== 'false',
+    );
+  }
+
+  @Post('activities/purge')
+  @RequireGrant('crm', 'edit')
+  @Roles('owner', 'admin')
+  @ApiOperation({ summary: 'Clear activities older than N days (soft delete, audited with the count)' })
+  purge(@Body() dto: PurgeActivitiesDto, @CurrentUser() user: JwtPayload) {
+    return this.activities.purgeOlderThan(user.tenantId, user.sub, {
+      days: parsePurgeDays(String(dto.days)),
+      completedOnly: dto.completed_only !== false,
+    });
+  }
+}
+
+// 30 days is the floor — "clear everything from this week" is a mis-click,
+// not a retention policy.
+const PURGE_DAYS = [30, 60, 90, 180, 365];
+function parsePurgeDays(raw: string | undefined): number {
+  const n = Number(raw);
+  if (!PURGE_DAYS.includes(n)) {
+    throw new BadRequestException(`days must be one of ${PURGE_DAYS.join(', ')}`);
+  }
+  return n;
 }

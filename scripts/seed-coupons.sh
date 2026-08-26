@@ -35,21 +35,17 @@ ALPHABET="ABCDEFGHJKMNPQRSTUVWXYZ"  # letters only — never collides with seque
 
 run_sql() { psql "$CONN" -v ON_ERROR_STOP=1 --no-psqlrc -qAt -c "$1"; }
 
-echo "─── FOUNDER-001..050 · 3 months · single-use · exp 2026-09-30 ───"
+# Round 9 (2026-08-26, founder decision): the FOUNDER-002..050 and FLICKS-CA-*
+# sets were retired — a guessable numbered sequence is abusable, and the CA
+# codes were 10-use each (up to 150 free workspaces). Only FOUNDER-001 (the
+# founder's own redeemed code) is kept/ensured. Retirement of already-minted
+# rows: scripts/supabase-editor/06-retire-coupons.sql.
+echo "─── FOUNDER-001 · 3 months · single-use · exp 2026-09-30 ───"
 run_sql "
 INSERT INTO coupon_codes (code, campaign, months, max_redemptions, expires_at, active)
-SELECT 'FOUNDER-' || lpad(n::text, 3, '0'), 'founder', 3, 1, '2026-09-30T23:59:59+05:30', true
-FROM generate_series(1, 50) n
+VALUES ('FOUNDER-001', 'founder', 3, 1, '2026-09-30T23:59:59+05:30', true)
 ON CONFLICT (code) DO NOTHING;"
-echo "  ✓ founder set ensured"
-
-echo "─── FLICKS-CA-001..015 · 3 months · 10 uses · exp 2026-12-31 ───"
-run_sql "
-INSERT INTO coupon_codes (code, campaign, months, max_redemptions, expires_at, active)
-SELECT 'FLICKS-CA-' || lpad(n::text, 3, '0'), 'chartered-accountants', 3, 10, '2026-12-31T23:59:59+05:30', true
-FROM generate_series(1, 15) n
-ON CONFLICT (code) DO NOTHING;"
-echo "  ✓ CA set ensured"
+echo "  ✓ FOUNDER-001 ensured"
 
 for CAMP in "$@"; do
   CAMP_UPPER=$(echo "$CAMP" | tr '[:lower:]' '[:upper:]' | tr -cd 'A-Z0-9')

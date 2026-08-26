@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   useLeads,
   useCreateLead,
+  useDeleteLead,
   useDiscardLead,
   useConvertLead,
   usePipelines,
@@ -44,6 +45,7 @@ export default function LeadsPage() {
   const [tab, setTab] = useState('new')
   const { data, isLoading } = useLeads(tab)
   const discard = useDiscardLead()
+  const deleteLead = useDeleteLead()
   const { toast } = useToast()
   const [addOpen, setAddOpen] = useState(false)
   const [convertFor, setConvertFor] = useState<Lead | null>(null)
@@ -113,11 +115,17 @@ export default function LeadsPage() {
                         <Btn kind="primary" size="sm" icon={<Icon.check size={12} />} onClick={() => setConvertFor(l)}>Convert</Btn>
                         <Btn kind="ghost" size="sm" icon={<Icon.x size={12} />} disabled={discard.isPending}
                           onClick={() => discard.mutate(l.id, { onSuccess: () => toast({ title: 'Lead discarded' }) })}>Discard</Btn>
+                        <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
+                          onClick={() => { if (window.confirm('Delete this lead? This removes it from every view.')) deleteLead.mutate(l.id, { onSuccess: () => toast({ title: 'Lead deleted' }) }) }} />
                       </div>
                     ) : l.status === 'converted' && l.converted_deal_id ? (
                       <Link href={`/crm/deals/${l.converted_deal_id}`} style={{ color: 'var(--blue)', fontSize: 11.5, fontWeight: 800, textDecoration: 'none' }}>View deal →</Link>
                     ) : (
-                      <span className="t-caption">kept for source analytics</span>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span className="t-caption">kept for source analytics</span>
+                        <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
+                          onClick={() => { if (window.confirm('Delete this lead? It will no longer count in source analytics.')) deleteLead.mutate(l.id, { onSuccess: () => toast({ title: 'Lead deleted' }) }) }} />
+                      </div>
                     )}
                   </td>
                 </tr>

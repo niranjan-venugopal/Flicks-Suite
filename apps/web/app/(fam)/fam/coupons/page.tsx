@@ -10,6 +10,7 @@ import {
   useFamBillingOverview,
   useFamCouponBatch,
   useFamCouponRedemptions,
+  useFamCouponDelete,
   useFamCouponUpdate,
   useFamCoupons,
   type FamCoupon,
@@ -58,7 +59,6 @@ function BatchForm({ onDone }: { onDone: (minted: number) => void }) {
   const { toast } = useToast()
   const batch = useFamCouponBatch()
   const [prefix, setPrefix] = useState('FLICKS')
-  const [mode, setMode] = useState<'random' | 'sequential'>('random')
   const [count, setCount] = useState('50')
   const [months, setMonths] = useState(2)
   const [campaign, setCampaign] = useState('')
@@ -72,7 +72,7 @@ function BatchForm({ onDone }: { onDone: (minted: number) => void }) {
     try {
       const res = await batch.mutateAsync({
         prefix,
-        mode,
+        mode: 'random',
         count: countN,
         months,
         campaign: campaign || 'general',
@@ -120,10 +120,10 @@ function BatchForm({ onDone }: { onDone: (minted: number) => void }) {
         </div>
         <div style={field}>
           <span className="label">Suffix</span>
-          <select className="input" style={{ height: 36, fontSize: 12 }} value={mode} onChange={(e) => setMode(e.target.value as never)}>
-            <option value="random">Random (XXXXX)</option>
-            <option value="sequential">Sequential (001…)</option>
-          </select>
+          {/* Random only — sequential codes were retired in round 9: a
+              numbered sequence is guessable, so anyone holding one code can
+              enumerate the rest. The API rejects 'sequential' outright. */}
+          <input className="input" style={{ height: 36, fontSize: 12 }} value="Random (XXXXX)" readOnly disabled />
         </div>
         <div style={field}>
           <span className="label">Count</span>
@@ -195,6 +195,7 @@ export default function FamCouponsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const list = useFamCoupons({ campaign: campaignF || undefined, active: activeF || undefined })
   const update = useFamCouponUpdate()
+  const remove = useFamCouponDelete()
   const rows = list.data?.data ?? []
   // Derived, never copied: the drawer always mirrors the refreshed row (a
   // frozen copy showed stale redemption counts / a just-deactivated state).
@@ -315,24 +316,43 @@ export default function FamCouponsPage() {
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <Btn
-                          kind="ghost"
-                          size="sm"
-                          disabled={update.isPending}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            void toggle(c)
-                          }}
-                        >
-                          {c.active ? 'Deactivate' : 'Reactivate'}
-                        </Btn>
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
+                          <Btn
+                            kind="ghost"
+                            size="sm"
+                            disabled={update.isPending}
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation()
+                              void toggle(c)
+                            }}
+                          >
+                            {c.active ? 'Deactivate' : 'Reactivate'}
+                          </Btn>
+                          {/* Round 9: unredeemed codes can be removed outright;
+                              redeemed ones keep their history (API 409s). */}
+                          {c.redemption_count === 0 && (
+                            <Btn
+                              kind="ghost"
+                              size="sm"
+                              disabled={remove.isPending}
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation()
+                                if (window.confirm(`Delete ${c.code}? It was never redeemed; this removes it permanently.`)) {
+                                  remove.mutate(c.id, { onSuccess: () => toast({ title: 'Coupon deleted', description: c.code }) })
+                                }
+                              }}
+                            >
+                              Delete
+                            </Btn>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
                     <tr>
                       <td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'var(--text-mute)', fontSize: 12.5 }}>
-                        No coupons yet — mint a batch above or run scripts/seed-coupons.sh for the launch sets.
+                        No coupons yet — mint a random batch above.
                       </td>
                     </tr>
                   )}

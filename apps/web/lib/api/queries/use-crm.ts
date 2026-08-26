@@ -557,6 +557,30 @@ export function useDealActivities(dealId: string | null) {
   })
 }
 
+/** Preview for "Clear old activities" — count only, owner/admin. */
+export function useActivityPurgePreview(days: number, completedOnly: boolean, enabled: boolean) {
+  return useQuery({
+    queryKey: ['crm', 'activities', 'purge-preview', days, completedOnly],
+    queryFn: () =>
+      api.get<{ data: { count: number; cutoff: string } }>(
+        `/api/v1/crm/activities/purge-preview?days=${days}&completed_only=${completedOnly}`,
+      ),
+    enabled,
+    staleTime: 0,
+  })
+}
+
+export function usePurgeActivities() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { days: number; completed_only: boolean }) =>
+      api.post<{ data: { removed: number; cutoff: string } }>('/api/v1/crm/activities/purge', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm'] })
+    },
+  })
+}
+
 function invalidateActivityScopes(qc: ReturnType<typeof useQueryClient>, dealId?: string | null) {
   qc.invalidateQueries({ queryKey: ['crm', 'activities'] })
   qc.invalidateQueries({ queryKey: ['crm', 'board'] }) // next_activity_at chips
@@ -798,6 +822,14 @@ export function useDiscardLead() {
   })
 }
 
+export function useDeleteLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/leads/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
+  })
+}
+
 export function useConvertLead() {
   const qc = useQueryClient()
   return useMutation({
@@ -842,6 +874,14 @@ export function useSetFormActive() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => api.patch(`/api/v1/crm/forms/${id}/active`, { active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'forms'] }),
+  })
+}
+
+export function useDeleteForm() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/crm/forms/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'forms'] }),
   })
 }

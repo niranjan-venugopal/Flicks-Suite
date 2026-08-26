@@ -171,7 +171,10 @@ Full DNS/Resend background: CRM_Launch_Actions.md §3–4.
    ```
 
    Then in-app: **Settings → Billing → Redeem coupon → `FOUNDER-001`**
-   (+3 months, single-use — use 002, 003… for later workspaces).
+   (+3 months, single-use). Round 9: this is the ONLY seeded code — the
+   002…050 sequence and the FLICKS-CA set were retired as guessable
+   (`scripts/supabase-editor/06-retire-coupons.sql`); mint any future codes
+   from FAM → Coupons, which generates random suffixes only.
 
    Manual lever (FAM → tenant → *Extend trial* also works; takes ≤60s to
    surface because of the billing-state cache).

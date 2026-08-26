@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, createHmac, randomBytes } from 'crypto';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { formSubmissions, leads, tenants, webForms } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -73,7 +73,7 @@ export class FormsService {
 
   async list(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
-      const rows = await tx.select().from(webForms).orderBy(desc(webForms.created_at));
+      const rows = await tx.select().from(webForms).where(isNull(webForms.deleted_at)).orderBy(desc(webForms.created_at));
       const counts = await tx
         .select({ form_id: formSubmissions.form_id, n: sql<number>`count(*)::int` })
         .from(formSubmissions)
@@ -136,9 +136,41 @@ export class FormsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const [row] = await tx.update(webForms).set({ active, updated_at: new Date() }).where(eq(webForms.id, id)).returning();
+        const [row] = await tx
+          .update(webForms)
+          .set({ active, updated_at: new Date() })
+          .where(and(eq(webForms.id, id), isNull(webForms.deleted_at)))
+          .returning();
         if (!row) throw new NotFoundException('Form not found');
+        await this.audit.log({
+          tenantId, actorUserId: userId,
+          action: active ? 'crm.form.activate' : 'crm.form.deactivate',
+          resourceType: 'web_form', resourceId: id,
+        });
         return { data: row };
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Delete (round 9) — soft. The public token stops resolving immediately
+   * (publicForm/submit filter deleted_at), the name is freed for reuse (the
+   * unique index is partial), and past submissions + the leads they created
+   * are kept — a soft delete never cascades.
+   */
+  async remove(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [row] = await tx
+          .update(webForms)
+          .set({ deleted_at: new Date(), active: false, updated_at: new Date() })
+          .where(and(eq(webForms.id, id), eq(webForms.tenant_id, tenantId), isNull(webForms.deleted_at)))
+          .returning({ id: webForms.id });
+        if (!row) throw new NotFoundException('Form not found');
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.form.delete', resourceType: 'web_form', resourceId: id });
+        return { data: { deleted: true } };
       },
       userId,
     );
@@ -173,7 +205,7 @@ export class FormsService {
       })
       .from(webForms)
       .innerJoin(tenants, eq(tenants.id, webForms.tenant_id))
-      .where(eq(webForms.token, token))
+      .where(and(eq(webForms.token, token), isNull(webForms.deleted_at)))
       .limit(1);
     if (!form || !form.active) throw new NotFoundException('This form is not available');
     const ts = Date.now().toString();
@@ -200,7 +232,11 @@ export class FormsService {
     body: { values?: Record<string, string>; ts?: string; sig?: string; website?: string; utm?: Record<string, string> },
     ip: string,
   ) {
-    const [form] = await this.dbAdmin.select().from(webForms).where(eq(webForms.token, token)).limit(1);
+    const [form] = await this.dbAdmin
+      .select()
+      .from(webForms)
+      .where(and(eq(webForms.token, token), isNull(webForms.deleted_at)))
+      .limit(1);
     if (!form || !form.active) throw new NotFoundException('This form is not available');
 
     // Bound the free-form body before any DB work (the submit body is public

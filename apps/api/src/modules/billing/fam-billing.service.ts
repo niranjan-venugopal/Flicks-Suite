@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -26,6 +27,7 @@ const MAX_BATCH = 500;
 
 export interface BatchCreateInput {
   prefix: string;
+  /** Round 9: 'sequential' is rejected — numbered codes are guessable. */
   mode: 'random' | 'sequential';
   count: number;
   months: number;
@@ -62,6 +64,13 @@ export class FamBillingService {
     if (expiresAt && expiresAt.getTime() < Date.now()) {
       throw new BadRequestException('Expiry is in the past');
     }
+    // Round 9 (founder): sequential codes are a guessable, enumerable space —
+    // FOUNDER-002..050 proved the point. Random suffixes only.
+    if (input.mode === 'sequential') {
+      throw new BadRequestException(
+        'Sequential codes are retired — numbered sequences are guessable. Use random.',
+      );
+    }
 
     // The whole mint runs in one transaction holding a per-prefix advisory
     // lock: two concurrent sequential batches would otherwise read the same
@@ -69,30 +78,13 @@ export class FamBillingService {
     const inserted = await this.dbAdmin.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`coupon:${prefix}`}))`);
 
-      // Sequential: PREFIX-001..NNN continues AFTER any existing numbered
-      // codes with the same prefix (re-running never collides or renumbers).
-      let startAt = 1;
-      if (input.mode === 'sequential') {
-        const [row] = await tx
-          .select({
-            max: sql<number>`COALESCE(MAX(NULLIF(regexp_replace(${couponCodes.code}, ${`^${prefix}-`}, ''), '')::int), 0)`,
-          })
-          .from(couponCodes)
-          .where(sql`${couponCodes.code} ~ ${`^${prefix}-[0-9]+$`}`);
-        startAt = Number(row?.max ?? 0) + 1;
-      }
-
       const values: Array<typeof couponCodes.$inferInsert> = [];
       const seen = new Set<string>();
       for (let i = 0; i < input.count; i++) {
         let code: string;
-        if (input.mode === 'sequential') {
-          code = `${prefix}-${String(startAt + i).padStart(3, '0')}`;
-        } else {
-          do {
-            code = `${prefix}-${this.randomSuffix(5)}`;
-          } while (seen.has(code));
-        }
+        do {
+          code = `${prefix}-${this.randomSuffix(5)}`;
+        } while (seen.has(code));
         seen.add(code);
         values.push({
           code,
@@ -210,6 +202,32 @@ export class FamBillingService {
       metadata: { coupon_id: id, code: existing.code },
     });
     return { data: updated };
+  }
+
+  /**
+   * Delete an UNREDEEMED coupon (round 9). A redeemed code is history — the
+   * redemption ledger references it (FK) and the drawer shows who used it —
+   * so those return 409 and can only be deactivated.
+   */
+  async remove(actorUserId: string, id: string) {
+    const [existing] = await this.dbAdmin
+      .select()
+      .from(couponCodes)
+      .where(eq(couponCodes.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException('Coupon not found');
+    if (Number(existing.redemption_count) > 0) {
+      throw new ConflictException(
+        'This code has been redeemed — deactivate it instead so the redemption history stays intact.',
+      );
+    }
+    await this.dbAdmin.delete(couponCodes).where(eq(couponCodes.id, id));
+    await this.audit.logPlatform({
+      actorUserId,
+      action: 'fam.coupon_deleted',
+      metadata: { coupon_id: id, code: existing.code, campaign: existing.campaign },
+    });
+    return { data: { deleted: true, code: existing.code } };
   }
 
   async redemptions(id: string) {

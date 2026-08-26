@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Ip, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Ip, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Type } from 'class-transformer';
@@ -52,6 +52,14 @@ export class FormsController {
   @Roles('owner', 'admin', 'manager')
   setActive(@Param('id') id: string, @Body() dto: SetActiveDto, @CurrentUser() user: JwtPayload) {
     return this.forms.setActive(user.tenantId, user.sub, id, dto.active);
+  }
+
+  @Delete('forms/:id')
+  @RequireGrant('crm', 'edit')
+  @Roles('owner', 'admin', 'manager') // §13: delete = manager-and-up
+  @ApiOperation({ summary: 'Delete a form (soft) — the public link dies, submissions and leads are kept' })
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.forms.remove(user.tenantId, user.sub, id);
   }
 
   @Get('forms/:id/submissions')

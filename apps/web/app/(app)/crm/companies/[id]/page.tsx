@@ -1,6 +1,7 @@
 'use client'
 
 import { use } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { OwnerAv } from '@/components/crm/kit'
@@ -10,6 +11,7 @@ import {
   useContacts,
   useCompanyDeals,
   useCompanyActivities,
+  useDeleteCompany,
 } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -19,6 +21,8 @@ import {
 
 export default function CompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const router = useRouter()
+  const deleteCompany = useDeleteCompany()
   const { data, isLoading, error } = useCompany(id)
   const people = useContacts({ company_id: id })
   const deals = useCompanyDeals(id)
@@ -61,7 +65,15 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
             {c.source && <Pill>{c.source.replace(/_/g, ' ')}</Pill>}
           </div>
         </div>
-        {c.phone && <a href={`tel:${c.phone}`}><Btn kind="secondary" size="sm" icon={<Icon.phone size={13} />}>Call</Btn></a>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {c.phone && <a href={`tel:${c.phone}`}><Btn kind="secondary" size="sm" icon={<Icon.phone size={13} />}>Call</Btn></a>}
+          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteCompany.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete ${c.name}? Its contacts, deals and history are kept — and the domain is freed for a fresh record.`)) {
+                deleteCompany.mutate(c.id, { onSuccess: () => router.push('/crm/companies') })
+              }
+            }} />
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>

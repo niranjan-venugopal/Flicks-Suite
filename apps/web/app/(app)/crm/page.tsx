@@ -52,12 +52,28 @@ export default function CrmOverviewPage() {
   useEffect(() => { setDismissed(localStorage.getItem(DISMISS_KEY) === '1') }, [])
   const dismiss = () => { localStorage.setItem(DISMISS_KEY, '1'); setDismissed(true) }
 
+  // The visible/hidden decision may only be made once every input has actually
+  // loaded — deciding against `undefined` query data painted a bogus "0 of 5
+  // done" for a second and then hid it (or the reverse). Same rule as the
+  // invoicing setup wizard: no data, no verdict.
+  const checklistSettled =
+    !forecast.isLoading && !board.isLoading && !mine.isLoading && !reps.isLoading
+
+  // Open activities with a real due date — "schedule a follow-up" must not be
+  // satisfied by completed history or by activities with no date at all.
+  const openScheduled = !!acts &&
+    [...acts.overdue, ...acts.today, ...acts.upcoming].some((a) => !!a.due_at)
+
   const steps: Array<{ label: string; done: boolean; onClick: () => void }> = [
     { label: 'Create your first deal', done: totalOpenDeals + (f?.won_value ? 1 : 0) > 0, onClick: () => quickAdd.openWith('deal') },
-    { label: 'Link a company & contact to a deal', done: cards.some((d) => d.company_id || d.primary_person_id), onClick: () => quickAdd.openWith('deal') },
-    { label: 'Schedule a follow-up activity', done: anyActivity, onClick: () => router.push('/crm/activities') },
+    // BOTH ends linked — one or the other is half the setup.
+    { label: 'Link a company & contact to a deal', done: cards.some((d) => d.company_id && d.primary_person_id), onClick: () => quickAdd.openWith('deal') },
+    { label: 'Schedule a follow-up activity', done: openScheduled, onClick: () => router.push('/crm/activities') },
     { label: 'Invite your team', done: (reps.data?.data.length ?? 0) > 1, onClick: () => router.push('/settings/members') },
-    { label: 'Walk the pipeline on the board', done: rotting.length + noNext.length < cards.length || cards.length > 0, onClick: () => router.push('/crm/deals') },
+    // The CRM's own doctrine: no deal without a next step. (The old expression
+    // `… || cards.length > 0` short-circuited to "any deal exists", which
+    // duplicated step 1 and ticked itself the moment a deal was created.)
+    { label: 'Give every deal a next step', done: cards.length > 0 && noNext.length === 0, onClick: () => router.push('/crm/deals') },
   ]
   const doneCount = steps.filter((s) => s.done).length
 
@@ -80,8 +96,8 @@ export default function CrmOverviewPage() {
     <div style={{ padding: '28px 32px 64px' }}>
       <SectionHead title="CRM" sub="Your pipeline at a glance — deals, follow-ups and what needs attention." />
 
-      {/* Quick-start checklist (§19.10) */}
-      {!dismissed && doneCount < steps.length && (
+      {/* Quick-start checklist — only rendered once ALL its inputs settled */}
+      {checklistSettled && !dismissed && doneCount < steps.length && (
         <div className="card" style={{ position: 'relative', borderColor: 'rgba(62,123,250,.35)', marginBottom: 16 }}>
           <button onClick={dismiss} title="Dismiss" style={{ position: 'absolute', top: 12, right: 12, width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-mute)', cursor: 'pointer' }}><Icon.x size={12} /></button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>

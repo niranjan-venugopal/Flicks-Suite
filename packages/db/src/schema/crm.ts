@@ -548,10 +548,16 @@ export const leads = pgTable(
     converted_person_id: uuid('converted_person_id').references(() => directoryPeople.id, { onDelete: 'set null' }),
     converted_company_id: uuid('converted_company_id').references(() => directoryCompanies.id, { onDelete: 'set null' }),
     converted_deal_id: uuid('converted_deal_id').references(() => deals.id, { onDelete: 'set null' }),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }), // 0053 — soft delete
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_leads_inbox').on(t.tenant_id, t.status, t.created_at.desc())],
+  (t) => [
+    index('idx_leads_inbox').on(t.tenant_id, t.status, t.created_at.desc()),
+    index('idx_leads_tenant_status_live')
+      .on(t.tenant_id, t.status)
+      .where(sql`${t.deleted_at} IS NULL`),
+  ],
 );
 
 export const webForms = pgTable(
@@ -570,10 +576,16 @@ export const webForms = pgTable(
     redirect_url: text('redirect_url'),
     active: boolean('active').notNull().default(true),
     created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }), // 0053 — soft delete
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('uq_web_form_name').on(t.tenant_id, sql`lower(${t.name})`)],
+  (t) => [
+    // Partial (0053): a deleted form frees its name for reuse.
+    uniqueIndex('uq_web_form_name')
+      .on(t.tenant_id, sql`lower(${t.name})`)
+      .where(sql`${t.deleted_at} IS NULL`),
+  ],
 );
 
 export const formSubmissions = pgTable(

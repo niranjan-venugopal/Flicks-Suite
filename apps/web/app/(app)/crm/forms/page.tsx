@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   useForms,
   useCreateForm,
+  useDeleteForm,
   useSetFormActive,
   useFormSubmissions,
   type WebForm,
@@ -22,6 +23,7 @@ import {
 export default function FormsPage() {
   const { data, isLoading } = useForms()
   const setActive = useSetFormActive()
+  const deleteForm = useDeleteForm()
   const [createOpen, setCreateOpen] = useState(false)
   const [subsFor, setSubsFor] = useState<WebForm | null>(null)
   const { toast } = useToast()
@@ -66,6 +68,12 @@ export default function FormsPage() {
               <Link href={`/f/${f.token}`} target="_blank"><Btn kind="ghost" size="sm" icon={<Icon.eye size={12} />}>Preview</Btn></Link>
               <Btn kind="secondary" size="sm" onClick={() => setSubsFor(f)}>Submissions</Btn>
               <Toggle on={f.active} onChange={(v: boolean) => setActive.mutate({ id: f.id, active: v })} />
+              <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteForm.isPending}
+                onClick={() => {
+                  if (window.confirm(`Delete “${f.name}”? The public link stops working immediately. Past submissions and the leads they created are kept.`)) {
+                    deleteForm.mutate(f.id, { onSuccess: () => toast({ title: 'Form deleted', description: 'Submissions and leads were kept.' }) })
+                  }
+                }} />
             </div>
           ))}
         </div>

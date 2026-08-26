@@ -66,28 +66,33 @@ afterAll(async () => {
   await (db as unknown as { $client?: { end?: () => Promise<void> } }).$client?.end?.();
 });
 
+let seqCode = '';
+
 describe('FAM coupons + billing overview (PRD v4 D21/D22)', () => {
-  it('sequential batches number from 001 and CONTINUE across batches; random batches are unique', async () => {
-    const b1 = await famBilling.batchCreate(famUserId, {
+  it('sequential minting is REJECTED (round 9 — guessable sequences); random batches are unique', async () => {
+    // The FOUNDER-002..050 retirement made the policy explicit: numbered
+    // sequences let anyone holding one code enumerate the rest.
+    await expect(
+      famBilling.batchCreate(famUserId, {
+        prefix: PREFIX,
+        mode: 'sequential',
+        count: 5,
+        months: 3,
+        campaign: CAMP_SEQ,
+      }),
+    ).rejects.toThrow(/Sequential codes are retired/);
+
+    // Seed a couple of CAMP_SEQ rows the later CSV/list cases rely on —
+    // random now, since that is the only mint mode.
+    const seeded = await famBilling.batchCreate(famUserId, {
       prefix: PREFIX,
-      mode: 'sequential',
+      mode: 'random',
       count: 5,
       months: 3,
       campaign: CAMP_SEQ,
     });
-    expect(b1.data.minted).toBe(5);
-    expect(b1.data.codes[0]).toBe(`${PREFIX}-001`);
-    expect(b1.data.codes[4]).toBe(`${PREFIX}-005`);
-
-    // Second batch continues (no renumber, no collision).
-    const b2 = await famBilling.batchCreate(famUserId, {
-      prefix: PREFIX,
-      mode: 'sequential',
-      count: 3,
-      months: 3,
-      campaign: CAMP_SEQ,
-    });
-    expect(b2.data.codes[0]).toBe(`${PREFIX}-006`);
+    expect(seeded.data.minted).toBe(5);
+    seqCode = seeded.data.codes[0]!;
 
     // §8B.3 checkpoint size: a full batch of 50.
     const r = await famBilling.batchCreate(famUserId, {
@@ -111,8 +116,8 @@ describe('FAM coupons + billing overview (PRD v4 D21/D22)', () => {
     expect(lines[0]).toBe(
       'code,campaign,months,max_redemptions,redemption_count,expires_at,active',
     );
-    expect(lines.length).toBe(1 + 8); // 5 + 3 sequential codes
-    expect(lines[1]).toContain(`"${PREFIX}-001"`);
+    expect(lines.length).toBe(1 + 5); // the 5 CAMP_SEQ codes
+    expect(lines[1]).toContain(`"${PREFIX}-`);
     expect(lines[1]).toContain(`"${CAMP_SEQ}"`);
   });
 
@@ -142,7 +147,7 @@ describe('FAM coupons + billing overview (PRD v4 D21/D22)', () => {
     const [coupon] = await dbAdmin
       .select()
       .from(couponCodes)
-      .where(eq(couponCodes.code, `${PREFIX}-001`))
+      .where(eq(couponCodes.code, seqCode))
       .limit(1);
 
     // Deactivated → redemption refused.

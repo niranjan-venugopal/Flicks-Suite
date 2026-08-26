@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { activities, deals, directoryCompanies, directoryPeople, memberships, users } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
@@ -10,6 +10,27 @@ import { PresencePublicService } from '../presence/public';
 
 const TYPES = ['task', 'call', 'meeting', 'note'] as const;
 const CALL_OUTCOMES = ['connected', 'no_answer', 'busy', 'voicemail', 'wrong_number'] as const;
+
+/** Cutoff for the activity purge — N days back from now. */
+function purgeCutoff(days: number): Date {
+  return new Date(Date.now() - days * 86_400_000);
+}
+
+/**
+ * What the purge touches: live rows older than the cutoff. completedOnly
+ * (the default posture) clears only finished history — completed before the
+ * cutoff; otherwise anything CREATED before the cutoff goes, open or not.
+ * Explicit tenant predicate as defence-in-depth on top of RLS.
+ */
+function purgePredicate(tenantId: string, cutoff: Date, completedOnly: boolean) {
+  return and(
+    eq(activities.tenant_id, tenantId),
+    isNull(activities.deleted_at),
+    completedOnly
+      ? and(isNotNull(activities.completed_at), lt(activities.completed_at, cutoff))
+      : lt(activities.created_at, cutoff),
+  );
+}
 
 /**
  * Activities (PRD v5 §6) — the follow-up loop behind activity-based selling.
@@ -295,6 +316,64 @@ export class ActivitiesService {
           tx,
         );
         return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Bulk cleanup (round 9): count what a purge WOULD remove, so the Data
+   * hygiene card can show "1,240 activities" before anyone commits.
+   */
+  async purgePreview(tenantId: string, days: number, completedOnly: boolean) {
+    const cutoff = purgeCutoff(days);
+    return this.db.withTenant(tenantId, async (tx) => {
+      const [row] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(activities)
+        .where(purgePredicate(tenantId, cutoff, completedOnly));
+      return { data: { count: row?.n ?? 0, cutoff: cutoff.toISOString() } };
+    });
+  }
+
+  /**
+   * Clear activities older than N days (round 9) — at client volume the log
+   * becomes a dump. One set-based soft delete in a tenant transaction with a
+   * single audit row carrying the count (the import-undo pattern). Deal
+   * stamps are recomputed for every touched deal so next/last-activity stay
+   * truthful on the board.
+   */
+  async purgeOlderThan(
+    tenantId: string,
+    userId: string,
+    opts: { days: number; completedOnly: boolean },
+  ) {
+    const cutoff = purgeCutoff(opts.days);
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const removed = await tx
+          .update(activities)
+          .set({ deleted_at: new Date(), updated_at: new Date() })
+          .where(purgePredicate(tenantId, cutoff, opts.completedOnly))
+          .returning({ id: activities.id, deal_id: activities.deal_id });
+
+        const dealIds = [...new Set(removed.map((r) => r.deal_id).filter(Boolean))] as string[];
+        for (const dealId of dealIds) await this.syncDealStamps(tx, dealId);
+
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'crm.activities.purge',
+          resourceType: 'activity',
+          metadata: {
+            days: opts.days,
+            completedOnly: opts.completedOnly,
+            cutoff: cutoff.toISOString(),
+            removed: removed.length,
+          },
+        });
+        return { data: { removed: removed.length, cutoff: cutoff.toISOString() } };
       },
       userId,
     );

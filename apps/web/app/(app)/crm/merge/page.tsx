@@ -4,7 +4,10 @@ import { useState } from 'react'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import {
+  useActivityPurgePreview,
+  usePurgeActivities,
   useMergeCandidates,
   useMergePreview,
   useMerge,
@@ -30,6 +33,7 @@ export default function MergePage() {
         : <>
             <Finder onReview={setReviewing} />
             <ReassignCard />
+            <PurgeActivitiesCard />
           </>}
     </div>
   )
@@ -194,6 +198,83 @@ function ReassignCard() {
         <div className="t-caption" style={{ marginTop: 10 }}>
           {total === 0 ? 'Nothing open to move — this member has no active CRM work.' : `Will move: ${p.open_deals} open deals · ${p.open_activities} open activities · ${p.active_leads} active leads`}
         </div>
+      )}
+    </div>
+  )
+}
+
+
+// ── Round 9 — clear old activities ────────────────────────────────────────────
+// At client volume the activity log becomes a dump: thousands of completed
+// calls/tasks nobody will read again. Preview → confirm, owner/admin only.
+const PURGE_DAY_OPTIONS = [30, 60, 90, 180, 365]
+
+function PurgeActivitiesCard() {
+  const { toast } = useToast()
+  const { currentUser } = useAuthStore()
+  const [days, setDays] = useState(90)
+  const [completedOnly, setCompletedOnly] = useState(true)
+  const [armed, setArmed] = useState(false)
+  const isAdmin = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
+  const preview = useActivityPurgePreview(days, completedOnly, armed && isAdmin)
+  const purge = usePurgeActivities()
+
+  if (!isAdmin) return null
+  const count = preview.data?.data.count
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 4 }}>
+        <Icon.trash size={15} style={{ color: 'var(--coral)' }} />
+        <span style={{ fontSize: 13, fontWeight: 800, flex: 1 }}>Clear old activities</span>
+      </div>
+      <div className="t-mute" style={{ fontSize: 11.5, marginBottom: 14 }}>
+        Remove activity history older than a cutoff so the log stays readable at scale.
+        Deals, contacts and companies are never touched.
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
+        <div>
+          <div className="label">Older than</div>
+          <select className="input" value={days}
+            onChange={(e) => { setDays(Number(e.target.value)); setArmed(false) }}
+            style={{ height: 38, width: 150 }}>
+            {PURGE_DAY_OPTIONS.map((d) => <option key={d} value={d}>{d} days</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="label">Scope</div>
+          <select className="input" value={completedOnly ? 'completed' : 'all'}
+            onChange={(e) => { setCompletedOnly(e.target.value === 'completed'); setArmed(false) }}
+            style={{ height: 38, width: 220 }}>
+            <option value="completed">Completed activities only</option>
+            <option value="all">Everything older than the cutoff</option>
+          </select>
+        </div>
+        {!armed ? (
+          <Btn kind="secondary" onClick={() => setArmed(true)}>Preview</Btn>
+        ) : preview.isLoading ? (
+          <Btn kind="secondary" disabled icon={<Icon.refresh size={13} className="animate-spin" />}>Counting…</Btn>
+        ) : (
+          <Btn kind="danger" disabled={purge.isPending || !count}
+            icon={<Icon.trash size={13} />}
+            onClick={() => {
+              if (!count) return
+              if (window.confirm(`Clear ${count.toLocaleString()} activit${count === 1 ? 'y' : 'ies'} older than ${days} days? This cannot be undone from the app.`)) {
+                purge.mutate({ days, completed_only: completedOnly }, {
+                  onSuccess: (r) => {
+                    setArmed(false)
+                    toast({ title: 'Activities cleared', description: `${r.data.removed.toLocaleString()} removed.` })
+                  },
+                  onError: (err) => toast({ title: 'Could not clear activities', description: err instanceof Error ? err.message : undefined, variant: 'destructive' }),
+                })
+              }
+            }}>
+            {count === 0 ? 'Nothing to clear' : `Clear ${count?.toLocaleString()} activities`}
+          </Btn>
+        )}
+      </div>
+      {armed && count === 0 && !preview.isLoading && (
+        <div className="t-caption" style={{ marginTop: 10 }}>No activities match that cutoff — nothing to clean.</div>
       )}
     </div>
   )

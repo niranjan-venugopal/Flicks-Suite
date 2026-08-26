@@ -1,4 +1,5 @@
 import {
+  Delete,
   Body,
   Controller,
   Get,
@@ -106,6 +107,12 @@ export class FamBillingController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.famBilling.update(user.sub, id, dto);
+  }
+
+  @Delete('coupons/:id')
+  @ApiOperation({ summary: 'Delete an UNREDEEMED coupon (409 if it has redemptions — deactivate those instead)' })
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.famBilling.remove(user.sub, id);
   }
 
   @Get('coupons/:id/redemptions')

@@ -48,7 +48,8 @@ export default function MyActivitiesPage() {
           <Bucket label="Today" tone="blue" items={d?.today ?? []} onComplete={completeLoop.start} onDelete={(a) => del.mutate({ id: a.id, dealId: a.deal_id })} />
           <Bucket label="Upcoming" tone="" items={d?.upcoming ?? []} onComplete={completeLoop.start} onDelete={(a) => del.mutate({ id: a.id, dealId: a.deal_id })} />
           {(d?.completed.length ?? 0) > 0 && (
-            <Bucket label="Recently completed" tone="green" items={d!.completed} muted meId={currentUser?.id} />
+            <Bucket label="Recently completed" tone="green" items={d!.completed} muted meId={currentUser?.id}
+              onDelete={(a) => del.mutate({ id: a.id, dealId: a.deal_id })} />
           )}
         </>
       )}
@@ -106,7 +107,9 @@ function Bucket({ label, tone, items, onComplete, onDelete, muted, meId }: {
               {onComplete && !a.completed_at && (
                 <Btn kind="secondary" size="sm" icon={<Icon.check size={13} />} onClick={() => onComplete(a)}>Complete</Btn>
               )}
-              {onDelete && !a.completed_at && (
+              {/* Completed activities are deletable too — that history IS the
+                  dump at client volume (round 9). */}
+              {onDelete && (
                 <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} onClick={() => onDelete(a)} />
               )}
             </div>

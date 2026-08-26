@@ -37,6 +37,7 @@ import {
   useCreateActivity,
   useSequences,
   useEnrollInSequence,
+  useDeleteDeal,
   type DealDetail,
   type Activity,
 } from '@/lib/api/queries/use-crm'
@@ -59,6 +60,7 @@ const TABS = ALL_TABS.filter(([k]) => k !== 'emails' || FEATURES.crm_email)
 export default function DealDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  const deleteDeal = useDeleteDeal()
   const { toast } = useToast()
   const { data, isLoading, error } = useDeal(id)
   const pipelines = usePipelines()
@@ -199,6 +201,12 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
                 </Btn>
               </>
             )}
+            <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteDeal.isPending} title="Manager and above"
+              onClick={() => {
+                if (window.confirm(`Delete “${d.title}”? Linked invoices and quotes are kept.`)) {
+                  deleteDeal.mutate(id, { onSuccess: () => router.push('/crm/deals') })
+                }
+              }} />
           </div>
         </div>
 

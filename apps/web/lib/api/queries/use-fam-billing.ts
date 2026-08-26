@@ -71,6 +71,14 @@ export function useFamCouponUpdate() {
   })
 }
 
+export function useFamCouponDelete() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/fam/coupons/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fam', 'coupons'] }),
+  })
+}
+
 export function useFamCouponRedemptions(id: string | null) {
   return useQuery({
     queryKey: ['fam', 'coupons', 'redemptions', id],

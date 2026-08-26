@@ -1,6 +1,7 @@
 'use client'
 
 import { use } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { OwnerAv } from '@/components/crm/kit'
@@ -10,6 +11,7 @@ import {
   useCompany,
   useContactDeals,
   useContactActivities,
+  useDeleteContact,
 } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -19,6 +21,8 @@ import {
 
 export default function ContactDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const router = useRouter()
+  const deleteContact = useDeleteContact()
   const { data, isLoading, error } = useContact(id)
   const p = data?.data
   const company = useCompany(p?.company_id ?? null)
@@ -66,6 +70,12 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {p.email && <a href={`mailto:${p.email}`}><Btn kind="secondary" size="sm" icon={<Icon.mail size={13} />}>Email</Btn></a>}
           {p.phone && <a href={`tel:${p.phone}`}><Btn kind="secondary" size="sm" icon={<Icon.phone size={13} />}>Call</Btn></a>}
+          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteContact.isPending}
+            onClick={() => {
+              if (window.confirm(`Delete ${name}? Their deals and activity history are kept.`)) {
+                deleteContact.mutate(p.id, { onSuccess: () => router.push('/crm/contacts') })
+              }
+            }} />
         </div>
       </div>
 

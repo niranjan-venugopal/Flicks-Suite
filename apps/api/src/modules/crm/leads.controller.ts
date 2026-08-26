@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
+import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { LeadsService } from './leads.service';
@@ -60,6 +61,14 @@ export class LeadsController {
   @RequireGrant('crm', 'edit')
   discard(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.leads.discard(user.tenantId, user.sub, id);
+  }
+
+  @Delete('leads/:id')
+  @Roles('owner', 'admin', 'manager') // §13: delete = manager-and-up
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Delete a lead (soft) — junk or test rows; converted records are kept' })
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.leads.remove(user.tenantId, user.sub, id);
   }
 
   @Post('leads/:id/convert')

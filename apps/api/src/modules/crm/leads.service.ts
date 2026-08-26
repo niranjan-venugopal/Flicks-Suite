@@ -68,7 +68,7 @@ export class LeadsService {
         })
         .from(leads)
         .leftJoin(users, eq(users.id, leads.owner_user_id))
-        .where(eq(leads.status, wanted))
+        .where(and(eq(leads.status, wanted), isNull(leads.deleted_at)))
         .orderBy(desc(leads.created_at))
         .limit(200);
 
@@ -85,6 +85,7 @@ export class LeadsService {
       const counts = await tx
         .select({ status: leads.status, n: sql<number>`count(*)::int` })
         .from(leads)
+        .where(isNull(leads.deleted_at))
         .groupBy(leads.status);
 
       return {
@@ -147,7 +148,7 @@ export class LeadsService {
         const [row] = await tx
           .update(leads)
           .set({ status: 'working', owner_user_id: sql`coalesce(${leads.owner_user_id}, ${userId})`, updated_at: new Date() })
-          .where(and(eq(leads.id, id), sql`${leads.status} IN ('new','working')`))
+          .where(and(eq(leads.id, id), isNull(leads.deleted_at), sql`${leads.status} IN ('new','working')`))
           .returning();
         if (!row) throw new NotFoundException('Lead not found or already decided');
         return { data: row };
@@ -164,7 +165,7 @@ export class LeadsService {
         const [row] = await tx
           .update(leads)
           .set({ status: 'discarded', updated_at: new Date() })
-          .where(and(eq(leads.id, id), sql`${leads.status} IN ('new','working')`))
+          .where(and(eq(leads.id, id), isNull(leads.deleted_at), sql`${leads.status} IN ('new','working')`))
           .returning();
         if (!row) throw new NotFoundException('Lead not found or already decided');
         await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.discard', resourceType: 'lead', resourceId: id });
@@ -173,6 +174,29 @@ export class LeadsService {
           tx,
         );
         return { data: row };
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Delete (round 9) — soft, like every other CRM entity. Works from any
+   * status: deleting a converted lead does NOT touch the person/company/deal
+   * it created (their FKs are SET NULL on the lead side, and the soft delete
+   * never cascades anyway); the row simply leaves the inbox and the counts.
+   */
+  async remove(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [row] = await tx
+          .update(leads)
+          .set({ deleted_at: new Date(), updated_at: new Date() })
+          .where(and(eq(leads.id, id), eq(leads.tenant_id, tenantId), isNull(leads.deleted_at)))
+          .returning({ id: leads.id });
+        if (!row) throw new NotFoundException('Lead not found');
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.delete', resourceType: 'lead', resourceId: id });
+        return { data: { deleted: true } };
       },
       userId,
     );
@@ -209,7 +233,7 @@ export class LeadsService {
         const [lead] = await tx
           .update(leads)
           .set({ status: 'converted', updated_at: new Date() })
-          .where(and(eq(leads.id, id), inArray(leads.status, ['new', 'working'])))
+          .where(and(eq(leads.id, id), isNull(leads.deleted_at), inArray(leads.status, ['new', 'working'])))
           .returning();
         if (!lead) {
           // Either it doesn't exist, or it's already converted/discarded.
