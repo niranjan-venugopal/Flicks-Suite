@@ -16,8 +16,9 @@ const ToastViewport = React.forwardRef<
     ref={ref}
     className={cn(
       // Catalog: toasts are BOTTOM-CENTER, one at a time, above everything
-      // except the palette/keymap layers.
-      'fixed bottom-0 left-1/2 z-[2000] flex max-h-screen w-full -translate-x-1/2 flex-col items-center p-4 sm:max-w-[520px]',
+      // except the palette/keymap layers. The viewport itself must not eat
+      // clicks in that strip — only the toast pills (pointer-events-auto) do.
+      'pointer-events-none fixed bottom-0 left-1/2 z-[2000] flex max-h-screen w-full -translate-x-1/2 flex-col items-center p-4 sm:max-w-[520px]',
       className
     )}
     {...props}

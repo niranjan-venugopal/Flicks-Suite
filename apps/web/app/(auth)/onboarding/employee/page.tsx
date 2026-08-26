@@ -13,7 +13,10 @@ import {
   useSubmitOnboardingStep,
   type SubmitOnboardingStepPayload,
 } from '@/lib/api/queries/use-employee-onboarding'
+import { useMyEmployeeRecord } from '@/lib/api/queries/use-employees'
+import { useOrganization } from '@/lib/api/queries/use-settings'
 import { PAN_RE, IFSC_RE, BANKS, OTHER_BANK } from '@/lib/employee-details'
+import { INDIAN_STATES } from '@flicks/shared/constants'
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
@@ -22,10 +25,12 @@ interface StepMeta {
   sub: string
 }
 
-const STEPS: StepMeta[] = [
+// PAN/Aadhaar/UAN are Indian statutory documents — employees assigned to a
+// location outside India see passport/ID fields instead.
+const stepsFor = (isIndia: boolean): StepMeta[] => [
   { title: 'Personal info',     sub: 'Basic details & address' },
-  { title: 'Identity',          sub: 'PAN, Aadhaar, contact' },
-  { title: 'Bank & statutory',  sub: 'Salary account & UAN' },
+  { title: 'Identity',          sub: isIndia ? 'PAN, Aadhaar, contact' : 'Passport / ID, contact' },
+  { title: 'Bank & statutory',  sub: isIndia ? 'Salary account & UAN' : 'Salary account details' },
   { title: 'Documents',         sub: 'Upload offer & ID proofs' },
   { title: 'Review',            sub: 'Submit for HR review' },
 ]
@@ -48,7 +53,8 @@ type FormState = {
   emergencyPhone: string
   // Step 2
   pan: string
-  aadhaar: string  // captured but not persisted (no schema column yet)
+  aadhaar: string  // only the last 4 digits are sent — never the full number
+  passportNumber: string  // non-India identity document
   personalPhone: string
   personalEmail: string
   nationality: string
@@ -78,6 +84,7 @@ const EMPTY: FormState = {
   emergencyPhone: '',
   pan: '',
   aadhaar: '',
+  passportNumber: '',
   personalPhone: '',
   personalEmail: '',
   nationality: 'Indian',
@@ -100,6 +107,14 @@ export default function EmployeeOnboardingPage() {
   const me = useCurrentUser()
   const status = useEmployeeOnboardingStatus()
   const submit = useSubmitOnboardingStep()
+
+  // Statutory fields follow the employee's assigned location country, falling
+  // back to the organization's country (the org GET is readable by employees).
+  const org = useOrganization()
+  const myRecord = useMyEmployeeRecord()
+  const country =
+    myRecord.data?.locationCountryCode ?? org.data?.countryCode ?? 'IN'
+  const isIndia = country === 'IN'
 
   const [stepIdx, setStepIdx] = useState(0) // 0-based
   const [form, setForm] = useState<FormState>(EMPTY)
@@ -124,7 +139,8 @@ export default function EmployeeOnboardingPage() {
     }
   }, [status.data, router])
 
-  const stepMeta = STEPS[stepIdx]!
+  const steps = useMemo(() => stepsFor(isIndia), [isIndia])
+  const stepMeta = steps[stepIdx]!
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((p) => ({ ...p, [key]: value }))
@@ -165,7 +181,7 @@ export default function EmployeeOnboardingPage() {
     }
 
     if (step === 2) {
-      if (form.pan && !PAN_RE.test(form.pan)) {
+      if (isIndia && form.pan && !PAN_RE.test(form.pan)) {
         toast({
           title: 'Invalid PAN',
           description: 'Format: 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F).',
@@ -173,10 +189,28 @@ export default function EmployeeOnboardingPage() {
         })
         return null
       }
+      const aadhaarDigits = form.aadhaar.replace(/\D/g, '')
+      if (isIndia && form.aadhaar && aadhaarDigits.length !== 12) {
+        toast({
+          title: 'Invalid Aadhaar',
+          description: 'Aadhaar numbers have 12 digits.',
+          variant: 'destructive',
+        })
+        return null
+      }
       return {
         step,
         identity: {
-          pan: form.pan || undefined,
+          // Only the fields for this location's country are ever sent.
+          ...(isIndia
+            ? {
+                pan: form.pan || undefined,
+                // Privacy: the full Aadhaar never leaves the browser.
+                aadhaarLast4: form.aadhaar
+                  ? aadhaarDigits.slice(-4)
+                  : undefined,
+              }
+            : { passportNumber: form.passportNumber || undefined }),
           personalPhone: form.personalPhone || undefined,
           personalEmail: form.personalEmail || undefined,
           nationality: form.nationality || undefined,
@@ -214,7 +248,7 @@ export default function EmployeeOnboardingPage() {
           bankAccountHolder: form.bankAccountHolder || undefined,
           bankIfsc: form.bankIfsc || undefined,
           bankAccountType: form.bankAccountType || undefined,
-          pfUan: form.pfUan || undefined,
+          pfUan: isIndia ? form.pfUan || undefined : undefined,
         },
       }
     }
@@ -242,8 +276,9 @@ export default function EmployeeOnboardingPage() {
           {
             type: 'data_processing' as const,
             granted: true,
-            purpose:
-              'HR, payroll and statutory compliance (PAN, Aadhaar last-4, bank, attendance).',
+            purpose: isIndia
+              ? 'HR, payroll and statutory compliance (PAN, Aadhaar last-4, bank, attendance).'
+              : 'HR, payroll and statutory compliance (identity documents, bank, attendance).',
           },
           {
             type: 'marketing' as const,
@@ -364,7 +399,7 @@ export default function EmployeeOnboardingPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {STEPS.map((s, i) => {
+            {steps.map((s, i) => {
               const done = i < stepIdx
               const active = i === stepIdx
               return (
@@ -487,15 +522,25 @@ export default function EmployeeOnboardingPage() {
           </div>
 
           {stepIdx === 0 && (
-            <PersonalInfoStep form={form} set={setField} userName={userName} />
+            <PersonalInfoStep
+              form={form}
+              set={setField}
+              userName={userName}
+              isIndia={isIndia}
+            />
           )}
-          {stepIdx === 1 && <IdentityStep form={form} set={setField} />}
-          {stepIdx === 2 && <BankStep form={form} set={setField} />}
-          {stepIdx === 3 && <DocumentsStep />}
+          {stepIdx === 1 && (
+            <IdentityStep form={form} set={setField} isIndia={isIndia} />
+          )}
+          {stepIdx === 2 && (
+            <BankStep form={form} set={setField} isIndia={isIndia} />
+          )}
+          {stepIdx === 3 && <DocumentsStep isIndia={isIndia} />}
           {stepIdx === 4 && (
             <ReviewStep
               form={form}
               userName={userName}
+              isIndia={isIndia}
               consentData={consentData}
               setConsentData={setConsentData}
               consentComms={consentComms}
@@ -554,10 +599,12 @@ function PersonalInfoStep({
   form,
   set,
   userName,
+  isIndia,
 }: {
   form: FormState
   set: <K extends keyof FormState>(k: K, v: FormState[K]) => void
   userName: string
+  isIndia: boolean
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -637,19 +684,31 @@ function PersonalInfoStep({
             onChange={(e) => set('city', e.target.value)}
             placeholder="City"
           />
-          <input
-            className="input"
-            value={form.stateCode}
-            onChange={(e) => set('stateCode', e.target.value.toUpperCase())}
-            placeholder="State"
-            maxLength={2}
-            style={{ textTransform: 'uppercase' }}
-          />
+          {isIndia ? (
+            <select
+              className="input"
+              value={form.stateCode}
+              onChange={(e) => set('stateCode', e.target.value)}
+            >
+              <option value="">State…</option>
+              {INDIAN_STATES.map((s) => (
+                <option key={s.code} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="input"
+              value={form.stateCode}
+              onChange={(e) => set('stateCode', e.target.value)}
+              placeholder="State / Province / Emirate"
+              maxLength={40}
+            />
+          )}
           <input
             className="input"
             value={form.postalCode}
             onChange={(e) => set('postalCode', e.target.value)}
-            placeholder="PIN"
+            placeholder={isIndia ? 'PIN' : 'Postal / ZIP'}
             inputMode="numeric"
           />
         </div>
@@ -698,52 +757,87 @@ function PersonalInfoStep({
 function IdentityStep({
   form,
   set,
+  isIndia,
 }: {
   form: FormState
   set: <K extends keyof FormState>(k: K, v: FormState[K]) => void
+  isIndia: boolean
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-      <div style={{ gridColumn: 'span 2' }}>
-        <label className="label">
-          PAN{' '}
-          <span style={{ color: 'var(--text-faint)', textTransform: 'none' }}>
-            (required for TDS)
-          </span>
-        </label>
-        <input
-          className="input"
-          value={form.pan}
-          onChange={(e) => set('pan', e.target.value.toUpperCase())}
-          placeholder="ABCDE1234F"
-          style={{ fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}
-          maxLength={10}
-        />
-      </div>
-      <div style={{ gridColumn: 'span 2' }}>
-        <label className="label">Aadhaar number</label>
-        <input
-          className="input"
-          value={form.aadhaar}
-          onChange={(e) => set('aadhaar', e.target.value)}
-          placeholder="1234 5678 9012"
-          style={{ fontFamily: 'var(--font-mono)' }}
-          maxLength={14}
-        />
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--text-mute)',
-            marginTop: 6,
-            display: 'flex',
-            gap: 6,
-            alignItems: 'center',
-          }}
-        >
-          <Icon.shield size={11} /> Masked storage · last 4 digits visible to
-          admin only
+      {isIndia ? (
+        <>
+          <div style={{ gridColumn: 'span 2' }}>
+            <label className="label">
+              PAN{' '}
+              <span style={{ color: 'var(--text-faint)', textTransform: 'none' }}>
+                (required for TDS)
+              </span>
+            </label>
+            <input
+              className="input"
+              value={form.pan}
+              onChange={(e) => set('pan', e.target.value.toUpperCase())}
+              placeholder="ABCDE1234F"
+              style={{ fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}
+              maxLength={10}
+            />
+          </div>
+          <div style={{ gridColumn: 'span 2' }}>
+            <label className="label">Aadhaar number</label>
+            <input
+              className="input"
+              value={form.aadhaar}
+              onChange={(e) => set('aadhaar', e.target.value)}
+              placeholder="1234 5678 9012"
+              style={{ fontFamily: 'var(--font-mono)' }}
+              maxLength={14}
+            />
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--text-mute)',
+                marginTop: 6,
+                display: 'flex',
+                gap: 6,
+                alignItems: 'center',
+              }}
+            >
+              <Icon.shield size={11} /> Only the last 4 digits are stored ·
+              visible to admin only
+            </div>
+          </div>
+        </>
+      ) : (
+        <div style={{ gridColumn: 'span 2' }}>
+          <label className="label">
+            Passport / national ID number{' '}
+            <span style={{ color: 'var(--text-faint)', textTransform: 'none' }}>
+              (as followed at your location)
+            </span>
+          </label>
+          <input
+            className="input"
+            value={form.passportNumber}
+            onChange={(e) => set('passportNumber', e.target.value.toUpperCase())}
+            placeholder="A1234567"
+            style={{ fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}
+            maxLength={20}
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-mute)',
+              marginTop: 6,
+              display: 'flex',
+              gap: 6,
+              alignItems: 'center',
+            }}
+          >
+            <Icon.shield size={11} /> Encrypted at rest · visible to HR only
+          </div>
         </div>
-      </div>
+      )}
       <div>
         <label className="label">Personal phone</label>
         <input
@@ -785,9 +879,11 @@ function IdentityStep({
 function BankStep({
   form,
   set,
+  isIndia,
 }: {
   form: FormState
   set: <K extends keyof FormState>(k: K, v: FormState[K]) => void
+  isIndia: boolean
 }) {
   // "Other" opens a free-text field; the typed name is what's stored in the
   // single bankName string (nothing new is POSTed — the API takes free text).
@@ -877,29 +973,29 @@ function BankStep({
           <option value="salary">Salary</option>
         </select>
       </div>
-      <div
-        style={{
-          gridColumn: 'span 2',
-          padding: 14,
-          background: 'var(--surf-1)',
-          border: '1px solid var(--bord)',
-          borderRadius: 10,
-          marginTop: 6,
-        }}
-      >
-        <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
-          Statutory{' '}
-          <span
-            style={{
-              color: 'var(--text-faint)',
-              fontWeight: 600,
-              fontSize: 11,
-            }}
-          >
-            (optional, can be added later)
-          </span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      {isIndia && (
+        <div
+          style={{
+            gridColumn: 'span 2',
+            padding: 14,
+            background: 'var(--surf-1)',
+            border: '1px solid var(--bord)',
+            borderRadius: 10,
+            marginTop: 6,
+          }}
+        >
+          <div className="t-h3" style={{ fontSize: 13, marginBottom: 10 }}>
+            Statutory{' '}
+            <span
+              style={{
+                color: 'var(--text-faint)',
+                fontWeight: 600,
+                fontSize: 11,
+              }}
+            >
+              (optional, can be added later)
+            </span>
+          </div>
           <div>
             <label className="label">UAN (Universal Account Number)</label>
             <input
@@ -909,33 +1005,46 @@ function BankStep({
               placeholder="100123456789"
               style={{ fontFamily: 'var(--font-mono)' }}
             />
-          </div>
-          <div>
-            <label className="label">PF account</label>
-            <input
-              className="input"
-              placeholder="auto-fetched if UAN provided"
-              disabled
-            />
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--text-mute)',
+                marginTop: 6,
+                lineHeight: 1.5,
+              }}
+            >
+              Your PF account is linked through your UAN — HR completes PF
+              setup on the employer portal. No document needed from you.
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
 
 // ─── Step 4: Documents ───────────────────────────────────────────────────────
 
-const DOCS: Array<{ name: string; required: boolean; sub: string }> = [
+const docsFor = (
+  isIndia: boolean,
+): Array<{ name: string; required: boolean; sub: string }> => [
   { name: 'Signed offer letter', required: true, sub: 'PDF · max 10 MB' },
-  { name: 'PAN card', required: true, sub: 'PDF, JPG, or PNG · max 10 MB' },
-  { name: 'Aadhaar card (front + back)', required: true, sub: 'PDF or JPG · max 10 MB' },
-  { name: 'Cancelled cheque or bank statement', required: true, sub: 'PDF or JPG · max 10 MB' },
+  ...(isIndia
+    ? [
+        { name: 'PAN card', required: true, sub: 'PDF, JPG, or PNG · max 10 MB' },
+        { name: 'Aadhaar card (front + back)', required: true, sub: 'PDF or JPG · max 10 MB' },
+        { name: 'Cancelled cheque or bank statement', required: true, sub: 'PDF or JPG · max 10 MB' },
+      ]
+    : [
+        { name: 'Passport or national ID (front + back)', required: true, sub: 'PDF or JPG · max 10 MB' },
+        { name: 'Bank statement or account proof', required: true, sub: 'PDF or JPG · max 10 MB' },
+      ]),
   { name: 'Educational certificates', required: false, sub: 'PDF · max 10 MB' },
   { name: 'Previous employment relieving letter', required: false, sub: 'PDF · max 10 MB' },
 ]
 
-function DocumentsStep() {
+function DocumentsStep({ isIndia }: { isIndia: boolean }) {
+  const docs = docsFor(isIndia)
   return (
     <>
       <div
@@ -961,7 +1070,7 @@ function DocumentsStep() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {DOCS.map((d, i) => (
+        {docs.map((d, i) => (
           <div
             key={i}
             style={{
@@ -1025,6 +1134,7 @@ function DocumentsStep() {
 function ReviewStep({
   form,
   userName,
+  isIndia,
   consentData,
   setConsentData,
   consentComms,
@@ -1032,6 +1142,7 @@ function ReviewStep({
 }: {
   form: FormState
   userName: string
+  isIndia: boolean
   consentData: boolean
   setConsentData: (v: boolean) => void
   consentComms: boolean
@@ -1050,13 +1161,16 @@ function ReviewStep({
     },
     {
       title: 'Identity',
-      value:
-        form.pan
+      value: isIndia
+        ? form.pan
           ? `PAN ${form.pan}${
               form.aadhaar
-                ? ` · Aadhaar •••• ${form.aadhaar.slice(-4)}`
+                ? ` · Aadhaar •••• ${form.aadhaar.replace(/\D/g, '').slice(-4)}`
                 : ''
             }`
+          : 'Not provided'
+        : form.passportNumber
+          ? `Passport / ID ••••${form.passportNumber.slice(-4)}`
           : 'Not provided',
     },
     {
@@ -1072,7 +1186,7 @@ function ReviewStep({
     },
     {
       title: 'Documents',
-      value: '0 of 6 uploaded · HR will collect these over email',
+      value: `0 of ${docsFor(isIndia).length} uploaded · HR will collect these over email`,
     },
   ]
 
@@ -1157,8 +1271,9 @@ function ReviewStep({
           required
         >
           I consent to Flicks Suite processing my personal and statutory data
-          (PAN, Aadhaar last-4, bank details, attendance) for HR, payroll and
-          compliance, as described in the{' '}
+          ({isIndia ? 'PAN, Aadhaar last-4' : 'identity documents'}, bank
+          details, attendance) for HR, payroll and compliance, as described in
+          the{' '}
           <a
             href="/privacy"
             target="_blank"

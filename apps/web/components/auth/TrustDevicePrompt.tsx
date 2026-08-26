@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 import { useCurrentUser, useTrustDevice } from '@/lib/api/queries/use-auth'
+import { useMyConsents } from '@/lib/api/queries/use-consent'
 
 const DISMISS_KEY = 'fs-trust-device-dismissed'
 
@@ -24,6 +25,13 @@ export function TrustDevicePrompt() {
   const { data: me } = useCurrentUser()
   const trust = useTrustDevice()
   const { toast } = useToast()
+  // Radix dialogs set body-level pointer-events: none while open, which
+  // deadens the (non-Radix) terms ReacceptanceGate painting above this
+  // dialog. Never open while a terms re-acceptance is due — the gate goes
+  // first, and accepting it invalidates the consents query, which re-renders
+  // this prompt into view. Same query key as the gate → one network call.
+  const consents = useMyConsents(!!me)
+  const consentState = consents.data?.data
   // Start dismissed (matches the SSR render → no hydration mismatch), then
   // read the per-tab-session flag on mount.
   const [dismissed, setDismissed] = useState(true)
@@ -44,7 +52,9 @@ export function TrustDevicePrompt() {
     !dismissed &&
     !me.impersonatorUserId &&
     role !== 'fam' &&
-    role !== 'super_admin'
+    role !== 'super_admin' &&
+    !!consentState &&
+    !consentState.requires_reacceptance
 
   if (!show) return null
 

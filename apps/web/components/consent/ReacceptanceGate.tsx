@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Btn, LogoMark } from '@/components/proto'
+import { useToast } from '@/components/ui/use-toast'
 import { useMyConsents, useRecordConsents } from '@/lib/api/queries/use-consent'
 
 /**
@@ -12,6 +14,8 @@ import { useMyConsents, useRecordConsents } from '@/lib/api/queries/use-consent'
 export function ReacceptanceGate() {
   const { data } = useMyConsents(true)
   const record = useRecordConsents()
+  const qc = useQueryClient()
+  const { toast } = useToast()
   const [agree, setAgree] = useState(false)
   const [dismissed, setDismissed] = useState(false)
 
@@ -23,8 +27,18 @@ export function ReacceptanceGate() {
       await record.mutateAsync({
         consents: [{ type: 'terms_privacy', granted: true }],
       })
-    } finally {
+      // The trust-device prompt waits behind this gate on the same consents
+      // query; refresh auth/me too so anything reading it sees fresh state.
+      qc.invalidateQueries({ queryKey: ['auth', 'me'] })
       setDismissed(true)
+    } catch (err) {
+      // Keep the gate up — dismissing on failure would leave the ledger
+      // without the acceptance this interstitial exists to record.
+      toast({
+        title: 'Could not record your acceptance',
+        description: err instanceof Error ? err.message : 'Please try again',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -34,6 +48,9 @@ export function ReacceptanceGate() {
         position: 'fixed',
         inset: 0,
         zIndex: 990,
+        // Radix modals set pointer-events: none on <body>; this gate is not a
+        // Radix layer, so it must re-arm its own subtree or every click dies.
+        pointerEvents: 'auto',
         background: 'rgba(1,1,13,.72)',
         backdropFilter: 'blur(4px)',
         display: 'flex',

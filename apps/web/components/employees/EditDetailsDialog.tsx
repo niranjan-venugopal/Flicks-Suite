@@ -15,6 +15,7 @@ import {
   useEmployeeChangeRequests,
 } from '@/lib/api/queries/use-employee-onboarding'
 import type { EmployeeDetail } from '@/lib/api/queries/use-employees'
+import { useOrganization } from '@/lib/api/queries/use-settings'
 import {
   PAN_RE,
   IFSC_RE,
@@ -25,6 +26,7 @@ import {
   BANKS,
   OTHER_BANK,
 } from '@/lib/employee-details'
+import { INDIAN_STATES } from '@flicks/shared/constants'
 
 const TABS = ['Personal', 'Identity', 'Bank & statutory'] as const
 
@@ -52,6 +54,12 @@ export function EditDetailsDialog({
   )
   const [tab, setTab] = useState<(typeof TABS)[number]>('Personal')
 
+  // PAN/Aadhaar/UAN are Indian statutory fields — follow the employee's
+  // assigned location country, falling back to the organization's country.
+  const org = useOrganization()
+  const country = e.locationCountryCode ?? org.data?.countryCode ?? 'IN'
+  const isIndia = country === 'IN'
+
   // Personal (step 1)
   const [dateOfBirth, setDateOfBirth] = useState(e.dateOfBirth ?? '')
   const [gender, setGender] = useState(e.gender ?? '')
@@ -63,8 +71,10 @@ export function EditDetailsDialog({
   const [stateCode, setStateCode] = useState(e.currentAddress?.state ?? '')
   const [postalCode, setPostalCode] = useState(e.currentAddress?.postal_code ?? '')
 
-  // Identity (step 2)
+  // Identity (step 2) — sensitive fields are write-only: blank means "keep".
   const [pan, setPan] = useState('')
+  const [aadhaarLast4, setAadhaarLast4] = useState('')
+  const [passportNumber, setPassportNumber] = useState('')
   const [personalEmail, setPersonalEmail] = useState(e.personalEmail ?? '')
   const [nationality, setNationality] = useState(e.nationality ?? '')
 
@@ -108,15 +118,21 @@ export function EditDetailsDialog({
           },
         })
       } else if (tab === 'Identity') {
-        if (pan && !PAN_RE.test(pan)) {
+        if (isIndia && pan && !PAN_RE.test(pan)) {
           toast({ title: 'PAN looks invalid', description: 'Format: AAAAA9999A', variant: 'destructive' })
+          return
+        }
+        if (isIndia && aadhaarLast4 && !/^\d{4}$/.test(aadhaarLast4)) {
+          toast({ title: 'Aadhaar last 4 looks invalid', description: 'Exactly 4 digits', variant: 'destructive' })
           return
         }
         res = await submit.mutateAsync({
           employeeId: e.id,
           step: 2,
           identity: {
-            pan: pan || undefined,
+            pan: isIndia ? pan || undefined : undefined,
+            aadhaarLast4: isIndia ? aadhaarLast4 || undefined : undefined,
+            passportNumber: passportNumber || undefined,
             personalEmail: personalEmail || undefined,
             nationality: nationality || undefined,
           },
@@ -136,7 +152,7 @@ export function EditDetailsDialog({
             bankAccountHolder: bankAccountHolder || undefined,
             bankIfsc: bankIfsc || undefined,
             bankAccountType: (bankAccountType || undefined) as 'savings' | 'current' | 'salary' | undefined,
-            pfUan: pfUan || undefined,
+            pfUan: isIndia ? pfUan || undefined : undefined,
           },
         })
       }
@@ -233,19 +249,67 @@ export function EditDetailsDialog({
               {field('Address line 2', input(addressLine2, setAddressLine2, { maxLength: 200 }))}
               <div style={{ display: 'flex', gap: 12 }}>
                 {field('City', input(city, setCity, { maxLength: 80 }))}
-                {field('State', input(stateCode, setStateCode, { maxLength: 40 }))}
-                {field('PIN code', input(postalCode, setPostalCode, { maxLength: 12, inputMode: 'numeric' }))}
+                {field(
+                  'State',
+                  isIndia ? (
+                    <select
+                      className="input"
+                      value={stateCode}
+                      onChange={(ev) => setStateCode(ev.target.value)}
+                      style={{ width: '100%' }}
+                    >
+                      <option value="">—</option>
+                      {/* Legacy free-typed values (e.g. "TA" from the old
+                          wizard) stay selectable so an untouched save
+                          round-trips the identical string. */}
+                      {stateCode &&
+                        !INDIAN_STATES.some((s) => s.name === stateCode) && (
+                          <option value={stateCode}>{stateCode}</option>
+                        )}
+                      {INDIAN_STATES.map((s) => (
+                        <option key={s.code} value={s.name}>{s.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    input(stateCode, setStateCode, { maxLength: 40 })
+                  ),
+                )}
+                {field(
+                  isIndia ? 'PIN code' : 'Postal / ZIP code',
+                  input(postalCode, setPostalCode, { maxLength: 12, inputMode: 'numeric' }),
+                )}
               </div>
             </>
           )}
 
           {tab === 'Identity' && (
             <>
+              {isIndia && (
+                <div style={{ display: 'flex', gap: 12 }}>
+                  {field(
+                    'PAN',
+                    input(pan, (v) => setPan(v.toUpperCase()), {
+                      maxLength: 10,
+                      placeholder: e.hasPan ? '•••• on file — leave blank to keep' : 'AAAAA9999A',
+                    }),
+                  )}
+                  {field(
+                    'Aadhaar (last 4)',
+                    input(aadhaarLast4, (v) => setAadhaarLast4(v.replace(/\D/g, '')), {
+                      maxLength: 4,
+                      inputMode: 'numeric',
+                      placeholder: e.aadhaarLast4
+                        ? `•••• ${e.aadhaarLast4} on file — leave blank to keep`
+                        : 'Last 4 digits only',
+                    }),
+                  )}
+                </div>
+              )}
               {field(
-                'PAN',
-                input(pan, (v) => setPan(v.toUpperCase()), {
-                  maxLength: 10,
-                  placeholder: e.hasPan ? '•••• on file — leave blank to keep' : 'AAAAA9999A',
+                'Passport / national ID number',
+                input(passportNumber, (v) => setPassportNumber(v.toUpperCase()), {
+                  maxLength: 20,
+                  placeholder: e.hasPassport ? '•••• on file — leave blank to keep' : 'A1234567',
                 }),
               )}
               <div style={{ display: 'flex', gap: 12 }}>
@@ -294,7 +358,8 @@ export function EditDetailsDialog({
                 {field('IFSC', input(bankIfsc, (v) => setBankIfsc(v.toUpperCase()), { maxLength: 11 }))}
                 {field('Account type', select(bankAccountType, setBankAccountType, BANK_ACCOUNT_TYPES))}
               </div>
-              {field('PF UAN', input(pfUan, setPfUan, { maxLength: 20, inputMode: 'numeric' }))}
+              {isIndia &&
+                field('PF UAN', input(pfUan, setPfUan, { maxLength: 20, inputMode: 'numeric' }))}
             </>
           )}
         </div>

@@ -157,6 +157,7 @@ export interface EmployeeDetail {
   locationName: string | null
   locationCity: string | null
   locationTimezone: string | null
+  locationCountryCode: string | null
   reportingManagerId: string | null
   reportingManagerName: string | null
   reportingManagerEmail: string | null
@@ -178,6 +179,7 @@ export interface EmployeeDetail {
   // Statutory
   hasPan: boolean
   hasPassport: boolean
+  aadhaarLast4: string | null
   pfUan: string | null
   esicNumber: string | null
   pfApplicable: boolean
@@ -210,6 +212,18 @@ export function useEmployee(id: string) {
     queryKey: ['employees', id],
     queryFn: () => api.get<EmployeeDetail>(`/api/v1/employees/${id}`),
     enabled: !!id,
+  })
+}
+
+// My own employee record — the onboarding wizard reads the assigned location's
+// country from here to decide which statutory fields (PAN/UAN vs passport)
+// apply. 404s quietly for users without an employee bridge (e.g. guests).
+export function useMyEmployeeRecord() {
+  return useQuery({
+    queryKey: ['employees', 'me'],
+    queryFn: () => api.get<EmployeeDetail>('/api/v1/employees/me'),
+    staleTime: 60_000,
+    retry: false,
   })
 }
 

@@ -45,6 +45,10 @@ export interface EmergencyContactData {
 
 export interface IdentityData {
   pan?: string
+  /** Client-side truncation — only the last 4 digits ever leave the browser. */
+  aadhaarLast4?: string
+  /** Passport / national ID for employees outside India. */
+  passportNumber?: string
   personalPhone?: string
   personalEmail?: string
   nationality?: string
@@ -97,7 +101,23 @@ export function useSubmitOnboardingStep() {
         payload,
       ),
     onSuccess: (data, vars) => {
-      qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
+      if (data.allStepsComplete) {
+        // Write the final state synchronously instead of refetching: the app
+        // layout reads this cache the instant we land on /dashboard, and a
+        // stale submittedForReview=false would bounce the user straight back
+        // into the wizard.
+        qc.setQueryData<EmployeeOnboardingStatus>(
+          ['employee', 'onboarding-status'],
+          (prev) => ({
+            employeeId: data.employeeId,
+            onboardingStep: data.onboardingStep,
+            submittedAt: prev?.submittedAt ?? new Date().toISOString(),
+            submittedForReview: true,
+          }),
+        )
+      } else {
+        qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
+      }
       qc.invalidateQueries({ queryKey: ['employees', 'me'] })
       if (vars.submitForReview || data.allStepsComplete) {
         track(EVENTS.EMPLOYEE_ONBOARDING_SUBMITTED)

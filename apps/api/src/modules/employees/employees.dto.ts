@@ -268,6 +268,17 @@ export class OnboardingIdentityDto {
   })
   pan?: string;
 
+  // Only the last 4 digits ever reach the server (client truncates); the full
+  // Aadhaar number is never transmitted or stored.
+  @IsString() @IsOptional() @Matches(/^\d{4}$/, {
+    message: 'aadhaarLast4 must be exactly 4 digits',
+  })
+  aadhaarLast4?: string;
+
+  // Passport / national ID for employees outside India (encrypted at rest).
+  @IsString() @IsOptional() @MaxLength(20)
+  passportNumber?: string;
+
   @IsString() @IsOptional() personalPhone?: string;
   @IsString() @IsOptional() personalEmail?: string;
   @IsString() @IsOptional() nationality?: string;

@@ -204,6 +204,19 @@ select.input {
   background-position: right 12px center;
   background-size: 16px 16px;
 }
+/* The option LIST is OS-drawn (light menu surface on Windows/Linux in
+   Chrome, Edge and Firefox alike), while the page's white text inherits into
+   every <option> — white on light = invisible until the OS hover highlight
+   paints its own colors. color-scheme:dark styles UA chrome but cannot beat
+   an author-declared color, so paint BOTH sides ourselves. The background
+   must be an OPAQUE hex: the --surf-* tokens are translucent white and would
+   still composite light on that popup. Bare element selector on purpose —
+   the invoicing selects skip .input and style inline. */
+option, optgroup {
+  background-color: var(--bg-2);
+  color: var(--text);
+}
+option:disabled { color: var(--text-faint); }
 .label { display: block; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 7px; letter-spacing: -0.01em; }
 
 /* ─── Buttons ─── */

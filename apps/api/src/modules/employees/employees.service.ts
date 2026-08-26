@@ -506,6 +506,7 @@ export class EmployeesService {
           locationName: locations.name,
           locationCity: locations.city,
           locationTimezone: locations.timezone,
+          locationCountryCode: locations.country_code,
           reportingManagerId: employees.reporting_manager_id,
           reportingManagerName: managerUser.full_name,
           reportingManagerEmail: managerUser.email,
@@ -527,6 +528,7 @@ export class EmployeesService {
           // Statutory (encrypted columns surfaced as flags only)
           hasPan: sql<boolean>`${employees.pan_encrypted} IS NOT NULL`,
           hasPassport: sql<boolean>`${employees.passport_number_encrypted} IS NOT NULL`,
+          aadhaarLast4: employees.aadhaar_last4,
           pfUan: employees.pf_uan,
           esicNumber: employees.esic_number,
           pfApplicable: employees.pf_applicable,
@@ -1109,6 +1111,12 @@ export class EmployeesService {
       const i = data.identity;
       if (i.pan !== undefined)
         updateFields.pan_encrypted = this.fieldCipher.encrypt(i.pan);
+      if (i.aadhaarLast4 !== undefined)
+        updateFields.aadhaar_last4 = i.aadhaarLast4;
+      if (i.passportNumber !== undefined)
+        updateFields.passport_number_encrypted = this.fieldCipher.encrypt(
+          i.passportNumber,
+        );
       if (i.personalPhone !== undefined)
         updateFields.personal_phone = i.personalPhone;
       if (i.personalEmail !== undefined)
@@ -1364,6 +1372,13 @@ export class EmployeesService {
           from: employee.hasPan ? 'on file' : null,
           to: this.maskTail(i.pan),
         });
+      if (i.passportNumber !== undefined)
+        rows.push({
+          field: 'Passport / ID number',
+          from: employee.hasPassport ? 'on file' : null,
+          to: this.maskTail(i.passportNumber),
+        });
+      push('Aadhaar (last 4)', employee.aadhaarLast4, i.aadhaarLast4);
       push('Personal phone', employee.personalPhone, i.personalPhone);
       push('Personal email', employee.personalEmail, i.personalEmail);
       push('Nationality', employee.nationality, i.nationality);
