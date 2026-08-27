@@ -82,6 +82,9 @@ function todayEyebrow(): string {
 
 export default function AttendancePage() {
   const [regOpen, setRegOpen] = useState(false)
+  // Set when a Daily-log row's Regularize button opened the dialog — the
+  // clicked day pre-fills the date picker.
+  const [regDate, setRegDate] = useState<string | null>(null)
   const [cursor, setCursor] = useState(new Date())
   const today = useMyAttendanceToday()
   // Daily records for the browsed month, clamped so the range never runs
@@ -160,12 +163,25 @@ export default function AttendancePage() {
               />
             </div>
           ) : (
-            <DailyLogTable rows={range.data.data} />
+            <DailyLogTable
+              rows={range.data.data}
+              onRegularize={(date) => {
+                setRegDate(date)
+                setRegOpen(true)
+              }}
+            />
           )}
         </div>
       </div>
 
-      <RegularizationDialog open={regOpen} onOpenChange={setRegOpen} />
+      <RegularizationDialog
+        open={regOpen}
+        onOpenChange={(o) => {
+          setRegOpen(o)
+          if (!o) setRegDate(null)
+        }}
+        initialDate={regDate}
+      />
     </div>
   )
 }
@@ -368,7 +384,13 @@ function statusPill(s: AttendanceRecord['attendanceStatus']) {
   }
 }
 
-function DailyLogTable({ rows }: { rows: AttendanceRecord[] }) {
+function DailyLogTable({
+  rows,
+  onRegularize,
+}: {
+  rows: AttendanceRecord[]
+  onRegularize: (date: string) => void
+}) {
   return (
     <table className="tbl" style={{ width: '100%' }}>
       <thead>
@@ -403,8 +425,10 @@ function DailyLogTable({ rows }: { rows: AttendanceRecord[] }) {
               )}
             </td>
             <td style={{ textAlign: 'right' }}>
-              {(r.attendanceStatus === 'late' || r.attendanceStatus === 'absent') && (
-                <Btn kind="ghost" size="sm">
+              {(r.attendanceStatus === 'late' ||
+                r.attendanceStatus === 'absent' ||
+                r.attendanceStatus === 'half_day') && (
+                <Btn kind="ghost" size="sm" onClick={() => onRegularize(r.attendanceDate)}>
                   Regularize
                 </Btn>
               )}
@@ -429,13 +453,20 @@ const REG_TYPES: Array<{ value: RegularizationType; label: string }> = [
 function RegularizationDialog({
   open,
   onOpenChange,
+  initialDate,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Pre-fills the date when opened from a Daily-log row. */
+  initialDate?: string | null
 }) {
   const submit = useRequestRegularization()
   const { toast } = useToast()
   const [attendanceDate, setAttendanceDate] = useState('')
+
+  useEffect(() => {
+    if (open && initialDate) setAttendanceDate(initialDate)
+  }, [open, initialDate])
   const [requestType, setRequestType] = useState<RegularizationType>('missing_punch')
   const [proposedInTime, setProposedInTime] = useState('')
   const [proposedOutTime, setProposedOutTime] = useState('')

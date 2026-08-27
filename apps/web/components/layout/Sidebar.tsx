@@ -128,12 +128,14 @@ const ADMIN_NAV: NavSection[] = [
         icon: 'target',
         // PRD v6 (shell-pm.jsx). Surfaces expand sprint by sprint — Sprint 33
         // ships the team issue list on the sync engine.
+        // Round 12 (founder): Projects leads the group — it's the module's
+        // main page (Linear-style: project first, then issues).
         children: [
+          { href: '/pm/projects', label: 'Projects' },
           { href: '/pm/my', label: 'My Issues' },
           { href: '/pm/issues', label: 'Issues' },
           { href: '/pm/triage', label: 'Triage' },
           { href: '/pm/cycle', label: 'Cycle' },
-          { href: '/pm/projects', label: 'Projects' },
           { href: '/pm/timeline', label: 'Timeline' },
           { href: '/pm/roadmap', label: 'Roadmap' },
           { href: '/pm/teams', label: 'Teams' },
@@ -195,7 +197,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/projects', label: 'Projects' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
     ],
   },
   {
@@ -231,7 +233,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/projects', label: 'Projects' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/projects', label: 'Projects' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
     ],
   },
   {

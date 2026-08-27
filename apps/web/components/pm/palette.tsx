@@ -32,7 +32,9 @@ const COMMANDS: Command[] = [
   { id: 'nav.roadmap', label: 'Go to Roadmap', hint: 'G then R', run: (r) => r.push('/pm/roadmap') },
   { id: 'nav.triage', label: 'Go to Triage', hint: 'G then T', run: (r) => r.push('/pm/triage') },
   { id: 'nav.cycle', label: 'Go to Cycle', hint: 'G then C', run: (r) => r.push('/pm/cycle') },
-  { id: 'create.issue', label: 'Create issue…', hint: 'C', run: (r) => r.push('/pm/issues?create=1') },
+  // Plain /pm/issues — the page never read ?create=1; its New-issue button
+  // and first-run empty state are right there.
+  { id: 'create.issue', label: 'Create issue…', hint: 'C', run: (r) => r.push('/pm/issues') },
 ]
 
 export const KEYMAP: Array<{ keys: string; label: string; section: string }> = [

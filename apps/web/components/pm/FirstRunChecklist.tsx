@@ -5,31 +5,46 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { Icon } from '@/components/proto'
 import { usePm } from '@/lib/pm/PmProvider'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 // ─────────────────────────────────────────────────────────
 // P20 first-run checklist chip — Welcome → Inbox coach → checklist. Items
 // tick themselves from real workspace state and the strip dismisses forever
-// with the ×. ("Connect GitHub" from the prototype is swapped for "Create a
-// project" while the integration is parked behind FEATURES.pm_github.)
+// with the ×. Round 12 (founder): hosted on the Projects page, and the tour
+// runs Linear-style — create a PROJECT first, then an issue.
 // ─────────────────────────────────────────────────────────
 
-const DISMISS_KEY = 'pm-first-run-checklist'
+// .v2: the card moved from My Issues to Projects — resurface it once for
+// anyone who dismissed the old placement (it self-hides at 4/4 anyway).
+const DISMISS_KEY = 'pm-first-run-checklist.v2'
 
-export const FirstRunChecklist = observer(function FirstRunChecklist() {
+export const FirstRunChecklist = observer(function FirstRunChecklist({
+  onCreateProject,
+}: {
+  /** Opens the New-project modal in the hosting page (instead of routing). */
+  onCreateProject?: () => void
+}) {
   const { engine } = usePm()
   const router = useRouter()
+  const { currentUser } = useAuthStore()
   const [dismissed, setDismissed] = useState(
     () => typeof window !== 'undefined' && window.localStorage.getItem(DISMISS_KEY) === '0',
   )
 
-  if (dismissed || !engine) return null
+  // Guests are project-scoped viewers — every checklist action is a server
+  // 403 for them, so never coach a guest.
+  if (dismissed || !engine || currentUser?.role === 'GUEST') return null
   const store = engine.store
 
-  const items: Array<{ label: string; done: boolean; href: string }> = [
-    { label: 'Create an issue', done: store.issues.size > 0, href: '/pm/issues?create=1' },
-    { label: 'Invite your team', done: store.users.size > 1, href: '/settings/members' },
-    { label: 'Create a project', done: store.projects.size > 0, href: '/pm/projects' },
-    { label: 'Start a cycle', done: store.cycles.size > 0, href: '/pm/cycle' },
+  const items: Array<{ label: string; done: boolean; action: () => void }> = [
+    {
+      label: 'Create a project',
+      done: store.projects.size > 0,
+      action: () => (onCreateProject ? onCreateProject() : router.push('/pm/projects')),
+    },
+    { label: 'Create an issue', done: store.issues.size > 0, action: () => router.push('/pm/issues') },
+    { label: 'Invite your team', done: store.users.size > 1, action: () => router.push('/settings/members') },
+    { label: 'Start a cycle', done: store.cycles.size > 0, action: () => router.push('/pm/cycle') },
   ]
   const doneCount = items.filter((i) => i.done).length
   if (doneCount === items.length) return null // finished — nothing to coach
@@ -50,7 +65,7 @@ export const FirstRunChecklist = observer(function FirstRunChecklist() {
           <button
             key={it.label}
             type="button"
-            onClick={() => { if (!it.done) router.push(it.href) }}
+            onClick={() => { if (!it.done) it.action() }}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 11px',
               borderRadius: 99, cursor: it.done ? 'default' : 'pointer',

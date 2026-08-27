@@ -8,6 +8,7 @@ import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
 import { PmAv, ProjectCreateModal, TeamKeyChips } from '@/components/pm/projects'
 import { GuestWorkspaceNudge } from '@/components/pm/GuestWorkspaceNudge'
+import { FirstRunChecklist } from '@/components/pm/FirstRunChecklist'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -54,6 +55,9 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
         sub="Projects group issues toward an outcome — one lead, a target date, honest health updates."
         right={<Pill tone="blue" dot>sync</Pill>}
       />
+      {/* Round 12: the first-run tour lives on the module's main page and
+          starts with "Create a project" — its chip opens the modal below. */}
+      <FirstRunChecklist onCreateProject={() => setOpenNew(true)} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
           {(isGuest
