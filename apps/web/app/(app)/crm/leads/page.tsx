@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -49,6 +50,7 @@ export default function LeadsPage() {
   const { toast } = useToast()
   const [addOpen, setAddOpen] = useState(false)
   const [convertFor, setConvertFor] = useState<Lead | null>(null)
+  const [deleting, setDeleting] = useState<Lead | null>(null)
   const rows = data?.data ?? []
   const counts = data?.counts ?? {}
 
@@ -116,7 +118,7 @@ export default function LeadsPage() {
                         <Btn kind="ghost" size="sm" icon={<Icon.x size={12} />} disabled={discard.isPending}
                           onClick={() => discard.mutate(l.id, { onSuccess: () => toast({ title: 'Lead discarded' }) })}>Discard</Btn>
                         <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
-                          onClick={() => { if (window.confirm('Delete this lead? This removes it from every view.')) deleteLead.mutate(l.id, { onSuccess: () => toast({ title: 'Lead deleted' }) }) }} />
+                          onClick={() => setDeleting(l)} />
                       </div>
                     ) : l.status === 'converted' && l.converted_deal_id ? (
                       <Link href={`/crm/deals/${l.converted_deal_id}`} style={{ color: 'var(--blue)', fontSize: 11.5, fontWeight: 800, textDecoration: 'none' }}>View deal →</Link>
@@ -124,7 +126,7 @@ export default function LeadsPage() {
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         <span className="t-caption">kept for source analytics</span>
                         <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
-                          onClick={() => { if (window.confirm('Delete this lead? It will no longer count in source analytics.')) deleteLead.mutate(l.id, { onSuccess: () => toast({ title: 'Lead deleted' }) }) }} />
+                          onClick={() => setDeleting(l)} />
                       </div>
                     )}
                   </td>
@@ -138,6 +140,23 @@ export default function LeadsPage() {
 
       {addOpen && <AddLeadModal onClose={() => setAddOpen(false)} />}
       {convertFor && <ConvertModal lead={convertFor} onClose={() => setConvertFor(null)} />}
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete lead"
+        danger
+        body={
+          deleting?.status === 'new' || deleting?.status === 'working'
+            ? 'Delete this lead? This removes it from every view.'
+            : 'Delete this lead? It will no longer count in source analytics.'
+        }
+        confirmLabel="Delete lead"
+        loading={deleteLead.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && deleteLead.mutate(deleting.id, {
+          onSuccess: () => { toast({ title: 'Lead deleted' }); setDeleting(null) },
+        })}
+      />
     </div>
   )
 }

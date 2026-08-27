@@ -420,6 +420,38 @@ export class OnboardingService {
       })
       .catch(() => undefined);
 
+    // FAM ping: every new workspace lands in the verification queue — tell
+    // the platform admins so they can actually review it. tenant_id NULL is
+    // deliberate: the notifications tenantScope keeps platform rows visible
+    // in the FAM shell regardless of the admin's JWT tenant. users is a
+    // platform-global table (no tenant_id) — the is_platform_admin predicate
+    // IS the scope for this service-role read. Best-effort: a notification
+    // hiccup must never fail signup (house rule 6).
+    try {
+      const platformAdmins = await this.db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.is_platform_admin, true), eq(users.status, 'active')));
+      await Promise.all(
+        platformAdmins.map((a) =>
+          this.notificationsService
+            .createInAppNotification(
+              a.id,
+              'tenant.signup',
+              `New workspace signup: ${tenant.name} (${tenant.slug}) — pending verification.`,
+              `/fam/verify?tenant=${tenant.id}`,
+              null,
+              { groupKey: `tenant.signup:${tenant.id}` },
+            )
+            .catch(() => undefined),
+        ),
+      );
+    } catch (e) {
+      this.logger.warn(
+        `FAM signup notification failed: ${(e as Error).message}`,
+      );
+    }
+
     return {
       id: tenant.id,
       name: tenant.name,

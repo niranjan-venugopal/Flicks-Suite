@@ -87,7 +87,11 @@ export function useDeleteCompany() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/crm/companies/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'companies'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'companies'] })
+      // Contact rows/filters reference the company by name — refresh them too.
+      qc.invalidateQueries({ queryKey: ['crm', 'contacts'] })
+    },
   })
 }
 
@@ -136,7 +140,11 @@ export function useDeleteContact() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/crm/contacts/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'contacts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'contacts'] })
+      // The company detail People card lists contacts — keep it fresh.
+      qc.invalidateQueries({ queryKey: ['crm', 'companies'] })
+    },
   })
 }
 

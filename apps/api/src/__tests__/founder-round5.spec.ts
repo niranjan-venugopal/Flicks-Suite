@@ -186,7 +186,8 @@ describe('submit for review: reviewer fan-out excludes the submitter', () => {
     for (const call of createInAppNotification.mock.calls) {
       const [, type, , linkUrl, notifTenant] = call as unknown[];
       expect(type).toBe('onboarding.submitted');
-      expect(linkUrl).toBe('/employees/onboarding');
+      // Round 11: deep link straight into the review dialog for this hire.
+      expect(linkUrl).toBe(`/employees/onboarding?employee=${empCId}`);
       expect(notifTenant).toBe(tenantId);
     }
 

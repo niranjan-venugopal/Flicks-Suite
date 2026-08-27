@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { DateField } from '@/components/ui/date-picker'
 import { EditDetailsDialog } from '@/components/employees/EditDetailsDialog'
+import { Card, Grid, Field, fmtDate, fmtAddress, fmtPhone } from '@/components/employees/detail-kit'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -33,27 +34,6 @@ const TABS = [
   'access',
 ] as const
 type Tab = (typeof TABS)[number]
-
-function fmtDate(d: string | null | undefined): string {
-  if (!d) return '—'
-  return new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
-function fmtAddress(a: EmployeeDetail['currentAddress']): string {
-  if (!a) return '—'
-  const parts = [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(
-    Boolean,
-  )
-  return parts.length ? parts.join(', ') : '—'
-}
-
-function fmtPhone(p: string | null | undefined): string {
-  return p && p.trim() ? p : '—'
-}
 
 function statusTone(s: EmployeeDetail['status']): PillTone {
   switch (s) {
@@ -819,73 +799,8 @@ function ComingSoon({ title, desc }: { title: string; desc: string }) {
 }
 
 // ─── Re-usable bits ──────────────────────────────────────────────────────────
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="card">
-      <div className="t-h3" style={{ marginBottom: 14 }}>{title}</div>
-      {children}
-    </div>
-  )
-}
-
-function Grid({ cols, children }: { cols: 2 | 3; children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: cols === 3 ? '1fr 1fr 1fr' : '1fr 1fr',
-        gap: 18,
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
-function Field({
-  label,
-  value,
-  hint,
-  mono,
-  capitalize,
-  span,
-}: {
-  label: string
-  value: string
-  hint?: string
-  mono?: boolean
-  capitalize?: boolean
-  span?: 2
-}) {
-  return (
-    <div style={{ gridColumn: span === 2 ? 'span 2' : 'auto' }}>
-      <div
-        className="t-caption"
-        style={{ fontSize: 11, color: 'var(--text-mute)', marginBottom: 4 }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: 700,
-          color: 'var(--text)',
-          fontFamily: mono ? 'var(--font-mono)' : undefined,
-          textTransform: capitalize ? 'capitalize' : undefined,
-          wordBreak: 'break-word',
-        }}
-      >
-        {value}
-      </div>
-      {hint && (
-        <div className="t-mute" style={{ fontSize: 11, marginTop: 3 }}>
-          {hint}
-        </div>
-      )}
-    </div>
-  )
-}
+// Card/Grid/Field + the fmt helpers moved to components/employees/detail-kit
+// (shared with the onboarding review dialog).
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (

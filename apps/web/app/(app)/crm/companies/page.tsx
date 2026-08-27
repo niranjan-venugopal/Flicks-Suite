@@ -8,20 +8,26 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
 import { FilterBar, BulkBar, EmptyState } from '@/components/crm/kit'
-import { useCompanies, useCreateCompany, useDeleteCompany } from '@/lib/api/queries/use-crm'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { useCompanies, useCreateCompany, useDeleteCompany, type DirectoryCompany } from '@/lib/api/queries/use-crm'
 
 export default function CompaniesPage() {
   const [q, setQ] = useState('')
   const [modal, setModal] = useState(false)
   const [sel, setSel] = useState<string[]>([])
+  const [deleting, setDeleting] = useState<DirectoryCompany | null>(null)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const { data, isLoading } = useCompanies(q || undefined)
   const del = useDeleteCompany()
   const rows = data?.data ?? []
 
   const bulkDelete = async () => {
-    if (!window.confirm(`Delete ${sel.length} compan${sel.length === 1 ? 'y' : 'ies'}?`)) return
+    setBulkBusy(true)
     for (const id of sel) { try { await del.mutateAsync(id) } catch { /* server enforces */ } }
+    setBulkBusy(false)
     setSel([])
+    setBulkOpen(false)
   }
 
   return (
@@ -45,7 +51,7 @@ export default function CompaniesPage() {
           <table className="tbl" style={{ width: '100%' }}>
             <thead>
               <tr>
-                <th style={{ width: 34 }} /><th>Company</th><th>Domain</th><th>Industry</th><th>Location</th><th>Source</th>
+                <th style={{ width: 34 }} /><th>Company</th><th>Domain</th><th>Industry</th><th>Location</th><th>Source</th><th />
               </tr>
             </thead>
             <tbody>
@@ -64,6 +70,10 @@ export default function CompaniesPage() {
                   <td>{c.industry ?? '—'}</td>
                   <td>{[c.city, c.country_code].filter(Boolean).join(', ') || '—'}</td>
                   <td>{c.source ? <Pill>{c.source.replace(/_/g, ' ')}</Pill> : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} title="Delete — Manager and above"
+                      disabled={del.isPending} onClick={() => setDeleting(c)} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -72,8 +82,31 @@ export default function CompaniesPage() {
       </div>
 
       <BulkBar count={sel.length} onClear={() => setSel([])} actions={[
-        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => void bulkDelete() },
+        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => setBulkOpen(true) },
       ]} />
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete company"
+        danger
+        body={deleting ? `Delete ${deleting.name}? Its contacts, deals and history are kept — and the domain is freed for a fresh record.` : null}
+        confirmLabel="Delete company"
+        loading={del.isPending && !bulkBusy}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && del.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
+      />
+      <ConfirmDialog
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Delete companies"
+        danger
+        body={`Delete ${sel.length} compan${sel.length === 1 ? 'y' : 'ies'}?`}
+        confirmLabel={`Delete ${sel.length}`}
+        loading={bulkBusy}
+        loadingLabel="Deleting…"
+        onConfirm={() => void bulkDelete()}
+      />
 
       <NewCompanyModal open={modal} onClose={() => setModal(false)} />
     </div>

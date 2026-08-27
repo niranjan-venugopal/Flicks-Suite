@@ -1,9 +1,10 @@
 'use client'
 
-import { use } from 'react'
+import { use, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Btn, Icon, Pill } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { OwnerAv } from '@/components/crm/kit'
 import { DealsCard, ActivityCard } from '@/components/crm/DetailCards'
 import {
@@ -23,6 +24,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params)
   const router = useRouter()
   const deleteCompany = useDeleteCompany()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const { data, isLoading, error } = useCompany(id)
   const people = useContacts({ company_id: id })
   const deals = useCompanyDeals(id)
@@ -67,14 +69,22 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {c.phone && <a href={`tel:${c.phone}`}><Btn kind="secondary" size="sm" icon={<Icon.phone size={13} />}>Call</Btn></a>}
-          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteCompany.isPending}
-            onClick={() => {
-              if (window.confirm(`Delete ${c.name}? Its contacts, deals and history are kept — and the domain is freed for a fresh record.`)) {
-                deleteCompany.mutate(c.id, { onSuccess: () => router.push('/crm/companies') })
-              }
-            }} />
+          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} title="Delete — Manager and above"
+            disabled={deleteCompany.isPending} onClick={() => setConfirmingDelete(true)} />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        title="Delete company"
+        danger
+        body={`Delete ${c.name}? Its contacts, deals and history are kept — and the domain is freed for a fresh record.`}
+        confirmLabel="Delete company"
+        loading={deleteCompany.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleteCompany.mutate(c.id, { onSuccess: () => router.push('/crm/companies') })}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

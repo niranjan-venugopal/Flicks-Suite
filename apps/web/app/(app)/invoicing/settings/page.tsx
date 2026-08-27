@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { InvoPage } from '@/components/invoicing/invo'
 import { NumberingTab } from '@/components/invoicing/NumberingTab'
 import { useOrgFinancial } from '@/lib/api/queries/use-invoicing'
@@ -96,8 +97,9 @@ export default function InvoicingSettingsPage() {
     }
   }
 
+  const [disconnectOpen, setDisconnectOpen] = useState(false)
   const disconnectRazorpay = async () => {
-    if (!window.confirm('Disconnect Razorpay? Customers will no longer be able to pay online.')) return
+    setDisconnectOpen(false)
     try {
       await disconnectRzp.mutateAsync()
       toast({ title: 'Razorpay disconnected' })
@@ -325,7 +327,7 @@ export default function InvoicingSettingsPage() {
                 // Legacy connected tenants keep visibility + the exit door.
                 <>
                   <Pill tone="green" dot>Connected</Pill>
-                  <Btn kind="secondary" size="sm" onClick={disconnectRazorpay} disabled={disconnectRzp.isPending}>
+                  <Btn kind="secondary" size="sm" onClick={() => setDisconnectOpen(true)} disabled={disconnectRzp.isPending}>
                     Disconnect
                   </Btn>
                 </>
@@ -452,6 +454,17 @@ export default function InvoicingSettingsPage() {
           </Btn>
         </div>
       )}
+
+      <ConfirmDialog
+        open={disconnectOpen}
+        onClose={() => setDisconnectOpen(false)}
+        title="Disconnect Razorpay"
+        body="Disconnect Razorpay? Customers will no longer be able to pay online."
+        confirmLabel="Disconnect"
+        loading={disconnectRzp.isPending}
+        loadingLabel="Disconnecting…"
+        onConfirm={() => void disconnectRazorpay()}
+      />
     </InvoPage>
   )
 }

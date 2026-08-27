@@ -166,6 +166,7 @@ export default function FamTenantsPage() {
                   <th>Users</th>
                   <th>Health</th>
                   <th>Status</th>
+                  <th>Verified</th>
                   <th>Joined</th>
                   <th />
                 </tr>
@@ -184,7 +185,7 @@ export default function FamTenantsPage() {
                           color: 'inherit',
                         }}
                       >
-                        <Avatar name={t.name} size="sm" />
+                        <Avatar name={t.name} size="sm" src={t.logoUrl ?? undefined} />
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 800 }}>{t.name}</div>
                           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
@@ -243,6 +244,15 @@ export default function FamTenantsPage() {
                       <Pill tone={statusTone(t.status)} dot>
                         {t.status.replace('_', ' ')}
                       </Pill>
+                    </td>
+                    <td>
+                      {/* Distinct from the billing-status pill on purpose —
+                          verification comes ONLY from the FAM verify action. */}
+                      {t.verifiedAt ? (
+                        <Pill tone="green" dot>Verified</Pill>
+                      ) : (
+                        <Pill tone="yellow" dot>Unverified</Pill>
+                      )}
                     </td>
                     <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
                       {timeAgo(t.createdAt)}

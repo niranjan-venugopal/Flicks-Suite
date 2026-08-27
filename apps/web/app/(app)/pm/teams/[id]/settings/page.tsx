@@ -4,6 +4,7 @@ import { use, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, Toggle, avBg, initials } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { StateGlyph, PM_CAT_COLOR } from '@/components/pm/glyphs'
 import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -54,6 +55,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
 
   const [tab, setTab] = useState<Tab>('Workflow states')
   const [privateConfirm, setPrivateConfirm] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [newState, setNewState] = useState<{ cat: string; name: string } | null>(null)
   const [newLabel, setNewLabel] = useState('')
@@ -415,12 +417,24 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
               </div>
             </div>
             <Btn kind="danger" size="sm" disabled={!isAdmin || deleteTeam.isPending}
-              onClick={() => { if (window.confirm(`Delete ${team.key}? Issues stay restorable for 30 days.`)) deleteTeam.mutate() }}>
+              onClick={() => setDeleteConfirm(true)}>
               Delete {team.key}…
             </Btn>
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteConfirm}
+        onClose={() => setDeleteConfirm(false)}
+        title="Delete team"
+        danger
+        body={`Delete ${team.key}? Issues stay restorable for 30 days.`}
+        confirmLabel={`Delete ${team.key}`}
+        loading={deleteTeam.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleteTeam.mutate()}
+      />
 
       {/* Make-private confirm (§4.4 — audited) */}
       {privateConfirm && (

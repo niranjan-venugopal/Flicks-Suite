@@ -51,7 +51,8 @@ export function NotificationsBell() {
     } catch {
       /* swallow — UX should not be blocked on a 4xx */
     }
-    if (n.linkUrl) router.push(n.linkUrl)
+    // Link-less notifications land in the Inbox instead of dying silently.
+    router.push(n.linkUrl ?? '/inbox')
   }
 
   return (

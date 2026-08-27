@@ -500,7 +500,6 @@ export function Sidebar() {
     return bestId
   }, [pathname, nav])
 
-  const parentOfActive = activeId.includes('>') ? activeId.split('>')[0] : null
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   // Collapsible rail (prototype shell-v3: 248px ↔ 72px). Persisted locally.
@@ -521,9 +520,9 @@ export function Sidebar() {
     setCollapsed(next)
     if (typeof window !== 'undefined') localStorage.setItem('sidebar-collapsed', next ? '1' : '0')
   }
-  useEffect(() => {
-    if (parentOfActive) setOpenGroups((g) => ({ ...g, [parentOfActive!]: true }))
-  }, [parentOfActive])
+  // No route-driven force-open effect here: NavRow's `??` fallback already
+  // reveals the active section when the user hasn't toggled it, and writing
+  // `true` on every navigation would clobber an explicit collapse.
 
   const isFam = role === 'FAM'
   // Brand area: customer workspaces see the Flicks Suite mark with the
@@ -704,8 +703,12 @@ function NavRow({
   onExpand?: () => void
 }) {
   const hasChildren = !!item.children?.length
+  // `??`, never `||`: the user's stored choice is authoritative. With `||`
+  // the group holding the ACTIVE route could never be collapsed — the toggle
+  // wrote false but the route term OR'd it straight back open ("stuck
+  // dropdown"). Untouched groups still auto-reveal the active section.
   const isOpen =
-    openGroups[item.id] || (hasChildren && activeId.startsWith(`${item.id}>`))
+    openGroups[item.id] ?? (hasChildren && activeId.startsWith(`${item.id}>`))
   const active = activeId === item.id
   const parentActive = hasChildren && activeId.startsWith(`${item.id}>`)
   const IconCmp = Icon[item.icon]

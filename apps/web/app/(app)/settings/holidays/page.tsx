@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { CalendarDays, Download, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { Btn, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { useLocations } from '@/lib/api/queries/use-settings'
 import {
@@ -64,6 +65,7 @@ export default function HolidaysSettingsPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [editing, setEditing] = useState<Holiday | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [deleting, setDeleting] = useState<Holiday | null>(null)
 
   const holidays = data?.holidays ?? []
   const locations = (locData?.data ?? []).filter((l) => l.isActive)
@@ -82,7 +84,6 @@ export default function HolidaysSettingsPage() {
   const companyWide = holidays.filter((h) => !h.locationId).length
 
   const handleDelete = async (h: Holiday) => {
-    if (!window.confirm(`Delete "${h.name}" (${h.date})? Leave-day math will no longer skip it.`)) return
     try {
       await del.mutateAsync(h.id)
       toast({ title: 'Holiday deleted', description: h.name })
@@ -92,6 +93,8 @@ export default function HolidaysSettingsPage() {
         description: err instanceof Error ? err.message : 'Try again',
         variant: 'destructive',
       })
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -211,7 +214,7 @@ export default function HolidaysSettingsPage() {
                           <button
                             className="icon-btn"
                             title="Delete"
-                            onClick={() => handleDelete(h)}
+                            onClick={() => setDeleting(h)}
                             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--coral, #f87171)', padding: 4 }}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -252,6 +255,18 @@ export default function HolidaysSettingsPage() {
           onClose={() => setImportOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete holiday"
+        danger
+        body={deleting ? `Delete "${deleting.name}" (${deleting.date})? Leave-day math will no longer skip it.` : null}
+        confirmLabel="Delete holiday"
+        loading={del.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && void handleDelete(deleting)}
+      />
     </SettingsLayout>
   )
 }

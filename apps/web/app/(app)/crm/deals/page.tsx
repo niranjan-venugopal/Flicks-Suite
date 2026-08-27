@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Pill } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { api } from '@/lib/api/client'
@@ -86,6 +87,8 @@ export default function DealsBoardPage() {
   const [wonDeal, setWonDeal] = useState<TDeal | null>(null)
   const [lostDeal, setLostDeal] = useState<TDeal | null>(null)
   const [bulkStagePick, setBulkStagePick] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   const data = board.data?.data
   const base = data?.base_currency ?? 'INR'
@@ -178,11 +181,13 @@ export default function DealsBoardPage() {
       setSel([]); setBulkStagePick(false)
     },
     del: async () => {
-      if (!window.confirm(`Delete ${sel.length} deal(s)? This can't be undone.`)) return
+      setBulkBusy(true)
       for (const id of sel) {
         try { await del.mutateAsync(id) } catch { /* per-deal toast is noise in bulk */ }
       }
+      setBulkBusy(false)
       setSel([])
+      setBulkDeleteOpen(false)
     },
   }
 
@@ -302,7 +307,7 @@ export default function DealsBoardPage() {
         onClear={() => setSel([])}
         actions={[
           { icon: <Icon.switchH size={13} />, label: 'Move stage', onClick: () => setBulkStagePick(true) },
-          { icon: <Icon.trash size={13} />, label: 'Delete', danger: true, onClick: () => void bulk.del() },
+          { icon: <Icon.trash size={13} />, label: 'Delete', danger: true, onClick: () => setBulkDeleteOpen(true) },
         ]}
       />
       {bulkStagePick && (
@@ -324,6 +329,17 @@ export default function DealsBoardPage() {
         <span>? — keymap</span>
       </div>
 
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        title="Delete deals"
+        danger
+        body={`Delete ${sel.length} deal(s)? This can't be undone.`}
+        confirmLabel={`Delete ${sel.length}`}
+        loading={bulkBusy}
+        loadingLabel="Deleting…"
+        onConfirm={() => void bulk.del()}
+      />
       <KeymapOverlay open={keymap} onClose={() => setKeymap(false)} />
 
       {wonDeal && (

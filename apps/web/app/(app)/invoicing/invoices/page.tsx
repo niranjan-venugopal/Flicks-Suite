@@ -12,6 +12,7 @@ import {
   type InvoiceRow,
 } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Sk } from '@/components/states'
 import {
   INVO,
@@ -128,6 +129,7 @@ export default function InvoicesPage() {
   const record = useRecordPayment()
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [markingId, setMarkingId] = useState<string | null>(null)
+  const [markPaidFor, setMarkPaidFor] = useState<InvoiceRow | null>(null)
 
   const rows = data?.data ?? []
   const drafts = (draftsData?.data ?? []).slice(0, 3)
@@ -160,11 +162,9 @@ export default function InvoicesPage() {
     }
   }
 
-  const onMarkPaid = async (inv: InvoiceRow) => {
+  const doMarkPaid = async (inv: InvoiceRow) => {
     const amount = inv.amount_outstanding ?? inv.total_amount
-    if (!window.confirm(`Mark ${inv.invoice_number} as paid? This records ${fmt(amount, inv.currency)} as received.`)) {
-      return
-    }
+    setMarkPaidFor(null)
     setMarkingId(inv.id)
     try {
       const res = await record.mutateAsync({
@@ -313,7 +313,7 @@ export default function InvoicesPage() {
                     <InvoBtn
                       kind="chip-blue"
                       disabled={markingId === inv.id}
-                      onClick={() => onMarkPaid(inv)}
+                      onClick={() => setMarkPaidFor(inv)}
                     >
                       {markingId === inv.id ? 'Marking…' : 'Mark as paid'}
                     </InvoBtn>
@@ -328,6 +328,15 @@ export default function InvoicesPage() {
           </InvoRow>
         ))}
       </InvoTable>
+
+      <ConfirmDialog
+        open={!!markPaidFor}
+        onClose={() => setMarkPaidFor(null)}
+        title="Mark as paid"
+        body={markPaidFor ? `Mark ${markPaidFor.invoice_number} as paid? This records ${fmt(markPaidFor.amount_outstanding ?? markPaidFor.total_amount, markPaidFor.currency)} as received.` : null}
+        confirmLabel="Mark as paid"
+        onConfirm={() => markPaidFor && void doMarkPaid(markPaidFor)}
+      />
     </InvoPage>
   )
 }

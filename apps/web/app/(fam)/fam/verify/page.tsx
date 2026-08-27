@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
@@ -26,16 +27,26 @@ function stateCodeOf(gstin: string | null): string | null {
   return gstin.slice(0, 2)
 }
 
-export default function FamVerifyPage() {
+function FamVerifyContent() {
+  const router = useRouter()
+  const sp = useSearchParams()
   const queue = useFamVerificationQueue()
   const verify = useVerifyTenant()
   const { toast } = useToast()
 
   const rows = queue.data?.data ?? []
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Deep-linkable: signup notifications and tenant pages land on
+  // /fam/verify?tenant=<id> with that company pre-selected.
+  const [selectedId, setSelectedId] = useState<string | null>(() => sp.get('tenant'))
   const [decisionNotes, setDecisionNotes] = useState('')
 
-  // Auto-select the first row when data loads.
+  const selectRow = (id: string) => {
+    setSelectedId(id)
+    router.replace(`/fam/verify?tenant=${id}`, { scroll: false })
+  }
+
+  // Auto-select the first row when data loads (or the deep-linked tenant is
+  // no longer in the queue — e.g. already verified).
   useEffect(() => {
     if (rows.length > 0 && (!selectedId || !rows.find((r) => r.id === selectedId))) {
       setSelectedId(rows[0].id)
@@ -47,13 +58,14 @@ export default function FamVerifyPage() {
   const handleApprove = async () => {
     if (!selected) return
     try {
-      await verify.mutateAsync(selected.id)
+      await verify.mutateAsync({ id: selected.id, notes: decisionNotes })
       toast({
         title: 'Verified',
         description: `${selected.name} approved & verified.`,
       })
       setDecisionNotes('')
       setSelectedId(null)
+      router.replace('/fam/verify', { scroll: false })
     } catch (e) {
       toast({
         title: 'Could not verify',
@@ -115,7 +127,7 @@ export default function FamVerifyPage() {
                   return (
                     <button
                       key={q.id}
-                      onClick={() => setSelectedId(q.id)}
+                      onClick={() => selectRow(q.id)}
                       style={{
                         width: '100%',
                         textAlign: 'left',
@@ -128,7 +140,7 @@ export default function FamVerifyPage() {
                       }}
                     >
                       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                        <Avatar name={q.name} size="sm" />
+                        <Avatar name={q.name} size="sm" src={q.logoUrl ?? undefined} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
                             <span
@@ -191,7 +203,7 @@ export default function FamVerifyPage() {
                         alignItems: 'center',
                       }}
                     >
-                      <Avatar name={selected.name} size="lg" />
+                      <Avatar name={selected.name} size="lg" src={selected.logoUrl ?? undefined} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 3 }}>
                           <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.02em' }}>
@@ -321,6 +333,14 @@ export default function FamVerifyPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function FamVerifyPage() {
+  return (
+    <Suspense fallback={null}>
+      <FamVerifyContent />
+    </Suspense>
   )
 }
 

@@ -1,9 +1,10 @@
 'use client'
 
-import { use } from 'react'
+import { use, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Btn, Icon, Pill } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { OwnerAv } from '@/components/crm/kit'
 import { DealsCard, ActivityCard } from '@/components/crm/DetailCards'
 import {
@@ -23,6 +24,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params)
   const router = useRouter()
   const deleteContact = useDeleteContact()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const { data, isLoading, error } = useContact(id)
   const p = data?.data
   const company = useCompany(p?.company_id ?? null)
@@ -70,14 +72,22 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {p.email && <a href={`mailto:${p.email}`}><Btn kind="secondary" size="sm" icon={<Icon.mail size={13} />}>Email</Btn></a>}
           {p.phone && <a href={`tel:${p.phone}`}><Btn kind="secondary" size="sm" icon={<Icon.phone size={13} />}>Call</Btn></a>}
-          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteContact.isPending}
-            onClick={() => {
-              if (window.confirm(`Delete ${name}? Their deals and activity history are kept.`)) {
-                deleteContact.mutate(p.id, { onSuccess: () => router.push('/crm/contacts') })
-              }
-            }} />
+          <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} title="Delete — Manager and above"
+            disabled={deleteContact.isPending} onClick={() => setConfirmingDelete(true)} />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        title="Delete contact"
+        danger
+        body={`Delete ${name}? Their deals and activity history are kept.`}
+        confirmLabel="Delete contact"
+        loading={deleteContact.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleteContact.mutate(p.id, { onSuccess: () => router.push('/crm/contacts') })}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

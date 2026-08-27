@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { Btn, Icon, Modal, Pill, SectionHead, Toggle } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -26,6 +27,7 @@ export default function FormsPage() {
   const deleteForm = useDeleteForm()
   const [createOpen, setCreateOpen] = useState(false)
   const [subsFor, setSubsFor] = useState<WebForm | null>(null)
+  const [deleting, setDeleting] = useState<WebForm | null>(null)
   const { toast } = useToast()
   const rows = data?.data ?? []
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
@@ -54,26 +56,26 @@ export default function FormsPage() {
               <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(62,123,250,.14)', color: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon.doc size={16} />
               </div>
-              <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ flex: 1, minWidth: 150 }}>
                 <div style={{ fontSize: 14, fontWeight: 800 }}>{f.name}</div>
                 <div className="t-mute" style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>
                   /f/{f.token} · source form:{f.source_tag} · {f.fields.length} fields
                 </div>
               </div>
-              <Pill tone="blue">{f.submission_count} submissions</Pill>
-              <Btn kind="ghost" size="sm" icon={<Icon.copy size={12} />}
-                onClick={() => { void navigator.clipboard.writeText(`${origin}/f/${f.token}`); toast({ title: 'Hosted link copied' }) }}>
-                Copy link
-              </Btn>
-              <Link href={`/f/${f.token}`} target="_blank"><Btn kind="ghost" size="sm" icon={<Icon.eye size={12} />}>Preview</Btn></Link>
-              <Btn kind="secondary" size="sm" onClick={() => setSubsFor(f)}>Submissions</Btn>
-              <Toggle on={f.active} onChange={(v: boolean) => setActive.mutate({ id: f.id, active: v })} />
-              <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteForm.isPending}
-                onClick={() => {
-                  if (window.confirm(`Delete “${f.name}”? The public link stops working immediately. Past submissions and the leads they created are kept.`)) {
-                    deleteForm.mutate(f.id, { onSuccess: () => toast({ title: 'Form deleted', description: 'Submissions and leads were kept.' }) })
-                  }
-                }} />
+              {/* One non-shrinking cluster so the actions never orphan onto a
+                  second line — below ~800px the whole cluster wraps together. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <Pill tone="blue">{f.submission_count} submissions</Pill>
+                <Btn kind="ghost" size="sm" icon={<Icon.copy size={12} />}
+                  onClick={() => { void navigator.clipboard.writeText(`${origin}/f/${f.token}`); toast({ title: 'Hosted link copied' }) }}>
+                  Copy link
+                </Btn>
+                <Link href={`/f/${f.token}`} target="_blank"><Btn kind="ghost" size="sm" icon={<Icon.eye size={12} />}>Preview</Btn></Link>
+                <Btn kind="secondary" size="sm" onClick={() => setSubsFor(f)}>Submissions</Btn>
+                <Toggle on={f.active} onChange={(v: boolean) => setActive.mutate({ id: f.id, active: v })} />
+                <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteForm.isPending}
+                  onClick={() => setDeleting(f)} />
+              </div>
             </div>
           ))}
         </div>
@@ -84,6 +86,22 @@ export default function FormsPage() {
 
       {createOpen && <CreateFormModal onClose={() => setCreateOpen(false)} />}
       {subsFor && <SubmissionsModal form={subsFor} onClose={() => setSubsFor(null)} />}
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete form"
+        danger
+        body={deleting ? `Delete “${deleting.name}”? The public link stops working immediately. Past submissions and the leads they created are kept.` : null}
+        confirmLabel="Delete form"
+        loading={deleteForm.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && deleteForm.mutate(deleting.id, {
+          onSuccess: () => {
+            toast({ title: 'Form deleted', description: 'Submissions and leads were kept.' })
+            setDeleting(null)
+          },
+        })}
+      />
     </div>
   )
 }

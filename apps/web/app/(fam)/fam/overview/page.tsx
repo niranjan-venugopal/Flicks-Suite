@@ -211,7 +211,7 @@ export default function FamOverviewPage() {
                       <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.name}</div>
                       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>{reason}</div>
                     </div>
-                    <Link href="/fam/verify"><Btn kind="ghost" size="sm">Review</Btn></Link>
+                    <Link href={`/fam/verify?tenant=${v.id}`}><Btn kind="ghost" size="sm">Review</Btn></Link>
                   </div>
                 )
               })

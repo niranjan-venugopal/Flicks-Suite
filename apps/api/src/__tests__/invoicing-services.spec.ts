@@ -1378,6 +1378,7 @@ describe('Members & auditor role (Sprint 8)', () => {
     notificationsStub,
     authStub,
   moduleAccess,
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
 );
 
   // Two isolated companies + an owner; the auditor is invited into both.
@@ -1684,6 +1685,7 @@ describe('FAM module toggle gate + registry/seats/metrics (Sprint 9)', () => {
     {} as never, // authService — unused by these methods
     {} as never, // notifications — unused
     {} as never, // analytics — unused
+    { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never, // media — unused
   );
   let tenantId: string;
   let ownerId: string;
@@ -1918,6 +1920,7 @@ describe('FAM consented-debug (Sprint 10 §E)', () => {
     {} as never,
     {} as never,
     {} as never,
+    { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
   );
   let tenantId: string;
   let ownerId: string;

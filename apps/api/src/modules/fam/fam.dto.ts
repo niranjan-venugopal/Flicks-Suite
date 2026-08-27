@@ -172,3 +172,11 @@ export class ToggleModuleDto {
   @IsBoolean()
   enabled!: boolean;
 }
+
+export class VerifyTenantDto {
+  @ApiPropertyOptional({ description: 'Reviewer notes stored in the platform audit log' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000)
+  notes?: string;
+}

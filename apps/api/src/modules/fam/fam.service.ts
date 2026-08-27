@@ -38,6 +38,7 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
+import { MediaService } from '../media/media.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   AnalyticsService,
@@ -63,6 +64,7 @@ export class FamService {
     private readonly authService: AuthService,
     private readonly notificationsService: NotificationsService,
     private readonly analytics: AnalyticsService,
+    private readonly mediaService: MediaService,
   ) {}
 
   // ─── Overview (platform-wide stats) ────────────────────────────────────────
@@ -273,6 +275,9 @@ export class FamService {
         status: tenants.status,
         createdAt: tenants.created_at,
         trialEndsAt: tenants.trial_ends_at,
+        verifiedAt: tenants.verified_at,
+        logoKey: tenants.logo_key,
+        logoUrlLegacy: tenants.logo_url,
         planCode: subscriptions.plan_code,
         subStatus: subscriptions.status,
         mrrAmount: subscriptions.mrr_amount,
@@ -338,26 +343,32 @@ export class FamService {
     // Build the shaped response. If a signal filter was requested, drop
     // tenants whose latest snapshot doesn't match — cheaper than a
     // second SQL pass for the small page sizes the UI uses.
-    const data = baseRows
-      .map((r) => {
-        const h = healthByTenant.get(r.id);
-        return {
-          id: r.id,
-          name: r.name,
-          slug: r.slug,
-          status: r.status,
-          createdAt: r.createdAt.toISOString(),
-          trialEndsAt: r.trialEndsAt?.toISOString() ?? null,
-          plan: r.planCode ?? null,
-          subStatus: r.subStatus ?? null,
-          mrr: r.mrrAmount != null ? Number(r.mrrAmount) : 0,
-          userCount: r.userCount ?? 0,
-          memberCount: memberCountByTenant.get(r.id) ?? 0,
-          signal: h?.signal ?? null,
-          healthScore: h?.healthScore ?? null,
-        };
-      })
-      .filter((t) => (query.signal ? t.signal === query.signal : true));
+    const data = (
+      await Promise.all(
+        baseRows.map(async (r) => {
+          const h = healthByTenant.get(r.id);
+          return {
+            id: r.id,
+            name: r.name,
+            slug: r.slug,
+            status: r.status,
+            createdAt: r.createdAt.toISOString(),
+            trialEndsAt: r.trialEndsAt?.toISOString() ?? null,
+            verifiedAt: r.verifiedAt?.toISOString() ?? null,
+            // Signed URL from the uploaded logo_key, else the legacy URL —
+            // same serving rule as the customer app (settings/auth).
+            logoUrl: await this.mediaService.servedUrl(r.logoKey, r.logoUrlLegacy, 64),
+            plan: r.planCode ?? null,
+            subStatus: r.subStatus ?? null,
+            mrr: r.mrrAmount != null ? Number(r.mrrAmount) : 0,
+            userCount: r.userCount ?? 0,
+            memberCount: memberCountByTenant.get(r.id) ?? 0,
+            signal: h?.signal ?? null,
+            healthScore: h?.healthScore ?? null,
+          };
+        }),
+      )
+    ).filter((t) => (query.signal ? t.signal === query.signal : true));
 
     return {
       data,
@@ -435,7 +446,8 @@ export class FamService {
       country: tenant.country_code,
       currency: tenant.currency,
       timezone: tenant.timezone,
-      logoUrl: tenant.logo_url,
+      // logo_key is the live column (R2 upload); logo_url is legacy-only.
+      logoUrl: await this.mediaService.servedUrl(tenant.logo_key, tenant.logo_url, 256),
       trialEndsAt: tenant.trial_ends_at?.toISOString() ?? null,
       verifiedAt: tenant.verified_at?.toISOString() ?? null,
       createdAt: tenant.created_at.toISOString(),
@@ -1583,6 +1595,8 @@ export class FamService {
         industry: tenants.industry,
         sizeBand: tenants.size_band,
         createdAt: tenants.created_at,
+        logoKey: tenants.logo_key,
+        logoUrlLegacy: tenants.logo_url,
       })
       .from(tenants)
       .where(
@@ -1595,26 +1609,31 @@ export class FamService {
       .orderBy(desc(tenants.created_at));
 
     return {
-      data: rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        slug: r.slug,
-        legalName: r.legalName,
-        gstin: r.gstin,
-        pan: r.pan,
-        cin: r.cin,
-        industry: r.industry,
-        sizeBand: r.sizeBand,
-        createdAt: r.createdAt.toISOString(),
-      })),
+      data: await Promise.all(
+        rows.map(async (r) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          legalName: r.legalName,
+          gstin: r.gstin,
+          pan: r.pan,
+          cin: r.cin,
+          industry: r.industry,
+          sizeBand: r.sizeBand,
+          createdAt: r.createdAt.toISOString(),
+          logoUrl: await this.mediaService.servedUrl(r.logoKey, r.logoUrlLegacy, 64),
+        })),
+      ),
       total: rows.length,
     };
   }
 
   /**
-   * Marks a tenant as verified (sets tenants.verified_at = now()).
+   * Marks a tenant as verified (sets tenants.verified_at = now()). This is
+   * the ONLY writer of verified_at in the application — the badge can never
+   * appear without a FAM admin taking this action.
    */
-  async verifyTenant(tenantId: string, actorUserId: string) {
+  async verifyTenant(tenantId: string, actorUserId: string, notes?: string) {
     if (tenantId === SPECFLICKS_TENANT_ID) {
       throw new NotFoundException('Tenant not found');
     }
@@ -1633,6 +1652,7 @@ export class FamService {
       actorUserId,
       action: 'tenant.verified',
       targetTenantId: tenantId,
+      metadata: notes?.trim() ? { notes: notes.trim() } : undefined,
     });
 
     return {

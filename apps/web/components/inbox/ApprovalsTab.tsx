@@ -452,7 +452,7 @@ function ApprovalDetail({
                 <Field label="Employee code" value={ob.employeeCode ?? '—'} />
               </div>
               <Link
-                href={`/employees/${ob.employeeId}`}
+                href={`/employees/onboarding?employee=${ob.employeeId}`}
                 style={{
                   fontSize: 12.5,
                   fontWeight: 700,
@@ -460,7 +460,7 @@ function ApprovalDetail({
                   textDecoration: 'none',
                 }}
               >
-                Review full profile →
+                Review submitted details →
               </Link>
             </>
           )

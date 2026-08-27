@@ -1,22 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import {
   useOnboardingQueue,
   useApproveOnboarding,
-  useRejectOnboarding,
   type OnboardingQueueRow,
 } from '@/lib/api/queries/use-employees'
 import { useToast } from '@/components/ui/use-toast'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { OnboardingReviewDialog } from '@/components/employees/OnboardingReviewDialog'
 
 function rowName(r: OnboardingQueueRow): string {
   return (r.fullName ?? '').trim() || r.email || r.employeeCode || 'New hire'
@@ -30,14 +25,19 @@ function fmtDate(iso: string | null): string {
     : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-export default function OnboardingQueuePage() {
+function OnboardingQueueContent() {
+  const router = useRouter()
+  const sp = useSearchParams()
   const queue = useOnboardingQueue()
   const approve = useApproveOnboarding()
-  const reject = useRejectOnboarding()
   const { toast } = useToast()
 
-  const [rejecting, setRejecting] = useState<OnboardingQueueRow | null>(null)
-  const [reason, setReason] = useState('')
+  // The URL is the single source of truth for which hire is being reviewed —
+  // notification/email deep links land here as ?employee=<id>.
+  const reviewing = sp.get('employee')
+  const openReview = (id: string) =>
+    router.replace(`/employees/onboarding?employee=${id}`, { scroll: false })
+  const closeReview = () => router.replace('/employees/onboarding', { scroll: false })
 
   const rows = queue.data?.data ?? []
 
@@ -48,25 +48,6 @@ export default function OnboardingQueuePage() {
     } catch (e) {
       toast({
         title: 'Could not approve',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleReject = async () => {
-    if (!rejecting) return
-    try {
-      await reject.mutateAsync({ id: rejecting.id, reason: reason.trim() || undefined })
-      toast({
-        title: 'Sent back for changes',
-        description: `${rowName(rejecting)} can edit and resubmit.`,
-      })
-      setRejecting(null)
-      setReason('')
-    } catch (e) {
-      toast({
-        title: 'Could not reject',
         description: e instanceof Error ? e.message : 'Try again',
         variant: 'destructive',
       })
@@ -139,17 +120,18 @@ export default function OnboardingQueuePage() {
                     <Btn
                       kind="secondary"
                       size="sm"
-                      onClick={() => { setRejecting(row); setReason('') }}
-                      disabled={approve.isPending || reject.isPending}
+                      icon={<Icon.eye size={13} />}
+                      onClick={() => openReview(row.id)}
+                      disabled={approve.isPending}
                     >
-                      Send back
+                      Review
                     </Btn>
                     <Btn
                       kind="primary"
                       size="sm"
                       icon={<Icon.check size={13} />}
                       onClick={() => handleApprove(row)}
-                      disabled={approve.isPending || reject.isPending}
+                      disabled={approve.isPending}
                     >
                       Approve
                     </Btn>
@@ -161,41 +143,15 @@ export default function OnboardingQueuePage() {
         </div>
       </div>
 
-      <Dialog open={!!rejecting} onOpenChange={(o) => { if (!o) { setRejecting(null); setReason('') } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Send onboarding back for changes</DialogTitle>
-          </DialogHeader>
-          {rejecting && (
-            <>
-              <p style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
-                {rowName(rejecting)} will be notified and can edit their details and resubmit.
-              </p>
-              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
-                Reason (optional)
-              </label>
-              <textarea
-                className="input"
-                rows={4}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="What should they correct before resubmitting?"
-                maxLength={500}
-                style={{ width: '100%', padding: 10, fontSize: 12.5, lineHeight: 1.5 }}
-                autoFocus
-              />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-                <Btn kind="ghost" onClick={() => { setRejecting(null); setReason('') }} disabled={reject.isPending}>
-                  Cancel
-                </Btn>
-                <Btn kind="secondary" onClick={handleReject} disabled={reject.isPending}>
-                  {reject.isPending ? 'Sending…' : 'Send back'}
-                </Btn>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <OnboardingReviewDialog employeeId={reviewing} onClose={closeReview} />
     </div>
+  )
+}
+
+export default function OnboardingQueuePage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingQueueContent />
+    </Suspense>
   )
 }

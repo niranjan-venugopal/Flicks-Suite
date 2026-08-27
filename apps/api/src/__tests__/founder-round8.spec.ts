@@ -101,6 +101,7 @@ const membersService = new MembersService(
   notifications,
   { issueInviteMagicLink: async () => 'https://app.test/verify?token=stub' } as unknown as AuthService,
   moduleAccess,
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
 );
 
 let tenantId: string;

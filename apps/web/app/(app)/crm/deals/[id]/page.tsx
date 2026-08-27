@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Modal, Pill } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
@@ -73,6 +74,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
   const [tab, setTab] = useState<TabKey>('timeline')
   const [wonOpen, setWonOpen] = useState(false)
   const [lostOpen, setLostOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const dealActivities = useDealActivities(id)
   const completeLoop = useCompleteWithNext(id)
@@ -202,11 +204,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
               </>
             )}
             <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteDeal.isPending} title="Manager and above"
-              onClick={() => {
-                if (window.confirm(`Delete “${d.title}”? Linked invoices and quotes are kept.`)) {
-                  deleteDeal.mutate(id, { onSuccess: () => router.push('/crm/deals') })
-                }
-              }} />
+              onClick={() => setConfirmingDelete(true)} />
           </div>
         </div>
 
@@ -304,6 +302,17 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
       {tab === 'people' && <PeopleTab deal={d} />}
       {tab === 'details' && <DetailsTab deal={d} pipelineName={pipeline?.name} stageName={currentStage?.name} stageProb={currentStage?.win_probability} />}
 
+      <ConfirmDialog
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        title="Delete deal"
+        danger
+        body={`Delete “${d.title}”? Linked invoices and quotes are kept.`}
+        confirmLabel="Delete deal"
+        loading={deleteDeal.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleteDeal.mutate(id, { onSuccess: () => router.push('/crm/deals') })}
+      />
       <WonDialog
         open={wonOpen}
         onClose={() => setWonOpen(false)}

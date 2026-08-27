@@ -44,6 +44,8 @@ export interface FamTenantRow {
   status: 'trialing' | 'active' | 'past_due' | 'canceled' | 'suspended'
   createdAt: string
   trialEndsAt: string | null
+  verifiedAt: string | null
+  logoUrl: string | null
   plan: string | null
   subStatus: string | null
   mrr: number
@@ -419,6 +421,7 @@ export interface FamVerificationTenant {
   industry: string | null
   sizeBand: string | null
   createdAt: string
+  logoUrl: string | null
 }
 
 export function useFamVerificationQueue() {
@@ -435,14 +438,15 @@ export function useFamVerificationQueue() {
 export function useVerifyTenant() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) =>
+    mutationFn: ({ id, notes }: { id: string; notes?: string }) =>
       api.post<{ id: string; verifiedAt: string | null }>(
         `/api/v1/fam/tenants/${id}/verify`,
-        {},
+        notes?.trim() ? { notes: notes.trim() } : {},
       ),
-    onSuccess: (_, id) => {
+    onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['fam', 'verify'] })
-      qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenant', vars.id] })
+      qc.invalidateQueries({ queryKey: ['fam', 'tenants'] })
       qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
     },
   })

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -215,6 +216,7 @@ function PurgeActivitiesCard() {
   const [days, setDays] = useState(90)
   const [completedOnly, setCompletedOnly] = useState(true)
   const [armed, setArmed] = useState(false)
+  const [confirmingPurge, setConfirmingPurge] = useState(false)
   const isAdmin = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
   const preview = useActivityPurgePreview(days, completedOnly, armed && isAdmin)
   const purge = usePurgeActivities()
@@ -257,18 +259,7 @@ function PurgeActivitiesCard() {
         ) : (
           <Btn kind="danger" disabled={purge.isPending || !count}
             icon={<Icon.trash size={13} />}
-            onClick={() => {
-              if (!count) return
-              if (window.confirm(`Clear ${count.toLocaleString()} activit${count === 1 ? 'y' : 'ies'} older than ${days} days? This cannot be undone from the app.`)) {
-                purge.mutate({ days, completed_only: completedOnly }, {
-                  onSuccess: (r) => {
-                    setArmed(false)
-                    toast({ title: 'Activities cleared', description: `${r.data.removed.toLocaleString()} removed.` })
-                  },
-                  onError: (err) => toast({ title: 'Could not clear activities', description: err instanceof Error ? err.message : undefined, variant: 'destructive' }),
-                })
-              }
-            }}>
+            onClick={() => { if (count) setConfirmingPurge(true) }}>
             {count === 0 ? 'Nothing to clear' : `Clear ${count?.toLocaleString()} activities`}
           </Btn>
         )}
@@ -276,6 +267,27 @@ function PurgeActivitiesCard() {
       {armed && count === 0 && !preview.isLoading && (
         <div className="t-caption" style={{ marginTop: 10 }}>No activities match that cutoff — nothing to clean.</div>
       )}
+      <ConfirmDialog
+        open={confirmingPurge}
+        onClose={() => setConfirmingPurge(false)}
+        title="Clear old activities"
+        danger
+        body={count ? `Clear ${count.toLocaleString()} activit${count === 1 ? 'y' : 'ies'} older than ${days} days? This cannot be undone from the app.` : null}
+        confirmLabel="Clear activities"
+        loading={purge.isPending}
+        loadingLabel="Clearing…"
+        onConfirm={() => purge.mutate({ days, completed_only: completedOnly }, {
+          onSuccess: (r) => {
+            setArmed(false)
+            setConfirmingPurge(false)
+            toast({ title: 'Activities cleared', description: `${r.data.removed.toLocaleString()} removed.` })
+          },
+          onError: (err) => {
+            setConfirmingPurge(false)
+            toast({ title: 'Could not clear activities', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+          },
+        })}
+      />
     </div>
   )
 }

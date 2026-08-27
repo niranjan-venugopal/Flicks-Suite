@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Btn, Icon, Pill, SectionHead, Skeleton } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -193,6 +194,7 @@ export default function FamCouponsPage() {
   const [csvBusy, setCsvBusy] = useState(false)
   const [activeF, setActiveF] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<{ id: string; code: string } | null>(null)
   const list = useFamCoupons({ campaign: campaignF || undefined, active: activeF || undefined })
   const update = useFamCouponUpdate()
   const remove = useFamCouponDelete()
@@ -337,9 +339,7 @@ export default function FamCouponsPage() {
                               disabled={remove.isPending}
                               onClick={(e: React.MouseEvent) => {
                                 e.stopPropagation()
-                                if (window.confirm(`Delete ${c.code}? It was never redeemed; this removes it permanently.`)) {
-                                  remove.mutate(c.id, { onSuccess: () => toast({ title: 'Coupon deleted', description: c.code }) })
-                                }
+                                setDeleting({ id: c.id, code: c.code })
                               }}
                             >
                               Delete
@@ -398,6 +398,23 @@ export default function FamCouponsPage() {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete coupon"
+        danger
+        body={deleting ? `Delete ${deleting.code}? It was never redeemed; this removes it permanently.` : null}
+        confirmLabel="Delete coupon"
+        loading={remove.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && remove.mutate(deleting.id, {
+          onSuccess: () => {
+            toast({ title: 'Coupon deleted', description: deleting.code })
+            setDeleting(null)
+          },
+        })}
+      />
     </div>
   )
 }

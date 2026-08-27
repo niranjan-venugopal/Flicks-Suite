@@ -140,7 +140,7 @@ export default function FamTenantDetailPage() {
             >
               <Icon.chevL size={14} />
             </Link>
-            <Avatar name={t.name} size="lg" />
+            <Avatar name={t.name} size="lg" src={t.logoUrl ?? undefined} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', margin: 0 }}>
@@ -257,7 +257,7 @@ function OverviewTab({
     toast({ title, description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
 
   const doVerify = () =>
-    verifyMut.mutate(t.id, {
+    verifyMut.mutate({ id: t.id }, {
       onSuccess: () => { toast({ title: 'Tenant verified' }); close() },
       onError: err('Verify failed'),
     })
@@ -1041,7 +1041,7 @@ function SettingsTab({
   }
   const submitVerify = async () => {
     try {
-      await verifyMut.mutateAsync(tenantId)
+      await verifyMut.mutateAsync({ id: tenantId })
       toast({ title: 'Verified', description: `${tenant.name} is now verified.` })
     } catch (e) {
       toast({ title: 'Could not verify', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
@@ -1105,7 +1105,7 @@ function SettingsTab({
               </Link>
             ) : (
               <div style={{ display: 'flex', gap: 6 }}>
-                <Link href="/fam/verify" style={{ textDecoration: 'none' }}>
+                <Link href={`/fam/verify?tenant=${tenant.id}`} style={{ textDecoration: 'none' }}>
                   <Btn kind="ghost" size="sm" iconRight={<Icon.arrow size={13} />}>
                     Queue
                   </Btn>

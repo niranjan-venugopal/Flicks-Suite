@@ -10,13 +10,17 @@ import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
 import { FilterBar, BulkBar, EmptyState, type FilterChip } from '@/components/crm/kit'
 import { Icon } from '@/components/proto'
-import { useContacts, useCreateContact, useDeleteContact, useCompanies } from '@/lib/api/queries/use-crm'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { useContacts, useCreateContact, useDeleteContact, useCompanies, type DirectoryPerson } from '@/lib/api/queries/use-crm'
 
 export default function ContactsPage() {
   const [q, setQ] = useState('')
   const [companyId, setCompanyId] = useState<string | null>(null)
   const [modal, setModal] = useState(false)
   const [sel, setSel] = useState<string[]>([])
+  const [deleting, setDeleting] = useState<DirectoryPerson | null>(null)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const { data, isLoading } = useContacts({ q: q || undefined, company_id: companyId ?? undefined })
   const { data: companies } = useCompanies()
   const del = useDeleteContact()
@@ -27,9 +31,11 @@ export default function ContactsPage() {
     : []
 
   const bulkDelete = async () => {
-    if (!window.confirm(`Delete ${sel.length} contact(s)?`)) return
+    setBulkBusy(true)
     for (const id of sel) { try { await del.mutateAsync(id) } catch { /* server enforces */ } }
+    setBulkBusy(false)
     setSel([])
+    setBulkOpen(false)
   }
 
   return (
@@ -67,7 +73,7 @@ export default function ContactsPage() {
           <EmptyState icon={<Icon.people size={22} />} line="No contacts yet. Add your first contact to build your directory — every deal, email and activity hangs off it." cta="New contact" onCta={() => setModal(true)} />
         ) : (
           <table className="tbl" style={{ width: '100%' }}>
-            <thead><tr><th style={{ width: 34 }} /><th>Name</th><th>Email</th><th>Title</th><th>Phone</th><th>Source</th></tr></thead>
+            <thead><tr><th style={{ width: 34 }} /><th>Name</th><th>Email</th><th>Title</th><th>Phone</th><th>Source</th><th /></tr></thead>
             <tbody>
               {rows.map((p) => (
                 <tr key={p.id} style={{ background: sel.includes(p.id) ? 'rgba(62,123,250,.08)' : undefined }}>
@@ -87,6 +93,10 @@ export default function ContactsPage() {
                   <td>{p.title ?? '—'}</td>
                   <td>{p.phone ?? '—'}</td>
                   <td>{p.source ? <Pill>{p.source.replace(/_/g, ' ')}</Pill> : '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} title="Delete — Manager and above"
+                      disabled={del.isPending} onClick={() => setDeleting(p)} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -95,8 +105,31 @@ export default function ContactsPage() {
       </div>
 
       <BulkBar count={sel.length} onClear={() => setSel([])} actions={[
-        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => void bulkDelete() },
+        { icon: <Trash2 size={13} />, label: 'Delete', danger: true, onClick: () => setBulkOpen(true) },
       ]} />
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete contact"
+        danger
+        body={deleting ? `Delete ${deleting.display_name ?? deleting.email ?? 'this contact'}? Their deals and activity history are kept.` : null}
+        confirmLabel="Delete contact"
+        loading={del.isPending && !bulkBusy}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && del.mutate(deleting.id, { onSuccess: () => setDeleting(null) })}
+      />
+      <ConfirmDialog
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Delete contacts"
+        danger
+        body={`Delete ${sel.length} contact(s)?`}
+        confirmLabel={`Delete ${sel.length}`}
+        loading={bulkBusy}
+        loadingLabel="Deleting…"
+        onConfirm={() => void bulkDelete()}
+      />
 
       <NewContactModal open={modal} onClose={() => setModal(false)} />
     </div>

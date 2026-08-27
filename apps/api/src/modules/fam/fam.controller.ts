@@ -31,6 +31,7 @@ import {
   UpsertCohortDto,
   TenantListQueryDto,
   ToggleModuleDto,
+  VerifyTenantDto,
 } from './fam.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -298,9 +299,10 @@ export class FamController {
   @ApiOperation({ summary: 'Mark a tenant as verified' })
   async verifyTenant(
     @Param('id') id: string,
+    @Body() dto: VerifyTenantDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.famService.verifyTenant(id, user.sub);
+    return this.famService.verifyTenant(id, user.sub, dto?.notes);
   }
 
   @Get('audit')

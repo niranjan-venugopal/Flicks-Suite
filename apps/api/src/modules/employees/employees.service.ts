@@ -1280,7 +1280,7 @@ export class EmployeesService {
             {
               approverName: info.managerName ?? 'there',
               employeeName: info.employeeName || 'A new hire',
-              reviewUrl: `${appUrl}/employees/onboarding`,
+              reviewUrl: `${appUrl}/employees/onboarding?employee=${employeeId}`,
             },
           );
         }
@@ -1306,8 +1306,11 @@ export class EmployeesService {
               reviewerId,
               'onboarding.submitted',
               `${info?.employeeName || 'A new hire'} submitted onboarding for review.`,
-              '/employees/onboarding',
+              // Deep link straight into the review dialog for THIS employee —
+              // a bare queue URL left reviewers with nothing to act on.
+              `/employees/onboarding?employee=${employeeId}`,
               tenantId,
+              { groupKey: `onboarding:${employeeId}` },
             )
             .catch(() => undefined);
         }

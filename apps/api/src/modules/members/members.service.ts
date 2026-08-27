@@ -19,6 +19,7 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
+import { MediaService } from '../media/media.service';
 import { ModuleAccessService } from '../../core/auth/module-access.service';
 import type { UserRole } from '@flicks/shared/types';
 import type { GrantModule } from '../../core/auth/decorators/require-grant.decorator';
@@ -63,6 +64,7 @@ export class MembersService {
     private readonly notificationsService: NotificationsService,
     private readonly authService: AuthService,
     private readonly moduleAccess: ModuleAccessService,
+    private readonly mediaService: MediaService,
   ) {}
 
   // ─── Invite ────────────────────────────────────────────────────────────────
@@ -725,7 +727,8 @@ export class MembersService {
         invitedAt: memberships.invited_at,
         name: tenants.name,
         slug: tenants.slug,
-        logoUrl: tenants.logo_url,
+        logoKey: tenants.logo_key,
+        logoUrlLegacy: tenants.logo_url,
         gstin: tenants.gstin,
         city: tenants.city,
       })
@@ -781,14 +784,15 @@ export class MembersService {
 
     return {
       canCreateWorkspace,
-      data: rows.map((r) => {
+      data: await Promise.all(rows.map(async (r) => {
         const stats = statsByTenant.get(r.tenantId);
         return {
           membershipId: r.membershipId,
           tenantId: r.tenantId,
           name: r.name,
           slug: r.slug,
-          logoUrl: r.logoUrl,
+          // Signed URL from logo_key (the live column) — logo_url is legacy.
+          logoUrl: await this.mediaService.servedUrl(r.logoKey, r.logoUrlLegacy, 64),
           gstin: r.gstin,
           city: r.city,
           role: r.role,
@@ -806,7 +810,7 @@ export class MembersService {
             currency: 'INR',
           },
         };
-      }),
+      })),
     };
   }
 }

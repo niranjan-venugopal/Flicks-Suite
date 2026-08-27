@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { MediaModule } from '../media/media.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MembersService } from './members.service';
 import { MembersPublicService } from './public';
@@ -12,7 +13,7 @@ import { MeCompaniesController, MembersController } from './members.controller';
  * Company switching itself lives in AuthModule (POST /auth/switch-company).
  */
 @Module({
-  imports: [AuditModule, AuthModule, NotificationsModule],
+  imports: [AuditModule, AuthModule, MediaModule, NotificationsModule],
   controllers: [MembersController, MeCompaniesController],
   providers: [MembersService, MembersPublicService],
   exports: [MembersService, MembersPublicService],

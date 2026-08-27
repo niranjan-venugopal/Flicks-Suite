@@ -87,6 +87,7 @@ const membersSvc = new MembersService(
   notificationsSvc,
   authStub,
   moduleAccess,
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
 );
 const guestsSvc = new PmGuestsService(
   dbSvc,
