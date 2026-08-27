@@ -20,9 +20,10 @@ const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 /**
  * Organization → Financial details (PRD §7.2/§8) — an org Settings page, so it
  * follows the HRMS settings pattern (SettingsLayout + cards). Legal identity
- * (legal name / GSTIN / PAN) is edited ONLY in Settings → General (user
- * decision, 2026-07-06); this page owns the company bank accounts that render
- * on invoices.
+ * (legal name / GSTIN / PAN) is edited ONLY in Settings → Company profile —
+ * the 2026-07-06 single-edit-surface decision, relocated there in round 13
+ * when Settings → General became the preferences tab; this page owns the
+ * company bank accounts that render on invoices.
  */
 export default function OrgFinancialPage() {
   const { toast } = useToast()
@@ -83,17 +84,21 @@ export default function OrgFinancialPage() {
         }
       />
 
-      {/* Legal identity lives in Settings → General (single edit surface).
-          Invoices keep reading the same tenant columns — nothing moved in the DB. */}
+      {/* Legal identity lives in Settings → Company profile (single edit
+          surface). Invoices keep reading the same tenant columns. */}
       <div className="card p-4 mb-6 flex items-start gap-3">
         <Info className="w-4 h-4 text-brand-blue shrink-0 mt-0.5" />
         <p className="t-mute text-sm leading-relaxed">
           Legal name, GSTIN and PAN are managed in{' '}
+          <Link href="/settings/company" className="text-brand-blue font-semibold hover:underline">
+            Settings → Company profile
+          </Link>
+          . Invoices read those same details. The financial year start is set
+          in{' '}
           <Link href="/settings" className="text-brand-blue font-semibold hover:underline">
             Settings → General
           </Link>
-          . Invoices read those same details. Fiscal year: April – March (month{' '}
-          {fin?.data?.fiscal_year_start_month ?? 4}).
+          {' '}(currently month {fin?.data?.fiscal_year_start_month ?? 4}).
         </p>
       </div>
 

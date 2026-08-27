@@ -236,6 +236,8 @@ export class PmSyncEngine {
     assignee_user_id?: string | null
     description?: string | null
     estimate?: number | string | null
+    project_id?: string | null
+    milestone_id?: string | null
   }): string {
     const id = crypto.randomUUID()
     const team = this.store.teams.get(input.team_id)
@@ -267,8 +269,8 @@ export class PmSyncEngine {
       assignee_user_id: input.assignee_user_id ?? null,
       creator_user_id: this.userId,
       parent_issue_id: null,
-      project_id: null,
-      milestone_id: null,
+      project_id: input.project_id ?? null,
+      milestone_id: input.milestone_id ?? null,
       cycle_id: null,
       due_date: null,
       board_rank: rankBetween(lastBoard, null),
@@ -296,6 +298,8 @@ export class PmSyncEngine {
         assignee_user_id: input.assignee_user_id ?? undefined,
         description: input.description ?? undefined,
         estimate: input.estimate ?? undefined,
+        project_id: input.project_id ?? undefined,
+        milestone_id: input.milestone_id ?? undefined,
       },
       inverse: { table: 'pm_issues', id, row: null }, // rollback = remove
       enqueuedAt: Date.now(),
@@ -438,9 +442,21 @@ export class PmSyncEngine {
   }
 
   setIssueProject(id: string, projectId: string | null, milestoneId?: string | null): void {
+    // Mirrors the server: an implicit milestone survives only when the issue
+    // STAYS in the same project — a project move drops it (it belongs to the
+    // old project).
+    const current = this.store.issues.get(id)
+    const impliedMilestone =
+      projectId && projectId === current?.project_id
+        ? current?.milestone_id ?? null
+        : null
     const prev = this.store.patchIssue(id, {
       project_id: projectId,
-      milestone_id: projectId ? (milestoneId !== undefined ? milestoneId : this.store.issues.get(id)?.milestone_id ?? null) : null,
+      milestone_id: projectId
+        ? milestoneId !== undefined
+          ? milestoneId
+          : impliedMilestone
+        : null,
       updated_at: new Date().toISOString(),
     })
     this.enqueue({

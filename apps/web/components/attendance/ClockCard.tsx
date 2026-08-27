@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Btn, Icon, Pill, type PillTone } from '@/components/proto'
+import { Btn, Icon, Modal, Pill, type PillTone } from '@/components/proto'
 import {
   useBreakEnd,
   useBreakStart,
@@ -46,6 +46,50 @@ function shiftDurationHrs(s: TodayAttendance['shift']): number {
   const [sh, sm] = s.startTime.split(':').map(Number)
   const [eh, em] = s.endTime.split(':').map(Number)
   return Math.round((eh! * 60 + em! - sh! * 60 - sm!) / 60)
+}
+
+/**
+ * Best-effort browser position. Resolves null on denial/timeout/unsupported —
+ * a punch must always go through even when location fails (PRD §6.4).
+ */
+function getPosition(): Promise<GeolocationPosition | null> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve(null)
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve(pos),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 8_000, maximumAge: 30_000 },
+    )
+  })
+}
+
+/** Haversine distance in metres — client-side pre-check only; the server recomputes. */
+function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000
+  const toRad = (deg: number) => (deg * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+/** "12.9352° N, 77.6245° E" */
+function fmtCoords(lat: number, lng: number): string {
+  return `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`
+}
+
+interface OutsideFence {
+  lat: number
+  lng: number
+  accuracy: number | null
+  distanceM: number
+  radiusM: number
+  locationName: string
 }
 
 // ─── ClockCard ─────────────────────────────────────────────────────────────
@@ -97,21 +141,25 @@ export function ClockCard() {
       })
     : '--:--:--'
 
-  const handlePunch = async () => {
-    if (dayComplete) {
-      toast({
-        title: 'Day already complete',
-        description: "You've already clocked out for today. See you tomorrow!",
-      })
-      return
-    }
+  // Geofence pre-check state: set when a clock-in position lands outside the
+  // configured office fence — the "You're not at the office" dialog takes over.
+  const [outside, setOutside] = useState<OutsideFence | null>(null)
+  const [locating, setLocating] = useState(false)
+
+  const doPunch = async (coords: { lat?: number; lng?: number; accuracy?: number }) => {
     try {
       if (isClockedIn) {
-        await punchOut.mutateAsync({})
+        await punchOut.mutateAsync(coords)
         toast({ title: 'Clocked out', description: 'See you tomorrow.' })
       } else {
-        await punchIn.mutateAsync({})
-        toast({ title: 'Clocked in', description: 'Have a productive day.' })
+        const res = await punchIn.mutateAsync(coords)
+        toast({
+          title: res.workMode === 'remote' ? 'Clocked in — WFH' : 'Clocked in',
+          description:
+            res.workMode === 'remote'
+              ? `Outside the ${res.locationName ?? 'office'} geofence — marked as working from home today.`
+              : 'Have a productive day.',
+        })
       }
     } catch (e) {
       // The 409 from the backend carries the exact message we want to show;
@@ -124,6 +172,58 @@ export function ClockCard() {
         variant: isAlreadyDone ? 'default' : 'destructive',
       })
     }
+  }
+
+  const handlePunch = async () => {
+    if (dayComplete) {
+      toast({
+        title: 'Day already complete',
+        description: "You've already clocked out for today. See you tomorrow!",
+      })
+      return
+    }
+    // Capture position best-effort; denial/timeout still punches (no coords).
+    setLocating(true)
+    const pos = await getPosition()
+    setLocating(false)
+    const coords = pos
+      ? {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy),
+        }
+      : {}
+    // Clock-IN only: when the office has a geofence and we're outside it, ask
+    // before punching — Mark as WFH / Try again / Cancel. The server stays
+    // authoritative; this is a courtesy stop, never a hard block.
+    const fence = data?.location
+    if (
+      !isClockedIn &&
+      pos &&
+      fence &&
+      fence.geofenceLat !== null &&
+      fence.geofenceLng !== null &&
+      fence.geofenceRadiusM !== null
+    ) {
+      const distanceM = haversineM(
+        coords.lat!,
+        coords.lng!,
+        fence.geofenceLat,
+        fence.geofenceLng,
+      )
+      if (distanceM > fence.geofenceRadiusM) {
+        setOutside({
+          lat: coords.lat!,
+          lng: coords.lng!,
+          accuracy: coords.accuracy ?? null,
+          distanceM: Math.round(distanceM),
+          radiusM: fence.geofenceRadiusM,
+          locationName: fence.name ?? 'the office',
+        })
+        return
+      }
+    }
+    await doPunch(coords)
   }
 
   const handleBreak = async () => {
@@ -255,14 +355,14 @@ export function ClockCard() {
             <button
               type="button"
               onClick={handlePunch}
-              disabled={punchOut.isPending}
+              disabled={punchOut.isPending || locating}
               className="pm-pop"
               key="out"
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
                 height: 52, borderRadius: 10, cursor: 'pointer',
                 background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.45)',
-                opacity: punchOut.isPending ? 0.6 : 1,
+                opacity: punchOut.isPending || locating ? 0.6 : 1,
               }}
             >
               <span className="pm-pending" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)' }} />
@@ -280,12 +380,17 @@ export function ClockCard() {
                 dayComplete ||
                 punchIn.isPending ||
                 punchOut.isPending ||
+                locating ||
                 today.isLoading
               }
               className="pm-pop"
               style={{ flex: 1, justifyContent: 'center', height: 52, fontSize: 15 }}
             >
-              {dayComplete ? 'Day complete · see you tomorrow' : 'Clock in'}
+              {dayComplete
+                ? 'Day complete · see you tomorrow'
+                : locating
+                  ? 'Getting your location…'
+                  : 'Clock in'}
             </Btn>
           )}
           <Btn
@@ -318,7 +423,131 @@ export function ClockCard() {
             </div>
           </div>
         )}
+
+        {/* Geofence strip — the clock-in position vs the assigned office. */}
+        {data?.lastPunchGeo && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              marginTop: 8,
+              padding: '10px 12px',
+              background:
+                data.lastPunchGeo.isWithinGeofence === false
+                  ? 'rgba(255,184,74,.07)'
+                  : 'rgba(39,210,128,.06)',
+              border:
+                data.lastPunchGeo.isWithinGeofence === false
+                  ? '1px solid rgba(255,184,74,.25)'
+                  : '1px solid rgba(39,210,128,.22)',
+              borderRadius: 8,
+            }}
+          >
+            <Icon.pin
+              size={14}
+              style={{
+                color:
+                  data.lastPunchGeo.isWithinGeofence === false
+                    ? 'var(--yellow)'
+                    : 'var(--green)',
+                marginTop: 1,
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>
+              {data.lastPunchGeo.isWithinGeofence === true
+                ? `Inside ${data.location?.name ?? 'office'} geofence`
+                : data.lastPunchGeo.isWithinGeofence === false
+                  ? `Outside ${data.location?.name ?? 'office'} geofence — working from home`
+                  : 'Location recorded'}
+              {' · '}
+              {fmtCoords(data.lastPunchGeo.lat, data.lastPunchGeo.lng)}
+              {data.lastPunchGeo.accuracyM !== null &&
+                ` · ±${Math.round(data.lastPunchGeo.accuracyM)}m`}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* "You're not at the office" — geofence pre-check on clock-in. */}
+      <Modal
+        open={!!outside}
+        onClose={() => setOutside(null)}
+        title="You're not at the office"
+        sub={
+          outside
+            ? `Your current position is outside the ${outside.locationName} geofence.`
+            : undefined
+        }
+        width={440}
+        footer={
+          <>
+            <Btn kind="ghost" onClick={() => setOutside(null)}>
+              Cancel
+            </Btn>
+            <Btn
+              kind="secondary"
+              onClick={() => {
+                setOutside(null)
+                void handlePunch()
+              }}
+            >
+              Try again
+            </Btn>
+            <Btn
+              kind="primary"
+              icon={<Icon.home size={14} />}
+              disabled={punchIn.isPending}
+              onClick={async () => {
+                const o = outside!
+                setOutside(null)
+                await doPunch({
+                  lat: o.lat,
+                  lng: o.lng,
+                  accuracy: o.accuracy ?? undefined,
+                })
+              }}
+            >
+              Mark as WFH today
+            </Btn>
+          </>
+        }
+      >
+        {outside && (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {(
+              [
+                ['Detected at', fmtCoords(outside.lat, outside.lng)],
+                ['Accuracy', outside.accuracy !== null ? `±${outside.accuracy}m` : 'Unknown'],
+                ['Geofence radius', `${outside.radiusM}m around ${outside.locationName}`],
+                ['Distance', `${outside.distanceM >= 1000 ? `${(outside.distanceM / 1000).toFixed(1)} km` : `${outside.distanceM}m`} from the office`],
+              ] as const
+            ).map(([label, value]) => (
+              <div
+                key={label}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '9px 12px',
+                  background: 'var(--surf-1)',
+                  border: '1px solid var(--bord)',
+                  borderRadius: 8,
+                }}
+              >
+                <span className="t-caption">{label}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                  {value}
+                </span>
+              </div>
+            ))}
+            <div style={{ fontSize: 11.5, color: 'var(--text-mute)', fontWeight: 600 }}>
+              Marking WFH clocks you in normally and shows today as working from
+              home on your team&apos;s attendance.
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -58,6 +58,10 @@ export const regularizationRequestTypeEnum = pgEnum(
   ['missing_punch', 'wrong_time', 'wfh_request', 'on_duty', 'manual_override'],
 );
 
+// Where the day was worked — orthogonal to attendance_status (a WFH day can
+// still be late/half-day). NULL = unknown (no coords / no geofence).
+export const workModeEnum = pgEnum('work_mode', ['office', 'remote', 'field']);
+
 // ─── shift_templates ──────────────────────────────────────────────────────────
 
 export const shiftTemplates = pgTable(
@@ -156,6 +160,7 @@ export const attendanceRecords = pgTable(
     attendance_status: attendanceStatusEnum('attendance_status')
       .notNull()
       .default('absent'),
+    work_mode: workModeEnum('work_mode'),
     source: attendanceSourceEnum('source').notNull().default('system'),
     notes: text('notes'),
     is_regularized: boolean('is_regularized').notNull().default(false),

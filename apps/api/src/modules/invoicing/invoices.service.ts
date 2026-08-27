@@ -640,7 +640,7 @@ export class InvoicesService {
         );
       }
       const [tenant] = await tx
-        .select({ name: tenants.name, slug: tenants.slug })
+        .select({ name: tenants.name })
         .from(tenants)
         .where(eq(tenants.id, tenantId))
         .limit(1);

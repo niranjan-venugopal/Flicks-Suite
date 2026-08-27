@@ -4,7 +4,7 @@ import { use, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon } from '@/components/proto'
+import { Btn, Icon, Modal } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
@@ -112,6 +112,45 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
     setMsName(''); setMsDate(''); setAddMs(false)
   }
 
+  // ── New issue (founder round 13): create straight from the project page,
+  // pre-linked to this project + an optional milestone. Teams linked to the
+  // project are offered first; a project with no linked team falls back to
+  // every team the caller can see.
+  const [newIssue, setNewIssue] = useState(false)
+  const [niTitle, setNiTitle] = useState('')
+  const [niMilestone, setNiMilestone] = useState('')
+  const [niTeam, setNiTeam] = useState('')
+  const teamsQ = useQuery({
+    queryKey: ['pm', 'teams', 'index'],
+    queryFn: () => api.get<{ data: { teams: Array<{ id: string; key: string; name: string }> } }>('/api/v1/pm/teams'),
+    enabled: !engine,
+  })
+  const linkedTeamIds = engine ? engine.store.projectTeams.get(id) ?? d.team_ids : d.team_ids
+  const allTeams = engine
+    ? engine.store.teamList().map((t) => ({ id: t.id, name: t.name }))
+    : (teamsQ.data?.data.teams ?? []).map((t) => ({ id: t.id, name: t.name }))
+  const teamOptions = linkedTeamIds.length
+    ? linkedTeamIds.map((tid) => ({ id: tid, name: allTeams.find((t) => t.id === tid)?.name ?? 'Team' }))
+    : allTeams
+  const createIssue = () => {
+    const title = niTitle.trim()
+    const teamId = niTeam || teamOptions[0]?.id
+    if (!title || !teamId) return
+    if (engine) {
+      engine.createIssue({ team_id: teamId, title, project_id: id, milestone_id: niMilestone || null })
+    } else {
+      void api
+        .post('/api/v1/pm/issues', {
+          team_id: teamId,
+          title,
+          project_id: id,
+          ...(niMilestone ? { milestone_id: niMilestone } : {}),
+        })
+        .then(invalidate)
+    }
+    setNiTitle(''); setNiMilestone(''); setNewIssue(false)
+  }
+
   // Milestone completion fraction: issues attached to it, weight = estimate ?? 1.
   const msProgress = (msId: string): number => {
     const rows = engine
@@ -217,6 +256,13 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center' }}>
               <span style={{ fontSize: 11.5, fontWeight: 800, flex: 1 }}>Issues · {issues.length}</span>
+              <button
+                onClick={() => setNewIssue(true)}
+                disabled={teamOptions.length === 0}
+                style={{ background: 'none', border: 'none', color: 'var(--blue)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}
+              >
+                + New issue
+              </button>
             </div>
             {issues.length === 0 && <div className="t-mute" style={{ padding: '16px 14px', fontSize: 11.5 }}>No issues attached — set a project on issues from the list or detail page.</div>}
             {issues.map((i) => {
@@ -291,6 +337,57 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         {/* Round 7: project-scoped guest seats (Owner/Admin only) */}
         <ProjectGuestsCard projectId={id} />
       </div>
+
+      {/* New issue — pre-linked to this project (+ optional milestone) */}
+      <Modal
+        open={newIssue}
+        onClose={() => setNewIssue(false)}
+        title="New issue"
+        sub={`Created inside ${project.name}`}
+        width={480}
+        footer={
+          <>
+            <Btn kind="ghost" onClick={() => setNewIssue(false)}>Cancel</Btn>
+            <Btn kind="primary" onClick={createIssue} disabled={!niTitle.trim() || teamOptions.length === 0}>
+              Create issue
+            </Btn>
+          </>
+        }
+      >
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div>
+            <div className="t-caption" style={{ marginBottom: 6 }}>Title</div>
+            <input
+              className="input"
+              autoFocus
+              value={niTitle}
+              onChange={(e) => setNiTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') createIssue() }}
+              placeholder="What needs to be done?"
+              maxLength={500}
+            />
+          </div>
+          {teamOptions.length > 1 && (
+            <div>
+              <div className="t-caption" style={{ marginBottom: 6 }}>Team</div>
+              <select className="input" value={niTeam || teamOptions[0]?.id} onChange={(e) => setNiTeam(e.target.value)}>
+                {teamOptions.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <div className="t-caption" style={{ marginBottom: 6 }}>Milestone</div>
+            <select className="input" value={niMilestone} onChange={(e) => setNiMilestone(e.target.value)}>
+              <option value="">No milestone</option>
+              {milestones.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 })

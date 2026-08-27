@@ -62,6 +62,7 @@ export class AttendanceController {
       user.tenantId,
       dto,
       clientIp(req),
+      req.headers['user-agent'],
     );
     // PRD v4 §5 — a punch flips presence (In office / Remote) org-wide ≤5s.
     // A punch is an explicit availability signal, so it OVERRIDES any stale
@@ -87,6 +88,7 @@ export class AttendanceController {
       user.tenantId,
       dto,
       clientIp(req),
+      req.headers['user-agent'],
     );
     // Same rule on the way out — the punch wins over a stale manual status.
     await this.presence.clearStatus(user.tenantId, user.sub);
@@ -134,14 +136,25 @@ export class AttendanceController {
   }
 
   @Get('team/today')
-  @Roles('manager')
+  // Hierarchical guard: finance and above (owner/admin/manager/finance/fam).
+  // Managers get their direct reports; every higher role gets the whole org.
+  @Roles('finance')
   @ApiOperation({
-    summary: 'Get today’s status for direct reports',
-    description: 'Returns one row per active direct report with their current-day attendance state.',
+    summary: 'Get today’s team attendance',
+    description:
+      'One row per active employee with their current-day attendance state. Managers see direct reports; owner/admin/finance see the whole workspace (optionally narrowed with ?managerId=).',
   })
   @ApiResponse({ status: 200, description: 'Team status' })
-  async listTeamToday(@CurrentUser() user: JwtPayload) {
-    return this.attendanceService.listTeamToday(user.sub, user.tenantId);
+  async listTeamToday(
+    @CurrentUser() user: JwtPayload,
+    @Query('managerId') managerId?: string,
+  ) {
+    return this.attendanceService.listTeamToday(
+      user.sub,
+      user.tenantId,
+      user.role,
+      managerId,
+    );
   }
 
   @Post('regularizations')

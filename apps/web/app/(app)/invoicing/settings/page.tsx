@@ -1,5 +1,6 @@
 'use client'
 
+import { stateName } from '@flicks/shared/constants'
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -408,13 +409,13 @@ export default function InvoicingSettingsPage() {
           <div className="card">
             <div className="t-h3" style={{ marginBottom: 18 }}>GST</div>
             <div style={{ ...GRID_2, alignItems: 'start' }}>
-              <Field label="GST registered" hint={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Organization'}>
+              <Field label="GST registered" hint={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Company profile'}>
                 <Pill tone={fin?.data?.gstin ? 'green' : ''} dot={!!fin?.data?.gstin}>
                   {fin?.data?.gstin ? 'Active' : 'Not set'}
                 </Pill>
               </Field>
               <Field label="Place of supply default" hint="From company state">
-                <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 700, paddingTop: 6 }}>{fin?.data?.state_code ?? '—'}</span>
+                <span style={{ display: 'inline-block', fontSize: 13, fontWeight: 700, paddingTop: 6 }}>{fin?.data?.state_code ? stateName(fin.data.state_code) : '—'}</span>
               </Field>
               <Field label="Filing frequency" hint="GSTR-1 cadence">
                 <select

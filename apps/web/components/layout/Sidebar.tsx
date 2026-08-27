@@ -96,6 +96,7 @@ const ADMIN_NAV: NavSection[] = [
         icon: 'clock',
         children: [
           { href: '/attendance', label: 'Attendance' },
+          { href: '/team/attendance', label: 'Team attendance' },
           { href: '/leave', label: 'Leave' },
           { href: '/timesheets', label: 'Timesheets' },
         ],

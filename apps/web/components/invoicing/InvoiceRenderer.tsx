@@ -1,5 +1,6 @@
 'use client'
 
+import { stateName } from '@flicks/shared/constants'
 import {
   INVO,
   InvoAvatar,
@@ -115,7 +116,7 @@ export function InvoiceRenderer({
               lines={[
                 seller?.address_line1,
                 seller?.address_line2,
-                [seller?.city, seller?.state_code, seller?.postal_code].filter(Boolean).join(', ') || null,
+                [seller?.city, stateName(seller?.state_code), seller?.postal_code].filter(Boolean).join(', ') || null,
                 seller?.gstin ? `GSTIN: ${seller.gstin}` : null,
               ]}
             />
@@ -144,7 +145,7 @@ export function InvoiceRenderer({
             lines={[
               customer?.billing_address_line1,
               customer?.billing_address_line2,
-              [customer?.billing_city, customer?.billing_state, customer?.billing_postal_code].filter(Boolean).join(', ') || null,
+              [customer?.billing_city, stateName(customer?.billing_state), customer?.billing_postal_code].filter(Boolean).join(', ') || null,
               customer?.billing_country,
               customer?.gstin ? `GSTIN: ${customer.gstin}` : null,
             ]}
@@ -166,7 +167,7 @@ export function InvoiceRenderer({
           {invoice.place_of_supply && (
             <>
               <div style={{ ...label, marginTop: 14 }}>Place of supply</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{invoice.place_of_supply}</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{stateName(invoice.place_of_supply)}</div>
             </>
           )}
         </div>

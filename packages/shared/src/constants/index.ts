@@ -67,6 +67,37 @@ export const INDIAN_STATES: Array<{ code: string; name: string }> = [
   { code: 'PY', name: 'Puducherry' },
 ];
 
+// Codes that appear in stored data / GSTINs but not in INDIAN_STATES above —
+// legacy GST codes (pre-rename/merge) that must still resolve to a name.
+const STATE_NAME_ALIASES: Record<string, string> = {
+  OD: 'Odisha',
+  OR: 'Odisha', // legacy GST code, still emitted by GST_STATE_BY_NUMERIC
+  DD: 'Daman and Diu', // pre-2020 UT — survives in old GSTINs/addresses
+  DN: 'Dadra and Nagar Haveli',
+  DH: 'Dadra and Nagar Haveli and Daman and Diu',
+  UT: 'Uttarakhand', // occasional legacy alias for UK
+};
+
+/**
+ * Display name for a stored state value. Accepts a 2-letter code ("TN" →
+ * "Tamil Nadu", legacy aliases included) OR an already-full name / foreign
+ * free text (returned unchanged). Never throws, never loses data — codes
+ * stay codes in the database (tax math depends on them); this is
+ * display-time only.
+ */
+export function stateName(codeOrName?: string | null): string {
+  if (!codeOrName) return '';
+  const raw = codeOrName.trim();
+  if (/^[A-Za-z]{2}$/.test(raw)) {
+    const code = raw.toUpperCase();
+    const hit =
+      INDIAN_STATES.find((s) => s.code === code)?.name ??
+      STATE_NAME_ALIASES[code];
+    if (hit) return hit;
+  }
+  return raw;
+}
+
 // ─── Default Leave Types (PRD Section 7.2) ───────────────────────────────────
 
 export interface DefaultLeaveType {

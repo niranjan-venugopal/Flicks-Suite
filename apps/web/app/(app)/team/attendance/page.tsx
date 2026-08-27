@@ -12,6 +12,7 @@ import {
   type PillTone,
 } from '@/components/proto'
 import { useTeamToday, type TeamMemberToday } from '@/lib/api/queries/use-attendance'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -32,6 +33,14 @@ function fmtWorked(min: number | null): string {
 }
 
 function statusPill(t: TeamMemberToday): { tone: PillTone; label: string } {
+  // Work mode wins for present-ish days: a remote day shows WFH even though
+  // its attendance_status is present/late (status carries lateness, not place).
+  if (
+    t.workMode === 'remote' &&
+    (t.attendanceStatus === 'present' || t.attendanceStatus === 'late' || t.attendanceStatus === 'half_day')
+  ) {
+    return { tone: 'blue', label: 'WFH' }
+  }
   if (!t.attendanceStatus) {
     return { tone: 'yellow', label: 'Yet to clock in' }
   }
@@ -50,10 +59,20 @@ function statusPill(t: TeamMemberToday): { tone: PillTone; label: string } {
   }
 }
 
+function locationLabel(t: TeamMemberToday): string {
+  if (t.workMode === 'remote') return 'Home'
+  if (t.recordId && t.locationName) return t.locationName
+  return t.locationName ?? '—'
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function TeamAttendancePage() {
   const { data, isLoading } = useTeamToday()
+  const role = useAuthStore((s) => s.currentUser?.role)
+  // Managers get their direct reports from the API; every other permitted
+  // role (owner/admin/finance) gets the whole workspace.
+  const orgWide = role !== 'MANAGER'
   const rows = data ?? []
 
   const kpis = useMemo(() => {
@@ -64,13 +83,18 @@ export default function TeamAttendancePage() {
     let late = 0
     for (const r of rows) {
       const s = r.attendanceStatus
-      if (s === 'present' || s === 'on_duty' || s === 'comp_off') inOffice++
-      else if (s === 'work_from_home') wfh++
+      const remote = r.workMode === 'remote'
+      if (s === 'present' || s === 'on_duty' || s === 'comp_off' || s === 'half_day') {
+        if (remote) wfh++
+        else inOffice++
+      } else if (s === 'work_from_home') wfh++
       else if (s === 'on_leave') onLeave++
       else if (s === 'late') {
-        inOffice++
-        if ((r as any).isLate) late++
+        if (remote) wfh++
+        else inOffice++
+        if (r.isLate) late++
       } else if (!s || s === 'absent') yetToClockIn++
+      // holiday / weekend days count in no tile — nobody is expected in.
     }
     return { inOffice, wfh, onLeave, yetToClockIn, late }
   }, [rows])
@@ -87,7 +111,11 @@ export default function TeamAttendancePage() {
       >
         <SectionHead
           title="Team attendance"
-          sub={`Live · ${rows.length} direct report${rows.length === 1 ? '' : 's'} today`}
+          sub={
+            orgWide
+              ? `Live · everyone in your workspace today (${rows.length})`
+              : `Live · ${rows.length} direct report${rows.length === 1 ? '' : 's'} today`
+          }
           right={
             <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
               Export
@@ -165,9 +193,13 @@ export default function TeamAttendancePage() {
                 marginBottom: 6,
               }}
             >
-              No direct reports yet
+              {orgWide ? 'No active employees yet' : 'No direct reports yet'}
             </div>
-            <div>Once employees are assigned to you as their manager, their attendance shows up here.</div>
+            <div>
+              {orgWide
+                ? 'Add employees in People and their attendance shows up here.'
+                : 'Once employees are assigned to you as their manager, their attendance shows up here.'}
+            </div>
           </div>
         ) : (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -176,6 +208,7 @@ export default function TeamAttendancePage() {
                 <tr style={{ borderBottom: '1px solid var(--bord)' }}>
                   <th style={th}>Employee</th>
                   <th style={th}>Status</th>
+                  <th style={th}>Location</th>
                   <th style={th}>Clock in</th>
                   <th style={th}>Clock out</th>
                   <th style={th}>Worked</th>
@@ -220,6 +253,16 @@ export default function TeamAttendancePage() {
                             <Pill tone="coral">Late</Pill>
                           )}
                         </div>
+                      </td>
+                      <td style={td}>
+                        <span className="inline-flex items-center gap-1.5">
+                          {r.workMode === 'remote' ? (
+                            <Icon.home size={12} style={{ color: 'var(--blue)' }} />
+                          ) : r.recordId && r.locationName ? (
+                            <Icon.pin size={12} style={{ color: 'var(--text-mute)' }} />
+                          ) : null}
+                          {locationLabel(r)}
+                        </span>
                       </td>
                       <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>
                         {fmtTime(r.firstPunchInAt)}

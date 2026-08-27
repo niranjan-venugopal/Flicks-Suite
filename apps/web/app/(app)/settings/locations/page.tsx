@@ -25,6 +25,7 @@ import {
   TIMEZONES,
   countryName,
 } from '@/lib/countries'
+import { stateName } from '@flicks/shared/constants'
 
 // Suggest the office timezone from the chosen country so a Dubai branch
 // doesn't accidentally stay on IST.
@@ -54,6 +55,9 @@ export default function LocationsSettingsPage() {
     stateCode: '',
     postalCode: '',
     timezone: 'Asia/Kolkata',
+    geofenceLat: '',
+    geofenceLng: '',
+    geofenceRadiusM: '',
   })
 
   const [editing, setEditing] = useState<Location | null>(null)
@@ -65,6 +69,9 @@ export default function LocationsSettingsPage() {
     stateCode: '',
     postalCode: '',
     timezone: 'Asia/Kolkata',
+    geofenceLat: '',
+    geofenceLng: '',
+    geofenceRadiusM: '',
   })
   const [deleting, setDeleting] = useState<Location | null>(null)
 
@@ -84,6 +91,9 @@ export default function LocationsSettingsPage() {
       stateCode: '',
       postalCode: '',
       timezone: 'Asia/Kolkata',
+      geofenceLat: '',
+      geofenceLng: '',
+      geofenceRadiusM: '',
     })
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -98,6 +108,9 @@ export default function LocationsSettingsPage() {
         stateCode: form.stateCode.trim() || undefined,
         postalCode: form.postalCode.trim() || undefined,
         timezone: form.timezone,
+        geofenceLat: form.geofenceLat.trim() || undefined,
+        geofenceLng: form.geofenceLng.trim() || undefined,
+        geofenceRadiusM: form.geofenceRadiusM ? Number(form.geofenceRadiusM) : undefined,
       })
       toast({ title: 'Location added', description: form.name.trim() })
       reset()
@@ -121,6 +134,9 @@ export default function LocationsSettingsPage() {
       stateCode: loc.stateCode ?? '',
       postalCode: loc.postalCode ?? '',
       timezone: loc.timezone || 'Asia/Kolkata',
+      geofenceLat: loc.geofenceLat ?? '',
+      geofenceLng: loc.geofenceLng ?? '',
+      geofenceRadiusM: loc.geofenceRadiusM != null ? String(loc.geofenceRadiusM) : '',
     })
   }
 
@@ -139,6 +155,10 @@ export default function LocationsSettingsPage() {
           stateCode: editForm.stateCode.trim(),
           postalCode: editForm.postalCode.trim() || undefined,
           timezone: editForm.timezone,
+          // '' / 0 clear the geofence
+          geofenceLat: editForm.geofenceLat.trim(),
+          geofenceLng: editForm.geofenceLng.trim(),
+          geofenceRadiusM: editForm.geofenceRadiusM ? Number(editForm.geofenceRadiusM) : 0,
         },
       })
       toast({ title: 'Location updated' })
@@ -234,14 +254,19 @@ export default function LocationsSettingsPage() {
                         <div className="w-7 h-7 rounded-lg bg-brand-blue/10 flex items-center justify-center shrink-0">
                           <MapPin className="w-3.5 h-3.5 text-brand-blue" />
                         </div>
-                        <div className="font-semibold text-white">{l.name}</div>
+                        <div>
+                          <div className="font-semibold text-white">{l.name}</div>
+                          {l.geofenceRadiusM ? (
+                            <Pill tone="blue">Geofence · {l.geofenceRadiusM}m</Pill>
+                          ) : null}
+                        </div>
                       </div>
                     </td>
                     <td className="text-sm text-brand-muted">
                       {[
                         l.addressLine1,
                         l.city,
-                        l.stateCode,
+                        stateName(l.stateCode),
                         l.postalCode,
                         l.countryCode !== 'IN' ? countryName(l.countryCode) : null,
                       ]
@@ -379,7 +404,7 @@ export default function LocationsSettingsPage() {
                   >
                     <option value="">—</option>
                     {STATE_CODES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
+                      <option key={s} value={s}>{stateName(s)}</option>
                     ))}
                   </select>
                 ) : (
@@ -402,6 +427,36 @@ export default function LocationsSettingsPage() {
                   inputMode={form.countryCode === 'IN' ? 'numeric' : 'text'}
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="label">Clock-in geofence (optional)</label>
+              <div className="grid grid-cols-3 gap-3">
+                <input
+                  className="input"
+                  value={form.geofenceLat}
+                  onChange={(e) => setForm({ ...form, geofenceLat: e.target.value })}
+                  placeholder="Latitude · 12.9352"
+                  inputMode="decimal"
+                />
+                <input
+                  className="input"
+                  value={form.geofenceLng}
+                  onChange={(e) => setForm({ ...form, geofenceLng: e.target.value })}
+                  placeholder="Longitude · 77.6245"
+                  inputMode="decimal"
+                />
+                <input
+                  className="input"
+                  value={form.geofenceRadiusM}
+                  onChange={(e) => setForm({ ...form, geofenceRadiusM: e.target.value.replace(/[^0-9]/g, '') })}
+                  placeholder="Radius (m) · 100"
+                  inputMode="numeric"
+                />
+              </div>
+              <p className="t-mute text-xs" style={{ margin: 0 }}>
+                With all three set, clock-ins outside this circle are marked
+                work-from-home (never blocked). Clear the fields to turn it off.
+              </p>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Btn kind="ghost" type="button" onClick={() => setOpen(false)}>
@@ -494,7 +549,7 @@ export default function LocationsSettingsPage() {
                   >
                     <option value="">—</option>
                     {STATE_CODES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
+                      <option key={s} value={s}>{stateName(s)}</option>
                     ))}
                   </select>
                 ) : (
@@ -515,6 +570,36 @@ export default function LocationsSettingsPage() {
                   inputMode={editForm.countryCode === 'IN' ? 'numeric' : 'text'}
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="label">Clock-in geofence (optional)</label>
+              <div className="grid grid-cols-3 gap-3">
+                <input
+                  className="input"
+                  value={editForm.geofenceLat}
+                  onChange={(e) => setEditForm({ ...editForm, geofenceLat: e.target.value })}
+                  placeholder="Latitude · 12.9352"
+                  inputMode="decimal"
+                />
+                <input
+                  className="input"
+                  value={editForm.geofenceLng}
+                  onChange={(e) => setEditForm({ ...editForm, geofenceLng: e.target.value })}
+                  placeholder="Longitude · 77.6245"
+                  inputMode="decimal"
+                />
+                <input
+                  className="input"
+                  value={editForm.geofenceRadiusM}
+                  onChange={(e) => setEditForm({ ...editForm, geofenceRadiusM: e.target.value.replace(/[^0-9]/g, '') })}
+                  placeholder="Radius (m) · 100"
+                  inputMode="numeric"
+                />
+              </div>
+              <p className="t-mute text-xs" style={{ margin: 0 }}>
+                With all three set, clock-ins outside this circle are marked
+                work-from-home (never blocked). Clear the fields to turn it off.
+              </p>
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Btn kind="ghost" type="button" onClick={() => setEditing(null)}>

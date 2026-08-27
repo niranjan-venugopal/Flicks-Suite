@@ -59,6 +59,8 @@ class CreateIssueDto {
   @IsOptional() @IsString() due_date?: string;
   // At-create project link (validated in-tenant; REQUIRED for guest callers)
   @IsOptional() @IsUUID() project_id?: string;
+  // At-create milestone link — must belong to project_id
+  @IsOptional() @IsUUID() milestone_id?: string;
 }
 
 class UpdateIssueDto {

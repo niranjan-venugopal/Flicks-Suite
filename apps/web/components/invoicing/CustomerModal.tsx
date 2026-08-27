@@ -15,6 +15,8 @@ import {
   type Customer,
   type CustomerInput,
 } from '@/lib/api/queries/use-invoicing'
+import { IN_STATE_CODES } from '@/lib/countries'
+import { stateName } from '@flicks/shared/constants'
 
 const FIELD: React.CSSProperties = {
   width: '100%',
@@ -120,8 +122,21 @@ export function CustomerModal({
             <input style={FIELD} value={form.gstin ?? ''} onChange={set('gstin')} placeholder="29ABCDE1234F1Z5" />
           </div>
           <div>
-            <label style={LABEL}>State code</label>
-            <input style={FIELD} value={form.state_code ?? ''} onChange={set('state_code')} placeholder="KA" />
+            <label style={LABEL}>State</label>
+            {/* Code-valued select — free text here used to silently break the
+                CGST/SGST-vs-IGST derivation, which compares 2-letter codes. */}
+            <select style={{ ...FIELD, ...invoSelectReset }} value={form.state_code ?? ''} onChange={set('state_code')}>
+              <option value="">Select…</option>
+              {IN_STATE_CODES.map((c) => (
+                <option key={c} value={c}>
+                  {stateName(c)}
+                </option>
+              ))}
+              {/* Keep a legacy free-text value selectable so old customers stay editable */}
+              {form.state_code && !(IN_STATE_CODES as readonly string[]).includes(form.state_code) && (
+                <option value={form.state_code}>{stateName(form.state_code)}</option>
+              )}
+            </select>
           </div>
           <div>
             <label style={LABEL}>Default currency</label>

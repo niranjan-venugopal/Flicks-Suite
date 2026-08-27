@@ -8,7 +8,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, inArray, desc, asc, sql } from 'drizzle-orm';
+import { eq, ne, and, inArray, desc, asc, sql, or, isNull } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -621,6 +621,12 @@ export class EmployeesService {
             and(
               eq(leaveTypes.tenant_id, tenantId),
               eq(leaveTypes.is_active, true),
+              // Gender-scoped: untagged types for everyone; tagged types only
+              // when THIS employee's gender matches (mirrors leave service).
+              or(
+                isNull(leaveTypes.applicable_genders),
+                sql`(SELECT e.gender::text FROM employees e WHERE e.id = ${employeeId} AND e.tenant_id = ${tenantId}) = ANY(${leaveTypes.applicable_genders})`,
+              ),
             ),
           )
           .orderBy(asc(leaveTypes.display_order)),

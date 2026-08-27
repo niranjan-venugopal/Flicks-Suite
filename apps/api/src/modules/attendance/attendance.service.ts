@@ -15,13 +15,14 @@ import {
   shiftTemplates,
   employeeShifts,
   employees,
+  locations,
   memberships,
   users,
   holidays,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
-import type { DbAdmin } from '@flicks/db';
+import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type {
@@ -95,6 +96,25 @@ function localTimeToUTC(dateISO: string, hhmm: string, tz: string): Date {
     guess = new Date(guess.getTime() + diffMin * 60_000);
   }
   return guess;
+}
+
+/**
+ * Haversine distance in metres between two WGS-84 points (PRD §6.4 step 3).
+ */
+function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6_371_000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
 }
 
 /**
@@ -326,9 +346,83 @@ export class AttendanceService {
     });
   }
 
+  // ─── Geofence resolution (PRD §6.4) ───────────────────────────────────────
+
+  /**
+   * The employee's assigned office and its geofence, if configured. Used to
+   * resolve `is_within_geofence`/`work_mode` on punches — location problems
+   * must NEVER block the punch itself (PRD §6.4 graceful degradation).
+   */
+  private async getEmployeeGeofence(
+    tx: Db,
+    tenantId: string,
+    employeeId: string,
+  ) {
+    const [row] = await tx
+      .select({
+        locationId: employees.location_id,
+        locationName: locations.name,
+        geofenceLat: locations.geofence_lat,
+        geofenceLng: locations.geofence_lng,
+        geofenceRadiusM: locations.geofence_radius_m,
+      })
+      .from(employees)
+      .leftJoin(locations, eq(employees.location_id, locations.id))
+      .where(
+        and(eq(employees.tenant_id, tenantId), eq(employees.id, employeeId)),
+      )
+      .limit(1);
+    const lat = row?.geofenceLat ? parseFloat(row.geofenceLat) : NaN;
+    const lng = row?.geofenceLng ? parseFloat(row.geofenceLng) : NaN;
+    const hasFence =
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      typeof row?.geofenceRadiusM === 'number' &&
+      row.geofenceRadiusM > 0;
+    return {
+      locationId: row?.locationId ?? null,
+      locationName: row?.locationName ?? null,
+      geofenceLat: hasFence ? lat : null,
+      geofenceLng: hasFence ? lng : null,
+      geofenceRadiusM: hasFence ? row!.geofenceRadiusM : null,
+    };
+  }
+
+  /**
+   * `is_within_geofence` for a punch: true/false only when BOTH the punch has
+   * coordinates and the employee's location has a geofence; NULL otherwise.
+   */
+  private resolveWithinGeofence(
+    dto: PunchDto,
+    fence: Awaited<ReturnType<AttendanceService['getEmployeeGeofence']>>,
+  ): boolean | null {
+    if (
+      dto.lat === undefined ||
+      dto.lng === undefined ||
+      fence.geofenceLat === null ||
+      fence.geofenceLng === null ||
+      fence.geofenceRadiusM === null
+    ) {
+      return null;
+    }
+    const distance = haversineMeters(
+      dto.lat,
+      dto.lng,
+      fence.geofenceLat,
+      fence.geofenceLng,
+    );
+    return distance <= fence.geofenceRadiusM;
+  }
+
   // ─── Punch flow ───────────────────────────────────────────────────────────
 
-  async punchIn(userId: string, tenantId: string, dto: PunchDto, ip?: string) {
+  async punchIn(
+    userId: string,
+    tenantId: string,
+    dto: PunchDto,
+    ip?: string,
+    userAgent?: string,
+  ) {
     const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
 
@@ -354,6 +448,13 @@ export class AttendanceService {
     const result = await this.databaseService.withTenant(
       tenantId,
       async (tx) => {
+        // Geofence resolution (PRD §6.4): office when inside, remote when the
+        // coordinates land outside, unknown (NULL) when either side is missing.
+        const fence = await this.getEmployeeGeofence(tx, tenantId, employeeId);
+        const isWithinGeofence = this.resolveWithinGeofence(dto, fence);
+        const workMode: 'office' | 'remote' | null =
+          isWithinGeofence === null ? null : isWithinGeofence ? 'office' : 'remote';
+
         // Check for an open punch-in (no matching out yet) — reject duplicates
         const [existing] = await tx
           .select()
@@ -392,6 +493,7 @@ export class AttendanceService {
                 is_late: isLate,
                 late_by_minutes: lateBy,
                 attendance_status: isLate ? 'late' : 'present',
+                work_mode: workMode,
                 source: 'web',
                 updated_at: new Date(),
               })
@@ -411,6 +513,7 @@ export class AttendanceService {
               shift_template_id: shift.id,
               first_punch_in_at: now,
               attendance_status: isLate ? 'late' : 'present',
+              work_mode: workMode,
               is_late: isLate,
               late_by_minutes: lateBy,
               source: 'web',
@@ -430,16 +533,23 @@ export class AttendanceService {
             punched_at: now,
             source: 'web',
             ip_address: ip ?? null,
+            user_agent: userAgent ?? null,
             geo_lat: dto.lat ?? null,
             geo_lng: dto.lng ?? null,
             geo_accuracy_m: dto.accuracy ?? null,
-            location_id: dto.locationId ?? null,
-            is_within_geofence: null, // geofence resolution deferred to Settings (PRD §6.8)
+            location_id: dto.locationId ?? fence.locationId ?? null,
+            is_within_geofence: isWithinGeofence,
             notes: dto.notes ?? null,
           })
           .returning();
 
-        return { record_id: recordId, punch: punch! };
+        return {
+          record_id: recordId,
+          punch: punch!,
+          isWithinGeofence,
+          workMode,
+          locationName: fence.locationName,
+        };
       },
     );
 
@@ -454,6 +564,8 @@ export class AttendanceService {
         isLate,
         lateBy,
         timezone: shift.timezone,
+        isWithinGeofence: result.isWithinGeofence,
+        workMode: result.workMode,
       },
     });
 
@@ -467,10 +579,19 @@ export class AttendanceService {
       lateByMinutes: lateBy,
       shiftStart: shift.start_time,
       shiftTimezone: shift.timezone,
+      isWithinGeofence: result.isWithinGeofence,
+      workMode: result.workMode,
+      locationName: result.locationName,
     };
   }
 
-  async punchOut(userId: string, tenantId: string, dto: PunchDto, ip?: string) {
+  async punchOut(
+    userId: string,
+    tenantId: string,
+    dto: PunchDto,
+    ip?: string,
+    userAgent?: string,
+  ) {
     const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
     const today = dateInTimezone(now, 'Asia/Kolkata');
@@ -502,6 +623,12 @@ export class AttendanceService {
           );
         }
 
+        // Same geofence resolution as punch-in, for the punch ROW only — the
+        // record's work_mode is set at clock-in and never downgraded here
+        // (clocking out from home must not flip an office day to remote).
+        const fence = await this.getEmployeeGeofence(tx, tenantId, employeeId);
+        const isWithinGeofence = this.resolveWithinGeofence(dto, fence);
+
         // Insert out punch
         const [punch] = await tx
           .insert(attendancePunches)
@@ -513,10 +640,12 @@ export class AttendanceService {
             punched_at: now,
             source: 'web',
             ip_address: ip ?? null,
+            user_agent: userAgent ?? null,
             geo_lat: dto.lat ?? null,
             geo_lng: dto.lng ?? null,
             geo_accuracy_m: dto.accuracy ?? null,
-            location_id: dto.locationId ?? null,
+            location_id: dto.locationId ?? fence.locationId ?? null,
+            is_within_geofence: isWithinGeofence,
             notes: dto.notes ?? null,
           })
           .returning();
@@ -722,6 +851,12 @@ export class AttendanceService {
     // Determine isOnBreak by inspecting last punch
     let isOnBreak = false;
     let lastPunchType: string | null = null;
+    let lastPunchGeo: {
+      lat: number;
+      lng: number;
+      accuracyM: number | null;
+      isWithinGeofence: boolean | null;
+    } | null = null;
     if (record) {
       const punches = await this.databaseService.withTenant(tenantId, (tx) =>
         tx
@@ -736,7 +871,41 @@ export class AttendanceService {
       );
       lastPunchType = punches[0]?.punch_type ?? null;
       isOnBreak = lastPunchType === 'break_start';
+
+      // The clock-in position feeds the geofence strip on the clock card.
+      const [inPunch] = await this.databaseService.withTenant(tenantId, (tx) =>
+        tx
+          .select({
+            lat: attendancePunches.geo_lat,
+            lng: attendancePunches.geo_lng,
+            accuracyM: attendancePunches.geo_accuracy_m,
+            isWithinGeofence: attendancePunches.is_within_geofence,
+          })
+          .from(attendancePunches)
+          .where(
+            and(
+              eq(attendancePunches.attendance_record_id, record.id),
+              eq(attendancePunches.punch_type, 'in'),
+            ),
+          )
+          .orderBy(desc(attendancePunches.punched_at))
+          .limit(1),
+      );
+      if (inPunch && inPunch.lat !== null && inPunch.lng !== null) {
+        lastPunchGeo = {
+          lat: inPunch.lat,
+          lng: inPunch.lng,
+          accuracyM: inPunch.accuracyM,
+          isWithinGeofence: inPunch.isWithinGeofence,
+        };
+      }
     }
+
+    // Assigned office + geofence — the web pre-checks the fence client-side
+    // before punch-in so it can offer "Mark as WFH today" instead of failing.
+    const fence = await this.databaseService.withTenant(tenantId, (tx) =>
+      this.getEmployeeGeofence(tx, tenantId, employeeId),
+    );
 
     // Working day check (per shift's working_days)
     const dow = dayOfWeekInTimezone(now, shift.timezone);
@@ -754,6 +923,17 @@ export class AttendanceService {
       lateByMinutes: record?.late_by_minutes ?? 0,
       isOnBreak,
       lastPunchType,
+      workMode: record?.work_mode ?? null,
+      location: fence.locationId
+        ? {
+            id: fence.locationId,
+            name: fence.locationName,
+            geofenceLat: fence.geofenceLat,
+            geofenceLng: fence.geofenceLng,
+            geofenceRadiusM: fence.geofenceRadiusM,
+          }
+        : null,
+      lastPunchGeo,
       shift: {
         id: shift.id,
         name: shift.name,
@@ -955,13 +1135,31 @@ export class AttendanceService {
     });
   }
 
-  async listTeamToday(userId: string, tenantId: string) {
-    const reviewerEmployeeId = await this.getEmployeeIdForUser(
-      userId,
-      tenantId,
-    );
+  async listTeamToday(
+    userId: string,
+    tenantId: string,
+    role?: string,
+    managerId?: string,
+  ) {
+    // Managers see their direct reports; owner/admin/finance/fam see the whole
+    // org (precedent: reports.service tenant-wide reads behind the same guard).
+    // An explicit ?managerId= narrows the org view to one manager's team.
+    const orgWide = role !== undefined && role !== 'manager';
+    const reviewerEmployeeId = orgWide
+      ? null
+      : await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
     const today = dateInTimezone(now, 'Asia/Kolkata');
+
+    const scope = [
+      eq(employees.tenant_id, tenantId),
+      eq(employees.status, 'active'),
+    ];
+    if (reviewerEmployeeId) {
+      scope.push(eq(employees.reporting_manager_id, reviewerEmployeeId));
+    } else if (managerId) {
+      scope.push(eq(employees.reporting_manager_id, managerId));
+    }
 
     return this.databaseService.withTenant(tenantId, (tx) =>
       tx
@@ -971,10 +1169,12 @@ export class AttendanceService {
           employeeCode: employees.employee_code,
           recordId: attendanceRecords.id,
           attendanceStatus: attendanceRecords.attendance_status,
+          workMode: attendanceRecords.work_mode,
           firstPunchInAt: attendanceRecords.first_punch_in_at,
           lastPunchOutAt: attendanceRecords.last_punch_out_at,
           totalWorkedMinutes: attendanceRecords.total_worked_minutes,
           isLate: attendanceRecords.is_late,
+          locationName: locations.name,
         })
         .from(employees)
         .leftJoin(
@@ -984,13 +1184,8 @@ export class AttendanceService {
             eq(attendanceRecords.attendance_date, today),
           ),
         )
-        .where(
-          and(
-            eq(employees.tenant_id, tenantId),
-            eq(employees.reporting_manager_id, reviewerEmployeeId),
-            eq(employees.status, 'active'),
-          ),
-        )
+        .leftJoin(locations, eq(employees.location_id, locations.id))
+        .where(and(...scope))
         .orderBy(employees.first_name),
     );
   }
@@ -1342,6 +1537,12 @@ export class AttendanceService {
             )
             .limit(1);
 
+          // An approved WFH request marks the day's work_mode remote (status
+          // stays 'present' — WFH is where you worked, not whether you did).
+          const wfhMode =
+            reg.request_type === 'wfh_request'
+              ? { work_mode: 'remote' as const }
+              : {};
           if (existing) {
             await tx
               .update(attendanceRecords)
@@ -1352,6 +1553,7 @@ export class AttendanceService {
                 regularization_request_id: regularizationId,
                 source: 'manual',
                 attendance_status: 'present',
+                ...wfhMode,
                 updated_at: now,
               })
               .where(eq(attendanceRecords.id, existing.id));
@@ -1365,6 +1567,7 @@ export class AttendanceService {
               is_regularized: true,
               regularization_request_id: regularizationId,
               attendance_status: 'present',
+              ...wfhMode,
               source: 'manual',
             });
           }

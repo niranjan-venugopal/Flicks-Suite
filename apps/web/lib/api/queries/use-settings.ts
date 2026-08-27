@@ -30,6 +30,8 @@ export interface Organization {
   timezone: string
   currency: string
   fiscalYearStartMonth: number
+  /** 0=Sunday .. 6=Saturday */
+  weekStartsOn: number
   dateFormat: string
   logoUrl: string | null
   brandColor: string | null
@@ -42,6 +44,7 @@ export interface Organization {
 
 export interface UpdateOrganizationPayload {
   name?: string
+  slug?: string
   legalName?: string
   gstin?: string
   pan?: string
@@ -54,6 +57,9 @@ export interface UpdateOrganizationPayload {
   countryCode?: string
   stateCode?: string
   postalCode?: string
+  timezone?: string
+  fiscalYearStartMonth?: number
+  weekStartsOn?: number
 }
 
 export function useOrganization() {
@@ -178,6 +184,9 @@ export interface CreateLocationPayload {
   postalCode?: string
   countryCode?: string
   timezone?: string
+  geofenceLat?: string
+  geofenceLng?: string
+  geofenceRadiusM?: number
 }
 
 export interface UpdateLocationPayload {
@@ -190,6 +199,10 @@ export interface UpdateLocationPayload {
   countryCode?: string
   timezone?: string
   postalCode?: string
+  // '' lat/lng or radius 0 clears the geofence
+  geofenceLat?: string
+  geofenceLng?: string
+  geofenceRadiusM?: number
   isActive?: boolean
 }
 
@@ -441,6 +454,8 @@ export interface LeavePolicy {
   color: string | null
   displayOrder: number
   isActive: boolean
+  /** null = applies to everyone; ['female'] / ['male'] = gender-scoped */
+  applicableGenders: string[] | null
   approvedYtd: number
 }
 

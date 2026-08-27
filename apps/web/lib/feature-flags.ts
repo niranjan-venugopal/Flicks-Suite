@@ -7,6 +7,12 @@
 export const FEATURES = {
   /** Email suite: sequences, templates/signature settings, deal Emails tab. */
   crm_email: false,
+  /**
+   * HR document vault (People → Documents). The tab exists but has no
+   * storage/upload backend yet — shown honestly as "Coming soon" instead of
+   * a dead empty state that invites an upload which can't happen.
+   */
+  hr_documents: false,
   /** Automation: workflow builder, starters, run history. */
   crm_automation: false,
   /**

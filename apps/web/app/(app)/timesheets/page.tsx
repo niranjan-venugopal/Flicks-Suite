@@ -146,7 +146,9 @@ export default function TimesheetsPage() {
   const weekStart = useMemo(() => {
     if (current.data?.periodStart) {
       const d = new Date(`${current.data.periodStart}T00:00:00`)
-      if (!isNaN(d.getTime())) return startOfWeekMon(d)
+      // The server's period_start IS the week start (per the tenant's
+      // week-starts-on setting) — never re-snap it to Monday here.
+      if (!isNaN(d.getTime())) return d
     }
     return startOfWeekMon()
   }, [current.data?.periodStart])

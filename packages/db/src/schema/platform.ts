@@ -9,6 +9,7 @@ import {
   pgEnum,
   uniqueIndex,
   index,
+  smallint,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -81,6 +82,8 @@ export const tenants = pgTable(
       .notNull()
       .default(4), // April
     date_format: text('date_format').notNull().default('DD/MM/YYYY'),
+    // 0=Sunday .. 6=Saturday (same convention as shift_templates.working_days).
+    week_starts_on: smallint('week_starts_on').notNull().default(1),
     working_days: text('working_days')
       .array()
       .notNull()

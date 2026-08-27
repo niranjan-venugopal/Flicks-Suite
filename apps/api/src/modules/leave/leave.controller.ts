@@ -47,7 +47,7 @@ export class LeaveController {
   @ApiOperation({ summary: 'List configured leave types' })
   @ApiResponse({ status: 200, description: 'Leave types' })
   async listLeaveTypes(@CurrentUser() user: JwtPayload) {
-    return this.leaveService.listLeaveTypes(user.tenantId);
+    return this.leaveService.listLeaveTypes(user.tenantId, user.sub);
   }
 
   @Post('types')

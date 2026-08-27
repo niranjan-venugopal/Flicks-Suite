@@ -263,6 +263,12 @@ export default function LeavePoliciesPage() {
                       {p.name}
                       <Pill>{p.code}</Pill>
                       {!p.isPaid && <Pill tone="coral">Unpaid</Pill>}
+                      {p.applicableGenders?.length === 1 && p.applicableGenders[0] === 'female' && (
+                        <Pill tone="purple">Female only</Pill>
+                      )}
+                      {p.applicableGenders?.length === 1 && p.applicableGenders[0] === 'male' && (
+                        <Pill tone="blue">Male only</Pill>
+                      )}
                     </span>
                   </td>
                   <td style={{ padding: '12px 14px', fontFamily: 'var(--font-mono)', fontWeight: 800 }}>

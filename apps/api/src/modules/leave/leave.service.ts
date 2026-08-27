@@ -146,6 +146,52 @@ export class LeaveService {
   }
 
   /**
+   * Employee id + gender for the logged-in user — gender scopes which leave
+   * types they see (maternity/paternity, PRD §7.2 applicable_genders).
+   */
+  private async getEmployeeForUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ id: string; gender: string | null }> {
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const [m] = await tx
+        .select({
+          employeeId: memberships.employee_id,
+          gender: employees.gender,
+        })
+        .from(memberships)
+        .leftJoin(employees, eq(memberships.employee_id, employees.id))
+        .where(
+          and(
+            eq(memberships.user_id, userId),
+            eq(memberships.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
+      if (!m?.employeeId) {
+        throw new NotFoundException(
+          'No employee record found for the current user',
+        );
+      }
+      return { id: m.employeeId, gender: m.gender ?? null };
+    });
+  }
+
+  /**
+   * WHERE fragment: untagged leave types apply to everyone; gender-tagged
+   * types only to a matching gender. No/other/undisclosed gender ⇒ untagged
+   * types only — never show Maternity to someone who hasn't set a gender.
+   */
+  private genderScope(gender: string | null) {
+    return or(
+      isNull(leaveTypes.applicable_genders),
+      gender
+        ? sql`${gender} = ANY(${leaveTypes.applicable_genders})`
+        : sql`false`,
+    );
+  }
+
+  /**
    * WHERE clause for holidays that block work in [from, to]: excludes
    * elective types and scopes by location — company-wide rows
    * (location_id NULL) always apply; location rows only apply to employees
@@ -205,7 +251,17 @@ export class LeaveService {
 
   // ─── Leave Types ───────────────────────────────────────────────────────────
 
-  async listLeaveTypes(tenantId: string) {
+  async listLeaveTypes(tenantId: string, userId?: string) {
+    // Gender-scoped for the calling employee (a user with no employee record
+    // — e.g. an admin-only seat — sees the untagged types).
+    let gender: string | null = null;
+    if (userId) {
+      try {
+        gender = (await this.getEmployeeForUser(userId, tenantId)).gender;
+      } catch {
+        gender = null;
+      }
+    }
     const rows = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
         .select({
@@ -224,6 +280,7 @@ export class LeaveService {
           and(
             eq(leaveTypes.tenant_id, tenantId),
             eq(leaveTypes.is_active, true),
+            this.genderScope(gender),
           ),
         )
         .orderBy(leaveTypes.display_order, leaveTypes.name),
@@ -277,7 +334,10 @@ export class LeaveService {
   // ─── Balances ──────────────────────────────────────────────────────────────
 
   async getMyBalances(userId: string, tenantId: string) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
+    const { id: employeeId, gender } = await this.getEmployeeForUser(
+      userId,
+      tenantId,
+    );
     const leaveYear = new Date().getFullYear();
 
     return this.databaseService.withTenant(tenantId, async (tx) => {
@@ -290,6 +350,7 @@ export class LeaveService {
           and(
             eq(leaveTypes.tenant_id, tenantId),
             eq(leaveTypes.is_active, true),
+            this.genderScope(gender),
           ),
         );
 
@@ -340,7 +401,10 @@ export class LeaveService {
   // ─── Apply ─────────────────────────────────────────────────────────────────
 
   async applyLeave(userId: string, tenantId: string, dto: ApplyLeaveDto) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
+    const { id: employeeId, gender } = await this.getEmployeeForUser(
+      userId,
+      tenantId,
+    );
 
     // Holiday-aware day counting (PRD §7.7 acceptance #8): subtract any
     // tenant holidays falling within the leave range so a Mon–Fri leave
@@ -386,7 +450,8 @@ export class LeaveService {
           );
         }
 
-        // Verify the leave type exists and is active for this tenant.
+        // Verify the leave type exists, is active, and applies to the
+        // applicant's gender (a male employee cannot apply for Maternity).
         const [type] = await tx
           .select()
           .from(leaveTypes)
@@ -395,11 +460,14 @@ export class LeaveService {
               eq(leaveTypes.tenant_id, tenantId),
               eq(leaveTypes.id, dto.leaveTypeId),
               eq(leaveTypes.is_active, true),
+              this.genderScope(gender),
             ),
           )
           .limit(1);
         if (!type) {
-          throw new BadRequestException('Leave type not found or inactive');
+          throw new BadRequestException(
+            'Leave type not found, inactive, or not applicable to you',
+          );
         }
 
         // Insert the request.

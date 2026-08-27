@@ -28,7 +28,9 @@ const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  // geolocation=(self): the clock-in geofence check needs the browser API on
+  // our own origin; camera/mic stay disabled.
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(self)' },
   ...(isProd
     ? [
         { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },

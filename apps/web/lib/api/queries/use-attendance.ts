@@ -20,6 +20,9 @@ export type AttendanceStatus =
 
 export type PunchType = 'in' | 'out' | 'break_start' | 'break_end'
 
+/** Where the day was worked — orthogonal to AttendanceStatus. */
+export type WorkMode = 'office' | 'remote' | 'field'
+
 export interface AttendanceRecord {
   id: string
   attendanceDate: string
@@ -45,6 +48,22 @@ export interface TodayAttendance {
   lateByMinutes: number
   isOnBreak: boolean
   lastPunchType: PunchType | null
+  workMode: WorkMode | null
+  /** Assigned office + its geofence (null when unassigned / no geofence set). */
+  location: {
+    id: string
+    name: string | null
+    geofenceLat: number | null
+    geofenceLng: number | null
+    geofenceRadiusM: number | null
+  } | null
+  /** The clock-in position, for the geofence strip. */
+  lastPunchGeo: {
+    lat: number
+    lng: number
+    accuracyM: number | null
+    isWithinGeofence: boolean | null
+  } | null
   shift: {
     id: string
     name: string
@@ -76,6 +95,9 @@ export interface PunchInResponse {
   lateByMinutes: number
   shiftStart: string
   shiftTimezone: string
+  isWithinGeofence: boolean | null
+  workMode: WorkMode | null
+  locationName: string | null
 }
 
 export interface PunchOutResponse {
@@ -97,10 +119,12 @@ export interface TeamMemberToday {
   employeeCode: string
   recordId: string | null
   attendanceStatus: AttendanceStatus | null
+  workMode: WorkMode | null
   firstPunchInAt: string | null
   lastPunchOutAt: string | null
   totalWorkedMinutes: number | null
   isLate: boolean | null
+  locationName: string | null
 }
 
 export type RegularizationType =
@@ -184,6 +208,8 @@ export function useTeamToday() {
     queryKey: ['attendance', 'team', 'today'],
     queryFn: () =>
       api.get<TeamMemberToday[]>('/api/v1/attendance/team/today'),
+    // The page bills itself as a live view — keep it fresh without a remount.
+    refetchInterval: 60_000,
   })
 }
 

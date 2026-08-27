@@ -6,7 +6,10 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { stateCodeFromGstin } from '@flicks/shared/constants';
+import {
+  stateCodeFromGstin,
+  RESERVED_TENANT_SLUGS,
+} from '@flicks/shared/constants';
 import { eq, and, asc, count, ne, sql } from 'drizzle-orm';
 import {
   tenants,
@@ -118,6 +121,7 @@ export class SettingsService {
       timezone: tenant.timezone,
       currency: tenant.currency,
       fiscalYearStartMonth: tenant.fiscal_year_start_month,
+      weekStartsOn: tenant.week_starts_on,
       dateFormat: tenant.date_format,
       // Signed URL for the uploaded logo (logo_key), else the legacy URL (§4/D7)
       logoUrl: await this.mediaService.servedUrl(
@@ -160,6 +164,23 @@ export class SettingsService {
       ? stateCodeFromGstin(dto.gstin) ?? dto.stateCode
       : dto.stateCode;
 
+    // Slug change: same reserved + global-uniqueness rules as signup, minus
+    // this tenant itself. dbAdmin on purpose — uniqueness is cross-tenant,
+    // which RLS-bound reads can't see.
+    if (dto.slug !== undefined && dto.slug !== existing.slug) {
+      if ((RESERVED_TENANT_SLUGS as readonly string[]).includes(dto.slug)) {
+        throw new ConflictException('That workspace ID is reserved');
+      }
+      const [taken] = await this.dbAdmin
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(and(eq(tenants.slug, dto.slug), ne(tenants.id, tenantId)))
+        .limit(1);
+      if (taken) {
+        throw new ConflictException('That workspace ID is already taken');
+      }
+    }
+
     const [updated] = await this.dbAdmin
       .update(tenants)
       .set({
@@ -183,6 +204,14 @@ export class SettingsService {
           state_code: derivedStateCode,
         }),
         ...(dto.postalCode !== undefined && { postal_code: dto.postalCode }),
+        ...(dto.slug !== undefined && { slug: dto.slug }),
+        ...(dto.timezone !== undefined && { timezone: dto.timezone }),
+        ...(dto.fiscalYearStartMonth !== undefined && {
+          fiscal_year_start_month: dto.fiscalYearStartMonth,
+        }),
+        ...(dto.weekStartsOn !== undefined && {
+          week_starts_on: dto.weekStartsOn,
+        }),
         updated_at: new Date(),
       })
       .where(eq(tenants.id, tenantId))
@@ -196,19 +225,27 @@ export class SettingsService {
       resourceId: tenantId,
       beforeState: {
         name: existing.name,
+        slug: existing.slug,
         legalName: existing.legal_name,
         gstin: existing.gstin,
         pan: existing.pan,
         industry: existing.industry,
         sizeBand: existing.size_band,
+        timezone: existing.timezone,
+        fiscalYearStartMonth: existing.fiscal_year_start_month,
+        weekStartsOn: existing.week_starts_on,
       },
       afterState: {
         name: updated.name,
+        slug: updated.slug,
         legalName: updated.legal_name,
         gstin: updated.gstin,
         pan: updated.pan,
         industry: updated.industry,
         sizeBand: updated.size_band,
+        timezone: updated.timezone,
+        fiscalYearStartMonth: updated.fiscal_year_start_month,
+        weekStartsOn: updated.week_starts_on,
       },
     });
 
@@ -505,6 +542,16 @@ export class SettingsService {
         }),
         ...(dto.timezone !== undefined && { timezone: dto.timezone }),
         ...(dto.postalCode !== undefined && { postal_code: dto.postalCode }),
+        // '' clears the geofence; radius 0 clears too (no zero-size fences)
+        ...(dto.geofenceLat !== undefined && {
+          geofence_lat: dto.geofenceLat || null,
+        }),
+        ...(dto.geofenceLng !== undefined && {
+          geofence_lng: dto.geofenceLng || null,
+        }),
+        ...(dto.geofenceRadiusM !== undefined && {
+          geofence_radius_m: dto.geofenceRadiusM || null,
+        }),
         ...(dto.isActive !== undefined && { is_active: dto.isActive }),
       })
       .where(
@@ -1049,6 +1096,7 @@ export class SettingsService {
         color: leaveTypes.color,
         displayOrder: leaveTypes.display_order,
         isActive: leaveTypes.is_active,
+        applicableGenders: leaveTypes.applicable_genders,
       })
       .from(leaveTypes)
       .where(eq(leaveTypes.tenant_id, tenantId))

@@ -63,8 +63,8 @@ export interface TodayAttendance {
 }
 
 export interface WeekSummary {
-  weekStart: string; // YYYY-MM-DD (Monday)
-  weekEnd: string; // YYYY-MM-DD (Sunday)
+  weekStart: string; // YYYY-MM-DD — the tenant's week_starts_on day (default Monday)
+  weekEnd: string; // YYYY-MM-DD — 6 days later
   totalWorkMinutes: number;
   totalExpectedMinutes: number;
   presentDays: number;

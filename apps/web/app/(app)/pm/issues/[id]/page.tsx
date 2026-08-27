@@ -73,7 +73,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   // ones still present in the text are sent as mentioned_user_ids.
   const [mentioned, setMentioned] = useState<Array<{ id: string; name: string }>>([])
   const [mentionIdx, setMentionIdx] = useState(0)
-  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | null>(null)
+  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | 'milestone' | null>(null)
 
   useEffect(() => {
     if (d?.issue.description != null && !editingDesc) setDesc(d.issue.description)
@@ -105,16 +105,20 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     },
   })
   // Kill-switch (no engine) fallback for avatars + the @-mention picker —
-  // also fixes the previously-empty assignee menu in REST mode.
+  // also fixes the previously-empty assignee menu in REST mode. The endpoint
+  // wraps the roster in { data } — typing it as a bare array crashed the page
+  // whenever this resolved before the sync engine finished bootstrapping.
   const usersQ = useQuery({
     queryKey: ['pm', 'users'],
-    queryFn: () => api.get<Array<{ id: string; name: string | null; avatar_url: string | null }>>('/api/v1/pm/users'),
+    queryFn: () =>
+      api.get<{ data: Array<{ id: string; name: string | null; avatar_url: string | null }> }>('/api/v1/pm/users'),
     staleTime: 300_000,
     enabled: !engine,
   })
 
   const restProject = useMutation({
-    mutationFn: (projectId: string | null) => api.post(`/api/v1/pm/issues/${id}/project`, { project_id: projectId }),
+    mutationFn: (input: { project_id: string | null; milestone_id?: string | null }) =>
+      api.post(`/api/v1/pm/issues/${id}/project`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
   })
   const projectsQ = useQuery({
@@ -122,10 +126,27 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     queryFn: () => api.get<{ data: { projects: Array<{ id: string; name: string; icon: string | null }> } }>('/api/v1/pm/projects'),
     enabled: !engine,
   })
+  // Milestones of the issue's project (kill-switch path — the engine store
+  // already has them all).
+  const milestonesQ = useQuery({
+    queryKey: ['pm', 'project-detail', issue?.project_id ?? 'none'],
+    queryFn: () =>
+      api.get<{ data: { milestones: Array<{ id: string; name: string }> } }>(
+        `/api/v1/pm/projects/${issue!.project_id}/detail`,
+      ),
+    enabled: !engine && !!issue?.project_id,
+  })
   const doMove = (stateId: string) => (engine ? engine.moveIssueState(id, stateId) : restMove.mutate(stateId))
   const doAssign = (uid: string | null) => (engine ? engine.assignIssue(id, uid) : restAssign.mutate(uid))
   const doPriority = (p: number) => (engine ? engine.setIssuePriority(id, p) : restPriority.mutate(p))
-  const doProject = (pid: string | null) => (engine ? engine.setIssueProject(id, pid) : restProject.mutate(pid))
+  const doProject = (pid: string | null) =>
+    engine ? engine.setIssueProject(id, pid) : restProject.mutate({ project_id: pid })
+  const doMilestone = (msId: string | null) => {
+    const pid = issue?.project_id
+    if (!pid) return
+    if (engine) engine.setIssueProject(id, pid, msId)
+    else restProject.mutate({ project_id: pid, milestone_id: msId })
+  }
   const me = useAuthStore((st) => st.currentUser)
   const ghStatus = useQuery({
     queryKey: ['pm', 'github', 'status'],
@@ -181,7 +202,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const state = states.find((s) => s.id === issue.state_id)
   // Uniform {id, name, avatar_url} regardless of source (engine store or the
   // REST fallback) — the mention picker + avatar lookups need non-null names.
-  const users = (store ? [...store.users.values()] : (usersQ.data ?? [])).map((u) => ({
+  const users = (store ? [...store.users.values()] : (usersQ.data?.data ?? [])).map((u) => ({
     id: u.id,
     name: u.name ?? '—',
     avatar_url: u.avatar_url ?? null,
@@ -463,6 +484,32 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               {(engine ? engine.store.projectList() : projectsQ.data?.data.projects ?? []).map((pr) => (
                 <button key={pr.id} onClick={() => { doProject(pr.id); setMenu(null) }} style={railMenuRow(pr.id === issue.project_id)}>
                   <span style={{ fontSize: 12 }}>{pr.icon ?? '🎯'}</span> {pr.name}
+                </button>
+              ))}
+            </RailMenu>
+          )}
+          <RailRow
+            label="Milestone"
+            onClick={issue.project_id ? () => setMenu(menu === 'milestone' ? null : 'milestone') : undefined}
+          >
+            {(() => {
+              if (!issue.project_id) return <span className="t-mute">Set a project first</span>
+              const options = engine
+                ? engine.store.milestonesForProject(issue.project_id)
+                : milestonesQ.data?.data.milestones ?? []
+              const ms = issue.milestone_id ? options.find((m) => m.id === issue.milestone_id) : null
+              return ms ? <span>{ms.name}</span> : <span className="t-mute">None</span>
+            })()}
+          </RailRow>
+          {menu === 'milestone' && issue.project_id && (
+            <RailMenu>
+              <button onClick={() => { doMilestone(null); setMenu(null) }} style={railMenuRow(!issue.milestone_id)}>No milestone</button>
+              {(engine
+                ? engine.store.milestonesForProject(issue.project_id)
+                : milestonesQ.data?.data.milestones ?? []
+              ).map((m) => (
+                <button key={m.id} onClick={() => { doMilestone(m.id); setMenu(null) }} style={railMenuRow(m.id === issue.milestone_id)}>
+                  {m.name}
                 </button>
               ))}
             </RailMenu>

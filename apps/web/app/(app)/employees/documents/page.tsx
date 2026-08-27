@@ -4,8 +4,25 @@ import { motion } from 'framer-motion'
 import { FileText } from 'lucide-react'
 import { PageGlows } from '@/components/layout/PageGlows'
 import { EmptyState } from '@/components/common/EmptyState'
+import { ComingSoon } from '@/components/crm/ComingSoon'
+import { Icon } from '@/components/proto'
+import { FEATURES } from '@/lib/feature-flags'
 
 export default function EmployeeDocumentsPage() {
+  if (!FEATURES.hr_documents) {
+    return (
+      <ComingSoon
+        title="Documents"
+        line="A central vault for offer letters, contracts and identity proofs — per-employee folders, controlled sharing, and expiry reminders. We're building the storage side now."
+        icon={<Icon.doc size={24} />}
+        bullets={[
+          'Per-employee folders with role-based access',
+          'Offer letters, contracts and ID proofs in one place',
+          'Expiry reminders for time-bound documents',
+        ]}
+      />
+    )
+  }
   return (
     <div className="relative min-h-full">
       <PageGlows />

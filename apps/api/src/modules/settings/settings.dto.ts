@@ -9,8 +9,10 @@ import {
   IsEnum,
   Matches,
   MaxLength,
+  MinLength,
   Min,
   Max,
+  IsInt,
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -186,6 +188,24 @@ export class UpdateLocationDto {
   @IsString()
   @IsOptional()
   postalCode?: string;
+
+  // Geofence centre + radius. '' lat/lng (or radius 0) clears the fence.
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  geofenceLat?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  geofenceLng?: string;
+
+  @ApiPropertyOptional({ example: 100 })
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Type(() => Number)
+  geofenceRadiusM?: number;
 
   @ApiPropertyOptional()
   @IsBoolean()
@@ -702,4 +722,38 @@ export class UpdateOrganizationDto {
   @IsOptional()
   @MaxLength(12)
   postalCode?: string;
+
+  // Workspace slug — editable (round 13). Reserved names + global uniqueness
+  // are enforced in the service; format mirrors the signup wizard.
+  @ApiPropertyOptional({ example: 'acme-inc' })
+  @IsString()
+  @IsOptional()
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'slug may only contain lowercase letters, digits and hyphens',
+  })
+  @MinLength(3)
+  @MaxLength(50)
+  slug?: string;
+
+  @ApiPropertyOptional({ example: 'Asia/Kolkata' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(60)
+  timezone?: string;
+
+  @ApiPropertyOptional({ example: 4, description: '1=Jan .. 12=Dec' })
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(12)
+  @Type(() => Number)
+  fiscalYearStartMonth?: number;
+
+  @ApiPropertyOptional({ example: 1, description: '0=Sunday .. 6=Saturday' })
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  @Max(6)
+  @Type(() => Number)
+  weekStartsOn?: number;
 }

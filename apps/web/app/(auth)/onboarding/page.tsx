@@ -945,9 +945,12 @@ function WorkspaceStep(props: {
             }}
           >
             <span>
-              Workspace URL:{' '}
+              Workspace ID:{' '}
               <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>
-                {props.slug || 'your-workspace'}.flickssuite.com
+                {props.slug || 'your-workspace'}
+              </span>
+              <span style={{ color: 'var(--text-faint)' }}>
+                {' '}· your email-in address &amp; future workspace URL
               </span>
             </span>
             {slugStatus && <span style={{ fontSize: 11 }}>{slugStatus}</span>}

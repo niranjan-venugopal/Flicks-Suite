@@ -160,7 +160,7 @@ export default function FamTenantDetailPage() {
                   display: 'flex', gap: 12, flexWrap: 'wrap', fontFamily: 'var(--font-mono)',
                 }}
               >
-                <span>{t.slug}.flickssuite.com</span>
+                <span>ID: {t.slug}</span>
                 <span>·</span>
                 <span>{t.gstin ? `GSTIN ${t.gstin}` : 'no GSTIN'}</span>
                 <span>·</span>

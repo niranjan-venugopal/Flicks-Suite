@@ -1,5 +1,6 @@
 'use client'
 
+import { stateName } from '@flicks/shared/constants'
 import type { EmployeeDetail } from '@/lib/api/queries/use-employees'
 
 // Shared read-only display primitives for employee details — used by the
@@ -17,7 +18,8 @@ export function fmtDate(d: string | null | undefined): string {
 
 export function fmtAddress(a: EmployeeDetail['currentAddress']): string {
   if (!a) return '—'
-  const parts = [a.line1, a.line2, a.city, a.state, a.postal_code, a.country].filter(
+  // Legacy rows store 2-letter state codes ("TN") — render the full name.
+  const parts = [a.line1, a.line2, a.city, stateName(a.state), a.postal_code, a.country].filter(
     Boolean,
   )
   return parts.length ? parts.join(', ') : '—'

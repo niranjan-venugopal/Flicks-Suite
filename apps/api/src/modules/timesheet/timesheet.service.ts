@@ -14,6 +14,7 @@ import {
   employees,
   users,
   memberships,
+  tenants,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
@@ -28,19 +29,25 @@ import type {
 } from './timesheet.dto';
 
 /**
- * Returns the Monday–Sunday week containing the given date as
- * { start, end } in YYYY-MM-DD form. Uses UTC-day arithmetic — calendar
- * weeks, not wall-clock instants.
+ * Returns the 7-day week containing the given date as { start, end } in
+ * YYYY-MM-DD form, starting on the tenant's `week_starts_on` day
+ * (0=Sunday..6=Saturday; default Monday). Uses UTC-day arithmetic —
+ * calendar weeks, not wall-clock instants. Historical periods keep their
+ * stored dates when the setting changes; only future get-or-creates key on
+ * the new boundary.
  */
-function weekBoundaries(d: Date): { start: string; end: string } {
-  const day = d.getUTCDay() || 7; // 1=Mon..7=Sun (Sun maps to 7 not 0)
-  const monday = new Date(d);
-  monday.setUTCDate(d.getUTCDate() - (day - 1));
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
+function weekBoundaries(
+  d: Date,
+  weekStartsOn = 1,
+): { start: string; end: string } {
+  const diff = (d.getUTCDay() - weekStartsOn + 7) % 7;
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - diff);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
   return {
-    start: monday.toISOString().slice(0, 10),
-    end: sunday.toISOString().slice(0, 10),
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
   };
 }
 
@@ -135,16 +142,27 @@ export class TimesheetService {
     return r ?? null;
   }
 
+  /** The tenant's configured week-start day (0=Sun..6=Sat; default Monday). */
+  private async tenantWeekStartsOn(tenantId: string): Promise<number> {
+    const [t] = await this.dbAdmin
+      .select({ weekStartsOn: tenants.week_starts_on })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    return t?.weekStartsOn ?? 1;
+  }
+
   // ─── 1. Get-or-create the caller's current week period ────────────────
 
   async getMyCurrentPeriod(userId: string, tenantId: string) {
+    const weekStartsOn = await this.tenantWeekStartsOn(tenantId);
     return this.databaseService.withTenant(tenantId, async (db) => {
       const { employeeId, reportingManagerId } = await this.resolveCaller(
         db,
         userId,
         tenantId,
       );
-      const { start, end } = weekBoundaries(new Date());
+      const { start, end } = weekBoundaries(new Date(), weekStartsOn);
 
       const [existing] = await db
         .select()
@@ -188,10 +206,12 @@ export class TimesheetService {
     userId: string,
     tenantId: string,
   ): Promise<{ categories: string[] }> {
+    const weekStartsOn = await this.tenantWeekStartsOn(tenantId);
     return this.databaseService.withTenant(tenantId, async (db) => {
       const { employeeId } = await this.resolveCaller(db, userId, tenantId);
       const prev = weekBoundaries(
         new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        weekStartsOn,
       );
 
       const [prevPeriod] = await db

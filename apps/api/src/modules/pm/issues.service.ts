@@ -49,6 +49,8 @@ export interface CreateIssueInput {
   // Optional at-create project link (validated in-tenant). REQUIRED for
   // guests — their issues must live inside one of their invited projects.
   project_id?: string | null;
+  // Optional at-create milestone link — must belong to project_id.
+  milestone_id?: string | null;
 }
 
 export interface UpdateIssueInput {
@@ -218,6 +220,25 @@ export class PmIssuesService {
             .limit(1);
           if (!project) throw new BadRequestException('project_id does not belong to this workspace');
         }
+        // Milestones live under a project — validated in-tenant like the
+        // project itself (FK checks bypass RLS — house rule #2).
+        if (input.milestone_id) {
+          if (!input.project_id) {
+            throw new BadRequestException('milestone_id requires project_id');
+          }
+          const [ms] = await tx
+            .select({ id: pmProjectMilestones.id })
+            .from(pmProjectMilestones)
+            .where(
+              and(
+                eq(pmProjectMilestones.id, input.milestone_id),
+                eq(pmProjectMilestones.tenant_id, tenantId),
+                eq(pmProjectMilestones.project_id, input.project_id),
+              ),
+            )
+            .limit(1);
+          if (!ms) throw new BadRequestException('milestone_id does not belong to this project');
+        }
 
         // §8 triage entry rule: an issue created by a NON-member in a public
         // team (or API-intake sources) lands in Triage — the intake gate.
@@ -297,6 +318,7 @@ export class PmIssuesService {
             creator_user_id: userId,
             parent_issue_id: input.parent_issue_id ?? null,
             project_id: input.project_id ?? null,
+            milestone_id: input.milestone_id ?? null,
             due_date: input.due_date ?? null,
             board_rank: rankBetween(last?.board ?? null, null),
             backlog_rank: rankBetween(last?.backlog ?? null, null),
@@ -810,6 +832,15 @@ export class PmIssuesService {
           throw new ForbiddenException('Guests can only move issues between their own projects');
         }
         let milestoneId: string | null = input.milestone_id === undefined ? issue.milestone_id : input.milestone_id;
+        // Moving to a DIFFERENT project without an explicit milestone must
+        // drop the old one — it belongs to the old project, and validating it
+        // against the new project used to 400 the whole move.
+        if (
+          input.milestone_id === undefined &&
+          input.project_id !== issue.project_id
+        ) {
+          milestoneId = null;
+        }
         if (input.project_id) {
           const [project] = await tx
             .select({ id: pmProjects.id })
@@ -835,6 +866,9 @@ export class PmIssuesService {
           .returning();
         await this.writeHistory(tx, tenantId, id, userId, [
           { field: 'project', from: issue.project_id, to: input.project_id },
+          ...(milestoneId !== issue.milestone_id
+            ? [{ field: 'milestone', from: issue.milestone_id, to: milestoneId }]
+            : []),
         ]);
         await this.domainEvents.publish(
           {
