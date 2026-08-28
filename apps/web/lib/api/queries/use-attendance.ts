@@ -203,6 +203,32 @@ export function useMyAttendanceRange(
   })
 }
 
+/** One employee's history — the employee-360° Attendance tab. */
+export interface EmployeeAttendanceRecord extends AttendanceRecord {
+  workMode: WorkMode | null
+}
+
+export function useEmployeeAttendance(
+  employeeId: string,
+  query?: { fromDate?: string; toDate?: string; limit?: number; page?: number },
+) {
+  return useQuery({
+    queryKey: ['attendance', 'employee', employeeId, query],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (query?.fromDate) params.set('fromDate', query.fromDate)
+      if (query?.toDate) params.set('toDate', query.toDate)
+      if (query?.limit) params.set('limit', String(query.limit))
+      if (query?.page) params.set('page', String(query.page))
+      const qs = params.toString()
+      return api.get<PaginatedResponse<EmployeeAttendanceRecord>>(
+        `/api/v1/attendance/employee/${employeeId}${qs ? `?${qs}` : ''}`,
+      )
+    },
+    retry: false, // a 403 is an answer, not a flake
+  })
+}
+
 export function useTeamToday() {
   return useQuery({
     queryKey: ['attendance', 'team', 'today'],

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { DateField } from '@/components/ui/date-picker'
 import { EditDetailsDialog } from '@/components/employees/EditDetailsDialog'
+import { EmployeeAttendanceTab } from '@/components/employees/EmployeeAttendanceTab'
 import { Card, Grid, Field, fmtDate, fmtAddress, fmtPhone } from '@/components/employees/detail-kit'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -111,7 +112,7 @@ export default function EmployeeDetailPage({
             <TabsBar tab={tab} setTab={setTab} />
             {tab === 'overview' && <OverviewTab e={e} />}
             {tab === 'timeline' && <TimelinePlaceholder e={e} />}
-            {tab === 'attendance' && <ModuleLink href="/attendance" label="Attendance" />}
+            {tab === 'attendance' && <EmployeeAttendanceTab employeeId={e.id} />}
             {tab === 'leave' && <ModuleLink href="/leave" label="Leave" />}
             {tab === 'timesheet' && <ModuleLink href="/timesheets" label="Timesheets" />}
             {tab === 'documents' && <ComingSoon title="Documents" desc="Offer letters, ID proofs, contracts and policies will land here once secure file uploads are enabled." />}

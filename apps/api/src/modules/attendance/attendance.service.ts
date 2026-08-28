@@ -1001,6 +1001,105 @@ export class AttendanceService {
     return { data, pagination: { page, limit, total: data.length } };
   }
 
+  /**
+   * Attendance history for ONE employee — the employee-360° Attendance tab
+   * (founder round 15). Visible to the employee themselves, their reporting
+   * manager, and owner/admin/finance/fam. Same shape as listMine, plus
+   * work_mode so the history can show WFH days.
+   */
+  async listForEmployee(
+    userId: string,
+    role: string | undefined,
+    employeeId: string,
+    tenantId: string,
+    query: AttendanceListQueryDto,
+  ) {
+    const page = query.page ?? 1;
+    const limit = Math.min(query.limit ?? 31, 100);
+    const offset = (page - 1) * limit;
+
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const [target] = await tx
+        .select({
+          id: employees.id,
+          reportingManagerId: employees.reporting_manager_id,
+        })
+        .from(employees)
+        .where(
+          and(eq(employees.tenant_id, tenantId), eq(employees.id, employeeId)),
+        )
+        .limit(1);
+      if (!target) throw new NotFoundException('Employee not found');
+
+      // Caller's own employee bridge, WITHOUT the punch-flow self-heal — a
+      // read must never mint employee records.
+      const [m] = await tx
+        .select({ employeeId: memberships.employee_id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.user_id, userId),
+            eq(memberships.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
+      const callerEmployeeId = m?.employeeId ?? null;
+
+      const elevated = ['owner', 'admin', 'finance', 'fam', 'super_admin'].includes(role ?? '');
+      const isSelf = callerEmployeeId !== null && callerEmployeeId === target.id;
+      const managesTarget =
+        role === 'manager' &&
+        callerEmployeeId !== null &&
+        target.reportingManagerId === callerEmployeeId;
+      if (!elevated && !isSelf && !managesTarget) {
+        throw new ForbiddenException(
+          'Attendance history is visible to the employee, their manager, and admins',
+        );
+      }
+
+      const conditions = [
+        eq(attendanceRecords.tenant_id, tenantId),
+        eq(attendanceRecords.employee_id, employeeId),
+      ];
+      if (query.fromDate) {
+        conditions.push(gte(attendanceRecords.attendance_date, query.fromDate));
+      }
+      if (query.toDate) {
+        conditions.push(lte(attendanceRecords.attendance_date, query.toDate));
+      }
+      if (query.status) {
+        conditions.push(
+          eq(
+            attendanceRecords.attendance_status,
+            query.status as typeof attendanceRecords.$inferSelect['attendance_status'],
+          ),
+        );
+      }
+
+      const data = await tx
+        .select({
+          id: attendanceRecords.id,
+          attendanceDate: attendanceRecords.attendance_date,
+          attendanceStatus: attendanceRecords.attendance_status,
+          workMode: attendanceRecords.work_mode,
+          firstPunchInAt: attendanceRecords.first_punch_in_at,
+          lastPunchOutAt: attendanceRecords.last_punch_out_at,
+          totalWorkedMinutes: attendanceRecords.total_worked_minutes,
+          totalBreakMinutes: attendanceRecords.total_break_minutes,
+          isLate: attendanceRecords.is_late,
+          lateByMinutes: attendanceRecords.late_by_minutes,
+          isRegularized: attendanceRecords.is_regularized,
+        })
+        .from(attendanceRecords)
+        .where(and(...conditions))
+        .orderBy(desc(attendanceRecords.attendance_date))
+        .limit(limit)
+        .offset(offset);
+
+      return { data, pagination: { page, limit, total: data.length } };
+    });
+  }
+
 
   /**
    * Unified month view (calendar redesign): one entry PER calendar day —

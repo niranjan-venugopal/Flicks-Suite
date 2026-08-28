@@ -135,6 +135,28 @@ export class AttendanceController {
     return this.attendanceService.listMine(user.sub, user.tenantId, query);
   }
 
+  @Get('employee/:employeeId')
+  @ApiOperation({
+    summary: 'Attendance history for one employee (employee-360 tab)',
+    description:
+      'Visible to the employee themselves, their reporting manager, and owner/admin/finance. Same shape as /attendance/me plus workMode.',
+  })
+  @ApiResponse({ status: 200, description: 'Attendance list' })
+  @ApiResponse({ status: 403, description: 'Not the employee, their manager, or an admin' })
+  async listForEmployee(
+    @Param('employeeId') employeeId: string,
+    @Query() query: AttendanceListQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.attendanceService.listForEmployee(
+      user.sub,
+      user.role,
+      employeeId,
+      user.tenantId,
+      query,
+    );
+  }
+
   @Get('team/today')
   // Hierarchical guard: finance and above (owner/admin/manager/finance/fam).
   // Managers get their direct reports; every higher role gets the whole org.
