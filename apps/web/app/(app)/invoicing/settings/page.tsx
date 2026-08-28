@@ -409,7 +409,7 @@ export default function InvoicingSettingsPage() {
           <div className="card">
             <div className="t-h3" style={{ marginBottom: 18 }}>GST</div>
             <div style={{ ...GRID_2, alignItems: 'start' }}>
-              <Field label="GST registered" hint={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → Company profile'}>
+              <Field label="GST registered" hint={fin?.data?.gstin ? `GSTIN ${fin.data.gstin}` : 'Add your GSTIN under Settings → General'}>
                 <Pill tone={fin?.data?.gstin ? 'green' : ''} dot={!!fin?.data?.gstin}>
                   {fin?.data?.gstin ? 'Active' : 'Not set'}
                 </Pill>

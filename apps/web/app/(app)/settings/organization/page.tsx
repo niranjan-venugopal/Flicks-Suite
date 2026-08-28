@@ -20,9 +20,9 @@ const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
 /**
  * Organization → Financial details (PRD §7.2/§8) — an org Settings page, so it
  * follows the HRMS settings pattern (SettingsLayout + cards). Legal identity
- * (legal name / GSTIN / PAN) is edited ONLY in Settings → Company profile —
- * the 2026-07-06 single-edit-surface decision, relocated there in round 13
- * when Settings → General became the preferences tab; this page owns the
+ * (legal name / GSTIN / PAN) is edited ONLY in Settings → General (user
+ * decision, 2026-07-06; round 14 kept that page whole, adding the
+ * timezone/fiscal-year/week-start preferences to it); this page owns the
  * company bank accounts that render on invoices.
  */
 export default function OrgFinancialPage() {

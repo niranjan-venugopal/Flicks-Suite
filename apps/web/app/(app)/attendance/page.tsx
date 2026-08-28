@@ -22,6 +22,8 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/components/ui/use-toast'
 import { ClockCard } from '@/components/attendance/ClockCard'
+import { TeamToday } from '@/components/attendance/TeamToday'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { DateField } from '@/components/ui/date-picker'
 import { MonthNav, monthTitle } from '@/components/ui/month-nav'
 import { SkeletonRows, StateEmpty } from '@/components/states'
@@ -86,6 +88,13 @@ export default function AttendancePage() {
   // clicked day pre-fills the date picker.
   const [regDate, setRegDate] = useState<string | null>(null)
   const [cursor, setCursor] = useState(new Date())
+  // Round 14 (founder): the team view is a TOGGLE on this page, not a
+  // separate sidebar tab. Managers see direct reports; owner/admin/finance
+  // see the whole workspace (the API scopes by role).
+  const role = useAuthStore((s) => s.currentUser?.role)
+  const canSeeTeam =
+    role === 'OWNER' || role === 'HR_ADMIN' || role === 'FINANCE' || role === 'MANAGER' || role === 'FAM'
+  const [view, setView] = useState<'me' | 'team'>('me')
   const today = useMyAttendanceToday()
   // Daily records for the browsed month, clamped so the range never runs
   // past today (the API rejects future ranges and there's nothing to show).
@@ -100,19 +109,68 @@ export default function AttendancePage() {
         <SectionHead
           eyebrow={todayEyebrow()}
           title="Attendance"
-          sub="Clock in once when you start, clock out when you're done."
+          sub={
+            view === 'team'
+              ? "Everyone's day at a glance — clock-ins, WFH and leave."
+              : "Clock in once when you start, clock out when you're done."
+          }
           right={
-            <Btn
-              kind="secondary"
-              size="sm"
-              icon={<Icon.cal size={13} />}
-              onClick={() => setRegOpen(true)}
-            >
-              Request regularization
-            </Btn>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {canSeeTeam && (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 3,
+                    padding: 3,
+                    background: 'var(--surf-1)',
+                    border: '1px solid var(--bord)',
+                    borderRadius: 9,
+                  }}
+                >
+                  {(
+                    [
+                      ['me', 'My attendance'],
+                      ['team', role === 'MANAGER' ? 'My team' : 'Everyone'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setView(key)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 7,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: view === key ? 'var(--surf-3)' : 'transparent',
+                        color: view === key ? '#fff' : 'var(--text-2)',
+                        fontSize: 11.5,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {view === 'me' && (
+                <Btn
+                  kind="secondary"
+                  size="sm"
+                  icon={<Icon.cal size={13} />}
+                  onClick={() => setRegOpen(true)}
+                >
+                  Request regularization
+                </Btn>
+              )}
+            </div>
           }
         />
 
+        {view === 'team' ? (
+          <TeamToday />
+        ) : (
+          <>
         {/* Row 1: Clock card + timeline */}
         <div
           style={{
@@ -172,6 +230,8 @@ export default function AttendancePage() {
             />
           )}
         </div>
+          </>
+        )}
       </div>
 
       <RegularizationDialog

@@ -96,7 +96,6 @@ const ADMIN_NAV: NavSection[] = [
         icon: 'clock',
         children: [
           { href: '/attendance', label: 'Attendance' },
-          { href: '/team/attendance', label: 'Team attendance' },
           { href: '/leave', label: 'Leave' },
           { href: '/timesheets', label: 'Timesheets' },
         ],
@@ -189,7 +188,6 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Team',
     items: [
       { id: 'mgr-team', label: 'Direct reports', icon: 'people', href: '/team' },
-      { id: 'mgr-attendance', label: 'Team attendance', icon: 'clock', href: '/team/attendance' },
       { id: 'mgr-leave', label: 'Team leave', icon: 'cal', href: '/team/leave' },
       { id: 'mgr-timesheets', label: 'Team timesheets', icon: 'sheet', href: '/team/timesheets' },
     ],
