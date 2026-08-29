@@ -301,6 +301,15 @@ export class EmployeesService {
             // edit them later but admins typically know phone + DOB up front.
             ...(dto.personalPhone ? { personal_phone: dto.personalPhone } : {}),
             ...(dto.dateOfBirth ? { date_of_birth: dto.dateOfBirth } : {}),
+            // Employment terms set by HR at hire time. noticePeriodDays keys
+            // on !== undefined so an explicit 0 sticks; omitted → column
+            // default (30).
+            ...(dto.probationEndDate
+              ? { probation_end_date: dto.probationEndDate }
+              : {}),
+            ...(dto.noticePeriodDays !== undefined
+              ? { notice_period_days: dto.noticePeriodDays }
+              : {}),
             status: 'inactive',
             custom_fields: {
               onboarding_step: 0,
@@ -809,6 +818,12 @@ export class EmployeesService {
       empPatch.employment_type = dto.employmentType as typeof employees.$inferInsert.employment_type;
     if (dto.dateOfJoining !== undefined)
       empPatch.date_of_joining = dto.dateOfJoining;
+    if (dto.probationEndDate !== undefined)
+      empPatch.probation_end_date = dto.probationEndDate;
+    if (dto.dateOfConfirmation !== undefined)
+      empPatch.date_of_confirmation = dto.dateOfConfirmation;
+    if (dto.noticePeriodDays !== undefined)
+      empPatch.notice_period_days = dto.noticePeriodDays;
 
     const updated = await this.databaseService.withTenant(
       tenantId,
@@ -867,12 +882,30 @@ export class EmployeesService {
         workPhone: employee.workPhone,
         personalPhone: employee.personalPhone,
         designationId: employee.designationId,
+        employeeCode: employee.employeeCode,
+        departmentId: employee.departmentId,
+        locationId: employee.locationId,
+        reportingManagerId: employee.reportingManagerId,
+        employmentType: employee.employmentType,
+        dateOfJoining: employee.dateOfJoining,
+        probationEndDate: employee.probationEndDate,
+        dateOfConfirmation: employee.dateOfConfirmation,
+        noticePeriodDays: employee.noticePeriodDays,
       },
       afterState: {
         fullName: dto.fullName,
         workPhone: dto.workPhone,
         personalPhone: dto.personalPhone,
         designationId: dto.designationId,
+        employeeCode: dto.employeeCode,
+        departmentId: dto.departmentId,
+        locationId: dto.locationId,
+        reportingManagerId: dto.reportingManagerId,
+        employmentType: dto.employmentType,
+        dateOfJoining: dto.dateOfJoining,
+        probationEndDate: dto.probationEndDate,
+        dateOfConfirmation: dto.dateOfConfirmation,
+        noticePeriodDays: dto.noticePeriodDays,
       },
     });
 
@@ -988,7 +1021,8 @@ export class EmployeesService {
           reason
             ? `Your onboarding was sent back for changes: ${reason}`
             : 'Your onboarding was sent back for changes. Please review and resubmit.',
-          '/employees/me/onboarding',
+          // The wizard's real route — /employees/me/onboarding never existed.
+          '/onboarding/employee',
           tenantId,
         )
         .catch(() => undefined);
@@ -998,7 +1032,7 @@ export class EmployeesService {
         .sendEmail('onboarding-rejected', user.email, {
           employeeName: user.full_name,
           reason,
-          resubmitUrl: `${appUrl}/employees/me/onboarding`,
+          resubmitUrl: `${appUrl}/onboarding/employee`,
         })
         .catch(() => undefined);
     }
@@ -1159,11 +1193,55 @@ export class EmployeesService {
     }
     updateFields.updated_at = new Date();
 
+    // Owner/Admin self-service completion (founder round 17): when the person
+    // finishing the wizard IS an owner/admin, there is nobody senior to
+    // review them — complete + activate directly and skip the reviewer
+    // fan-out. Derived from the caller's membership role inside the tx; a
+    // client flag can never trigger it.
+    let selfServeCompletion = false;
+
     await this.databaseService.withTenant(tenantId, async (db) => {
+      if (allStepsComplete) {
+        const [actor] = await db
+          .select({ role: memberships.role })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.user_id, actorUserId),
+            ),
+          )
+          .limit(1);
+        selfServeCompletion =
+          (actor?.role === 'owner' || actor?.role === 'admin') &&
+          employee.user_id === actorUserId;
+        if (selfServeCompletion) {
+          // No reviewer will ever approve them into 'active' — do it here.
+          updateFields.status = 'active';
+        }
+      }
+
       await db
         .update(employees)
         .set(updateFields)
         .where(eq(employees.id, employeeId));
+
+      if (selfServeCompletion) {
+        // Also activate the membership (an invited-then-promoted admin may
+        // still be 'invited'); idempotent for an already-active founder.
+        await db
+          .update(memberships)
+          .set({
+            status: 'active',
+            accepted_at: sql`COALESCE(${memberships.accepted_at}, now())`,
+          })
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.employee_id, employeeId),
+            ),
+          );
+      }
 
       // ─── Emergency contact: upsert the primary row ─────────────────────
       if (data.emergencyContact) {
@@ -1234,29 +1312,36 @@ export class EmployeesService {
     await this.auditService.log({
       tenantId,
       actorUserId,
-      action: allStepsComplete
-        ? 'employee.onboarding_submitted'
-        : isAdminEdit
-          ? 'employee.details_admin_saved'
-          : 'employee.onboarding_step_saved',
+      action: selfServeCompletion
+        ? 'employee.onboarding_completed'
+        : allStepsComplete
+          ? 'employee.onboarding_submitted'
+          : isAdminEdit
+            ? 'employee.details_admin_saved'
+            : 'employee.onboarding_step_saved',
       resourceType: 'employee',
       resourceId: employeeId,
       afterState: {
         step: nextStep,
         allStepsComplete,
+        selfActivated: selfServeCompletion,
         consentsRecorded: data.consents?.length ?? 0,
       },
     });
 
     if (allStepsComplete) {
       // Tenant-wide "employees data changed" broadcast (queue rows appear on
-      // every admin's screen without a reload).
+      // every admin's screen without a reload) — self-serve completions too:
+      // activation changes the directory.
       this.eventEmitter.emit('employees.directory.changed', { tenantId });
+    }
 
+    if (allStepsComplete && !selfServeCompletion) {
       // Notify reviewers (best-effort): the reporting manager by email, and
       // every active owner/admin in-app — EXCLUDING the submitter (a second
       // owner must never be invited to review their own profile). The
-      // People → Onboarding queue is the canonical surface.
+      // People → Onboarding queue is the canonical surface. Owner/admin
+      // self-serve completions notify nobody — there is nothing to review.
       try {
         const info = await this.databaseService.withTenant(
           tenantId,
@@ -1332,6 +1417,7 @@ export class EmployeesService {
       step,
       onboardingStep: nextStep,
       allStepsComplete,
+      selfServeCompletion,
     };
   }
 

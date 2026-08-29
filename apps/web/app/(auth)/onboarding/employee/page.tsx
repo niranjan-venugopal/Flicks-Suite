@@ -21,18 +21,29 @@ import { INDIAN_STATES } from '@flicks/shared/constants'
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
 interface StepMeta {
+  key: 'personal' | 'identity' | 'bank' | 'documents' | 'review'
+  // The :step number posted to the API. Decoupled from the UI index — the
+  // owner/admin variant drops the Documents step, so index and server step
+  // no longer line up.
+  serverStep: 1 | 2 | 3 | 4 | 5
   title: string
   sub: string
 }
 
 // PAN/Aadhaar/UAN are Indian statutory documents — employees assigned to a
 // location outside India see passport/ID fields instead.
-const stepsFor = (isIndia: boolean): StepMeta[] => [
-  { title: 'Personal info',     sub: 'Basic details & address' },
-  { title: 'Identity',          sub: isIndia ? 'PAN, Aadhaar, contact' : 'Passport / ID, contact' },
-  { title: 'Bank & statutory',  sub: isIndia ? 'Salary account & UAN' : 'Salary account details' },
-  { title: 'Documents',         sub: 'Upload offer & ID proofs' },
-  { title: 'Review',            sub: 'Submit for HR review' },
+//
+// Owners and admins (isPrivileged) get a shorter wizard: no Documents
+// placeholder, and the final step confirms + finishes instead of submitting
+// for HR review — there is nobody senior to review them (founder round 17).
+const stepsFor = (isIndia: boolean, isPrivileged: boolean): StepMeta[] => [
+  { key: 'personal', serverStep: 1, title: 'Personal info',    sub: 'Basic details & address' },
+  { key: 'identity', serverStep: 2, title: 'Identity',         sub: isIndia ? 'PAN, Aadhaar, contact' : 'Passport / ID, contact' },
+  { key: 'bank',     serverStep: 3, title: 'Bank & statutory', sub: isIndia ? 'Salary account & UAN' : 'Salary account details' },
+  ...(isPrivileged
+    ? []
+    : [{ key: 'documents', serverStep: 4, title: 'Documents', sub: 'Upload offer & ID proofs' } as StepMeta]),
+  { key: 'review', serverStep: 5, title: 'Review', sub: isPrivileged ? 'Confirm your details' : 'Submit for HR review' },
 ]
 
 
@@ -116,21 +127,44 @@ export default function EmployeeOnboardingPage() {
     myRecord.data?.locationCountryCode ?? org.data?.countryCode ?? 'IN'
   const isIndia = country === 'IN'
 
+  // Owners/admins get the shortened no-review wizard. Prefer the fresh
+  // lowercase role off /me; fall back to the persisted store role for the
+  // first paint (API 'admin' normalises to HR_ADMIN in the store).
+  const apiRole = me.data?.currentMembership?.role?.toLowerCase()
+  const isPrivileged = apiRole
+    ? apiRole === 'owner' || apiRole === 'admin'
+    : currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
+
   const [stepIdx, setStepIdx] = useState(0) // 0-based
   const [form, setForm] = useState<FormState>(EMPTY)
   // DPDP: required data-processing consent + optional comms consent.
   const [consentData, setConsentData] = useState(false)
   const [consentComms, setConsentComms] = useState(false)
 
-  // Resume on whatever step the user left off on
+  const steps = useMemo(
+    () => stepsFor(isIndia, isPrivileged),
+    [isIndia, isPrivileged],
+  )
+
+  // Resume on whatever step the user left off on. onboarding_step is the
+  // SERVER step number — map it back to a UI index (the privileged variant
+  // has no Documents step, so the two are not interchangeable).
   useEffect(() => {
     if (status.data) {
-      const lastSaved = Math.min(4, Math.max(0, status.data.onboardingStep - 1))
+      const savedStep = status.data.onboardingStep
+      const idx = steps.findIndex((s) => s.serverStep >= savedStep)
+      const lastSaved = Math.max(0, idx === -1 ? steps.length - 1 : idx)
       // Only auto-advance forward — if the user manually clicked back we let
       // them stay there.
       setStepIdx((cur) => Math.max(cur, lastSaved))
     }
-  }, [status.data])
+  }, [status.data, steps])
+
+  // The step list can shrink 5 → 4 when /me resolves after first paint —
+  // never let stepIdx point past the end.
+  useEffect(() => {
+    setStepIdx((cur) => Math.min(cur, steps.length - 1))
+  }, [steps.length])
 
   // If already submitted, redirect to dashboard
   useEffect(() => {
@@ -139,7 +173,6 @@ export default function EmployeeOnboardingPage() {
     }
   }, [status.data, router])
 
-  const steps = useMemo(() => stepsFor(isIndia), [isIndia])
   const stepMeta = steps[stepIdx]!
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -148,7 +181,9 @@ export default function EmployeeOnboardingPage() {
   // ─── Per-step validation + payload builder ────────────────────────────
 
   const validateAndBuildPayload = (): SubmitOnboardingStepPayload | null => {
-    const step = stepIdx + 1
+    // The server step id, NOT the UI index — the privileged variant skips
+    // the Documents step (4) entirely.
+    const step = steps[stepIdx]!.serverStep
 
     if (step === 1) {
       if (!form.emergencyName.trim() || !form.emergencyPhone.trim()) {
@@ -300,16 +335,23 @@ export default function EmployeeOnboardingPage() {
     try {
       const result = await submit.mutateAsync(payload)
       if (result.allStepsComplete) {
-        toast({
-          title: 'Submitted for review',
-          description: 'HR will confirm your details shortly.',
-        })
+        toast(
+          isPrivileged
+            ? {
+                title: 'Setup complete',
+                description: 'Your profile is active — welcome to your workspace.',
+              }
+            : {
+                title: 'Submitted for review',
+                description: 'HR will confirm your details shortly.',
+              },
+        )
         // Make sure /me reflects the now-complete onboarding before we route.
         await me.refetch()
         router.replace('/dashboard')
         return
       }
-      setStepIdx((cur) => Math.min(4, cur + 1))
+      setStepIdx((cur) => Math.min(steps.length - 1, cur + 1))
     } catch (e: any) {
       toast({
         title: 'Could not save',
@@ -352,7 +394,7 @@ export default function EmployeeOnboardingPage() {
   )
 
   return (
-    <AuthLayout step={stepIdx + 1} total={5} label="Onboarding">
+    <AuthLayout step={stepIdx + 1} total={steps.length} label="Onboarding">
       <div
         style={{
           width: '100%',
@@ -505,7 +547,7 @@ export default function EmployeeOnboardingPage() {
         >
           <div style={{ marginBottom: 20 }}>
             <div className="t-caption" style={{ marginBottom: 6 }}>
-              Step {stepIdx + 1} of 5
+              Step {stepIdx + 1} of {steps.length}
             </div>
             <div className="t-h1" style={{ fontSize: 24, marginBottom: 6 }}>
               {stepMeta.title}
@@ -521,7 +563,7 @@ export default function EmployeeOnboardingPage() {
             </div>
           </div>
 
-          {stepIdx === 0 && (
+          {stepMeta.key === 'personal' && (
             <PersonalInfoStep
               form={form}
               set={setField}
@@ -529,18 +571,19 @@ export default function EmployeeOnboardingPage() {
               isIndia={isIndia}
             />
           )}
-          {stepIdx === 1 && (
+          {stepMeta.key === 'identity' && (
             <IdentityStep form={form} set={setField} isIndia={isIndia} />
           )}
-          {stepIdx === 2 && (
+          {stepMeta.key === 'bank' && (
             <BankStep form={form} set={setField} isIndia={isIndia} />
           )}
-          {stepIdx === 3 && <DocumentsStep isIndia={isIndia} />}
-          {stepIdx === 4 && (
+          {stepMeta.key === 'documents' && <DocumentsStep isIndia={isIndia} />}
+          {stepMeta.key === 'review' && (
             <ReviewStep
               form={form}
               userName={userName}
               isIndia={isIndia}
+              isPrivileged={isPrivileged}
               consentData={consentData}
               setConsentData={setConsentData}
               consentComms={consentComms}
@@ -582,8 +625,10 @@ export default function EmployeeOnboardingPage() {
             >
               {submit.isPending
                 ? 'Saving…'
-                : stepIdx === 4
-                  ? 'Submit for review'
+                : stepIdx === steps.length - 1
+                  ? isPrivileged
+                    ? 'Finish setup'
+                    : 'Submit for review'
                   : 'Continue'}
             </Btn>
           </div>
@@ -1135,6 +1180,7 @@ function ReviewStep({
   form,
   userName,
   isIndia,
+  isPrivileged,
   consentData,
   setConsentData,
   consentComms,
@@ -1143,6 +1189,7 @@ function ReviewStep({
   form: FormState
   userName: string
   isIndia: boolean
+  isPrivileged: boolean
   consentData: boolean
   setConsentData: (v: boolean) => void
   consentComms: boolean
@@ -1184,10 +1231,15 @@ function ReviewStep({
             }${form.bankIfsc ? ` · IFSC ${form.bankIfsc}` : ''}`
           : 'Not provided',
     },
-    {
-      title: 'Documents',
-      value: `0 of ${docsFor(isIndia).length} uploaded · HR will collect these over email`,
-    },
+    // Owners/admins have no Documents step — don't summarise one.
+    ...(isPrivileged
+      ? []
+      : [
+          {
+            title: 'Documents',
+            value: `0 of ${docsFor(isIndia).length} uploaded · HR will collect these over email`,
+          },
+        ]),
   ]
 
   return (
@@ -1219,8 +1271,9 @@ function ReviewStep({
               lineHeight: 1.5,
             }}
           >
-            You can still go back and edit any section. After submitting, HR
-            will review and confirm your start date.
+            {isPrivileged
+              ? 'You can still go back and edit any section. Finishing will activate your profile — as an admin, nothing goes to HR review.'
+              : 'You can still go back and edit any section. After submitting, HR will review and confirm your start date.'}
           </div>
         </div>
       </div>

@@ -8,6 +8,7 @@ import {
   IsUUID,
   IsDate,
   IsBoolean,
+  IsInt,
   IsNumber,
   Min,
   Max,
@@ -84,6 +85,23 @@ export class InviteEmployeeDto {
   @IsString()
   @IsOptional()
   dateOfBirth?: string;
+
+  // ─── Employment terms set by HR at hire time ───────────────────────────
+  // Confirmation date deliberately absent — a hire isn't confirmed yet;
+  // it's set later via UpdateEmployeeDto.
+
+  @ApiPropertyOptional({ example: '2026-04-30' })
+  @IsDateString()
+  @IsOptional()
+  probationEndDate?: string;
+
+  @ApiPropertyOptional({ example: 30, minimum: 0, maximum: 365 })
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  @IsOptional()
+  @Type(() => Number)
+  noticePeriodDays?: number;
 }
 
 export class UpdateEmployeeDto {
@@ -146,6 +164,24 @@ export class UpdateEmployeeDto {
   @IsDateString()
   @IsOptional()
   dateOfJoining?: string;
+
+  @ApiPropertyOptional({ example: '2026-04-30' })
+  @IsDateString()
+  @IsOptional()
+  probationEndDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-05-01' })
+  @IsDateString()
+  @IsOptional()
+  dateOfConfirmation?: string;
+
+  @ApiPropertyOptional({ example: 30, minimum: 0, maximum: 365 })
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  @IsOptional()
+  @Type(() => Number)
+  noticePeriodDays?: number;
 }
 
 export class ImportEmployeeRowDto {

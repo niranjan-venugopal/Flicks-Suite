@@ -2,9 +2,11 @@
  * Founder round 5 — onboarding-approval integrity + inbox wiring:
  *
  *  - Final submit fans out an in-app 'onboarding.submitted' notification to
- *    every active owner/admin EXCEPT the submitter (a second owner must never
- *    be invited to review their own profile), and broadcasts
+ *    every active owner/admin EXCEPT the submitter, and broadcasts
  *    'employees.directory.changed' for the live tenant-wide refresh.
+ *    (Round 17: owner/admin submitters self-complete WITHOUT any fan-out —
+ *    covered in founder-round17.spec.ts — so the reviewed submitter here is
+ *    a manager, the most senior role that still goes through HR review.)
  *  - Self-approval is blocked: approve/reject of your own onboarding throws
  *    ForbiddenException; the onboarding queue and the dashboard approvals
  *    bucket both hide the caller's own row (invited rows with user_id NULL
@@ -69,8 +71,8 @@ const dashboardService = new DashboardService(
 let tenantId: string;
 let ownerAUserId: string; // existing owner — the reviewer
 let adminBUserId: string; // HR admin — also a reviewer
-let ownerCUserId: string; // second owner, the submitter
-let empCId: string; // ownerC's employee row (pending review)
+let managerCUserId: string; // manager — the submitter under review
+let empCId: string; // managerC's employee row (pending review)
 let invitedEmpId: string; // invited employee, user_id NULL, pending review
 const trackedUserIds: string[] = [];
 
@@ -97,12 +99,15 @@ beforeAll(async () => {
 
   ownerAUserId = await seedUser(`owner-a-${rid()}@r5.test`);
   adminBUserId = await seedUser(`admin-b-${rid()}@r5.test`);
-  ownerCUserId = await seedUser(`owner-c-${rid()}@r5.test`);
+  managerCUserId = await seedUser(`manager-c-${rid()}@r5.test`);
 
-  const roles: Array<[string, 'owner' | 'admin']> = [
+  // Round 17: owner/admin submitters complete without review, so the
+  // submitter under review here is a manager — the most senior role that
+  // still needs someone else to approve them.
+  const roles: Array<[string, 'owner' | 'admin' | 'manager']> = [
     [ownerAUserId, 'owner'],
     [adminBUserId, 'admin'],
-    [ownerCUserId, 'owner'],
+    [managerCUserId, 'manager'],
   ];
   for (const [userId, role] of roles) {
     await dbAdmin.insert(memberships).values({
@@ -116,7 +121,7 @@ beforeAll(async () => {
 
   const [des] = await dbAdmin
     .insert(designations)
-    .values({ tenant_id: tenantId, title: 'Co-founder', level: 9 })
+    .values({ tenant_id: tenantId, title: 'Engineering Manager', level: 6 })
     .returning();
 
   const [empC] = await dbAdmin
@@ -124,11 +129,11 @@ beforeAll(async () => {
     .values({
       tenant_id: tenantId,
       employee_code: `R5C${rid().slice(0, 4).toUpperCase()}`,
-      first_name: 'Second',
-      last_name: 'Owner',
-      work_email: `second-owner-${rid()}@r5.test`,
+      first_name: 'Team',
+      last_name: 'Manager',
+      work_email: `team-manager-${rid()}@r5.test`,
       date_of_joining: '2026-08-01',
-      user_id: ownerCUserId,
+      user_id: managerCUserId,
       status: 'inactive',
       designation_id: des!.id,
       custom_fields: { onboarding_step: 5 },
@@ -173,7 +178,7 @@ describe('submit for review: reviewer fan-out excludes the submitter', () => {
       5,
       { step: 5, submitForReview: true } as never,
       tenantId,
-      ownerCUserId,
+      managerCUserId,
     );
 
     const recipients = createInAppNotification.mock.calls.map(
@@ -181,7 +186,7 @@ describe('submit for review: reviewer fan-out excludes the submitter', () => {
     );
     expect(recipients).toContain(ownerAUserId);
     expect(recipients).toContain(adminBUserId);
-    expect(recipients).not.toContain(ownerCUserId);
+    expect(recipients).not.toContain(managerCUserId);
 
     for (const call of createInAppNotification.mock.calls) {
       const [, type, , linkUrl, notifTenant] = call as unknown[];
@@ -209,10 +214,10 @@ describe('submit for review: reviewer fan-out excludes the submitter', () => {
 describe('self-approval is blocked at every layer', () => {
   it('approve/reject own onboarding → ForbiddenException, state unchanged', async () => {
     await expect(
-      employeesService.approveOnboarding(empCId, ownerCUserId, tenantId),
+      employeesService.approveOnboarding(empCId, managerCUserId, tenantId),
     ).rejects.toThrow(/own onboarding/);
     await expect(
-      employeesService.rejectOnboarding(empCId, 'nope', ownerCUserId, tenantId),
+      employeesService.rejectOnboarding(empCId, 'nope', managerCUserId, tenantId),
     ).rejects.toThrow(/own onboarding/);
 
     const [row] = await dbAdmin
@@ -223,7 +228,7 @@ describe('self-approval is blocked at every layer', () => {
   });
 
   it('queue hides the caller\'s own row but keeps it for other admins', async () => {
-    const forC = await employeesService.getOnboardingQueue(tenantId, ownerCUserId);
+    const forC = await employeesService.getOnboardingQueue(tenantId, managerCUserId);
     expect(forC.data.some((r) => r.id === empCId)).toBe(false);
     // Invited rows (user_id NULL) survive the IS DISTINCT FROM filter.
     expect(forC.data.some((r) => r.id === invitedEmpId)).toBe(true);
@@ -248,13 +253,13 @@ describe('dashboard approvals bucket (Inbox)', () => {
     expect(forA.stats.pendingApprovals).toBeGreaterThanOrEqual(2);
 
     const empCRow = forA.pending.onboarding.find((o) => o.employeeId === empCId)!;
-    expect(empCRow.employeeName).toBe('Second Owner');
-    expect(empCRow.designationTitle).toBe('Co-founder');
-    expect(empCRow.userId).toBe(ownerCUserId);
+    expect(empCRow.employeeName).toBe('Team Manager');
+    expect(empCRow.designationTitle).toBe('Engineering Manager');
+    expect(empCRow.userId).toBe(managerCUserId);
     expect(empCRow.submittedAt).toBeTruthy();
 
     const forC = await dashboardService.getAdminOverview(tenantId, {
-      callerUserId: ownerCUserId,
+      callerUserId: managerCUserId,
       includeOnboarding: true,
       includeApprovals: true,
     });
@@ -296,7 +301,7 @@ describe('approve/reject side-effects', () => {
       (c) => (c as unknown[])[1] === 'onboarding.approved',
     ) as unknown[] | undefined;
     expect(approvedPing).toBeTruthy();
-    expect(approvedPing![0]).toBe(ownerCUserId);
+    expect(approvedPing![0]).toBe(managerCUserId);
 
     expect(emitSpy).toHaveBeenCalledWith('employees.directory.changed', {
       tenantId,

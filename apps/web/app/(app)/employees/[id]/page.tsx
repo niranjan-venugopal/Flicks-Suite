@@ -252,11 +252,26 @@ function EditProfileDialog({
   const [locationId, setLocationId] = useState(e.locationId ?? '')
   const [employmentType, setEmploymentType] = useState(e.employmentType ?? 'full_time')
   const [dateOfJoining, setDateOfJoining] = useState(e.dateOfJoining ?? '')
+  const [probationEndDate, setProbationEndDate] = useState(e.probationEndDate ?? '')
+  const [dateOfConfirmation, setDateOfConfirmation] = useState(e.dateOfConfirmation ?? '')
+  const [noticePeriodDays, setNoticePeriodDays] = useState(
+    e.noticePeriodDays != null ? String(e.noticePeriodDays) : '',
+  )
 
   const handleSave = async () => {
     if (!fullName.trim()) {
       toast({ title: 'Name is required', variant: 'destructive' })
       return
+    }
+    if (noticePeriodDays.trim()) {
+      const days = Number(noticePeriodDays)
+      if (!Number.isInteger(days) || days < 0 || days > 365) {
+        toast({
+          title: 'Notice period must be a whole number of days (0–365)',
+          variant: 'destructive',
+        })
+        return
+      }
     }
     try {
       if (!employeeCode.trim()) {
@@ -274,6 +289,11 @@ function EditProfileDialog({
         locationId: locationId || undefined,
         employmentType,
         dateOfJoining: dateOfJoining || undefined,
+        probationEndDate: probationEndDate || undefined,
+        dateOfConfirmation: dateOfConfirmation || undefined,
+        noticePeriodDays: noticePeriodDays.trim()
+          ? Number(noticePeriodDays)
+          : undefined,
       })
       toast({ title: 'Profile updated', description: fullName.trim() })
       onClose()
@@ -415,6 +435,44 @@ function EditProfileDialog({
                 ))}
               </select>
             </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Probation ends
+              </label>
+              <DateField
+                value={probationEndDate}
+                onChange={setProbationEndDate}
+                min={dateOfJoining || undefined}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Confirmed on
+              </label>
+              <DateField
+                value={dateOfConfirmation}
+                onChange={setDateOfConfirmation}
+                min={dateOfJoining || undefined}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Notice period (days)
+              </label>
+              <input
+                className="input"
+                inputMode="numeric"
+                value={noticePeriodDays}
+                onChange={(ev) => setNoticePeriodDays(ev.target.value)}
+                placeholder="30"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: 1 }} />
           </div>
           <div style={{ display: 'flex', gap: 12 }}>
             <div style={{ flex: 1 }}>

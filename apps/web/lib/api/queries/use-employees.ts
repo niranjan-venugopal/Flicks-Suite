@@ -77,6 +77,8 @@ export interface InviteEmployeePayload {
   joiningDate?: string
   personalPhone?: string
   dateOfBirth?: string
+  probationEndDate?: string
+  noticePeriodDays?: number
 }
 
 interface EmployeesFilters {
@@ -254,6 +256,9 @@ export interface UpdateEmployeePayload {
   reportingManagerId?: string
   employmentType?: string
   dateOfJoining?: string
+  probationEndDate?: string
+  dateOfConfirmation?: string
+  noticePeriodDays?: number
 }
 
 export function useUpdateEmployee() {

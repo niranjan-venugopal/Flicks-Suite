@@ -40,6 +40,8 @@ interface FormState {
   locationId: string
   employmentType: string
   joiningDate: string
+  probationEndDate: string
+  noticePeriodDays: string
   shiftTemplateId: string
   annualCtc: string
   employeeCode: string
@@ -108,6 +110,8 @@ export default function InviteEmployeePage() {
     locationId: '',
     employmentType: 'full_time',
     joiningDate: new Date().toISOString().slice(0, 10),
+    probationEndDate: '',
+    noticePeriodDays: '',
     shiftTemplateId: '',
     annualCtc: '',
     employeeCode: '',
@@ -140,6 +144,16 @@ export default function InviteEmployeePage() {
       toast({ title: 'Work email is required', variant: 'destructive' })
       return
     }
+    if (form.noticePeriodDays.trim()) {
+      const days = Number(form.noticePeriodDays)
+      if (!Number.isInteger(days) || days < 0 || days > 365) {
+        toast({
+          title: 'Notice period must be a whole number of days (0–365)',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
 
     const fullName = `${firstName} ${lastName}`.trim()
     const departmentId = asUuid(form.departmentId)
@@ -163,6 +177,13 @@ export default function InviteEmployeePage() {
         ? { personalPhone: form.personalPhone.trim() }
         : {}),
       ...(form.dateOfBirth ? { dateOfBirth: form.dateOfBirth } : {}),
+      ...(form.probationEndDate
+        ? { probationEndDate: form.probationEndDate }
+        : {}),
+      ...(form.noticePeriodDays.trim() &&
+      !Number.isNaN(Number(form.noticePeriodDays))
+        ? { noticePeriodDays: Number(form.noticePeriodDays) }
+        : {}),
     }
 
     // Warn in the console if any UUID-shaped field was dropped — this is
@@ -464,6 +485,27 @@ export default function InviteEmployeePage() {
                 <DateField
                   value={form.joiningDate}
                   onChange={(v) => set('joiningDate', v)}
+                />
+              </div>
+              <div>
+                <label className="label">
+                  Probation ends{' '}
+                  <span style={{ color: 'var(--text-faint)' }}>(optional)</span>
+                </label>
+                <DateField
+                  value={form.probationEndDate}
+                  onChange={(v) => set('probationEndDate', v)}
+                  min={form.joiningDate || undefined}
+                />
+              </div>
+              <div>
+                <label className="label">Notice period (days)</label>
+                <input
+                  className="input"
+                  inputMode="numeric"
+                  value={form.noticePeriodDays}
+                  onChange={(e) => set('noticePeriodDays', e.target.value)}
+                  placeholder="30"
                 />
               </div>
               <div>

@@ -92,9 +92,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const authRejected =
     isError && meError instanceof APIError && meError.status === 401
 
-  // Employees who haven't finished self-onboarding go to the wizard. Owners
-  // and HR Admins skip this check — they're managing the workspace, not
-  // joining it. Tracked in employees.custom_fields.onboarding_step.
+  // Anyone who hasn't finished self-onboarding goes to the wizard — every
+  // tenant role, owners and HR admins included (statutory + banking details
+  // are wanted regardless of seniority). Owners/admins just get the shorter
+  // variant there: no Documents step, and finishing activates them directly
+  // instead of submitting for HR review (founder round 17). Tracked in
+  // employees.custom_fields.onboarding_step.
   //
   // Use the FRESH /me role for routing decisions (currentMembership.role),
   // not the persisted auth-store snapshot. The store has the previous
