@@ -33,9 +33,10 @@ interface StepMeta {
 // PAN/Aadhaar/UAN are Indian statutory documents — employees assigned to a
 // location outside India see passport/ID fields instead.
 //
-// Owners and admins (isPrivileged) get a shorter wizard: no Documents
-// placeholder, and the final step confirms + finishes instead of submitting
-// for HR review — there is nobody senior to review them (founder round 17).
+// The owner (isPrivileged) gets a shorter wizard: no Documents placeholder,
+// and the final step confirms + finishes instead of submitting for HR review
+// — there is nobody senior to review them (founder round 17). Every other
+// role, HR admins included, keeps the full flow.
 const stepsFor = (isIndia: boolean, isPrivileged: boolean): StepMeta[] => [
   { key: 'personal', serverStep: 1, title: 'Personal info',    sub: 'Basic details & address' },
   { key: 'identity', serverStep: 2, title: 'Identity',         sub: isIndia ? 'PAN, Aadhaar, contact' : 'Passport / ID, contact' },
@@ -127,13 +128,14 @@ export default function EmployeeOnboardingPage() {
     myRecord.data?.locationCountryCode ?? org.data?.countryCode ?? 'IN'
   const isIndia = country === 'IN'
 
-  // Owners/admins get the shortened no-review wizard. Prefer the fresh
-  // lowercase role off /me; fall back to the persisted store role for the
-  // first paint (API 'admin' normalises to HR_ADMIN in the store).
+  // Only the owner gets the shortened no-review wizard — HR admins upload
+  // documents and submit to the owner like everyone else (founder round
+  // 17.1). Prefer the fresh lowercase role off /me; fall back to the
+  // persisted store role for the first paint.
   const apiRole = me.data?.currentMembership?.role?.toLowerCase()
   const isPrivileged = apiRole
-    ? apiRole === 'owner' || apiRole === 'admin'
-    : currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
+    ? apiRole === 'owner'
+    : currentUser?.role === 'OWNER'
 
   const [stepIdx, setStepIdx] = useState(0) // 0-based
   const [form, setForm] = useState<FormState>(EMPTY)
@@ -1272,7 +1274,7 @@ function ReviewStep({
             }}
           >
             {isPrivileged
-              ? 'You can still go back and edit any section. Finishing will activate your profile — as an admin, nothing goes to HR review.'
+              ? 'You can still go back and edit any section. Finishing will activate your profile — as the workspace owner, nothing goes to review.'
               : 'You can still go back and edit any section. After submitting, HR will review and confirm your start date.'}
           </div>
         </div>

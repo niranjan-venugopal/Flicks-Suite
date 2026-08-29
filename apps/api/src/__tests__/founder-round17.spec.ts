@@ -6,12 +6,13 @@
  *    PUT /employees/:id (columns shipped in 0001 but no write path ever
  *    existed) and pre-fillable at invite time; the audit snapshot now carries
  *    every org/employment field it silently dropped before.
- *  - An owner/admin finishing their own onboarding wizard completes WITHOUT
+ *  - An OWNER finishing their own onboarding wizard completes WITHOUT
  *    submitting for review: no reviewer fan-out, no manager email, and they
  *    self-activate (employee + membership) because nobody senior exists to
  *    approve them. The decision is derived from the caller's membership role
  *    inside the transaction — a client flag can never trigger it.
- *  - Everyone else (employee/manager/finance) keeps the review path intact.
+ *  - Everyone else keeps the review path, HR admins included (round 17.1) —
+ *    and an admin's own file is routed to the OWNERS, never to a peer admin.
  *  - Send-back deep links point at the wizard's real route.
  *
  * Service-level against the real Postgres, mirroring founder-round5.spec.ts.
@@ -67,6 +68,7 @@ let ownerAUserId: string; // reviewer — never the submitter
 let ownerSelfUserId: string; // owner finishing their own wizard
 let founderUserId: string; // founder-shaped row: already active, no custom_fields
 let promotedAdminUserId: string; // invited, later promoted to admin
+let otherAdminUserId: string; // a second HR admin — must never review a peer
 let plainEmpUserId: string; // ordinary employee — keeps the review path
 let sentBackUserId: string; // employee whose onboarding gets sent back
 
@@ -147,6 +149,7 @@ beforeAll(async () => {
   ownerSelfUserId = await seedUser(`owner-self-${rid()}@r17.test`);
   founderUserId = await seedUser(`founder-${rid()}@r17.test`);
   promotedAdminUserId = await seedUser(`promoted-${rid()}@r17.test`);
+  otherAdminUserId = await seedUser(`other-admin-${rid()}@r17.test`);
   plainEmpUserId = await seedUser(`employee-${rid()}@r17.test`);
   sentBackUserId = await seedUser(`sent-back-${rid()}@r17.test`);
 
@@ -159,6 +162,7 @@ beforeAll(async () => {
     // The invited-then-promoted case: role elevated before they ever
     // finished the wizard, membership still 'invited'.
     [promotedAdminUserId, 'admin', 'invited'],
+    [otherAdminUserId, 'admin', 'active'],
     [plainEmpUserId, 'employee', 'active'],
     [sentBackUserId, 'employee', 'active'],
   ];
@@ -386,9 +390,11 @@ describe('owner/admin finish onboarding without HR review', () => {
     expect(inAppTypes()).not.toContain('onboarding.submitted');
   });
 
-  it('activates an invited employee who was promoted to admin', async () => {
-    const before = await membershipRow(promotedAdminUserId);
-    expect(before.status).toBe('invited');
+});
+
+describe('HR admins are reviewed by the owner (round 17.1)', () => {
+  it('an admin submits for review — no self-activation, owners notified', async () => {
+    createInAppNotification.mockClear();
 
     const result = await employeesService.submitOnboardingStep(
       empPromotedId,
@@ -397,13 +403,31 @@ describe('owner/admin finish onboarding without HR review', () => {
       tenantId,
       promotedAdminUserId,
     );
-    expect(result.selfServeCompletion).toBe(true);
+    // HR staff do not sign off their own file.
+    expect(result.selfServeCompletion).toBe(false);
+    expect(result.allStepsComplete).toBe(true);
 
     const row = await employeeRow(empPromotedId);
-    expect(row.status).toBe('active');
+    expect(row.status).toBe('inactive');
     const seat = await membershipRow(promotedAdminUserId);
-    expect(seat.status).toBe('active');
-    expect(seat.accepted_at).toBeTruthy();
+    expect(seat.status).toBe('invited');
+
+    const recipients = createInAppNotification.mock.calls
+      .filter((c) => (c as unknown[])[1] === 'onboarding.submitted')
+      .map((c) => (c as unknown[])[0]);
+    // Routed to the OWNERS only — a peer admin must not review a colleague.
+    expect(recipients).toContain(ownerAUserId);
+    expect(recipients).toContain(ownerSelfUserId);
+    expect(recipients).not.toContain(otherAdminUserId);
+    expect(recipients).not.toContain(promotedAdminUserId);
+  });
+
+  it('lands in the owner\'s onboarding queue', async () => {
+    const queue = await employeesService.getOnboardingQueue(
+      tenantId,
+      ownerAUserId,
+    );
+    expect(queue.data.some((r) => r.id === empPromotedId)).toBe(true);
   });
 });
 
@@ -425,6 +449,9 @@ describe('everyone else keeps the HR review path', () => {
       .filter((c) => (c as unknown[])[1] === 'onboarding.submitted')
       .map((c) => (c as unknown[])[0]);
     expect(recipients).toContain(ownerAUserId);
+    // HR reviews ordinary joiners — that's the job; only an admin's OWN
+    // file is escalated to the owners.
+    expect(recipients).toContain(otherAdminUserId);
     expect(recipients).not.toContain(plainEmpUserId);
 
     const row = await employeeRow(empPlainId);

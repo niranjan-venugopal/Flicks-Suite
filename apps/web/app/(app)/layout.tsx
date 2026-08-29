@@ -93,11 +93,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     isError && meError instanceof APIError && meError.status === 401
 
   // Anyone who hasn't finished self-onboarding goes to the wizard — every
-  // tenant role, owners and HR admins included (statutory + banking details
-  // are wanted regardless of seniority). Owners/admins just get the shorter
-  // variant there: no Documents step, and finishing activates them directly
-  // instead of submitting for HR review (founder round 17). Tracked in
-  // employees.custom_fields.onboarding_step.
+  // tenant role, the owner included (statutory + banking details are wanted
+  // regardless of seniority). The owner just gets the shorter variant there:
+  // no Documents step, and finishing activates them directly instead of
+  // submitting for review, because nobody outranks them (founder round 17).
+  // Tracked in employees.custom_fields.onboarding_step.
   //
   // Use the FRESH /me role for routing decisions (currentMembership.role),
   // not the persisted auth-store snapshot. The store has the previous

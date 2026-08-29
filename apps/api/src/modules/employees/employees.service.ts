@@ -1193,12 +1193,14 @@ export class EmployeesService {
     }
     updateFields.updated_at = new Date();
 
-    // Owner/Admin self-service completion (founder round 17): when the person
-    // finishing the wizard IS an owner/admin, there is nobody senior to
-    // review them — complete + activate directly and skip the reviewer
-    // fan-out. Derived from the caller's membership role inside the tx; a
-    // client flag can never trigger it.
+    // Owner self-service completion (founder round 17): when the person
+    // finishing the wizard IS the owner, there is nobody senior to review
+    // them — complete + activate directly and skip the reviewer fan-out.
+    // Derived from the caller's membership role inside the tx; a client flag
+    // can never trigger it. HR admins deliberately keep the review path —
+    // the owner signs their file off (founder round 17.1).
     let selfServeCompletion = false;
+    let actorRole: string | null = null;
 
     await this.databaseService.withTenant(tenantId, async (db) => {
       if (allStepsComplete) {
@@ -1212,9 +1214,9 @@ export class EmployeesService {
             ),
           )
           .limit(1);
+        actorRole = actor?.role ?? null;
         selfServeCompletion =
-          (actor?.role === 'owner' || actor?.role === 'admin') &&
-          employee.user_id === actorUserId;
+          actor?.role === 'owner' && employee.user_id === actorUserId;
         if (selfServeCompletion) {
           // No reviewer will ever approve them into 'active' — do it here.
           updateFields.status = 'active';
@@ -1227,8 +1229,9 @@ export class EmployeesService {
         .where(eq(employees.id, employeeId));
 
       if (selfServeCompletion) {
-        // Also activate the membership (an invited-then-promoted admin may
-        // still be 'invited'); idempotent for an already-active founder.
+        // Also activate the membership (an owner seat can still be 'invited'
+        // if ownership was handed over before they finished); idempotent for
+        // an already-active founder.
         await db
           .update(memberships)
           .set({
@@ -1379,17 +1382,29 @@ export class EmployeesService {
         // In-app ping for every active owner/admin except the submitter.
         // dbAdmin (memberships are cross-tenant-invisible under RLS at this
         // point) — tenant predicate is mandatory.
-        const reviewers = await this.dbAdmin
-          .select({ userId: memberships.user_id })
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.tenant_id, tenantId),
-              eq(memberships.status, 'active'),
-              inArray(memberships.role, ['owner', 'admin']),
-              ne(memberships.user_id, actorUserId),
-            ),
-          );
+        //
+        // An HR admin's OWN onboarding goes to the owners: a peer admin
+        // shouldn't sign off their colleague's file (founder round 17.1).
+        // Falls back to the full pool if the workspace has no active owner,
+        // so the request can never land nowhere.
+        const findReviewers = (roles: Array<'owner' | 'admin'>) =>
+          this.dbAdmin
+            .select({ userId: memberships.user_id })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, tenantId),
+                eq(memberships.status, 'active'),
+                inArray(memberships.role, roles),
+                ne(memberships.user_id, actorUserId),
+              ),
+            );
+        const submitterIsAdmin = actorRole === 'admin';
+        let reviewers = await findReviewers(
+          submitterIsAdmin ? ['owner'] : ['owner', 'admin'],
+        );
+        if (!reviewers.length && submitterIsAdmin)
+          reviewers = await findReviewers(['owner', 'admin']);
         const recipientIds = [...new Set(reviewers.map((r) => r.userId))];
         for (const reviewerId of recipientIds) {
           await this.notificationsService
