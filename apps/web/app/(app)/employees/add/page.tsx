@@ -379,20 +379,29 @@ export default function InviteEmployeePage() {
               </div>
               <div>
                 <label className="label">Designation</label>
+                {/* All active designations are pickable in ANY order — choosing
+                    a department-linked one auto-fills the Department (founder
+                    round 16); common ones leave it untouched. */}
                 <select
                   className="input"
                   value={form.designationId}
-                  onChange={(e) => set('designationId', e.target.value)}
+                  onChange={(e) => {
+                    const designationId = e.target.value
+                    const picked = (designations.data?.data ?? []).find(
+                      (d) => d.id === designationId,
+                    )
+                    setForm((p) => ({
+                      ...p,
+                      designationId,
+                      ...(picked?.departmentId
+                        ? { departmentId: picked.departmentId }
+                        : {}),
+                    }))
+                  }}
                 >
                   <option value="">—</option>
                   {(designations.data?.data ?? [])
-                    .filter(
-                      (d) =>
-                        d.isActive &&
-                        (!d.departmentId ||
-                          !form.departmentId ||
-                          d.departmentId === form.departmentId),
-                    )
+                    .filter((d) => d.isActive)
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.title}

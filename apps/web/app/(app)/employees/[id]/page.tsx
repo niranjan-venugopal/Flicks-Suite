@@ -357,23 +357,27 @@ function EditProfileDialog({
               <label className="label" style={{ display: 'block', marginBottom: 6 }}>
                 Designation
               </label>
+              {/* Pickable in ANY order — a department-linked designation
+                  auto-fills the Department (founder round 16). */}
               <select
                 className="input"
                 value={designationId}
-                onChange={(ev) => setDesignationId(ev.target.value)}
+                onChange={(ev) => {
+                  const next = ev.target.value
+                  setDesignationId(next)
+                  const picked = (designations.data?.data ?? []).find((d) => d.id === next)
+                  if (picked?.departmentId) setDepartmentId(picked.departmentId)
+                }}
                 style={{ width: '100%' }}
               >
                 <option value="">—</option>
                 {(designations.data?.data ?? [])
-                  .filter(
-                    (d) =>
-                      (d.isActive || d.id === designationId) &&
-                      (!d.departmentId || !departmentId || d.departmentId === departmentId),
-                  )
+                  .filter((d) => d.isActive || d.id === designationId)
                   .map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.title}
                       {d.level ? ` · L${d.level}` : ''}
+                      {!d.departmentId ? '' : d.departmentName ? ` (${d.departmentName})` : ''}
                     </option>
                   ))}
               </select>
