@@ -76,12 +76,36 @@ export class PmJobs {
         .delete(pmIssues)
         .where(and(isNotNull(pmIssues.deleted_at), lt(pmIssues.deleted_at, cutoff)))
         .returning({ id: pmIssues.id });
+      // Projects going out of the window take any issue still pointing at them
+      // (founder round 20: "issues don't survive without a project"). The
+      // cascade in softDelete normally means the sweep above already caught
+      // them — same deleted_at, same run — but an issue attached to the project
+      // by an older code path, or restored individually while its project
+      // stayed deleted, would otherwise survive as a project-less orphan:
+      // pm_issues.project_id is ON DELETE SET NULL, so the FK detaches instead
+      // of deleting. Resolve it explicitly rather than leaving it to the
+      // constraint.
+      const doomed = await this.dbAdmin
+        .select({ id: pmProjects.id })
+        .from(pmProjects)
+        .where(and(isNotNull(pmProjects.deleted_at), lt(pmProjects.deleted_at, cutoff)));
+      let orphans = 0;
+      if (doomed.length) {
+        const stragglers = await this.dbAdmin
+          .delete(pmIssues)
+          .where(inArray(pmIssues.project_id, doomed.map((p) => p.id)))
+          .returning({ id: pmIssues.id });
+        orphans = stragglers.length;
+      }
       const projects = await this.dbAdmin
         .delete(pmProjects)
         .where(and(isNotNull(pmProjects.deleted_at), lt(pmProjects.deleted_at, cutoff)))
         .returning({ id: pmProjects.id });
       if (issues.length || projects.length) {
-        this.logger.log(`pm-recently-deleted-purge: ${issues.length} issues, ${projects.length} projects hard-deleted`);
+        this.logger.log(
+          `pm-recently-deleted-purge: ${issues.length} issues, ${projects.length} projects hard-deleted` +
+            (orphans ? ` (+${orphans} issues that would have been orphaned by a purged project)` : ''),
+        );
       }
     } catch (err) {
       this.logger.error(`pm-recently-deleted-purge failed: ${err instanceof Error ? err.message : err}`);

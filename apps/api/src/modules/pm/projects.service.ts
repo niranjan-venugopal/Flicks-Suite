@@ -82,6 +82,36 @@ export class PmProjectsService {
     if (!visible.includes(id)) throw new ForbiddenException('Project not visible to you');
   }
 
+  /**
+   * Authority to delete or restore a project — a SEPARATE question from
+   * `assertProjectAccess`, which only asks "is this project in your readable
+   * set". Visibility alone let any non-guest member destroy any project they
+   * could see, while deleting a mere *team* already required owner/admin
+   * (pm.controller.ts `@Roles('owner','admin')`).
+   *
+   * The bar is the initiative bar (`assertInitiativeRole`: manager and above)
+   * plus the project's own lead, so someone who runs a project can always
+   * retire it — otherwise an employee lead would be stuck with a project they
+   * created and nobody to ask (house rule 8, no dead ends).
+   *
+   * Enforced HERE rather than with a `@Roles` decorator because there are two
+   * doors into this service: the REST controller and the FSE sync mutation
+   * executor (`sync/mutation-executor.service.ts` `case 'project.delete'`),
+   * which reaches it through /pm/sync/mutate and carries no @Roles at all.
+   */
+  private assertMayDeleteProject(
+    role: string | undefined,
+    project: { lead_user_id: string | null },
+    userId: string,
+    verb: 'delete' | 'restore',
+  ) {
+    if (role && !['employee', 'auditor', 'guest'].includes(role)) return;
+    if (project.lead_user_id && project.lead_user_id === userId) return;
+    throw new ForbiddenException(
+      `Only the project lead, or a manager and above, can ${verb} a project.`,
+    );
+  }
+
   private async assertActiveMember(tx: Db, tenantId: string, userIds: string[]) {
     const clean = userIds.filter(Boolean);
     if (!clean.length) return;
@@ -401,36 +431,97 @@ export class PmProjectsService {
     );
   }
 
-  async softDelete(tenantId: string, userId: string, id: string) {
+  /**
+   * Delete a project — and its issues with it (founder round 20).
+   *
+   * The issues are the point. Before this, softDelete stamped pm_projects and
+   * stopped, so every issue in the project stayed live in the issues list, My
+   * Issues, Triage, search and the sync bootstrap, pointing at a project that
+   * no longer existed. Cascading here fixes all of those at once, in the one
+   * place, instead of teaching six read paths to join pm_projects.
+   *
+   * Each cascaded issue is stamped with `deleted_with_project_id` so restore
+   * can give back exactly this set — an issue the user had already deleted by
+   * hand before the project went must stay deleted when it comes back.
+   *
+   * Every affected row is named in the domain event's `sync` refs: the delta
+   * re-fetches what the refs name, finds the rows now filtered out by
+   * deleted_at, and turns them into tombstones for live clients. Without the
+   * issue refs the sidebar would keep rendering them until the next reload.
+   */
+  async softDelete(tenantId: string, userId: string, id: string, actorRole?: string) {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
         await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
-        await this.loadProject(tx, tenantId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        this.assertMayDeleteProject(actorRole, project, userId, 'delete');
+        const now = new Date();
         await tx
           .update(pmProjects)
-          .set({ deleted_at: new Date(), updated_at: new Date() })
+          .set({ deleted_at: now, updated_at: now })
           .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)));
+        // Only the LIVE issues: one already deleted keeps its own deleted_at
+        // and its NULL marker, so restore leaves it alone.
+        const cascaded = await tx
+          .update(pmIssues)
+          .set({ deleted_at: now, deleted_with_project_id: id, updated_at: now })
+          .where(
+            and(
+              eq(pmIssues.tenant_id, tenantId),
+              eq(pmIssues.project_id, id),
+              isNull(pmIssues.deleted_at),
+            ),
+          )
+          .returning({ id: pmIssues.id });
         await this.audit.log({
           tenantId,
           actorUserId: userId,
           action: 'pm.project.delete',
           resourceType: 'pm_project',
           resourceId: id,
-          metadata: {},
+          metadata: { name: project.name, cascaded_issues: cascaded.length },
         });
         await this.domainEvents.publish(
-          { name: 'pm.project.updated', tenantId, actorUserId: userId, payload: { project_id: id, deleted: true, sync: [{ t: 'pm_projects', id }] } },
+          {
+            name: 'pm.project.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              project_id: id,
+              deleted: true,
+              cascaded_issues: cascaded.length,
+              sync: [
+                { t: 'pm_projects', id },
+                ...cascaded.map((r) => ({ t: 'pm_issues', id: r.id })),
+              ],
+            },
+          },
           tx,
         );
-        return { data: { id, deleted: true } };
+        return { data: { id, deleted: true, cascaded_issues: cascaded.length } };
       },
       userId,
     );
   }
 
-  async restore(tenantId: string, userId: string, id: string) {
+  /**
+   * Undo a project delete, giving back exactly what that delete took.
+   *
+   * `deleted_with_project_id` is the whole reason this is precise: it names the
+   * issues THIS project's delete swallowed, so issues the user had deleted by
+   * hand beforehand stay deleted. The marker is cleared as they come back, so a
+   * second delete/restore cycle starts from a clean slate.
+   *
+   * The sync refs list the project's scoped rows as well as the issues. The
+   * client's `pm_projects` tombstone purges milestones, health updates, team
+   * links and member links along with the project (store.ts applyTombstones),
+   * and the delta only re-fetches what the refs name — so a restore that named
+   * only `pm_projects` handed back a project with no milestones and no team
+   * chips until the next full reload.
+   */
+  async restore(tenantId: string, userId: string, id: string, actorRole?: string) {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -440,13 +531,50 @@ export class PmProjectsService {
         // must not be un-deleted by someone who can't even see it.
         await this.assertProjectAccess(tx, tenantId, userId, id, { withDeleted: true });
         if (!project.deleted_at) return { data: project };
+        this.assertMayDeleteProject(actorRole, project, userId, 'restore');
+        const now = new Date();
         const [row] = await tx
           .update(pmProjects)
-          .set({ deleted_at: null, updated_at: new Date() })
+          .set({ deleted_at: null, updated_at: now })
           .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)))
           .returning();
+        const revived = await tx
+          .update(pmIssues)
+          .set({ deleted_at: null, deleted_with_project_id: null, updated_at: now })
+          .where(
+            and(
+              eq(pmIssues.tenant_id, tenantId),
+              eq(pmIssues.deleted_with_project_id, id),
+            ),
+          )
+          .returning({ id: pmIssues.id });
+        // The delete writes an audit row; the restore did not. Both halves of a
+        // destructive action belong in the log an Owner reads.
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.project.restore',
+          resourceType: 'pm_project',
+          resourceId: id,
+          metadata: { name: project.name, restored_issues: revived.length },
+        });
         await this.domainEvents.publish(
-          { name: 'pm.project.updated', tenantId, actorUserId: userId, payload: { project_id: id, restored: true, sync: [{ t: 'pm_projects', id }] } },
+          {
+            name: 'pm.project.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: {
+              project_id: id,
+              restored: true,
+              restored_issues: revived.length,
+              sync: [
+                { t: 'pm_projects', id },
+                { t: 'pm_project_teams', id },
+                { t: 'pm_project_members', id },
+                ...revived.map((r) => ({ t: 'pm_issues', id: r.id })),
+              ],
+            },
+          },
           tx,
         );
         return { data: row! };

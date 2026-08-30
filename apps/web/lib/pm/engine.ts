@@ -701,12 +701,24 @@ export class PmSyncEngine {
 
   deleteProject(id: string): void {
     const prev = this.store.projects.get(id)
-    this.store.applyTombstones('pm_projects', [id])
+    if (!prev) return
+    // Mirror deleteIssue (above), NOT applyTombstones. The tombstone path is
+    // for the authoritative delta: store.applyTombstones('pm_projects') purges
+    // the project's milestones, health updates, team links, member links and
+    // initiative-lane membership as well as the row. The rollback below can
+    // only put back what `inverse` holds — the project row — so an optimistic
+    // tombstone that the server then rejected (403 from the delete bar, 404 on
+    // a stale id) permanently stripped those scoped rows from this browser.
+    // Removing just the project hides it exactly the same way, and the real
+    // delta tombstone still does the full purge a moment later.
+    const snapshot = { ...prev }
+    this.store.patchProject(id, { deleted_at: new Date().toISOString() })
+    this.store.projects.delete(id)
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
       op: 'project.delete',
       id,
-      inverse: { table: 'pm_projects', id, row: prev ? ({ ...prev } as unknown as Record<string, unknown>) : null },
+      inverse: { table: 'pm_projects', id, row: snapshot as unknown as Record<string, unknown> },
       enqueuedAt: Date.now(),
     })
   }

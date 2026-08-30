@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
 import { PmAv, ProjectCreateModal, TeamKeyChips } from '@/components/pm/projects'
 import { GuestWorkspaceNudge } from '@/components/pm/GuestWorkspaceNudge'
@@ -14,6 +15,31 @@ import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmProjectRow } from '@/lib/pm/types'
+
+/**
+ * Who gets the delete affordance, mirroring the server bar in
+ * projects.service.ts `assertMayDeleteProject`: manager and above, or the
+ * project's own lead. Web roles are UPPERCASE, the API's are lowercase — the
+ * comparison has to happen on the right side of that split.
+ */
+function canDeleteProject(role: string | undefined, leadUserId: string | null, meId: string): boolean {
+  if (!role || role === 'GUEST' || role === 'AUDITOR') return false
+  if (['OWNER', 'HR_ADMIN', 'MANAGER', 'FINANCE'].includes(role)) return true
+  return !!leadUserId && leadUserId === meId
+}
+
+/** Shared confirm copy — the same words on the list row and the detail page. */
+function deleteBody(name: string, issueCount: number | null): string {
+  const issues =
+    issueCount === null
+      ? ' Its issues are deleted with it.'
+      : issueCount === 1
+        ? ' Its 1 issue is deleted with it.'
+        : issueCount > 1
+          ? ` Its ${issueCount} issues are deleted with it.`
+          : ''
+  return `“${name}” will be removed from Projects.${issues} You can put it back for 30 days from Settings → Workspace → Recently deleted; after that it is gone for good.`
+}
 
 // ─────────────────────────────────────────────────────────
 // P11 — Projects list: health chips, stacked progress, team keys, lead.
@@ -43,8 +69,16 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
 
   const me = currentUser?.id ?? ''
   const isGuest = currentUser?.role === 'GUEST'
+  const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
   const projects = store.projectList().filter((p) => (tab === 'mine' ? p.lead_user_id === me : true))
   const sorted = [...projects].sort((a, b) => (a.target_date ?? '9999') < (b.target_date ?? '9999') ? -1 : 1)
+  // Sync mode: the engine applies the delete optimistically and flushes it —
+  // no await, no spinner. The row is gone the moment the dialog closes.
+  const confirmDelete = () => {
+    if (!deleting) return
+    engine.deleteProject(deleting.id)
+    setDeleting(null)
+  }
 
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
@@ -92,10 +126,36 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
               teams={store.teams as never}
               leadName={p.lead_user_id ? store.users.get(p.lead_user_id)?.name ?? '' : ''}
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
+              onDelete={
+                canDeleteProject(currentUser?.role, p.lead_user_id, me)
+                  ? () => setDeleting(p)
+                  : undefined
+              }
             />
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete project"
+        // Count the issues, not the progress bar's estimate points — the copy
+        // promises to delete issues, so it has to say how many issues.
+        body={
+          deleting
+            ? deleteBody(
+                deleting.name,
+                [...store.issues.values()].filter(
+                  (i) => i.project_id === deleting.id && !i.deleted_at,
+                ).length,
+              )
+            : ''
+        }
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+      />
 
       <ProjectCreateModal
         open={openNew}
@@ -112,13 +172,15 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
   )
 })
 
-function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen }: {
+function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen, onDelete }: {
   p: PmProjectRow
   progress: { scope: number; started: number; done: number }
   teamIds: string[]
   teams: Map<string, never>
   leadName: string
   onOpen: () => void
+  /** Omitted when the viewer may not delete this project — see canDeleteProject. */
+  onDelete?: () => void
 }) {
   const overdue = p.target_date && p.status === 'in_progress' && new Date(p.target_date) < new Date()
   return (
@@ -144,6 +206,21 @@ function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen }: {
         {p.target_date ? new Date(p.target_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
       </span>
       {leadName && <PmAv name={leadName} size={18} />}
+      {/* stopPropagation: the whole row is the "open project" click target
+          (crm/companies/page.tsx does exactly this for its trash button). */}
+      {onDelete && (
+        <button
+          type="button"
+          title="Delete project"
+          aria-label={`Delete ${p.name}`}
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: 6, background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--coral)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-faint)' }}
+        >
+          <Icon.trash size={13} />
+        </button>
+      )}
     </div>
   )
 }
@@ -197,6 +274,18 @@ function RestProjects() {
     [teamsQ.data],
   )
   const d = projectsQ.data?.data
+  // REST mode has no local graph, so this is a real round-trip with a spinner.
+  const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
+  const del = useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/pm/projects/${id}/delete`, {}),
+    onSuccess: () => {
+      setDeleting(null)
+      void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
+      // The deleted project shows up under Settings → Workspace → Recently
+      // deleted, so that list is stale the moment this succeeds.
+      void qc.invalidateQueries({ queryKey: ['pm', 'recently-deleted'] })
+    },
+  })
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
       <GuestWorkspaceNudge />
@@ -221,10 +310,28 @@ function RestProjects() {
               teams={teamMap as never}
               leadName=""
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
+              onDelete={
+                canDeleteProject(currentUser?.role, p.lead_user_id, currentUser?.id ?? '')
+                  ? () => setDeleting(p)
+                  : undefined
+              }
             />
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete project"
+        // No local issue graph in REST mode — the copy stays truthful without
+        // claiming a count it cannot know.
+        body={deleting ? deleteBody(deleting.name, null) : ''}
+        confirmLabel="Delete"
+        danger
+        loading={del.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && del.mutate(deleting.id)}
+      />
       <ProjectCreateModal
         open={openNew}
         onClose={() => setOpenNew(false)}

@@ -272,12 +272,14 @@ export class PmMutationExecutor {
         });
         return {};
       }
+      // Same authority bar as the REST door — the service enforces it, and it
+      // only works if the role actually reaches it from here too.
       case 'project.delete': {
-        await this.projects.softDelete(tenantId, userId, item.id);
+        await this.projects.softDelete(tenantId, userId, item.id, role ?? 'employee');
         return {};
       }
       case 'project.restore': {
-        const res = await this.projects.restore(tenantId, userId, item.id);
+        const res = await this.projects.restore(tenantId, userId, item.id, role ?? 'employee');
         return { pm_projects: [res.data as unknown as Record<string, unknown>] };
       }
       case 'milestone.create': {

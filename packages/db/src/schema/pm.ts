@@ -208,6 +208,11 @@ export const pmIssues = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),
+    // 0056 — set when this issue was deleted BY its project's delete, not on
+    // its own. Restore un-deletes exactly this set, so an issue the user had
+    // already deleted by hand stays deleted when the project comes back. No FK
+    // on purpose: see the migration.
+    deleted_with_project_id: uuid('deleted_with_project_id'),
   },
   (t) => [
     uniqueIndex('pm_issues_tenant_id_team_id_number_key').on(t.tenant_id, t.team_id, t.number),
@@ -220,6 +225,9 @@ export const pmIssues = pgTable(
     index('idx_issues_cycle').on(t.tenant_id, t.cycle_id),
     index('idx_issues_project').on(t.tenant_id, t.project_id),
     index('idx_issues_parent').on(t.parent_issue_id),
+    index('idx_pm_issues_deleted_with_project')
+      .on(t.tenant_id, t.deleted_with_project_id)
+      .where(sql`${t.deleted_with_project_id} IS NOT NULL`),
   ],
 );
 

@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Modal } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
 import { ProjectGuestsCard } from '@/components/pm/ProjectGuestsCard'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmMilestoneRow, PmProjectRow, PmUpdateRow } from '@/lib/pm/types'
 
@@ -96,6 +98,37 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const patchProject = (patch: Partial<PmProjectRow>) => {
     if (engine) engine.updateProject(id, patch)
     else restPatch.mutate(patch)
+  }
+
+  // ── Delete this project (founder round 20) ────────────────────────────────
+  // Same engine-or-REST branch as patchProject above. Either way we leave for
+  // the list afterwards: this page's own "not found" state would otherwise be
+  // the thing the user lands on, which reads like an error rather than success.
+  const { currentUser } = useAuthStore()
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const restDelete = useMutation({
+    mutationFn: () => api.post(`/api/v1/pm/projects/${id}/delete`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
+      void qc.invalidateQueries({ queryKey: ['pm', 'recently-deleted'] })
+      onBack()
+    },
+  })
+  const role = currentUser?.role
+  const mayDelete =
+    !!role &&
+    role !== 'GUEST' &&
+    role !== 'AUDITOR' &&
+    (['OWNER', 'HR_ADMIN', 'MANAGER', 'FINANCE'].includes(role) ||
+      (!!project.lead_user_id && project.lead_user_id === currentUser?.id))
+  const doDelete = () => {
+    if (engine) {
+      engine.deleteProject(id)
+      setConfirmDelete(false)
+      onBack()
+    } else {
+      restDelete.mutate()
+    }
   }
 
   const postUpdate = () => {
@@ -200,6 +233,19 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             →
             <DateField value={project.target_date ?? ''} onChange={(iso) => patchProject({ target_date: iso || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
           </span>
+          {mayDelete && (
+            <button
+              type="button"
+              title="Delete project"
+              aria-label="Delete project"
+              onClick={() => setConfirmDelete(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-mute)', cursor: 'pointer' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--coral)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-mute)' }}
+            >
+              <Icon.trash size={14} />
+            </button>
+          )}
         </div>
         {d.project.summary && <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>{d.project.summary}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -337,6 +383,24 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         {/* Round 7: project-scoped guest seats (Owner/Admin only) */}
         <ProjectGuestsCard projectId={id} />
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete project"
+        body={`“${project.name}” will be removed from Projects.${
+          issues.length === 1
+            ? ' Its 1 issue is deleted with it.'
+            : issues.length > 1
+              ? ` Its ${issues.length} issues are deleted with it.`
+              : ''
+        } You can put it back for 30 days from Settings → Workspace → Recently deleted; after that it is gone for good.`}
+        confirmLabel="Delete"
+        danger
+        loading={restDelete.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={doDelete}
+      />
 
       {/* New issue — pre-linked to this project (+ optional milestone) */}
       <Modal

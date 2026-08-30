@@ -771,6 +771,12 @@ export class PmTeamsService {
                   eq(pmIssues.tenant_id, tenantId),
                   gte(pmIssues.deleted_at, cutoff),
                   inArray(pmIssues.team_id, visibleTeams),
+                  // An issue that went WITH its project is not separately
+                  // restorable: it comes back when the project does. Listing it
+                  // here offered a Restore that would resurrect an issue into a
+                  // deleted project — the orphan the cascade exists to prevent
+                  // — and buried the project's own row under its issues.
+                  isNull(pmIssues.deleted_with_project_id),
                 ),
               )
               .orderBy(sql`${pmIssues.deleted_at} DESC`)
@@ -813,6 +819,20 @@ export class PmTeamsService {
       tenantId,
       async (tx) => {
         const table = kind === 'issue' ? pmIssues : pmProjects;
+        // Purging a project takes its issues with it, explicitly, BEFORE the
+        // project row goes (founder round 20: "issues don't survive without a
+        // project"). pm_issues.project_id is ON DELETE SET NULL, so letting the
+        // FK decide would silently detach them into project-less issues that
+        // outlive the thing they belonged to. Deleting them here also means the
+        // decision is auditable instead of implicit in a constraint.
+        let purgedIssues = 0;
+        if (kind === 'project') {
+          const gone = await tx
+            .delete(pmIssues)
+            .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, id)))
+            .returning({ id: pmIssues.id });
+          purgedIssues = gone.length;
+        }
         const [row] = await tx
           .delete(table)
           .where(and(eq(table.id, id), eq(table.tenant_id, tenantId), sql`${table.deleted_at} IS NOT NULL`))
@@ -824,9 +844,11 @@ export class PmTeamsService {
           action: `pm.${kind}.purge`,
           resourceType: kind === 'issue' ? 'pm_issue' : 'pm_project',
           resourceId: id,
-          metadata: {},
+          // What a hard delete destroyed is the one thing the log must record:
+          // the rows themselves are gone and cannot be counted afterwards.
+          metadata: kind === 'project' ? { purged_issues: purgedIssues } : {},
         });
-        return { data: { purged: true } };
+        return { data: { purged: true, ...(kind === 'project' ? { purged_issues: purgedIssues } : {}) } };
       },
       userId,
     );

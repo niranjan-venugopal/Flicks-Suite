@@ -80,14 +80,23 @@ export class PmVisibilityService {
 
     if (membership?.role !== 'guest') return null;
 
-    // Guest: projects = explicit pm_project_members rows only.
+    // Guest: projects = explicit pm_project_members rows only — and only ones
+    // that still exist. The join to pmProjects is load-bearing (founder round
+    // 20): pm_project_members carries no deleted_at of its own, so without it a
+    // deleted project stayed in the guest's scope forever, and an external
+    // guest kept receiving its issues, milestones and health-update bodies
+    // after the workspace had deleted it. Restore puts it back automatically,
+    // since the row is only ever filtered, never removed.
     const rows = await tx
       .select({ project_id: pmProjectMembers.project_id })
       .from(pmProjectMembers)
+      .innerJoin(pmProjects, eq(pmProjects.id, pmProjectMembers.project_id))
       .where(
         and(
           eq(pmProjectMembers.tenant_id, tenantId),
           eq(pmProjectMembers.user_id, userId),
+          eq(pmProjects.tenant_id, tenantId),
+          isNull(pmProjects.deleted_at),
         ),
       );
     const projectIds = rows.map((r) => r.project_id);

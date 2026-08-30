@@ -1276,6 +1276,16 @@ export class PmIssuesService {
           throw new NotFoundException('Issue not found');
         }
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
+        // An issue that went down with its project comes back with it, never
+        // on its own — restoring it alone would leave it pointing at a deleted
+        // project ("issues don't survive without a project", founder round 20).
+        // Recently-deleted already hides these, so this is the direct-call
+        // backstop for the API and the sync executor.
+        if (issue.deleted_with_project_id) {
+          throw new BadRequestException(
+            'This issue was deleted along with its project. Restore the project to bring it back.',
+          );
+        }
         const [updated] = await tx
           .update(pmIssues)
           .set({ deleted_at: null, updated_at: new Date() })

@@ -500,16 +500,19 @@ export class PmController {
     return this.projects.postUpdate(user.tenantId, user.sub, id, dto);
   }
 
+  // Delete/restore authority is enforced INSIDE the service, not with @Roles:
+  // /pm/sync/mutate reaches the same methods with no @Roles of its own, so a
+  // decorator here would be bypassable by the app's own sync client.
   @Post('projects/:id/delete')
   @RequireGrant('pm', 'edit')
   deleteProject(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
-    return this.projects.softDelete(user.tenantId, user.sub, id);
+    return this.projects.softDelete(user.tenantId, user.sub, id, user.role);
   }
 
   @Post('projects/:id/restore')
   @RequireGrant('pm', 'edit')
   restoreProject(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
-    return this.projects.restore(user.tenantId, user.sub, id);
+    return this.projects.restore(user.tenantId, user.sub, id, user.role);
   }
 
   // ─── Guest seats (round 7) — admin+ (it mints a workspace membership,
