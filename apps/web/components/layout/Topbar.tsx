@@ -12,6 +12,7 @@ import { STATUS_META } from '@/components/presence/PresenceDot'
 import { useUserPresence, usePresence } from '@/lib/api/queries/use-presence'
 import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NotificationsBell } from './NotificationsBell'
+import type { SidebarVariant } from './Sidebar'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,10 +21,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export function Topbar() {
+export function Topbar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}) {
   const { currentUser } = useAuthStore()
   const logoutMutation = useLogout()
-  const isFam = currentUser?.role === 'FAM'
+  // Which console we're in, from the layout — not from the membership role.
+  // See the SidebarVariant docblock: a platform admin's active role is
+  // usually 'owner', so the role told us the wrong console.
+  const isFam = variant === 'fam'
   const [pickerOpen, setPickerOpen] = useState(false)
   const openFeedback = useFeedbackPanel((s) => s.setOpen)
 
@@ -158,12 +162,22 @@ export function Topbar() {
               </span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/profile">My profile</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/settings">Settings</Link>
-            </DropdownMenuItem>
+            {/* Both of these are TENANT routes. In the platform console they
+                land in the customer shell and bounce straight back here, so
+                the console doesn't offer them. */}
+            {!isFam && (
+              <DropdownMenuItem asChild>
+                <Link href="/profile">My profile</Link>
+              </DropdownMenuItem>
+            )}
+            {/* Workspace Settings is @Roles('admin') on every endpoint the
+                page reads — offering it to Finance, Managers, Employees,
+                Auditors or Guests only ever produced a 403 screen. */}
+            {!isFam && (currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN') && (
+              <DropdownMenuItem asChild>
+                <Link href="/settings">Settings</Link>
+              </DropdownMenuItem>
+            )}
             {/* D10-R — primary feedback trigger (below Profile/Settings, above
                 Sign out). Tenant users only: the FAM console doesn't mount the
                 panel and platform staff aren't the survey audience. */}

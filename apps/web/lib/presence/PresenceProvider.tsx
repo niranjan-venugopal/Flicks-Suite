@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { usePresenceStore, type ResolvedPresence } from './presence-store'
+import { SOCKET_TRANSPORTS } from '@/lib/realtime'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
@@ -28,7 +29,7 @@ export function PresenceProvider() {
 
     const socket = io(`${BASE_URL}/presence`, {
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      transports: SOCKET_TRANSPORTS,
       reconnectionDelayMax: 15_000,
     })
     socketRef.current = socket

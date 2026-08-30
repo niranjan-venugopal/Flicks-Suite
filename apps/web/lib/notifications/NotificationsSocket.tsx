@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { io, type Socket } from 'socket.io-client'
 import { useAuthStore } from '@/lib/stores/auth.store'
+import { SOCKET_TRANSPORTS } from '@/lib/realtime'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
@@ -38,7 +39,7 @@ export function NotificationsSocket() {
 
     const socket = io(`${BASE_URL}/notifications`, {
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      transports: SOCKET_TRANSPORTS,
       reconnectionDelayMax: 15_000,
     })
     socketRef.current = socket

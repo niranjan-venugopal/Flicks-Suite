@@ -60,9 +60,13 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-brand-bg">
-      <Sidebar />
+      {/* variant="fam" is what makes this the PLATFORM console: the nav, the
+          brand block and the search placeholder come from the console, not
+          from the membership role, which for a platform admin is usually
+          'owner' in their own workspace. */}
+      <Sidebar variant="fam" />
       <div className="flex flex-col flex-1 min-w-0">
-        <Topbar />
+        <Topbar variant="fam" />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>

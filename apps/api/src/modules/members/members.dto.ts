@@ -16,7 +16,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
  * Auditor invite + grant DTOs (PRD §3, §4.4). Grants drive both the
  * InvoicingGrantGuard and the auditor's sidebar; the capabilities object holds
  * the fine-grained switches from the Invite-auditor modal (send,
- * record_payments, manage_customers).
+ * record_payment, manage_customers).
  */
 
 export const GRANT_MODULES = [
@@ -55,7 +55,7 @@ export class GrantInputDto {
   access_level!: string;
 
   @ApiPropertyOptional({
-    description: 'Capability switches, e.g. { send, record_payments, manage_customers }',
+    description: 'Capability switches, e.g. { send, record_payment, manage_customers }',
   })
   @IsOptional()
   @IsObject()
@@ -107,7 +107,7 @@ export class UpsertGrantDto {
   access_level!: string;
 
   @ApiPropertyOptional({
-    description: 'Capability switches, e.g. { send, record_payments, manage_customers }',
+    description: 'Capability switches, e.g. { send, record_payment, manage_customers }',
   })
   @IsOptional()
   @IsObject()

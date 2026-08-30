@@ -238,9 +238,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         />
       )}
       <div className="flex flex-1 min-h-0">
-        <Sidebar />
+        {/* The customer shell always renders the TENANT nav — a platform
+            admin who lands here is being redirected to /fam/overview above. */}
+        <Sidebar variant="tenant" />
         <div className="flex flex-col flex-1 min-w-0">
-          <Topbar />
+          <Topbar variant="tenant" />
           {/* D19 (PRD v4 §8B.5): trial countdown / grace warning */}
           <BillingBanners />
           <main className="flex-1 overflow-y-auto">{children}</main>

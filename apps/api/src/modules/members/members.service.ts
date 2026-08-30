@@ -444,7 +444,7 @@ export class MembersService {
       )
       .limit(1);
 
-    // 'none' clears capabilities too: a stale {record_payments:true} left on a
+    // 'none' clears capabilities too: a stale {record_payment:true} left on a
     // revoked row would still light up the sidebar's Payments item.
     const capabilities =
       dto.access_level === 'none' ? {} : (dto.capabilities ?? before?.capabilities ?? {});

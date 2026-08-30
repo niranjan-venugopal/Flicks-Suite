@@ -66,6 +66,41 @@ interface NavSection {
   items: NavItem[]
 }
 
+// CRM_SUBITEMS from the v5 prototype (shell-crm.jsx). One list, shared by every
+// nav that carries CRM — Owner/Admin, Finance, and the Manager/Employee seats
+// the Owner has granted CRM to — so the module can never expose a different
+// menu depending on who is looking at it.
+const CRM_CHILDREN: NavChild[] = [
+  { href: '/crm', label: 'Overview' },
+  { href: '/crm/leads', label: 'Leads' },
+  { href: '/crm/deals', label: 'Deals' },
+  { href: '/crm/activities', label: 'Activities' },
+  { href: '/crm/sequences', label: 'Sequences' },
+  { href: '/crm/templates', label: 'Email settings' },
+  { href: '/crm/forms', label: 'Web forms' },
+  { href: '/crm/automation', label: 'Automation' },
+  { href: '/crm/reports', label: 'Reports' },
+  { href: '/crm/contacts', label: 'Contacts' },
+  { href: '/crm/companies', label: 'Companies' },
+  { href: '/crm/import', label: 'Import' },
+  { href: '/crm/merge', label: 'Data hygiene' },
+]
+
+// PRD v6 §16 — PM is org-open: every tenant role works issues the same way, so
+// one list serves them all. Round 12 (founder): Projects leads the group — it's
+// the module's main page (Linear-style: project first, then issues).
+const PM_CHILDREN: NavChild[] = [
+  { href: '/pm/projects', label: 'Projects' },
+  { href: '/pm/my', label: 'My Issues' },
+  { href: '/pm/issues', label: 'Issues' },
+  { href: '/pm/triage', label: 'Triage' },
+  { href: '/pm/cycle', label: 'Cycle' },
+  { href: '/pm/timeline', label: 'Timeline' },
+  { href: '/pm/roadmap', label: 'Roadmap' },
+  { href: '/pm/teams', label: 'Teams' },
+  { href: '/pm/settings/github', label: 'Settings' },
+]
+
 // Admin / Owner nav — used for HR_ADMIN and OWNER.
 const ADMIN_NAV: NavSection[] = [
   {
@@ -100,48 +135,8 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/timesheets', label: 'Timesheets' },
         ],
       },
-      {
-        id: 'crm',
-        label: 'CRM',
-        icon: 'funnel',
-        // CRM_SUBITEMS from the v5 prototype (shell-crm.jsx). Deals/Leads/etc.
-        // arrive in later sprints; Contacts & Companies ship in Sprint 25.
-        children: [
-          { href: '/crm', label: 'Overview' },
-          { href: '/crm/leads', label: 'Leads' },
-          { href: '/crm/deals', label: 'Deals' },
-          { href: '/crm/activities', label: 'Activities' },
-          { href: '/crm/sequences', label: 'Sequences' },
-          { href: '/crm/templates', label: 'Email settings' },
-          { href: '/crm/forms', label: 'Web forms' },
-          { href: '/crm/automation', label: 'Automation' },
-          { href: '/crm/reports', label: 'Reports' },
-          { href: '/crm/contacts', label: 'Contacts' },
-          { href: '/crm/companies', label: 'Companies' },
-          { href: '/crm/import', label: 'Import' },
-          { href: '/crm/merge', label: 'Data hygiene' },
-        ],
-      },
-      {
-        id: 'projects',
-        label: 'Projects',
-        icon: 'target',
-        // PRD v6 (shell-pm.jsx). Surfaces expand sprint by sprint — Sprint 33
-        // ships the team issue list on the sync engine.
-        // Round 12 (founder): Projects leads the group — it's the module's
-        // main page (Linear-style: project first, then issues).
-        children: [
-          { href: '/pm/projects', label: 'Projects' },
-          { href: '/pm/my', label: 'My Issues' },
-          { href: '/pm/issues', label: 'Issues' },
-          { href: '/pm/triage', label: 'Triage' },
-          { href: '/pm/cycle', label: 'Cycle' },
-          { href: '/pm/timeline', label: 'Timeline' },
-          { href: '/pm/roadmap', label: 'Roadmap' },
-          { href: '/pm/teams', label: 'Teams' },
-          { href: '/pm/settings/github', label: 'Settings' },
-        ],
-      },
+      { id: 'crm', label: 'CRM', icon: 'funnel', children: CRM_CHILDREN },
+      { id: 'projects', label: 'Projects', icon: 'target', children: PM_CHILDREN },
       {
         id: 'invoicing',
         label: 'Invoicing',
@@ -196,7 +191,7 @@ const MANAGER_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: managers work issues like everyone else.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/projects', label: 'Projects' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: PM_CHILDREN },
     ],
   },
   {
@@ -232,7 +227,7 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Work',
     items: [
       // PRD v6 §16 — PM is org-open: employees create/edit issues directly.
-      { id: 'projects', label: 'Projects', icon: 'target', children: [{ href: '/pm/projects', label: 'Projects' }, { href: '/pm/my', label: 'My Issues' }, { href: '/pm/issues', label: 'Issues' }, { href: '/pm/triage', label: 'Triage' }, { href: '/pm/cycle', label: 'Cycle' }, { href: '/pm/timeline', label: 'Timeline' }, { href: '/pm/roadmap', label: 'Roadmap' }, { href: '/pm/teams', label: 'Teams' }, { href: '/pm/settings/github', label: 'Settings' }] },
+      { id: 'projects', label: 'Projects', icon: 'target', children: PM_CHILDREN },
     ],
   },
   {
@@ -244,10 +239,74 @@ const EMPLOYEE_NAV: NavSection[] = [
   },
 ]
 
-// FAM nav — Specflicks platform admin. Only FAM sees this; they
-// live entirely under /fam/* and do not see customer-facing surfaces.
-// Mirrors the prototype's NAV_BY_ROLE.FAM: a flat "Overview" row up top,
-// then three two-level collapsible groups (Tenants / Revenue / Platform).
+// Finance nav — an accounting seat, NOT a junior HR admin. Finance ranks
+// BELOW manager in the API's role hierarchy (finance 2 < manager 3 < admin 4),
+// so it was previously handed the full ADMIN_NAV and six of its groups 403'd:
+// People (`GET /employees` needs manager, onboarding/documents need admin),
+// Insights (`/reports` needs manager, `/reports/audit` needs admin) and
+// workspace Settings (admin). What Finance actually holds, per
+// module-access.service.ts, is: invoicing + invoicing reports outright
+// (FULL_ACCESS_ROLES, unrevokable), CRM and Projects at 'edit' by built-in
+// default, the whole-workspace attendance view (`@Roles('finance')`), the
+// unranked org chart, and their own time + profile. That is this nav.
+const FINANCE_NAV: NavSection[] = [
+  {
+    section: 'main',
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: 'home', href: '/dashboard' },
+      { id: 'inbox', label: 'Inbox', icon: 'inbox', href: '/inbox' },
+      { id: 'calendar', label: 'Calendar', icon: 'cal', href: '/calendar' },
+    ],
+  },
+  {
+    section: 'main',
+    items: [
+      // Invoicing leads: it is the reason this seat exists.
+      {
+        id: 'invoicing',
+        label: 'Invoicing',
+        icon: 'wallet',
+        children: [
+          { href: '/invoicing', label: 'Overview' },
+          { href: '/invoicing/invoices', label: 'Invoices' },
+          { href: '/invoicing/quotes', label: 'Quotes / Estimates' },
+          { href: '/invoicing/recurring', label: 'Recurring' },
+          { href: '/invoicing/customers', label: 'Customers' },
+          { href: '/invoicing/items', label: 'Items / Catalogue' },
+          { href: '/invoicing/notes', label: 'Credit & Debit notes' },
+          { href: '/invoicing/payments', label: 'Payments' },
+          { href: '/invoicing/reports', label: 'Reports' },
+          { href: '/invoicing/settings', label: 'Settings' },
+        ],
+      },
+      { id: 'crm', label: 'CRM', icon: 'funnel', children: CRM_CHILDREN },
+      { id: 'projects', label: 'Projects', icon: 'target', children: PM_CHILDREN },
+      {
+        id: 'time',
+        label: 'Time',
+        icon: 'clock',
+        children: [
+          { href: '/attendance', label: 'Attendance' },
+          { href: '/leave', label: 'Leave' },
+          { href: '/timesheets', label: 'Timesheets' },
+        ],
+      },
+    ],
+  },
+  {
+    section: 'Personal',
+    items: [
+      // /employees/org-chart carries no @Roles gate — every member can read it.
+      { id: 'fin-org-chart', label: 'Org chart', icon: 'people', href: '/employees/org-chart' },
+      { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+    ],
+  },
+]
+
+// FAM nav — Specflicks platform admin. Only the /fam console renders this;
+// platform admins live entirely under /fam/* and do not see customer-facing
+// surfaces. Mirrors the prototype's NAV_BY_ROLE.FAM: a flat "Overview" row up
+// top, then the two-level collapsible groups.
 const FAM_NAV: NavSection[] = [
   {
     section: 'main',
@@ -302,16 +361,22 @@ const FAM_NAV: NavSection[] = [
   },
 ]
 
+/**
+ * Nav for a TENANT role. 'FAM' is deliberately absent: which console you are
+ * in is decided by the layout that mounted this sidebar (the `variant` prop),
+ * never by a role string. A platform admin's active membership is usually
+ * 'owner' in their own workspace, so a role switch here would have rendered a
+ * customer nav inside the FAM console.
+ */
 function navFor(role: UserRole | undefined): NavSection[] {
   switch (role) {
-    case 'FAM':
-      return FAM_NAV
     case 'OWNER':
     case 'HR_ADMIN':
-    case 'FINANCE':
-      // Owner/Admin/Finance get the full sidebar incl. the complete Invoicing
-      // section (they have full invoicing access by role).
+      // Owner/Admin get the full sidebar incl. the complete Invoicing section
+      // (they have full invoicing access by role).
       return ADMIN_NAV
+    case 'FINANCE':
+      return FINANCE_NAV
     case 'MANAGER':
       return MANAGER_NAV
     case 'EMPLOYEE':
@@ -344,7 +409,11 @@ function invoicingChildrenFromGrants(grants: ModuleGrant[]): NavChild[] {
   if (invoicing?.access_level === 'edit') {
     children.push({ href: '/invoicing/items', label: 'Items / Catalogue' })
   }
-  if (caps.record_payments) children.push({ href: '/invoicing/payments', label: 'Payments' })
+  // `record_payment`, singular — the key the @RequireGrant decorator checks and
+  // the key both grant modals write. This read was `record_payments`, so a
+  // member who HAD been given the capability never got the Payments link even
+  // though POST /invoices/:id/payments would have accepted them.
+  if (caps.record_payment) children.push({ href: '/invoicing/payments', label: 'Payments' })
   if (reports && reports.access_level !== 'none') {
     children.push({ href: '/invoicing/reports', label: 'Reports' })
   }
@@ -384,9 +453,16 @@ function guestNavFor(): NavSection[] {
 }
 
 /**
- * Drop the sections for modules this member has no access to, and add CRM back
- * when they DO have it (CRM has never been in the manager/employee nav, so a
- * granted manager could not reach it even though the API allowed them).
+ * Drop the sections for modules this member has no access to.
+ *
+ * Subtractive ONLY. It used to also append CRM to any nav that lacked it,
+ * which is how the tenant CRM menu ended up inside the FAM console: the
+ * platform nav has no `crm` item, a platform admin resolves crm='edit'
+ * (FULL_ACCESS_ROLES), so the customer CRM group was bolted onto the FAM
+ * sidebar — where every child link bounced straight back to /fam/overview.
+ * Adding a section back is now the caller's explicit decision
+ * (`withGrantedCrm`), which only the tenant Manager/Employee navs make.
+ *
  * `undefined` = /me hasn't answered yet: change nothing.
  */
 function withModuleAccess(
@@ -399,18 +475,26 @@ function withModuleAccess(
   if (access.pm === 'none') drop.add('projects')
   if (access.invoicing === 'none') drop.add('invoicing')
 
-  const pruned = sections
+  return sections
     .map((sec) => ({ ...sec, items: sec.items.filter((it) => !drop.has(it.id)) }))
     .filter((sec) => sec.items.length > 0)
+}
 
-  const hasCrm = pruned.some((sec) => sec.items.some((it) => it.id === 'crm'))
-  if (access.crm !== 'none' && !hasCrm) {
-    const crmItem = ADMIN_NAV.flatMap((sec) => sec.items).find((it) => it.id === 'crm')
-    if (crmItem) {
-      return [...pruned, { section: 'main', items: [crmItem] }]
-    }
-  }
-  return pruned
+/**
+ * Manager/Employee see CRM only when they actually have it — CRM has never
+ * been in their base nav, so a granted member could not reach it even though
+ * the API allowed them. `undefined` = /me still in flight: add nothing.
+ */
+function withGrantedCrm(
+  base: NavSection[],
+  access: ModuleAccessMap | undefined,
+): NavSection[] {
+  if (!access || access.crm === 'none') return base
+  if (base.some((sec) => sec.items.some((it) => it.id === 'crm'))) return base
+  return [
+    ...base,
+    { section: 'main', items: [{ id: 'crm', label: 'CRM', icon: 'funnel' as IconKey, children: CRM_CHILDREN }] },
+  ]
 }
 
 // Manager/Employee see Invoicing ONLY if the Owner granted it (membership_grants).
@@ -426,15 +510,30 @@ function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSec
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export function Sidebar() {
+/**
+ * `variant` names the CONSOLE this sidebar was mounted in, and it comes from
+ * the layout, not from the signed-in role:
+ *   'tenant' — the customer app shell, apps/web/app/(app)/layout.tsx
+ *   'fam'    — the Specflicks platform console, app/(fam)/layout.tsx
+ * The (fam) layout admits anyone with the user-level `isPlatformAdmin` flag,
+ * whose ACTIVE membership is usually 'owner' in their own workspace. Deriving
+ * the nav from that role rendered customer surfaces inside the platform
+ * console; the console decides its own nav instead.
+ */
+export type SidebarVariant = 'tenant' | 'fam'
+
+export function Sidebar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}) {
   const { currentUser } = useAuthStore()
   const pathname = usePathname() ?? '/'
+  const isFam = variant === 'fam'
   const role = currentUser?.role
 
   // Grant-driven roles read the active company's grants from the same
   // /me/companies payload the switcher uses: Auditors always, and
-  // Manager/Employee so the Owner can grant them invoicing access.
-  const grantDriven = role === 'AUDITOR' || role === 'MANAGER' || role === 'EMPLOYEE'
+  // Manager/Employee so the Owner can grant them invoicing access. Never in
+  // the platform console — those grants belong to a tenant, not to /fam.
+  const grantDriven =
+    !isFam && (role === 'AUDITOR' || role === 'MANAGER' || role === 'EMPLOYEE')
   const myCompanies = useMyCompanies(grantDriven)
   const activeGrants = useMemo<ModuleGrant[]>(() => {
     if (!grantDriven) return []
@@ -450,21 +549,30 @@ export function Sidebar() {
   const moduleAccess = useModuleAccess()
 
   const nav = useMemo(() => {
+    // The platform console's nav is fixed. It is NOT filtered by moduleAccess
+    // and never gains a tenant section: a platform admin resolves CRM/PM/
+    // Invoicing to 'edit' for whichever workspace their JWT happens to be
+    // scoped to, which is meaningless inside /fam.
+    if (isFam) return FAM_NAV
+    // A FAM session that lands in the customer shell is already being
+    // redirected to /fam/overview by the (app) layout — render no nav for the
+    // frame it takes rather than flashing a workspace they don't belong to.
+    if (role === 'FAM') return []
     if (role === 'GUEST') return guestNavFor()
     if (role === 'AUDITOR') return withoutParkedCrm(auditorNavFor(activeGrants))
     const base =
       role === 'MANAGER'
-        ? withGrantedInvoicing(MANAGER_NAV, activeGrants)
+        ? withGrantedCrm(withGrantedInvoicing(MANAGER_NAV, activeGrants), moduleAccess)
         : role === 'EMPLOYEE'
-          ? withGrantedInvoicing(EMPLOYEE_NAV, activeGrants)
+          ? withGrantedCrm(withGrantedInvoicing(EMPLOYEE_NAV, activeGrants), moduleAccess)
           : navFor(role)
     return withoutParkedCrm(withModuleAccess(base, moduleAccess))
-  }, [role, activeGrants, moduleAccess])
+  }, [isFam, role, activeGrants, moduleAccess])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.
   // FAM admins live under /fam/* and have no tenant approvals queue.
   const showApprovalsBadge =
-    role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER'
+    !isFam && (role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER')
   const overview = useAdminOverview()
   const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 
@@ -525,7 +633,6 @@ export function Sidebar() {
   // reveals the active section when the user hasn't toggled it, and writing
   // `true` on every navigation would clobber an explicit collapse.
 
-  const isFam = role === 'FAM'
   // Brand area: customer workspaces see the Flicks Suite mark with the
   // product byline underneath — the same "by Specflicks" the sign-in screen
   // shows. The workspace name is NOT repeated here: the CompanySwitcher

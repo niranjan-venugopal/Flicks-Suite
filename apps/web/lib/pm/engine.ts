@@ -4,6 +4,7 @@ import { api } from '@/lib/api/client'
 import { PmStore } from './store'
 import { openPmDb, destroyPmDb, loadSnapshot, persistTables, persistPending, type PmDb } from './idb'
 import type { PendingMutation, PmIssueRow, PmProjectRow, PmUpdateRow } from './types'
+import { SOCKET_TRANSPORTS } from '@/lib/realtime'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 const FLUSH_DEBOUNCE_MS = 250
@@ -193,7 +194,14 @@ export class PmSyncEngine {
   private connectSocket(): void {
     const socket = io(`${BASE_URL}/sync`, {
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      // Polling first, then upgrade — socket.io's own default, and the reason
+      // is the production console: an edge that doesn't forward the WebSocket
+      // Upgrade header turns a websocket-first connect into a hard failure
+      // ("WebSocket is closed before the connection is established"), retried
+      // forever. Handshaking over HTTP — which demonstrably works, the REST
+      // API goes the same way — and upgrading afterwards degrades silently to
+      // long-polling instead. See SOCKET_TRANSPORTS in lib/realtime.ts.
+      transports: SOCKET_TRANSPORTS,
       reconnectionDelayMax: 15_000,
     })
     this.socket = socket

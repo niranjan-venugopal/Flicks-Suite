@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { io } from 'socket.io-client'
 import { api } from '../client'
+import { SOCKET_TRANSPORTS } from '@/lib/realtime'
 
 // ─── Types (mirror the directory kernel, PRD v5 §3) ──────────────────────────
 export interface DirectoryCompany {
@@ -262,7 +263,7 @@ export function useBoard(pipelineId?: string) {
   // Live board: any tenant member's move refreshes every open board.
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
-    const socket = io(`${base}/crm`, { withCredentials: true, transports: ['websocket', 'polling'] })
+    const socket = io(`${base}/crm`, { withCredentials: true, transports: SOCKET_TRANSPORTS })
     socket.on('board_changed', () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }))
     return () => { socket.disconnect() }
   }, [qc])
