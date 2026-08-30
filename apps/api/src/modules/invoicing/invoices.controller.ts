@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
   Res,
+  Delete,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiProduces } from '@nestjs/swagger';
@@ -117,7 +118,10 @@ export class InvoicesController {
 
   @Post(':id/cancel')
   @RequireGrant('invoicing', 'edit')
-  @ApiOperation({ summary: 'Cancel an invoice (auto credit note arrives in Sprint 6)' })
+  @ApiOperation({
+    summary:
+      'Cancel an invoice (keeps the number on record; raise a credit note separately if it is already in a filed GSTR-1)',
+  })
   cancel(
     @Param('id') id: string,
     @Body() dto: CancelInvoiceDto,
@@ -142,6 +146,26 @@ export class InvoicesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.invoices.writeOff(id, dto.reason, user.sub, user.tenantId);
+  }
+
+  // Round 18 — Refrens/Zoho parity: delete moves the invoice to the Deleted
+  // tab (restorable) and is refused once a payment exists. Cancel remains the
+  // right action for an issued invoice.
+  @Delete(':id')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({
+    summary:
+      'Delete an invoice (soft — restorable; blocked when a payment is recorded)',
+  })
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.invoices.softDelete(id, user.sub, user.tenantId);
+  }
+
+  @Post(':id/restore')
+  @RequireGrant('invoicing', 'edit')
+  @ApiOperation({ summary: 'Restore a deleted invoice' })
+  restore(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.invoices.restore(id, user.sub, user.tenantId);
   }
 
   @Post(':id/send')

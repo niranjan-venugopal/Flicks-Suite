@@ -101,8 +101,9 @@ export class InvoicingPublicService {
    * Resolve an invoice's id + customer by id, tenant-scoped (RLS). Used by the
    * deal→invoice idempotency guard so a repeat call returns the existing draft
    * rather than minting a duplicate. Returns null if the id resolves to nothing
-   * (stale back-link) so the caller can re-create. Invoices are not hard-deleted
-   * — they carry a status lifecycle — so any surviving row counts.
+   * (stale back-link) so the caller can re-create. Round 18: a soft-deleted
+   * invoice deliberately resolves to null too, so deleting the invoice a deal
+   * generated lets the deal generate a fresh one instead of dead-ending.
    */
   async getInvoiceRef(
     tenantId: string,
@@ -112,7 +113,7 @@ export class InvoicingPublicService {
       const [row] = await tx
         .select({ id: invoices.id, customer_id: invoices.customer_id })
         .from(invoices)
-        .where(eq(invoices.id, invoiceId))
+        .where(and(eq(invoices.id, invoiceId), isNull(invoices.deleted_at)))
         .limit(1);
       return row ?? null;
     });
@@ -146,6 +147,7 @@ export class InvoicingPublicService {
         .from(invoices)
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
             eq(invoices.deal_id, dealId),
             eq(invoices.document_type, documentType),

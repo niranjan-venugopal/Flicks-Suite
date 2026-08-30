@@ -2,8 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
-import { and, eq, ilike, or, desc, sql, asc } from 'drizzle-orm';
+import { and, eq, ilike, or, desc, sql, asc, isNull, isNotNull } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -14,12 +15,18 @@ import {
   customerCreditBalanceEntries,
   customers,
   tenants,
+  invoicingSettings,
+  creditNotes,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NumberingService } from './numbering.service';
 import { computeInvoice, deriveTaxTreatment, type TaxTreatment } from './tax.util';
+import {
+  GST_POS_OTHER_COUNTRY,
+  type ExportRoute,
+} from '@flicks/shared/constants';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OrgFinancialService } from '../org-financial/org-financial.service';
 import type {
@@ -60,7 +67,14 @@ export class InvoicesService {
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const conditions = [eq(invoices.tenant_id, tenantId)];
+    const conditions = [
+      eq(invoices.tenant_id, tenantId),
+      // Deleted invoices live behind an explicit filter (the Deleted tab),
+      // never in the default list — same shape as the CRM soft deletes.
+      query.deleted === 'true'
+        ? isNotNull(invoices.deleted_at)
+        : isNull(invoices.deleted_at),
+    ];
     if (query.document_type)
       conditions.push(eq(invoices.document_type, query.document_type));
     if (query.status) conditions.push(eq(invoices.status, query.status));
@@ -185,6 +199,24 @@ export class InvoicesService {
           customerStateCode: customer.state_code,
           customerCountryCode: customer.country_code,
         });
+
+      // Export route is snapshotted onto the invoice: an LUT is annual, and
+      // the endorsement printed on a document must stay true to the date of
+      // supply even after the setting changes.
+      const [invSettings] = await tx
+        .select({
+          default_export_route: invoicingSettings.export_under_lut,
+          lut_number: invoicingSettings.lut_number,
+        })
+        .from(invoicingSettings)
+        .where(eq(invoicingSettings.tenant_id, tenantId))
+        .limit(1);
+      const exportRoute: ExportRoute | null =
+        treatment === 'EXPORT'
+          ? ((dto.export_route as ExportRoute | undefined) ??
+            (invSettings?.default_export_route === false ? 'WITH_IGST' : 'LUT'))
+          : null;
+
       const computed = computeInvoice({
         lines: dto.line_items,
         taxTreatment: treatment,
@@ -192,6 +224,7 @@ export class InvoicesService {
         discountValue: dto.discount_value ?? null,
         tdsRate: dto.tds_rate ?? null,
         currency, // gates GST/TDS to INR (§6.1/§6.2)
+        exportRoute,
       });
 
       // Quotes share the invoices table + lifecycle; they differ by
@@ -230,7 +263,16 @@ export class InvoicesService {
           currency,
           // §6.10: snapshot at creation; non-INR wired to the FX source in Sprint 7.
           fx_rate_to_inr: currency === 'INR' ? '1' : null,
-          place_of_supply: dto.place_of_supply ?? customer.state_code,
+          // Exports report the statutory "Other Country" code, never an
+          // Indian state — inheriting the customer's blank state_code used to
+          // leave this NULL and the block simply vanished from the PDF.
+          place_of_supply:
+            dto.place_of_supply ??
+            (treatment === 'EXPORT'
+              ? GST_POS_OTHER_COUNTRY
+              : customer.state_code),
+          export_route: exportRoute,
+          lut_number: exportRoute === 'LUT' ? (invSettings?.lut_number ?? null) : null,
           tax_treatment: treatment,
           discount_type: dto.discount_type,
           discount_value: dto.discount_value ?? '0',
@@ -487,9 +529,96 @@ export class InvoicesService {
     );
   }
 
+  // ─── delete / restore (round 18) ──────────────────────────────────────────
+
+  /**
+   * Soft delete. Never hard: invoice_payments and razorpay_orders CASCADE off
+   * invoices.id, so a real DELETE would silently destroy money records.
+   *
+   * Blocked once a payment exists — the same rule Zoho and Refrens apply
+   * ("remove the payment first, or issue a credit note"). The invoice NUMBER
+   * is never released: GST wants a consecutive series, and a number the
+   * customer already holds a copy of must not be reissued.
+   */
+  async softDelete(id: string, userId: string, tenantId: string) {
+    const result = await this.db.withTenant(tenantId, async (tx) => {
+      const inv = await this.fetch(tx, id);
+
+      const [paid] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(invoicePayments)
+        .where(eq(invoicePayments.invoice_id, id));
+      if ((paid?.n ?? 0) > 0 || parseFloat(inv.amount_paid ?? '0') > 0) {
+        throw new ConflictException(
+          'Remove the recorded payment first, then delete this invoice — or cancel it instead.',
+        );
+      }
+
+      const [notes] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(creditNotes)
+        .where(eq(creditNotes.invoice_id, id));
+      if ((notes?.n ?? 0) > 0) {
+        throw new ConflictException(
+          'A credit note references this invoice. Cancel it instead of deleting it.',
+        );
+      }
+
+      const [row] = await tx
+        .update(invoices)
+        .set({ deleted_at: new Date(), updated_by: userId, updated_at: new Date() })
+        .where(and(eq(invoices.id, id), isNull(invoices.deleted_at)))
+        .returning({ id: invoices.id, number: invoices.invoice_number });
+      if (!row) throw new NotFoundException('Invoice not found');
+      return { row, status: inv.status };
+    });
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.invoice.delete',
+      resourceType: 'invoice',
+      resourceId: id,
+      afterState: {
+        invoice_number: result.row.number,
+        status: result.status,
+        note: 'soft delete — the number is not reused',
+      },
+    });
+    return { data: { deleted: true, invoice_number: result.row.number } };
+  }
+
+  /** Undo a soft delete (the Deleted tab's Restore). */
+  async restore(id: string, userId: string, tenantId: string) {
+    const row = await this.db.withTenant(tenantId, async (tx) => {
+      const [restored] = await tx
+        .update(invoices)
+        .set({ deleted_at: null, updated_by: userId, updated_at: new Date() })
+        .where(and(eq(invoices.id, id), isNotNull(invoices.deleted_at)))
+        .returning({ id: invoices.id, number: invoices.invoice_number });
+      if (!restored) throw new NotFoundException('Deleted invoice not found');
+      return restored;
+    });
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.invoice.restore',
+      resourceType: 'invoice',
+      resourceId: id,
+      afterState: { invoice_number: row.number },
+    });
+    return { data: { restored: true, invoice_number: row.number } };
+  }
+
   // ─── lifecycle transitions (§6.5) ─────────────────────────────────────────
 
-  /** Cancel — auto-CN for GST invoices lands with credit notes in Sprint 6. */
+  /**
+   * Cancel — the recommended action for an issued invoice: the row and its
+   * number stay on record (CANCELLED), and reports/GSTR-1 already exclude it.
+   * It does NOT raise a credit note; if the invoice is already in a filed
+   * GSTR-1, issue one from Invoicing → Credit notes.
+   */
   async cancel(id: string, reason: string | undefined, userId: string, tenantId: string) {
     const inv = await this.transition(
       tenantId,
@@ -890,11 +1019,20 @@ export class InvoicesService {
 
   // ─── internals ─────────────────────────────────────────────────────────────
 
-  private async fetch(tx: Db, id: string) {
+  /**
+   * The single read path behind get/update/duplicate/cancel/void/write-off/
+   * send/record-payment/convert — so filtering deleted rows here covers all of
+   * them. `includeDeleted` exists only for restore().
+   */
+  private async fetch(tx: Db, id: string, opts?: { includeDeleted?: boolean }) {
     const [inv] = await tx
       .select()
       .from(invoices)
-      .where(eq(invoices.id, id))
+      .where(
+        opts?.includeDeleted
+          ? eq(invoices.id, id)
+          : and(eq(invoices.id, id), isNull(invoices.deleted_at)),
+      )
       .limit(1);
     if (!inv) throw new NotFoundException('Invoice not found');
     return inv;

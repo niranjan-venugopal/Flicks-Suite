@@ -9,6 +9,7 @@ import {
   useSendInvoice,
   useDownloadInvoicePdf,
   useRecordPayment,
+  useDeleteInvoice,
   type InvoiceRow,
 } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
@@ -95,6 +96,8 @@ const TABS = [
   { id: 'SENT', label: 'Pending' },
   { id: 'OVERDUE', label: 'Overdue' },
   { id: 'DRAFT', label: 'Drafts' },
+  // Round 18: soft-deleted invoices live here and can be restored.
+  { id: 'deleted', label: 'Deleted' },
 ]
 
 const dateFmt = (iso: string) =>
@@ -117,10 +120,12 @@ export default function InvoicesPage() {
   const access = useInvoicingAccess()
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
+  const showingDeleted = tab === 'deleted'
   const { data, isLoading, isError } = useInvoices({
     q: q || undefined,
-    status: tab === 'all' ? undefined : tab,
+    status: tab === 'all' || showingDeleted ? undefined : tab,
     document_type: 'INVOICE',
+    ...(showingDeleted ? { deleted: 'true' } : {}),
   })
   const { data: draftsData } = useInvoices({ status: 'DRAFT', document_type: 'INVOICE' })
   const action = useInvoiceAction()
@@ -130,6 +135,10 @@ export default function InvoicesPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [markingId, setMarkingId] = useState<string | null>(null)
   const [markPaidFor, setMarkPaidFor] = useState<InvoiceRow | null>(null)
+  const [cancelFor, setCancelFor] = useState<InvoiceRow | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [deleteFor, setDeleteFor] = useState<InvoiceRow | null>(null)
+  const del = useDeleteInvoice()
 
   const rows = data?.data ?? []
   const drafts = (draftsData?.data ?? []).slice(0, 3)
@@ -182,6 +191,56 @@ export default function InvoicesPage() {
       })
     } finally {
       setMarkingId(null)
+    }
+  }
+
+  const doCancel = async (inv: InvoiceRow) => {
+    const reason = cancelReason.trim()
+    setCancelFor(null)
+    setCancelReason('')
+    try {
+      await action.mutateAsync({ id: inv.id, action: 'cancel', body: { reason: reason || undefined } })
+      toast({
+        title: `${inv.invoice_number} cancelled`,
+        description: 'It stays on record and its number is not reused.',
+      })
+    } catch (err) {
+      toast({
+        title: 'Could not cancel',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const doDelete = async (inv: InvoiceRow) => {
+    setDeleteFor(null)
+    try {
+      await del.mutateAsync(inv.id)
+      toast({
+        title: `${inv.invoice_number} deleted`,
+        description: 'Find it under Deleted if you need it back.',
+      })
+    } catch (err) {
+      // The 409 body explains itself ("Remove the recorded payment first…").
+      toast({
+        title: 'Could not delete',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const doRestore = async (inv: InvoiceRow) => {
+    try {
+      await action.mutateAsync({ id: inv.id, action: 'restore' })
+      toast({ title: `${inv.invoice_number} restored` })
+    } catch (err) {
+      toast({
+        title: 'Could not restore',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+      })
     }
   }
 
@@ -268,7 +327,9 @@ export default function InvoicesPage() {
         {!isLoading && !isError && rows.length === 0 && (
           <tr>
             <td style={{ ...invoTd, color: INVO.muted30 }} colSpan={7}>
-              No invoices yet — create your first one.
+              {showingDeleted
+                ? 'Nothing deleted. Deleted invoices appear here and can be restored.'
+                : 'No invoices yet — create your first one.'}
             </td>
           </tr>
         )}
@@ -318,9 +379,28 @@ export default function InvoicesPage() {
                       {markingId === inv.id ? 'Marking…' : 'Mark as paid'}
                     </InvoBtn>
                   )}
-                {access.canEdit && (
+                {access.canEdit && !showingDeleted && (
                   <InvoBtn kind="chip-outline" onClick={() => onDuplicate(inv)}>
                     Duplicate
+                  </InvoBtn>
+                )}
+                {/* Cancel is the right action for an issued invoice: the row
+                    and its number stay on record. */}
+                {access.canEdit &&
+                  !showingDeleted &&
+                  ['DRAFT', 'SENT', 'VIEWED', 'OVERDUE', 'DISPUTED'].includes(inv.status) && (
+                    <InvoBtn kind="chip-outline" onClick={() => setCancelFor(inv)}>
+                      Cancel
+                    </InvoBtn>
+                  )}
+                {access.canEdit && !showingDeleted && (
+                  <InvoBtn kind="chip-outline" onClick={() => setDeleteFor(inv)}>
+                    Delete
+                  </InvoBtn>
+                )}
+                {access.canEdit && showingDeleted && (
+                  <InvoBtn kind="chip-blue" onClick={() => void doRestore(inv)}>
+                    Restore
                   </InvoBtn>
                 )}
               </div>
@@ -336,6 +416,54 @@ export default function InvoicesPage() {
         body={markPaidFor ? `Mark ${markPaidFor.invoice_number} as paid? This records ${fmt(markPaidFor.amount_outstanding ?? markPaidFor.total_amount, markPaidFor.currency)} as received.` : null}
         confirmLabel="Mark as paid"
         onConfirm={() => markPaidFor && void doMarkPaid(markPaidFor)}
+      />
+
+      <ConfirmDialog
+        open={!!cancelFor}
+        onClose={() => {
+          setCancelFor(null)
+          setCancelReason('')
+        }}
+        title="Cancel invoice"
+        body={
+          cancelFor ? (
+            <div>
+              <p style={{ marginBottom: 10 }}>
+                Cancel {cancelFor.invoice_number}? It stays on record marked
+                CANCELLED and drops out of your reports. The number is never
+                reused.
+              </p>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                placeholder="Reason (optional)"
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+              />
+            </div>
+          ) : null
+        }
+        confirmLabel="Cancel invoice"
+        cancelLabel="Keep it"
+        danger
+        onConfirm={() => cancelFor && void doCancel(cancelFor)}
+      />
+
+      <ConfirmDialog
+        open={!!deleteFor}
+        onClose={() => setDeleteFor(null)}
+        title="Delete invoice"
+        body={
+          deleteFor
+            ? deleteFor.status === 'DRAFT'
+              ? `Delete draft ${deleteFor.invoice_number}? Its number will not be reused. You can restore it from the Deleted tab.`
+              : `Delete ${deleteFor.invoice_number}? Cancelling is usually the right action for an invoice you have already issued — the customer may hold a copy. Deleted invoices move to the Deleted tab and can be restored.`
+            : null
+        }
+        confirmLabel="Delete"
+        danger
+        loading={del.isPending}
+        onConfirm={() => deleteFor && void doDelete(deleteFor)}
       />
     </InvoPage>
   )

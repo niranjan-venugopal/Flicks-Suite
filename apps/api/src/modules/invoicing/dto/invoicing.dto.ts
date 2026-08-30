@@ -7,13 +7,16 @@ import {
   IsBoolean,
   IsNumberString,
   IsIn,
+  Matches,
   Min,
   Max,
   MaxLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { GSTIN_REGEX, PAN_REGEX } from '@flicks/shared/constants';
 
 /**
  * Invoicing DTOs. Validation shapes for the resources implemented in Sprint 2
@@ -72,9 +75,34 @@ export class CreateCustomerDto {
   @IsOptional() @IsString() billing_country?: string;
   @IsOptional() @IsBoolean() shipping_same_as_billing?: boolean;
   @IsOptional() @IsBoolean() is_gst_registered?: boolean;
-  @IsOptional() @IsString() gstin?: string;
-  @IsOptional() @IsString() pan?: string;
+
+  // A GSTIN only exists for an Indian client. '' is the explicit "clear it"
+  // signal (same contract as the tenant's own GSTIN in settings.dto.ts), so
+  // the format check is skipped for an empty string.
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o: CreateCustomerDto) => !!o.gstin)
+  @Matches(GSTIN_REGEX, { message: 'Invalid GSTIN format' })
+  gstin?: string;
+
+  @IsOptional()
+  @IsString()
+  @ValidateIf((o: CreateCustomerDto) => !!o.pan)
+  @Matches(PAN_REGEX, { message: 'Invalid PAN format' })
+  pan?: string;
+
   @IsOptional() @IsString() intl_tax_id?: string;
+
+  // Shipping address: the column set has existed since 0012 and
+  // shipping_same_as_billing was already accepted, but these six were missing
+  // from the DTO — so anything sending them (CSV import included) had them
+  // silently dropped.
+  @IsOptional() @IsString() shipping_address_line1?: string;
+  @IsOptional() @IsString() shipping_address_line2?: string;
+  @IsOptional() @IsString() shipping_city?: string;
+  @IsOptional() @IsString() shipping_state?: string;
+  @IsOptional() @IsString() shipping_postal_code?: string;
+  @IsOptional() @IsString() shipping_country?: string;
   @IsOptional() @IsString() default_currency?: string;
   @IsOptional() @Type(() => Number) @IsInt() default_payment_terms_days?: number;
   @IsOptional() @IsString() default_notes?: string;
@@ -203,6 +231,13 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() place_of_supply?: string;
+  // Export of services: 'LUT' zero-rates the supply (the common route),
+  // 'WITH_IGST' charges IGST and the exporter claims a refund. Defaults from
+  // Invoicing → Settings when the client is foreign.
+  @IsOptional() @IsIn(['LUT', 'WITH_IGST']) export_route?: string;
+  // Rule 34 INR equivalent for a foreign-currency invoice, entered manually
+  // (there is no FX feed wired yet).
+  @IsOptional() @IsNumberString() fx_rate_to_inr?: string;
   @IsOptional()
   @IsIn(['INTRA_STATE', 'INTER_STATE', 'EXPORT', 'B2C_LARGE', 'B2C_SMALL'])
   tax_treatment?: string;
@@ -242,6 +277,13 @@ export class InvoiceListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsIn(['INVOICE', 'QUOTE'])
   document_type?: string;
+
+  // String-valued, not @IsBoolean: the global ValidationPipe's boolean
+  // transform doesn't apply to query strings.
+  @ApiPropertyOptional({ description: 'true = the Deleted tab' })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  deleted?: string;
 }
 
 export class RecordPaymentDto {
@@ -361,6 +403,10 @@ export class UpdateInvSettingsDto {
   @IsOptional() @IsString() default_tds_payment_code?: string;
   @IsOptional() @IsNumberString() default_tds_rate?: string;
   @IsOptional() @IsBoolean() auto_suggest_tds?: boolean;
+  // Exports: under LUT/bond without payment of IGST (default) vs on payment.
+  @IsOptional() @IsBoolean() export_under_lut?: boolean;
+  @IsOptional() @IsString() @MaxLength(40) lut_number?: string;
+  @IsOptional() @IsString() lut_valid_upto?: string;
 }
 
 export class GrantFamConsentDto {

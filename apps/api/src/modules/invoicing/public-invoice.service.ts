@@ -63,7 +63,13 @@ export class PublicInvoiceService {
     const [inv] = await this.dbAdmin
       .select()
       .from(invoices)
-      .where(eq(invoices.public_view_token, token))
+      .where(
+        and(
+          eq(invoices.public_view_token, token),
+          // A deleted invoice's hosted link must stop resolving.
+          isNull(invoices.deleted_at),
+        ),
+      )
       .limit(1);
     if (!inv) throw new NotFoundException('Invoice not found');
     if (
@@ -109,6 +115,7 @@ export class PublicInvoiceService {
           billing_state: customers.billing_state,
           billing_postal_code: customers.billing_postal_code,
           billing_country: customers.billing_country,
+          country_code: customers.country_code,
         })
         .from(customers)
         .where(eq(customers.id, inv.customer_id))
@@ -168,6 +175,8 @@ export class PublicInvoiceService {
       amount_outstanding: inv.amount_outstanding,
       tax_treatment: inv.tax_treatment,
       place_of_supply: inv.place_of_supply,
+      export_route: inv.export_route,
+      lut_number: inv.lut_number,
       reference: inv.reference,
       notes: inv.notes,
       terms_and_conditions: inv.terms_and_conditions,

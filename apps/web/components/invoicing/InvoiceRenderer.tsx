@@ -1,6 +1,12 @@
 'use client'
 
-import { stateName } from '@flicks/shared/constants'
+import {
+  stateName,
+  EXPORT_ENDORSEMENT,
+  GST_POS_OTHER_COUNTRY,
+  type ExportRoute,
+} from '@flicks/shared/constants'
+import { countryName } from '@/lib/countries'
 import {
   INVO,
   InvoAvatar,
@@ -57,6 +63,10 @@ export function InvoiceRenderer({
   const isDomestic = (cur ?? 'INR') === 'INR'
   const taxLbl = isDomestic ? 'GST' : 'VAT'
   const isIntra = invoice.tax_treatment === 'INTRA_STATE' && isDomestic
+  // Export of services: zero-rated under LUT, or charged and refunded later.
+  const isExport = invoice.tax_treatment === 'EXPORT'
+  const exportRoute: ExportRoute =
+    invoice.export_route === 'WITH_IGST' ? 'WITH_IGST' : 'LUT'
   const tdsCents = isDomestic ? Math.round(parseFloat(invoice.tds_amount ?? '0') * 100) : 0
 
   const label: React.CSSProperties = {
@@ -146,8 +156,12 @@ export function InvoiceRenderer({
               customer?.billing_address_line1,
               customer?.billing_address_line2,
               [customer?.billing_city, stateName(customer?.billing_state), customer?.billing_postal_code].filter(Boolean).join(', ') || null,
-              customer?.billing_country,
-              customer?.gstin ? `GSTIN: ${customer.gstin}` : null,
+              customer?.country_code
+                ? countryName(customer.country_code)
+                : customer?.billing_country,
+              // An export recipient has no GSTIN — don't print an empty or
+              // stale one on a zero-rated document.
+              isExport || !customer?.gstin ? null : `GSTIN: ${customer.gstin}`,
             ]}
           />
         </div>
@@ -164,10 +178,14 @@ export function InvoiceRenderer({
         <div>
           <div style={label}>Due date</div>
           <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{dateFmt(invoice.due_date)}</div>
-          {invoice.place_of_supply && (
+          {(invoice.place_of_supply || isExport) && (
             <>
               <div style={{ ...label, marginTop: 14 }}>Place of supply</div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{stateName(invoice.place_of_supply)}</div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+                {isExport
+                  ? `Other Country (${GST_POS_OTHER_COUNTRY})${customer?.country_code ? ` — ${countryName(customer.country_code)}` : ''}`
+                  : stateName(invoice.place_of_supply)}
+              </div>
             </>
           )}
         </div>
@@ -200,7 +218,12 @@ export function InvoiceRenderer({
                 {l.unit ? ` ${l.unit}` : ''}
               </td>
               <td style={{ ...td, textAlign: 'right' }}>{money(l.rate, cur)}</td>
-              <td style={{ ...td, textAlign: 'right', color: t.muted60 }}>{l.gst_rate ?? '0'}</td>
+              {/* A zero-rated export is 0% on the document, whatever rate the
+                  line was drafted with — printing 18% next to ₹0.00 tax reads
+                  as an error to a customer or an auditor. */}
+              <td style={{ ...td, textAlign: 'right', color: t.muted60 }}>
+                {isExport && exportRoute === 'LUT' ? '0.00' : (l.gst_rate ?? '0')}
+              </td>
               <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{money(l.taxable_amount ?? l.rate, cur)}</td>
             </tr>
           ))}
@@ -233,7 +256,13 @@ export function InvoiceRenderer({
             </>
           ) : (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={sumLabel}>{invoice.tax_treatment === 'EXPORT' ? 'IGST (zero-rated export)' : 'IGST'}</span>
+              <span style={sumLabel}>
+                {isExport
+                  ? exportRoute === 'WITH_IGST'
+                    ? 'IGST (export on payment of tax)'
+                    : 'IGST (zero-rated export)'
+                  : 'IGST'}
+              </span>
               <span style={sumValue}>{money(invoice.igst_amount, cur)}</span>
             </div>
           )) : (
@@ -286,6 +315,38 @@ export function InvoiceRenderer({
           )}
         </div>
       </div>
+
+      {/* Export declaration — Rule 46 requires this endorsement on every
+          export invoice, naming the route. Derived at render time from the
+          route snapshotted on the document, so it can never go stale. */}
+      {isExport && (
+        <div
+          style={{
+            borderTop: t.rowBorder,
+            paddingTop: 16,
+            marginBottom: 20,
+          }}
+        >
+          <div style={label}>Export declaration</div>
+          <div
+            style={{
+              fontWeight: 800,
+              fontSize: 11.5,
+              color: t.text,
+              letterSpacing: '0.02em',
+              lineHeight: 1.5,
+              textTransform: 'uppercase',
+            }}
+          >
+            {EXPORT_ENDORSEMENT[exportRoute]}
+          </div>
+          {exportRoute === 'LUT' && invoice.lut_number && (
+            <div style={{ fontWeight: 600, fontSize: 12, color: t.muted60, marginTop: 4 }}>
+              LUT No. {invoice.lut_number}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Notes / T&C */}
       {(invoice.notes || invoice.terms_and_conditions) && (

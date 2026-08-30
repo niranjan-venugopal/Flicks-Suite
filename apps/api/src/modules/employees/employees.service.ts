@@ -933,9 +933,112 @@ export class EmployeesService {
     );
   }
 
+  /**
+   * Reads the caller's and the target employee's membership roles inside the
+   * tenant transaction. Roles are never taken from the client — the same
+   * rationale as submitOnboardingStep's actor lookup.
+   *
+   * The target is resolved by employee_id, not user_id: an invited employee
+   * has employees.user_id = NULL until they accept.
+   */
+  private async loadReviewRoles(
+    tenantId: string,
+    employeeId: string,
+    callerUserId: string,
+  ) {
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const [target] = await db
+        .select({ role: memberships.role })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.employee_id, employeeId),
+          ),
+        )
+        .limit(1);
+      const [caller] = await db
+        .select({ role: memberships.role })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.user_id, callerUserId),
+          ),
+        )
+        .limit(1);
+      // If a workspace has no active owner (ownership handed over, owner
+      // deactivated) the owner-only rule would strand every pending admin
+      // with nobody able to approve them — house rule 8. Admins may act then.
+      const [owner] = await db
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            eq(memberships.role, 'owner'),
+          ),
+        )
+        .limit(1);
+      return {
+        targetRole: target?.role ?? null,
+        callerRole: caller?.role ?? null,
+        hasActiveOwner: !!owner,
+      };
+    });
+  }
+
+  /**
+   * Founder round 18: an HR admin's own onboarding is the owner's to sign off.
+   * A peer admin must not approve or send back a colleague's file — they hold
+   * the same powers, so it would be self-review by proxy.
+   */
+  private assertMayReviewTarget(roles: {
+    targetRole: string | null;
+    callerRole: string | null;
+    hasActiveOwner: boolean;
+  }) {
+    // Owner targets are gated too: a second owner must not be signed off by
+    // an admin either.
+    const seniorTarget =
+      roles.targetRole === 'admin' || roles.targetRole === 'owner';
+    if (!seniorTarget) return;
+    if (roles.callerRole === 'owner') return;
+    if (!roles.hasActiveOwner) return; // nobody senior exists — see above
+    throw new ForbiddenException(
+      "An HR admin's onboarding can only be reviewed by an owner.",
+    );
+  }
+
   async getOnboardingQueue(tenantId: string, callerUserId: string) {
-    const rows = await this.databaseService.withTenant(tenantId, (db) =>
-      db
+    const rows = await this.databaseService.withTenant(tenantId, async (db) => {
+      const [caller] = await db
+        .select({ role: memberships.role })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.user_id, callerUserId),
+          ),
+        )
+        .limit(1);
+      const callerIsOwner = caller?.role === 'owner';
+      const [activeOwner] = await db
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            eq(memberships.role, 'owner'),
+          ),
+        )
+        .limit(1);
+      // No owner to review them ⇒ don't hide the rows from admins.
+      const ownerOnly = !callerIsOwner && !!activeOwner;
+
+      return db
         .select({
           id: employees.id,
           employeeCode: employees.employee_code,
@@ -946,12 +1049,25 @@ export class EmployeesService {
           designationTitle: designations.title,
           departmentName: departments.name,
           status: employees.status,
+          // Lets the UI mark whose file this is; also what the owner-only
+          // rule keys on.
+          memberRole: memberships.role,
           submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
         })
         .from(employees)
         .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(designations, eq(employees.designation_id, designations.id))
         .leftJoin(departments, eq(employees.department_id, departments.id))
+        // By employee_id — an invited employee has no user_id yet. Deliberately
+        // NOT filtered on membership status: a pending admin's seat is still
+        // 'invited'.
+        .leftJoin(
+          memberships,
+          and(
+            eq(memberships.employee_id, employees.id),
+            eq(memberships.tenant_id, tenantId),
+          ),
+        )
         .where(
           and(
             eq(employees.tenant_id, tenantId),
@@ -961,10 +1077,21 @@ export class EmployeesService {
             // second owner would otherwise see and approve himself). IS
             // DISTINCT FROM keeps invited rows (user_id NULL) visible.
             sql`${employees.user_id} IS DISTINCT FROM ${callerUserId}`,
+            // Round 18: only an owner sees an HR admin's file. isNull keeps
+            // rows with no membership yet (ordinary joiners) visible.
+            ownerOnly
+              ? or(
+                  isNull(memberships.role),
+                  and(
+                    ne(memberships.role, 'admin'),
+                    ne(memberships.role, 'owner'),
+                  ),
+                )
+              : undefined,
           ),
         )
-        .orderBy(asc(employees.created_at)),
-    );
+        .orderBy(asc(employees.created_at));
+    });
 
     const data = await this.withAvatars(rows);
     return { data, total: data.length };
@@ -983,6 +1110,10 @@ export class EmployeesService {
         'You cannot review your own onboarding — another admin must approve or send it back.',
       );
     }
+
+    this.assertMayReviewTarget(
+      await this.loadReviewRoles(tenantId, employeeId, adminId),
+    );
 
     // Clear the review flag so the employee can edit + resubmit, and record
     // the reason in custom_fields for the wizard to surface.
@@ -1399,10 +1530,14 @@ export class EmployeesService {
                 ne(memberships.user_id, actorUserId),
               ),
             );
+        // An admin's own file is the owners' to review (round 18), so it is
+        // pointless — and now a guaranteed 403 — to ping peer admins about it.
         const submitterIsAdmin = actorRole === 'admin';
         let reviewers = await findReviewers(
           submitterIsAdmin ? ['owner'] : ['owner', 'admin'],
         );
+        // No active owner ⇒ admins both may and must review (see
+        // assertMayReviewTarget), so tell them.
         if (!reviewers.length && submitterIsAdmin)
           reviewers = await findReviewers(['owner', 'admin']);
         const recipientIds = [...new Set(reviewers.map((r) => r.userId))];
@@ -1869,6 +2004,10 @@ export class EmployeesService {
         'You cannot approve your own onboarding — another admin must review it.',
       );
     }
+
+    this.assertMayReviewTarget(
+      await this.loadReviewRoles(tenantId, employeeId, adminId),
+    );
 
     const user = await this.databaseService.withTenant(
       tenantId,

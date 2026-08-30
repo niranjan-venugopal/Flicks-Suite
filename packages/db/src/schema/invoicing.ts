@@ -136,6 +136,11 @@ export const invoicingSettings = pgTable(
     default_tds_payment_code: text('default_tds_payment_code'),
     default_tds_rate: numeric('default_tds_rate', { precision: 5, scale: 2 }),
     auto_suggest_tds: boolean('auto_suggest_tds').default(false),
+    // Exports (0055): under LUT/bond without payment of IGST (EXPWOP) by
+    // default; false = exported on payment of IGST (EXPWP).
+    export_under_lut: boolean('export_under_lut').notNull().default(true),
+    lut_number: text('lut_number'),
+    lut_valid_upto: date('lut_valid_upto'),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -677,8 +682,17 @@ export const invoices = pgTable(
       .defaultNow(),
     created_by: uuid('created_by').references(() => users.id),
     updated_by: uuid('updated_by').references(() => users.id),
+    // Export snapshot (0055) — 'LUT' | 'WITH_IGST', plus the LUT number in
+    // force when the document was raised.
+    export_route: text('export_route'),
+    lut_number: text('lut_number'),
+    // Soft delete (0055). Hard delete is impossible here: invoice_payments and
+    // razorpay_orders cascade off invoices.id.
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
+    // Deliberately NOT partial on deleted_at — a deleted or cancelled invoice
+    // number must never be reused (GST needs a consecutive series).
     uniqueIndex('invoices_tenant_number_unique').on(
       t.tenant_id,
       t.invoice_number,

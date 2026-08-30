@@ -272,7 +272,7 @@ export class DealsService {
         ? await tx
             .select({ id: invoices.id, number: invoices.invoice_number, status: invoices.status, total: invoices.total_amount, document_type: invoices.document_type, created_at: invoices.created_at })
             .from(invoices)
-            .where(inArray(invoices.id, docIds))
+            .where(and(inArray(invoices.id, docIds), isNull(invoices.deleted_at)))
         : [];
       return {
         data: {

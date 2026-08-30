@@ -3,7 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { and, eq, desc, sql } from 'drizzle-orm';
+import { and, eq, desc, sql, isNull } from 'drizzle-orm';
 import {
   creditNotes,
   debitNotes,
@@ -100,7 +100,7 @@ export class NotesService {
         [invoice] = await tx
           .select()
           .from(invoices)
-          .where(eq(invoices.id, dto.invoice_id))
+          .where(and(eq(invoices.id, dto.invoice_id), isNull(invoices.deleted_at)))
           .limit(1);
         if (!invoice) throw new NotFoundException('Invoice not found');
         customerId = invoice.customer_id;

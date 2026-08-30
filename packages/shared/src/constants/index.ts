@@ -98,6 +98,25 @@ export function stateName(codeOrName?: string | null): string {
   return raw;
 }
 
+// ─── Export of services (GST) ────────────────────────────────────────────────
+//
+// A supply to a client outside India is an export of services: zero-rated
+// under s.16 of the IGST Act. Two things the invoice must carry:
+//
+//  • Place of supply is the statutory "Other Country" code 96 — NOT the ISO
+//    country code. 'NL' would be ambiguous (Nagaland vs Netherlands) and
+//    stateName('NL') resolves to Nagaland.
+//  • A Rule 46 endorsement naming the route: under LUT/bond without payment
+//    of IGST (the common case), or on payment of IGST and claim a refund.
+export const GST_POS_OTHER_COUNTRY = '96';
+
+export type ExportRoute = 'LUT' | 'WITH_IGST';
+
+export const EXPORT_ENDORSEMENT: Record<ExportRoute, string> = {
+  LUT: 'SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX',
+  WITH_IGST: 'SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX',
+};
+
 // ─── Default Leave Types (PRD Section 7.2) ───────────────────────────────────
 
 export interface DefaultLeaveType {

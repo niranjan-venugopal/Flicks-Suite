@@ -35,6 +35,8 @@ const pct = (base: number, rate: number): number => Math.round((base * rate) / 1
 export function computeTotals(opts: {
   lines: EditorLine[]
   taxTreatment: string
+  /** 'LUT' zero-rates an export; 'WITH_IGST' charges the line rate. */
+  exportRoute?: 'LUT' | 'WITH_IGST' | null
   discountType?: 'percent' | 'fixed' | ''
   discountValue?: string
   tdsRate?: string
@@ -66,7 +68,10 @@ export function computeTotals(opts: {
   // INR: GST (intra split / inter IGST / export zero-rated) + cess + TDS.
   // Non-INR: a single VAT line at the line's rate (IGST slot), no cess/TDS.
   const isDomestic = (opts.currency ?? 'INR') === 'INR'
-  const zeroRated = isDomestic && opts.taxTreatment === 'EXPORT'
+  const zeroRated =
+    isDomestic &&
+    opts.taxTreatment === 'EXPORT' &&
+    (opts.exportRoute ?? 'LUT') !== 'WITH_IGST'
   const isIntra = opts.taxTreatment === 'INTRA_STATE' && isDomestic
   let cgst = 0,
     sgst = 0,

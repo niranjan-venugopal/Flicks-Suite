@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { and, eq, ilike, or, isNull, desc, sql, notInArray } from 'drizzle-orm';
 import {
@@ -83,14 +84,67 @@ export class CustomersService {
     return { data: row[0] };
   }
 
+  /**
+   * '' is how the forms say "clear this" — store NULL rather than an empty
+   * string so `IS NOT NULL` checks and idx_customers_gstin stay honest.
+   */
+  private normalizePatch<T extends CreateCustomerDto | UpdateCustomerDto>(
+    dto: T,
+  ): T {
+    const BLANKABLE = [
+      'gstin',
+      'pan',
+      'intl_tax_id',
+      'state_code',
+      'billing_address_line1',
+      'billing_address_line2',
+      'billing_city',
+      'billing_state',
+      'billing_postal_code',
+      'billing_country',
+    ] as const;
+    const out: Record<string, unknown> = { ...dto };
+    for (const k of BLANKABLE) {
+      if (typeof out[k] === 'string' && (out[k] as string).trim() === '')
+        out[k] = null;
+    }
+    return out as T;
+  }
+
+  /**
+   * A client outside India has no GSTIN — that supply is an export of
+   * services, zero-rated, and a GSTIN on it would corrupt the GSTR-1 bucket.
+   * Checked against the MERGED state so a PATCH that only flips the country
+   * can't leave a stale GSTIN behind.
+   */
+  private assertTaxIdsMatchCountry(merged: {
+    country_code?: string | null;
+    gstin?: string | null;
+    pan?: string | null;
+  }) {
+    const country = (merged.country_code ?? 'IN').toUpperCase();
+    if (country !== 'IN' && merged.gstin) {
+      throw new BadRequestException(
+        'A client outside India cannot have a GSTIN — clear it, or set the country to India.',
+      );
+    }
+  }
+
   async create(dto: CreateCustomerDto, userId: string, tenantId: string) {
     const code = dto.customer_code?.trim() || (await this.nextCode(tenantId));
+    const patch = this.normalizePatch(dto);
+    this.assertTaxIdsMatchCountry(patch);
     try {
       const created = await this.db.withTenant(tenantId, (tx) =>
         tx
           .insert(customers)
           .values({
-            ...dto,
+            ...patch,
+            // Only an Indian client can be GST-registered.
+            is_gst_registered:
+              (patch.country_code ?? 'IN').toUpperCase() === 'IN'
+                ? !!patch.gstin
+                : false,
             tenant_id: tenantId,
             customer_code: code,
             created_by: userId,
@@ -123,10 +177,33 @@ export class CustomersService {
     tenantId: string,
   ) {
     const existing = (await this.get(tenantId, id)).data;
+    const patch = this.normalizePatch(dto);
+    // Only an EXPLICIT gstin in this patch is an error. Moving an existing
+    // Indian client abroad is a legitimate edit — the stale GSTIN is cleared
+    // below rather than thrown back at the user (never leave a dead end).
+    this.assertTaxIdsMatchCountry({
+      country_code:
+        patch.country_code !== undefined
+          ? patch.country_code
+          : existing.country_code,
+      gstin: patch.gstin ?? null,
+    });
+    const mergedCountry = (
+      (patch.country_code !== undefined
+        ? patch.country_code
+        : existing.country_code) ?? 'IN'
+    ).toUpperCase();
     const updated = await this.db.withTenant(tenantId, (tx) =>
       tx
         .update(customers)
-        .set({ ...dto, updated_by: userId, updated_at: new Date() })
+        .set({
+          ...patch,
+          ...(mergedCountry === 'IN'
+            ? {}
+            : { is_gst_registered: false, gstin: null }),
+          updated_by: userId,
+          updated_at: new Date(),
+        })
         .where(eq(customers.id, id))
         .returning(),
     );
@@ -292,14 +369,101 @@ export class CustomersService {
   }
 
   /** Next sequential customer code (CUST-0001…). */
+  /**
+   * Next CUST-#### code. Derived from the highest existing suffix, NOT from
+   * count(*): once a client can be deleted, counting rows hands out a code
+   * that already exists (delete the 3rd of 5 → next is CUST-0005 → 409 on the
+   * very next "Add client"). Soft-deleted rows are included so a restored
+   * client never collides either.
+   *
+   * NB: the pattern lives in a template literal, so the backslash must be
+   * escaped — '\\d' here reaches Postgres as '\d'. Writing '\d' compiles to
+   * a bare 'd', the regex never matches, and every client gets CUST-0001.
+   */
   private async nextCode(tenantId: string): Promise<string> {
-    const [{ total }] = await this.db.withTenant(tenantId, (tx) =>
+    const [row] = await this.db.withTenant(tenantId, (tx) =>
       tx
-        .select({ total: sql<number>`count(*)::int` })
+        .select({
+          maxSeq: sql<number>`COALESCE(MAX((regexp_match(${customers.customer_code}, '^CUST-(\\d+)$'))[1]::int), 0)`,
+        })
         .from(customers)
         .where(eq(customers.tenant_id, tenantId)),
     );
-    return `CUST-${String((total ?? 0) + 1).padStart(4, '0')}`;
+    return `CUST-${String((row?.maxSeq ?? 0) + 1).padStart(4, '0')}`;
+  }
+
+  /**
+   * Delete a client. Hard when nothing references it (so a mistyped test
+   * client really goes away); soft otherwise, because invoices.customer_id is
+   * NOT NULL + RESTRICT — a billed client must keep resolving on its past
+   * documents. Returns which happened so the UI can say so.
+   */
+  async remove(id: string, userId: string, tenantId: string) {
+    const outcome = await this.db.withTenant(tenantId, async (tx) => {
+      const [existing] = await tx
+        .select({ id: customers.id, name: customers.display_name })
+        .from(customers)
+        .where(and(eq(customers.id, id), isNull(customers.deleted_at)))
+        .limit(1);
+      if (!existing) throw new NotFoundException('Client not found');
+
+      // Everything that RESTRICTs on customers.id — a hard delete would raise
+      // 23503 for any of these.
+      const [invCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(invoices)
+        .where(eq(invoices.customer_id, id));
+      const [payCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(invoicePayments)
+        .where(eq(invoicePayments.customer_id, id));
+      const [cnCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(creditNotes)
+        .where(eq(creditNotes.customer_id, id));
+      const [dnCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(debitNotes)
+        .where(eq(debitNotes.customer_id, id));
+      const [adjCount] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(adjustments)
+        .where(eq(adjustments.customer_id, id));
+      const references = {
+        invoices: invCount?.n ?? 0,
+        payments: payCount?.n ?? 0,
+        creditNotes: cnCount?.n ?? 0,
+        debitNotes: dnCount?.n ?? 0,
+        adjustments: adjCount?.n ?? 0,
+      };
+      const total = Object.values(references).reduce((a, b) => a + b, 0);
+
+      if (total === 0) {
+        await tx.delete(customers).where(eq(customers.id, id));
+        return { mode: 'hard' as const, name: existing.name, references };
+      }
+      await tx
+        .update(customers)
+        .set({ deleted_at: new Date(), updated_by: userId, updated_at: new Date() })
+        .where(eq(customers.id, id));
+      return { mode: 'soft' as const, name: existing.name, references };
+    });
+
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'invoicing.customer.delete',
+      resourceType: 'customer',
+      resourceId: id,
+      afterState: { mode: outcome.mode, references: outcome.references },
+    });
+    return {
+      data: {
+        deleted: true,
+        mode: outcome.mode,
+        references: outcome.references,
+      },
+    };
   }
 }
 

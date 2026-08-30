@@ -308,6 +308,35 @@ export class DashboardService {
                   sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
                   ne(employees.status, 'active'),
                   sql`${employees.user_id} IS DISTINCT FROM ${opts.callerUserId}`,
+                  // Round 18: an owner/admin seat is the owners' to sign off —
+                  // a peer admin holds the same powers, so it would be
+                  // self-review by proxy. Expressed in SQL (not a new opts
+                  // field) so getAdminOverview's signature — and its five
+                  // call sites in founder-round8.spec.ts — stay untouched.
+                  // Mirrors employees.service.getOnboardingQueue, including
+                  // the no-active-owner escape hatch.
+                  sql`(
+                    NOT EXISTS (
+                      SELECT 1 FROM memberships mt
+                       WHERE mt.tenant_id = ${tenantId}
+                         AND mt.role IN ('owner','admin')
+                         AND (mt.employee_id = ${employees.id}
+                              OR mt.user_id = ${employees.user_id})
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM memberships mc
+                       WHERE mc.tenant_id = ${tenantId}
+                         AND mc.user_id = ${opts.callerUserId}
+                         AND mc.status = 'active'
+                         AND mc.role = 'owner'
+                    )
+                    OR NOT EXISTS (
+                      SELECT 1 FROM memberships mo
+                       WHERE mo.tenant_id = ${tenantId}
+                         AND mo.status = 'active'
+                         AND mo.role = 'owner'
+                    )
+                  )`,
                 ),
               )
               .orderBy(asc(employees.created_at))

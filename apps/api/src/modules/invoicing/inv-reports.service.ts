@@ -4,7 +4,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
-import { and, eq, gte, lte, inArray, notInArray, sql, desc } from 'drizzle-orm';
+import { and, eq, gte, lte, inArray, notInArray, sql, desc, isNull } from 'drizzle-orm';
 import {
   invoices,
   creditNotes,
@@ -18,6 +18,7 @@ import {
 import { DatabaseService } from '../../core/database/database.service';
 import type { Db } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
+import { GST_POS_OTHER_COUNTRY } from '@flicks/shared/constants';
 import type { GenerateGstr1Dto } from './dto/invoicing.dto';
 
 const OPEN_STATUSES = ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE', 'DISPUTED'];
@@ -65,7 +66,7 @@ export class InvReportsService {
       const present = await tx
         .selectDistinct({ currency: invoices.currency })
         .from(invoices)
-        .where(eq(invoices.tenant_id, tenantId));
+        .where(and(eq(invoices.tenant_id, tenantId), isNull(invoices.deleted_at)));
 
       const baseCurrency = settings?.defaultCurrency ?? tenant?.currency ?? 'INR';
       const currencies = Array.from(
@@ -127,7 +128,13 @@ export class InvReportsService {
           tds: sql<string>`coalesce(sum(${invoices.tds_amount}) filter (where ${invoices.status} not in ('DRAFT','CANCELLED','VOIDED')), 0)::text`,
         })
         .from(invoices)
-        .where(and(eq(invoices.tenant_id, tenantId), eq(invoices.currency, cur)));
+        .where(
+          and(
+            eq(invoices.tenant_id, tenantId),
+            eq(invoices.currency, cur),
+            isNull(invoices.deleted_at),
+          ),
+        );
       return { data: { ...counts, currency: cur } };
     });
   }
@@ -145,6 +152,7 @@ export class InvReportsService {
         .from(invoices)
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
             eq(invoices.currency, cur),
             inArray(invoices.status, OPEN_STATUSES),
@@ -190,6 +198,7 @@ export class InvReportsService {
         .from(invoices)
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
             eq(invoices.currency, cur),
             notInArray(invoices.status, NON_REVENUE),
@@ -221,6 +230,7 @@ export class InvReportsService {
         .leftJoin(customers, eq(invoices.customer_id, customers.id))
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
             notInArray(invoices.status, NON_REVENUE),
             sql`${invoices.tds_amount} > 0`,
@@ -257,6 +267,7 @@ export class InvReportsService {
           tax_treatment: invoices.tax_treatment,
           place_of_supply: invoices.place_of_supply,
           fx_rate_to_inr: invoices.fx_rate_to_inr,
+          export_route: invoices.export_route,
           customer_name: customers.display_name,
           customer_gstin: customers.gstin,
         })
@@ -264,6 +275,7 @@ export class InvReportsService {
         .leftJoin(customers, eq(invoices.customer_id, customers.id))
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
             notInArray(invoices.status, NON_REVENUE),
             gte(invoices.invoice_date, from),
@@ -340,7 +352,15 @@ export class InvReportsService {
           b2b: b2b.map((i) => ({ ...i })),
           b2cl: b2cl.map((i) => ({ ...i })),
           b2cs: b2cs.map((i) => ({ ...i })),
-          exp: exp.map((i) => ({ ...i })),
+          // Direct exports report the recipient as 'URP' (unregistered
+          // person) with place-of-supply code 96 ("Other Country") — the
+          // statutory convention; a foreign client has no GSTIN.
+          exp: exp.map((i) => ({
+            ...i,
+            customer_gstin: 'URP',
+            place_of_supply: GST_POS_OTHER_COUNTRY,
+            export_route: i.export_route ?? 'LUT',
+          })),
           cdnr: [
             ...cdnrCredit.map((n) => ({ kind: 'C', ...n })),
             ...cdnrDebit.map((n) => ({ kind: 'D', ...n })),

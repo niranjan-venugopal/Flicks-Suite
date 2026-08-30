@@ -68,6 +68,8 @@ export interface ComputeInput {
    * zero-rated and TDS is not withheld (PRD §6.1/§6.2; matches the editor UI).
    */
   currency?: string | null;
+  /** Export route (GST): 'LUT' zero-rates the supply, 'WITH_IGST' charges it. */
+  exportRoute?: 'LUT' | 'WITH_IGST' | null;
 }
 
 export interface ComputeResult {
@@ -142,7 +144,13 @@ export function computeInvoice(input: ComputeInput): ComputeResult {
   //      in the IGST slot (no intra split, no cess, no TDS). The rate field
   //      (`gst_rate`) doubles as the generic per-currency tax rate.
   const isDomestic = (input.currency ?? 'INR') === 'INR';
-  const zeroRated = isDomestic && input.taxTreatment === 'EXPORT';
+  // An export is zero-rated only under LUT/bond. On the "with payment of
+  // IGST" route the tax IS charged (and refunded later), so the line rate
+  // stands. Defaulting to LUT reproduces the previous behaviour exactly.
+  const zeroRated =
+    isDomestic &&
+    input.taxTreatment === 'EXPORT' &&
+    (input.exportRoute ?? 'LUT') !== 'WITH_IGST';
   const isIntra = input.taxTreatment === 'INTRA_STATE' && isDomestic;
 
   const lines: ComputedLine[] = input.lines.map((l, i) => {

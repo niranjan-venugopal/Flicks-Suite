@@ -51,6 +51,8 @@ function toPayload(inv: InvoiceDetail, org: OrgProfile): PublicInvoicePayload {
       amount_outstanding: inv.amount_outstanding,
       tax_treatment: inv.tax_treatment,
       place_of_supply: inv.place_of_supply,
+      export_route: (inv as { export_route?: string | null }).export_route ?? null,
+      lut_number: (inv as { lut_number?: string | null }).lut_number ?? null,
       reference: inv.reference,
       notes: inv.notes,
       terms_and_conditions: inv.terms_and_conditions,
@@ -72,12 +74,17 @@ function toPayload(inv: InvoiceDetail, org: OrgProfile): PublicInvoicePayload {
           display_name: inv.customer.display_name,
           legal_name: inv.customer.legal_name ?? null,
           gstin: inv.customer.gstin ?? null,
-          billing_address_line1: null,
-          billing_address_line2: null,
-          billing_city: null,
-          billing_state: inv.customer.state_code ?? null,
-          billing_postal_code: null,
-          billing_country: null,
+          // These were hardcoded null, so the internal preview showed a
+          // Bill-To with only the client's name even when the address was on
+          // file — the hosted page always sent the real values (round 18).
+          billing_address_line1: inv.customer.billing_address_line1 ?? null,
+          billing_address_line2: inv.customer.billing_address_line2 ?? null,
+          billing_city: inv.customer.billing_city ?? null,
+          billing_state:
+            inv.customer.billing_state ?? inv.customer.state_code ?? null,
+          billing_postal_code: inv.customer.billing_postal_code ?? null,
+          billing_country: inv.customer.billing_country ?? null,
+          country_code: inv.customer.country_code ?? null,
         }
       : null,
     // Seller branding from the tenant profile — the preview must show exactly

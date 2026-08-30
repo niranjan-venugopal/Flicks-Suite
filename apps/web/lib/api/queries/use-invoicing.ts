@@ -31,6 +31,21 @@ export interface Customer {
   state_code?: string | null
   default_currency: string
   status: string
+  // Round 18: the API always returned these (list() is a bare select) but the
+  // type omitted them, so no form could send an address or a country — which
+  // is why every invoice printed a Bill-To with only the client's name, and
+  // why a foreign client was never treated as an export.
+  country_code?: string | null
+  billing_address_line1?: string | null
+  billing_address_line2?: string | null
+  billing_city?: string | null
+  billing_state?: string | null
+  billing_postal_code?: string | null
+  billing_country?: string | null
+  pan?: string | null
+  intl_tax_id?: string | null
+  is_gst_registered?: boolean | null
+  default_payment_terms_days?: number | null
 }
 export type CustomerInput = Partial<Omit<Customer, 'id' | 'customer_code' | 'status'>> & {
   display_name: string
@@ -262,6 +277,8 @@ export interface InvoiceDetail extends InvoiceRow {
   tds_rate: string | null
   place_of_supply: string | null
   tax_treatment: string | null
+  export_route?: string | null
+  lut_number?: string | null
   reference: string | null
   notes: string | null
   terms_and_conditions: string | null
@@ -277,7 +294,15 @@ export interface InvoiceDetail extends InvoiceRow {
 }
 
 export function useInvoices(
-  params: { page?: number; q?: string; status?: string; customer_id?: string; document_type?: string } = {},
+  params: {
+    page?: number
+    q?: string
+    status?: string
+    customer_id?: string
+    document_type?: string
+    /** 'true' = the Deleted tab (soft-deleted invoices, restorable). */
+    deleted?: string
+  } = {},
 ) {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
@@ -285,6 +310,7 @@ export function useInvoices(
   if (params.status) qs.set('status', params.status)
   if (params.customer_id) qs.set('customer_id', params.customer_id)
   if (params.document_type) qs.set('document_type', params.document_type)
+  if (params.deleted) qs.set('deleted', params.deleted)
   return useQuery({
     queryKey: ['invoicing', 'invoices', params],
     queryFn: () => api.get<Paginated<InvoiceRow>>(`/api/v1/invoices?${qs.toString()}`),
@@ -319,7 +345,7 @@ export function useInvoiceAction() {
       body,
     }: {
       id: string
-      action: 'duplicate' | 'cancel' | 'void' | 'write-off' | 'convert-to-invoice'
+      action: 'duplicate' | 'cancel' | 'void' | 'write-off' | 'convert-to-invoice' | 'restore'
       body?: Record<string, unknown>
     }) => api.post<{ data: InvoiceDetail }>(`/api/v1/invoices/${id}/${action}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
@@ -389,6 +415,33 @@ export function useDownloadPublicInvoicePdf() {
 
 // ─── Send / payments / public (Sprint 4) ────────────────────────────────────
 
+/**
+ * Delete an invoice. The API soft-deletes (Deleted tab + Restore) and refuses
+ * with 409 once a payment is recorded — surface that message verbatim.
+ */
+export function useDeleteInvoice() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ data: { deleted: boolean; invoice_number: string } }>(
+        `/api/v1/invoices/${id}`,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
+/** Hard when the client has never been billed, soft (archived) otherwise. */
+export function useDeleteCustomer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{
+        data: { deleted: boolean; mode: 'hard' | 'soft'; references: Record<string, number> }
+      }>(`/api/v1/customers/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
+  })
+}
+
 export function useSendInvoice() {
   const qc = useQueryClient()
   return useMutation({
@@ -446,6 +499,8 @@ export interface PublicInvoicePayload {
     amount_outstanding: string | null
     tax_treatment: string | null
     place_of_supply: string | null
+    export_route?: string | null
+    lut_number?: string | null
     reference: string | null
     notes: string | null
     terms_and_conditions: string | null
@@ -472,6 +527,7 @@ export interface PublicInvoicePayload {
     billing_state: string | null
     billing_postal_code: string | null
     billing_country: string | null
+    country_code?: string | null
   } | null
   seller: {
     name: string

@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   UseGuards,
+  Delete,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CustomersService } from './customers.service';
@@ -93,5 +94,15 @@ export class CustomersController {
   @ApiOperation({ summary: 'Unarchive a customer' })
   unarchive(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.customers.setStatus(id, 'active', user.sub, user.tenantId);
+  }
+
+  // Round 18: hard delete when nothing references the client, soft otherwise
+  // (invoices.customer_id is NOT NULL + RESTRICT, so a billed client has to
+  // keep resolving on its past documents).
+  @Delete(':id')
+  @RequireGrant('invoicing', 'edit', 'manage_customers')
+  @ApiOperation({ summary: 'Delete a client (soft when it has been billed)' })
+  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.customers.remove(id, user.sub, user.tenantId);
   }
 }

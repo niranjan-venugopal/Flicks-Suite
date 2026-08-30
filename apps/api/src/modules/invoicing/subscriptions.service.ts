@@ -137,7 +137,7 @@ export class SubscriptionsService {
           currency: invoices.currency,
         })
         .from(invoices)
-        .where(eq(invoices.subscription_id, id))
+        .where(and(eq(invoices.subscription_id, id), isNull(invoices.deleted_at)))
         .orderBy(desc(invoices.created_at));
       const prorations = await tx
         .select()

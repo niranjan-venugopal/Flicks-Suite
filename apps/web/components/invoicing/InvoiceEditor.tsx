@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
+import { CustomerModal } from '@/components/invoicing/CustomerModal'
+import { useOrganization } from '@/lib/api/queries/use-settings'
+import { useInvSettings } from '@/lib/api/queries/use-inv-settings'
 import {
   useCustomers,
   useSaveInvoice,
@@ -11,7 +14,6 @@ import {
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
-  useSaveCustomer,
 } from '@/lib/api/queries/use-invoicing'
 import { computeTotals } from '@/lib/invoicing/totals'
 import {
@@ -62,40 +64,11 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const { toast } = useToast()
   const save = useSaveInvoice()
   const send = useSendInvoice()
-  const saveCustomer = useSaveCustomer()
-  // Inline "new client" quick-add — invoicing customers are separate from CRM
-  // contacts, and leaving the editor to create one lost the whole draft.
+  // "+ New client" opens the SAME form as Clients → Add client (round 18).
+  // The old inline 4-field version asked for no country and no state, so
+  // every client born here was treated as inter-state — IGST forever, even
+  // for a same-city customer — and a foreign client was never an export.
   const [addingClient, setAddingClient] = useState(false)
-  const [newClient, setNewClient] = useState({ name: '', email: '', phone: '', gstin: '' })
-
-  const createClient = async () => {
-    if (!newClient.name.trim()) {
-      toast({ title: 'Client name is required', variant: 'destructive' })
-      return
-    }
-    if (!/.+@.+\..+/.test(newClient.email.trim())) {
-      toast({ title: 'A valid email is required', description: 'Sending the invoice needs it.', variant: 'destructive' })
-      return
-    }
-    try {
-      const created = await saveCustomer.mutateAsync({
-        display_name: newClient.name.trim(),
-        email: newClient.email.trim(),
-        phone: newClient.phone.trim() || undefined,
-        gstin: newClient.gstin.trim() || undefined,
-      })
-      setCustomerId(created.data.id)
-      setAddingClient(false)
-      setNewClient({ name: '', email: '', phone: '', gstin: '' })
-      toast({ title: `Client ${created.data.display_name} added` })
-    } catch (err) {
-      toast({
-        title: 'Could not add client',
-        description: err instanceof Error ? err.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
   const { data: customersData } = useCustomers({})
   const { data: banksData } = useBankAccounts()
 
@@ -130,6 +103,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
     })) ?? [emptyLine()],
   )
 
+  // The tenant's own state decides intra- vs inter-state; the invoicing
+  // settings decide which export route the totals card should assume.
+  const org = useOrganization()
+  const invSettings = useInvSettings()
   const customers = customersData?.data ?? []
   const customer = customers.find((c) => c.id === customerId)
   const bankAccounts = (banksData?.data ?? []).filter((b) => b.is_active)
@@ -150,11 +127,19 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
         ? 'No bank account yet — add one under Organization → Financial details.'
         : undefined
 
+  // Mirrors the server's deriveTaxTreatment exactly: country first, then the
+  // supplier/customer state comparison. Without the state comparison this memo
+  // could never return INTRA_STATE, so the pre-save totals card showed one
+  // IGST line where the server would save CGST + SGST (round 18).
   const taxTreatment = useMemo(() => {
     if (invoice?.tax_treatment) return invoice.tax_treatment
-    if (customer && (customer as { country_code?: string }).country_code && (customer as { country_code?: string }).country_code !== 'IN') return 'EXPORT'
+    const country = (customer?.country_code ?? 'IN').toUpperCase()
+    if (country !== 'IN') return 'EXPORT'
+    const supplier = (org.data?.stateCode ?? '').trim().toUpperCase()
+    const buyer = (customer?.state_code ?? '').trim().toUpperCase()
+    if (supplier && buyer && supplier === buyer) return 'INTRA_STATE'
     return 'INTER_STATE'
-  }, [invoice?.tax_treatment, customer])
+  }, [invoice?.tax_treatment, customer, org.data?.stateCode])
 
   // INR → GST (+ TDS); non-INR → a single VAT line. The tax-rate column shows
   // for both (GST %/VAT %); HSN/SAC + TDS stay INR-only.
@@ -162,9 +147,12 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const taxLbl = taxLabel(currency)
   const lineGrid = isDomestic ? LINE_GRID : LINE_GRID_INTL
 
+  // An export is zero-rated only under LUT; on the with-IGST route the tax is
+  // charged and refunded later.
+  const exportRoute = invSettings.data?.data?.export_under_lut === false ? 'WITH_IGST' : 'LUT'
   const totals = useMemo(
-    () => computeTotals({ lines, taxTreatment, discountType, discountValue, tdsRate, currency }),
-    [lines, taxTreatment, discountType, discountValue, tdsRate, currency],
+    () => computeTotals({ lines, taxTreatment, discountType, discountValue, tdsRate, currency, exportRoute }),
+    [lines, taxTreatment, discountType, discountValue, tdsRate, currency, exportRoute],
   )
 
   // Apply a TDS payment code: auto-fill section 393 + its standard rate.
@@ -313,13 +301,13 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <label style={invoLabel}>Client</label>
                   <button
                     type="button"
-                    onClick={() => setAddingClient((v) => !v)}
+                    onClick={() => setAddingClient(true)}
                     style={{
                       background: 'none', border: 'none', cursor: 'pointer',
                       color: INVO.blue, fontSize: 12, fontWeight: 700, padding: 0,
                     }}
                   >
-                    {addingClient ? 'Cancel' : '+ New client'}
+                    + New client
                   </button>
                 </div>
                 <select style={invoSelect()} value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
@@ -330,46 +318,11 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                     </option>
                   ))}
                 </select>
-                {addingClient && (
-                  <div
-                    style={{
-                      marginTop: 10, padding: 14, borderRadius: 10,
-                      border: `1px dashed ${INVO.muted30}`, display: 'grid',
-                      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10,
-                    }}
-                  >
-                    <input
-                      style={invoField()}
-                      placeholder="Client name *"
-                      value={newClient.name}
-                      onChange={(e) => setNewClient((c) => ({ ...c, name: e.target.value }))}
-                    />
-                    <input
-                      style={invoField()}
-                      placeholder="Email * (needed to send)"
-                      type="email"
-                      value={newClient.email}
-                      onChange={(e) => setNewClient((c) => ({ ...c, email: e.target.value }))}
-                    />
-                    <input
-                      style={invoField()}
-                      placeholder="Phone (optional)"
-                      value={newClient.phone}
-                      onChange={(e) => setNewClient((c) => ({ ...c, phone: e.target.value }))}
-                    />
-                    <input
-                      style={invoField()}
-                      placeholder="GSTIN (optional)"
-                      value={newClient.gstin}
-                      onChange={(e) => setNewClient((c) => ({ ...c, gstin: e.target.value.toUpperCase() }))}
-                    />
-                    <div style={{ gridColumn: '1 / -1' }}>
-                      <InvoBtn kind="secondary" height={40} onClick={createClient} disabled={saveCustomer.isPending}>
-                        {saveCustomer.isPending ? 'Adding…' : 'Add client'}
-                      </InvoBtn>
-                    </div>
-                  </div>
-                )}
+                <CustomerModal
+                  open={addingClient}
+                  onOpenChange={setAddingClient}
+                  onCreated={(c) => setCustomerId(c.id)}
+                />
                 {customer?.gstin && (
                   <div style={{ marginTop: 8, fontWeight: 600, fontSize: 12, color: INVO.muted40 }}>
                     GSTIN: {customer.gstin}

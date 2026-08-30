@@ -92,7 +92,8 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
     })
   }
   // Onboarding reviews (admin+ only; the API returns an empty list for
-  // other roles and never includes the viewer's own row).
+  // other roles and never includes the viewer's own row). Round 18: an HR
+  // admin's own file is filtered out too unless the viewer is an owner.
   for (const ob of o.pending.onboarding ?? []) {
     items.push({
       kind: 'onboarding',

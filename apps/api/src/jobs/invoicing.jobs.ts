@@ -1,7 +1,7 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, sql, isNull } from 'drizzle-orm';
 import {
   invoices,
   customers,
@@ -110,7 +110,13 @@ export class InvoicingJobs {
         customer_id: invoices.customer_id,
       })
       .from(invoices)
-      .where(inArray(invoices.status, ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE']));
+      .where(
+        and(
+          inArray(invoices.status, ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE']),
+          // Never chase a customer about an invoice its supplier deleted.
+          isNull(invoices.deleted_at),
+        ),
+      );
     if (!open.length) return 0;
 
     const schedules = await this.dbAdmin
@@ -360,6 +366,7 @@ export class InvoicingJobs {
           .from(invoices)
           .where(
             and(
+              isNull(invoices.deleted_at),
               eq(invoices.subscription_id, sub.id),
               inArray(invoices.status, ['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID']),
             ),

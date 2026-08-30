@@ -342,6 +342,9 @@ export interface OnboardingQueueRow {
   designationTitle: string | null
   departmentName: string | null
   status: string
+  /** Membership role of the pending hire — 'admin'/'owner' rows are shown to
+   *  owners only (round 18), so this is what the "Owner approval" badge keys on. */
+  memberRole: string | null
   submittedAt: string | null
 }
 

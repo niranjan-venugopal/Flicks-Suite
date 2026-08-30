@@ -38,6 +38,10 @@ export interface InvSettings {
   default_tds_payment_code: string | null
   default_tds_rate: string | null
   auto_suggest_tds: boolean
+  // Exports (round 18): true = under LUT/bond without payment of IGST.
+  export_under_lut: boolean
+  lut_number: string | null
+  lut_valid_upto: string | null
   razorpay_webhook_configured: boolean
   razorpay_connected: boolean
   razorpay_connected_at: string | null

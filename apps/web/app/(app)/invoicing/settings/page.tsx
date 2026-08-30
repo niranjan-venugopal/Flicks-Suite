@@ -132,6 +132,9 @@ export default function InvoicingSettingsPage() {
       composition_scheme: settings.composition_scheme,
       auto_suggest_tds: settings.auto_suggest_tds,
       default_tds_section: settings.default_tds_section ?? '393',
+      export_under_lut: settings.export_under_lut ?? true,
+      lut_number: settings.lut_number ?? '',
+      lut_valid_upto: settings.lut_valid_upto ?? '',
     })
   }, [settings])
 
@@ -428,6 +431,50 @@ export default function InvoicingSettingsPage() {
                   <option value="quarterly">Quarterly (QRMP)</option>
                 </select>
               </Field>
+            </div>
+          </div>
+          {/* Exports — a client outside India is an export of services:
+              zero-rated, and the invoice must carry a Rule 46 endorsement
+              naming the route (round 18). */}
+          <div className="card">
+            <div className="t-h3" style={{ marginBottom: 6 }}>Exports</div>
+            <p className="t-mute" style={{ fontSize: 12.5, marginBottom: 16 }}>
+              Printed on every invoice raised for a client outside India.
+            </p>
+            <div style={{ ...GRID_2, alignItems: 'start' }}>
+              <Field label="Export route" hint="Most exporters file an LUT and charge no IGST">
+                <select
+                  className="input"
+                  value={draft.export_under_lut === false ? 'WITH_IGST' : 'LUT'}
+                  onChange={(e) => set('export_under_lut', e.target.value === 'LUT')}
+                  style={{ width: '100%' }}
+                >
+                  <option value="LUT">Under LUT / bond — no IGST charged</option>
+                  <option value="WITH_IGST">On payment of IGST — refund claimed later</option>
+                </select>
+              </Field>
+              {draft.export_under_lut !== false && (
+                <>
+                  <Field label="LUT number" hint="ARN from your RFD-11 filing">
+                    <input
+                      className="input"
+                      value={draft.lut_number ?? ''}
+                      onChange={(e) => set('lut_number', e.target.value)}
+                      placeholder="AD290423000123X"
+                      style={{ width: '100%' }}
+                    />
+                  </Field>
+                  <Field label="LUT valid until" hint="LUTs are filed per financial year">
+                    <input
+                      className="input"
+                      type="date"
+                      value={draft.lut_valid_upto ?? ''}
+                      onChange={(e) => set('lut_valid_upto', e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  </Field>
+                </>
+              )}
             </div>
           </div>
           <ToggleRow label="Composition scheme" sub="Composition dealers don't charge GST">

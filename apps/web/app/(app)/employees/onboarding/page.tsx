@@ -11,6 +11,7 @@ import {
   type OnboardingQueueRow,
 } from '@/lib/api/queries/use-employees'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { OnboardingReviewDialog } from '@/components/employees/OnboardingReviewDialog'
 
 function rowName(r: OnboardingQueueRow): string {
@@ -40,6 +41,9 @@ function OnboardingQueueContent() {
   const closeReview = () => router.replace('/employees/onboarding', { scroll: false })
 
   const rows = queue.data?.data ?? []
+  // Round 18: HR-admin profiles are listed to owners only, so the copy and
+  // the badge differ by who is looking.
+  const isOwner = useAuthStore((st) => st.currentUser?.role) === 'OWNER'
 
   const handleApprove = async (row: OnboardingQueueRow) => {
     try {
@@ -82,6 +86,7 @@ function OnboardingQueueContent() {
               <div className="t-h3" style={{ marginBottom: 4 }}>All caught up</div>
               <p className="t-mute" style={{ fontSize: 13 }}>
                 No employees are waiting for onboarding approval right now.
+                {!isOwner && ' HR admins are reviewed by an owner, so their profiles are not listed here.'}
               </p>
             </div>
           ) : (
@@ -109,6 +114,9 @@ function OnboardingQueueContent() {
                         {rowName(row)}
                       </Link>
                       <Pill tone="yellow" dot>Pending</Pill>
+                      {(row.memberRole === 'admin' || row.memberRole === 'owner') && (
+                        <Pill tone="blue">Owner approval</Pill>
+                      )}
                       {row.employeeCode && <Pill>{row.employeeCode}</Pill>}
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)', marginTop: 3 }}>

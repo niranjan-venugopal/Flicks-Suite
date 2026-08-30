@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql, isNull } from 'drizzle-orm';
 import {
   invoices,
   membershipGrants,
@@ -768,6 +768,7 @@ export class MembersService {
       .from(invoices)
       .where(
         and(
+          isNull(invoices.deleted_at),
           inArray(invoices.tenant_id, tenantIds),
           eq(invoices.document_type, 'INVOICE'),
         ),

@@ -8,6 +8,7 @@ import {
   useEmployee,
   useApproveOnboarding,
   useRejectOnboarding,
+  useOnboardingQueue,
 } from '@/lib/api/queries/use-employees'
 import { Card, Grid, Field, fmtDate, fmtAddress, fmtPhone } from './detail-kit'
 
@@ -32,6 +33,14 @@ export function OnboardingReviewDialog({
   const [mode, setMode] = useState<'review' | 'sendback'>('review')
   const [reason, setReason] = useState('')
   const busy = approve.isPending || reject.isPending
+  // This dialog is deep-linkable (?employee=<id>), so a stale link can point
+  // at a hire the viewer may not review — an HR admin's file is the owner's
+  // to sign off (round 18). The queue is the authority; the server enforces.
+  const queue = useOnboardingQueue()
+  const notReviewable =
+    !queue.isLoading &&
+    !!employeeId &&
+    !(queue.data?.data ?? []).some((r) => r.id === employeeId)
 
   if (!employeeId) return null
 
@@ -91,7 +100,21 @@ export function OnboardingReviewDialog({
       }
       sub="Submitted onboarding details — approve to activate"
       footer={
-        mode === 'review' ? (
+        notReviewable ? (
+          <>
+            <span
+              style={{
+                flex: 1,
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: 'var(--text-mute)',
+              }}
+            >
+              An owner reviews this profile.
+            </span>
+            <Btn kind="ghost" onClick={close}>Close</Btn>
+          </>
+        ) : mode === 'review' ? (
           <>
             <Btn kind="ghost" onClick={close} disabled={busy}>Cancel</Btn>
             <Btn kind="secondary" onClick={() => setMode('sendback')} disabled={busy}>
