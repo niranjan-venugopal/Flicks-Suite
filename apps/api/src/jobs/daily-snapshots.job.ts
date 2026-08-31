@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, sql, isNull } from 'drizzle-orm';
 import {
   tenants,
   employees,
@@ -83,6 +83,7 @@ export class DailySnapshotsJob {
         .where(
           and(
             eq(employees.tenant_id, t.id),
+            isNull(employees.deleted_at), // round 21 — not headcount any more
             inArray(employees.status, ['active', 'on_leave', 'notice_period']),
           ),
         );

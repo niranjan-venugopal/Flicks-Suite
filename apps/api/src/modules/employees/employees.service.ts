@@ -8,7 +8,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, inArray, desc, asc, sql, or, isNull } from 'drizzle-orm';
+import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -23,8 +23,11 @@ import {
   emergencyContacts,
   locations,
   attendanceRecords,
+  attendancePunches,
   leaveBalances,
+  leaveRequests,
   leaveTypes,
+  timesheetEntries,
   dataConsents,
   employeeChangeRequests,
 } from '@flicks/db/schema';
@@ -114,7 +117,12 @@ export class EmployeesService {
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const conditions = [eq(employees.tenant_id, tenantId)];
+    // `removed: true` is how the Removed filter on the directory asks for the
+    // archived rows; every other caller gets live employees only (round 21).
+    const conditions = [
+      eq(employees.tenant_id, tenantId),
+      query.removed ? isNotNull(employees.deleted_at) : isNull(employees.deleted_at),
+    ];
 
     if (query.departmentId) {
       conditions.push(eq(employees.department_id, query.departmentId));
@@ -261,9 +269,13 @@ export class EmployeesService {
           managerEmployeeId: dto.managerId,
         });
 
-        // Check for duplicate employee code within tenant
+        // Check for duplicate employee code within tenant. REMOVED employees
+        // are deliberately included: their row still holds the unique index on
+        // (tenant_id, employee_code), so skipping them here would only move
+        // the failure to a raw constraint violation. Say so instead of leaving
+        // the user staring at "already in use" for a code they cannot see.
         const existing = await db
-          .select({ id: employees.id })
+          .select({ id: employees.id, deletedAt: employees.deleted_at })
           .from(employees)
           .where(
             and(
@@ -275,7 +287,9 @@ export class EmployeesService {
 
         if (existing[0]) {
           throw new ConflictException(
-            `Employee code ${dto.employeeCode} is already in use`,
+            existing[0].deletedAt
+              ? `Employee code ${dto.employeeCode} belongs to a removed employee. Restore them from People → Removed, or use a different code.`
+              : `Employee code ${dto.employeeCode} is already in use`,
           );
         }
 
@@ -2142,6 +2156,256 @@ export class EmployeesService {
     return updated;
   }
 
+  /**
+   * How much of a working record this person has. Drives the delete rule:
+   * nothing here means the row was a mistake and can really go; anything here
+   * means a hard DELETE would take statutory data with it, because FOURTEEN
+   * tables CASCADE off employees.id (see migration 0057).
+   *
+   * Deliberately counts only the tables an Indian employer has to be able to
+   * produce later — attendance, punches, leave, timesheets, documents and the
+   * employment history. Emergency contacts and an unopened invitation are not
+   * "history": a mistyped row usually has both, and neither is worth keeping a
+   * ghost employee in the directory for.
+   */
+  private async historyFootprint(db: Db, tenantId: string, employeeId: string) {
+    const count = async (table: typeof attendanceRecords | typeof attendancePunches
+      | typeof leaveRequests | typeof timesheetEntries | typeof employeeDocuments) => {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(table)
+        .where(
+          and(
+            eq(table.tenant_id, tenantId),
+            eq(table.employee_id, employeeId),
+          ),
+        );
+      return row?.n ?? 0;
+    };
+    const [attendance, punches, leave, timesheets, documents] = await Promise.all([
+      count(attendanceRecords),
+      count(attendancePunches),
+      count(leaveRequests),
+      count(timesheetEntries),
+      count(employeeDocuments),
+    ]);
+    // The hire row every employee gets at creation is not history; a SECOND
+    // entry means something real happened (promotion, transfer, separation).
+    const [hist] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(employmentHistory)
+      .where(
+        and(
+          eq(employmentHistory.tenant_id, tenantId),
+          eq(employmentHistory.employee_id, employeeId),
+        ),
+      );
+    const historyRows = Math.max(0, (hist?.n ?? 0) - 1);
+    const total = attendance + punches + leave + timesheets + documents + historyRows;
+    return { attendance, punches, leave, timesheets, documents, historyRows, total };
+  }
+
+  /**
+   * What `DELETE /employees/:id` will do, without doing it — so the confirm
+   * dialog can tell the truth ("this will be deleted" vs "this will be
+   * removed but their records are kept") instead of guessing.
+   */
+  async previewRemoval(employeeId: string, tenantId: string) {
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const [emp] = await db
+        .select({ id: employees.id, first: employees.first_name, last: employees.last_name })
+        .from(employees)
+        .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+        .limit(1);
+      if (!emp) throw new NotFoundException('Employee not found');
+      const footprint = await this.historyFootprint(db, tenantId, employeeId);
+      return {
+        data: {
+          mode: footprint.total === 0 ? ('delete' as const) : ('archive' as const),
+          name: `${emp.first} ${emp.last}`.trim(),
+          ...footprint,
+        },
+      };
+    });
+  }
+
+  /**
+   * Remove an employee (founder round 21).
+   *
+   * The founder asked to be able to delete ANY employee. That is honoured, but
+   * not by handing a DELETE to the database: 14 tables cascade off
+   * employees.id, so a real delete of anyone who has worked here destroys their
+   * attendance, punches, leave, timesheets and employment history — the PF/ESI
+   * and wage-register substrate. So:
+   *
+   *   no history  -> a genuine DELETE (added by mistake; nothing to lose)
+   *   any history -> deleted_at stamped; gone from every directory read, and
+   *                  the statutory rows survive. Restorable.
+   *
+   * Either way the workspace membership is revoked, because "removed" that
+   * leaves someone able to sign in is not removed. Offboarding (`terminate`)
+   * did not do this either — a separated employee kept their login — so the
+   * revoke lives here where both paths can reach it.
+   */
+  async removeEmployee(employeeId: string, tenantId: string, actorId: string) {
+    const result = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [emp] = await db
+          .select()
+          .from(employees)
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+          .limit(1);
+        if (!emp) throw new NotFoundException('Employee not found');
+        if (emp.deleted_at) {
+          throw new BadRequestException('This employee has already been removed.');
+        }
+        // Never let an admin remove their own record and lock themselves out
+        // mid-request.
+        if (emp.user_id && emp.user_id === actorId) {
+          throw new BadRequestException('You cannot remove your own employee record.');
+        }
+
+        // Role rules, mirroring the owner-only approval rule from round 18:
+        // an admin may remove ordinary staff, but removing an OWNER or ADMIN
+        // seat is the owner's call. Derived from the membership inside the
+        // transaction, never from the client.
+        const [targetSeat] = await db
+          .select({ role: memberships.role, id: memberships.id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.employee_id, employeeId),
+            ),
+          )
+          .limit(1);
+        const [callerSeat] = await db
+          .select({ role: memberships.role })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.user_id, actorId),
+            ),
+          )
+          .limit(1);
+        if (
+          targetSeat &&
+          ['owner', 'admin'].includes(targetSeat.role) &&
+          callerSeat?.role !== 'owner'
+        ) {
+          throw new ForbiddenException(
+            'Only an owner can remove an owner or HR admin.',
+          );
+        }
+        if (targetSeat?.role === 'owner') {
+          // Never strand a workspace with nobody who can administer it.
+          const [others] = await db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, tenantId),
+                eq(memberships.role, 'owner'),
+                eq(memberships.status, 'active'),
+                ne(memberships.id, targetSeat.id),
+              ),
+            );
+          if ((others?.n ?? 0) === 0) {
+            throw new BadRequestException(
+              'This is the workspace’s only owner. Make someone else an owner first.',
+            );
+          }
+        }
+
+        const footprint = await this.historyFootprint(db, tenantId, employeeId);
+        const name = `${emp.first_name} ${emp.last_name}`.trim();
+
+        // Revoke the seat either way — a removed person must not keep a login.
+        // 'deactivated' is the membership enum's revoked state; the /me guard
+        // and the (app) layout's revoked-tenant recovery both key off it.
+        if (targetSeat) {
+          await db
+            .update(memberships)
+            .set({ status: 'deactivated', employee_id: null })
+            .where(eq(memberships.id, targetSeat.id));
+        }
+
+        if (footprint.total === 0) {
+          // Nothing behind them: the cascade fires on empty tables.
+          await db
+            .delete(employees)
+            .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
+          return { mode: 'delete' as const, name, footprint };
+        }
+
+        await db
+          .update(employees)
+          .set({ deleted_at: new Date(), updated_at: new Date() })
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
+        return { mode: 'archive' as const, name, footprint };
+      },
+      actorId,
+    );
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: actorId,
+      action: result.mode === 'delete' ? 'employee.deleted' : 'employee.archived',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      // A hard delete leaves nothing to count afterwards, so the log records
+      // what was there at the time.
+      metadata: { name: result.name, ...result.footprint },
+    });
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
+
+    return {
+      data: {
+        id: employeeId,
+        mode: result.mode,
+        name: result.name,
+        kept: result.footprint.total,
+      },
+    };
+  }
+
+  /** Undo an archive. A hard-deleted employee has nothing to restore. */
+  async restoreEmployee(employeeId: string, tenantId: string, actorId: string) {
+    const row = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [emp] = await db
+          .select()
+          .from(employees)
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+          .limit(1);
+        if (!emp) throw new NotFoundException('Employee not found');
+        if (!emp.deleted_at) return emp;
+        const [updated] = await db
+          .update(employees)
+          .set({ deleted_at: null, updated_at: new Date() })
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+          .returning();
+        return updated!;
+      },
+      actorId,
+    );
+    await this.auditService.log({
+      tenantId,
+      actorUserId: actorId,
+      action: 'employee.restored',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      // The seat is NOT restored with the record: re-inviting them is a
+      // deliberate act, not a side effect of undoing a delete.
+      metadata: { name: `${row.first_name} ${row.last_name}`.trim() },
+    });
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
+    return { data: { id: employeeId, restored: true } };
+  }
+
   async terminateEmployee(
     employeeId: string,
     dto: TerminateEmployeeDto,
@@ -2234,6 +2498,7 @@ export class EmployeesService {
         .where(
           and(
             eq(employees.tenant_id, tenantId),
+            isNull(employees.deleted_at),
             inArray(employees.status, ['active', 'on_leave', 'notice_period']),
           ),
         ),

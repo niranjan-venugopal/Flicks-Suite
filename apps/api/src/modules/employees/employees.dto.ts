@@ -19,7 +19,7 @@ import {
   IsIn,
   IsDateString,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class InviteEmployeeDto {
@@ -456,6 +456,15 @@ export class EmployeeListQueryDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'true returns the REMOVED employees (the directory’s Removed filter) instead of the live ones. Round 21.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  removed?: boolean;
 
   @ApiPropertyOptional()
   @IsNumber()

@@ -1252,6 +1252,7 @@ export class AttendanceService {
 
     const scope = [
       eq(employees.tenant_id, tenantId),
+      isNull(employees.deleted_at), // round 21 — removed staff leave the board
       eq(employees.status, 'active'),
     ];
     if (reviewerEmployeeId) {

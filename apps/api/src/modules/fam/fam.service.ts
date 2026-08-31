@@ -422,6 +422,7 @@ export class FamService {
       .where(
         and(
           eq(employees.tenant_id, tenantId),
+          isNull(employees.deleted_at), // round 21 — removed staff are not a seat
           sql`${employees.status} NOT IN ('separated', 'absconded')`,
         ),
       );
@@ -705,6 +706,7 @@ export class FamService {
       .where(
         and(
           eq(employees.tenant_id, tenantId),
+          isNull(employees.deleted_at), // round 21 — removed staff are not a seat
           sql`${employees.status} NOT IN ('separated', 'absconded')`,
         ),
       );

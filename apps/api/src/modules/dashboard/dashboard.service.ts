@@ -106,7 +106,8 @@ export class DashboardService {
             count: sql<number>`COUNT(*)::int`,
           })
           .from(employees)
-          .where(eq(employees.tenant_id, tenantId))
+          // Removed employees leave the headcount tiles (round 21).
+          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at)))
           .groupBy(employees.status),
 
         // Attendance today by status
@@ -251,7 +252,8 @@ export class DashboardService {
             exits: sql<number>`SUM(CASE WHEN ${employees.date_of_exit} IS NOT NULL AND ${employees.date_of_exit} >= ${thirtyDaysAgo} THEN 1 ELSE 0 END)::int`,
           })
           .from(employees)
-          .where(eq(employees.tenant_id, tenantId)),
+          // ...and the 30-day joiners/exits trend.
+          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at))),
 
         // Avg working hours for fully-worked days in last 30d
         tx

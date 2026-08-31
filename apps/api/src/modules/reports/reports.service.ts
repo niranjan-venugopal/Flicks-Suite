@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, eq, inArray, sql, desc, asc, count } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, desc, asc, count } from 'drizzle-orm';
 import {
   attendanceRecords,
   employees,
@@ -365,7 +365,15 @@ export class ReportsService {
     const yearStart = `${year}-01-01`;
     const yearEnd = `${year}-12-31`;
 
-    const tenantWhere = eq(employees.tenant_id, tenantId);
+    // Every employee query in this report funnels through here, so the
+    // removed-employee filter belongs here too (round 21). A removed person
+    // must not sit in headcount, attrition or the department/location splits —
+    // and an ARCHIVED one still has their attendance rows, so leaving them in
+    // would double-count against a re-hire.
+    const tenantWhere = and(
+      eq(employees.tenant_id, tenantId),
+      isNull(employees.deleted_at),
+    )!;
 
     // 1. Status counts (active / on_leave / notice_period / separated)
     const statusRows = await this.db

@@ -296,6 +296,11 @@ export const employees = pgTable(
     created_by: uuid('created_by').references(() => users.id, {
       onDelete: 'set null',
     }),
+    // 0057 — set when the employee was REMOVED but has history worth keeping
+    // (attendance, leave, timesheets, payroll). They disappear from every
+    // directory read; the statutory rows behind them survive. An employee with
+    // no history is deleted outright instead, so this stays null for them.
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('employees_tenant_code_unique').on(t.tenant_id, t.employee_code),
@@ -306,6 +311,10 @@ export const employees = pgTable(
     index('employees_tenant_id_idx').on(t.tenant_id),
     index('employees_user_id_idx').on(t.user_id),
     index('employees_status_idx').on(t.status),
+    // Mirrors 0057 so drizzle-kit never proposes dropping it.
+    index('idx_employees_tenant_live')
+      .on(t.tenant_id, t.status)
+      .where(sql`${t.deleted_at} IS NULL`),
     index('employees_department_id_idx').on(t.department_id),
     index('employees_designation_id_idx').on(t.designation_id),
     index('employees_location_id_idx').on(t.location_id),

@@ -5,7 +5,7 @@ import {
   Logger,
   Inject,
 } from '@nestjs/common';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, isNull } from 'drizzle-orm';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
 import {
@@ -528,7 +528,8 @@ export class OnboardingService {
     const [employeeCount] = await this.db
       .select({ count: employees.id })
       .from(employees)
-      .where(eq(employees.tenant_id, tenantId))
+      // A removed employee doesn't tick "you've added your first employee".
+      .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at)))
       .limit(1);
 
     const hasCompanyDetails = Boolean(

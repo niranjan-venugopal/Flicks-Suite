@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Body,
   Param,
   Query,
@@ -335,6 +336,47 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.employeesService.terminateEmployee(id, dto, user.sub, user.tenantId);
+  }
+
+  // ─── Removal (founder round 21) ───────────────────────────────────────────
+  // The owner-only rule for an owner/admin target is enforced in the SERVICE,
+  // from the membership row, not with @Roles here — the decision depends on
+  // who is being removed, not on which route was called.
+
+  @Get(':id/removal-preview')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'What removing this employee would do',
+    description:
+      'Returns mode=delete (no history — the row goes for good) or mode=archive (they have attendance/leave/timesheet/payroll history, so the record is kept and hidden), with the counts behind that answer. Drives the confirmation copy.',
+  })
+  @ApiResponse({ status: 200, description: 'Removal preview' })
+  async previewRemoval(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeesService.previewRemoval(id, user.tenantId);
+  }
+
+  @Delete(':id')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Remove an employee',
+    description:
+      'Deletes the record outright when it has no history; otherwise stamps deleted_at so the person leaves every directory while their statutory records survive. Revokes the workspace seat either way.',
+  })
+  @ApiResponse({ status: 200, description: 'Removed' })
+  async removeEmployee(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeesService.removeEmployee(id, user.tenantId, user.sub);
+  }
+
+  @Post(':id/restore')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Restore a removed employee',
+    description:
+      'Clears deleted_at. The workspace seat is NOT restored — re-invite them if they need access again.',
+  })
+  @ApiResponse({ status: 200, description: 'Restored' })
+  async restoreEmployee(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeesService.restoreEmployee(id, user.tenantId, user.sub);
   }
 
   @Get(':id/history')
