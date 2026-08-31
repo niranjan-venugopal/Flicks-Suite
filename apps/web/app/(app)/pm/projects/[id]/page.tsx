@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Modal } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { IssueComposer } from '@/components/pm/IssueComposer'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
@@ -178,9 +179,6 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   // project are offered first; a project with no linked team falls back to
   // every team the caller can see.
   const [newIssue, setNewIssue] = useState(false)
-  const [niTitle, setNiTitle] = useState('')
-  const [niMilestone, setNiMilestone] = useState('')
-  const [niTeam, setNiTeam] = useState('')
   const teamsQ = useQuery({
     queryKey: ['pm', 'teams', 'index'],
     queryFn: () => api.get<{ data: { teams: Array<{ id: string; key: string; name: string }> } }>('/api/v1/pm/teams'),
@@ -193,25 +191,6 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const teamOptions = linkedTeamIds.length
     ? linkedTeamIds.map((tid) => ({ id: tid, name: allTeams.find((t) => t.id === tid)?.name ?? 'Team' }))
     : allTeams
-  const createIssue = () => {
-    const title = niTitle.trim()
-    const teamId = niTeam || teamOptions[0]?.id
-    if (!title || !teamId) return
-    if (engine) {
-      engine.createIssue({ team_id: teamId, title, project_id: id, milestone_id: niMilestone || null })
-    } else {
-      void api
-        .post('/api/v1/pm/issues', {
-          team_id: teamId,
-          title,
-          project_id: id,
-          ...(niMilestone ? { milestone_id: niMilestone } : {}),
-        })
-        .then(invalidate)
-    }
-    setNiTitle(''); setNiMilestone(''); setNewIssue(false)
-  }
-
   // Milestone completion fraction: issues attached to it, weight = estimate ?? 1.
   const msProgress = (msId: string): number => {
     const rows = engine
@@ -436,56 +415,17 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         onConfirm={doDelete}
       />
 
-      {/* New issue — pre-linked to this project (+ optional milestone) */}
-      <Modal
+      {/* New issue — the shared composer (round B), pre-linked to this
+          project; the team picker is restricted to the project's teams. */}
+      <IssueComposer
         open={newIssue}
         onClose={() => setNewIssue(false)}
-        title="New issue"
-        sub={`Created inside ${project.name}`}
-        width={480}
-        footer={
-          <>
-            <Btn kind="ghost" onClick={() => setNewIssue(false)}>Cancel</Btn>
-            <Btn kind="primary" onClick={createIssue} disabled={!niTitle.trim() || teamOptions.length === 0}>
-              Create issue
-            </Btn>
-          </>
-        }
-      >
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div>
-            <div className="t-caption" style={{ marginBottom: 6 }}>Title</div>
-            <input
-              className="input"
-              autoFocus
-              value={niTitle}
-              onChange={(e) => setNiTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') createIssue() }}
-              placeholder="What needs to be done?"
-              maxLength={500}
-            />
-          </div>
-          {teamOptions.length > 1 && (
-            <div>
-              <div className="t-caption" style={{ marginBottom: 6 }}>Team</div>
-              <select className="input" value={niTeam || teamOptions[0]?.id} onChange={(e) => setNiTeam(e.target.value)}>
-                {teamOptions.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div>
-            <div className="t-caption" style={{ marginBottom: 6 }}>Milestone</div>
-            <select className="input" value={niMilestone} onChange={(e) => setNiMilestone(e.target.value)}>
-              <option value="">No milestone</option>
-              {milestones.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </Modal>
+        engine={engine}
+        teamId={teamOptions[0]?.id}
+        teamOptions={teamOptions}
+        projectId={id}
+        onCreated={invalidate}
+      />
     </div>
   )
 })

@@ -59,7 +59,14 @@ export default function LeadsPage() {
       <SectionHead
         title="Leads"
         sub="Web forms, API and manual adds land here — triage fast, convert or discard."
-        right={<Btn kind="primary" size="sm" icon={<Icon.plus size={14} />} onClick={() => setAddOpen(true)}>Add lead</Btn>}
+        right={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <a href="/crm/import?object=leads" style={{ textDecoration: 'none' }}>
+              <Btn kind="secondary" size="sm" icon={<Icon.upload size={13} />}>Import</Btn>
+            </a>
+            <Btn kind="primary" size="sm" icon={<Icon.plus size={14} />} onClick={() => setAddOpen(true)}>Add lead</Btn>
+          </div>
+        }
       />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 9 }}>

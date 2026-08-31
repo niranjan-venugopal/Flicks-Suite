@@ -51,6 +51,9 @@ export interface CreateIssueInput {
   project_id?: string | null;
   // Optional at-create milestone link — must belong to project_id.
   milestone_id?: string | null;
+  // Optional at-create labels (round B composer) — validated like setLabels:
+  // workspace labels or this team's.
+  label_ids?: string[];
 }
 
 export interface UpdateIssueInput {
@@ -326,6 +329,23 @@ export class PmIssuesService {
           })
           .returning();
 
+        // At-create labels (round B composer) — same validation as setLabels:
+        // workspace labels or this team's, checked in-tenant (house rule #2).
+        const labelIds = [...new Set(input.label_ids ?? [])];
+        if (labelIds.length) {
+          const rows = await tx
+            .select({ id: pmLabels.id, team_id: pmLabels.team_id })
+            .from(pmLabels)
+            .where(and(eq(pmLabels.tenant_id, tenantId), inArray(pmLabels.id, labelIds)));
+          const valid = new Set(rows.filter((l) => !l.team_id || l.team_id === team.id).map((l) => l.id));
+          const bad = labelIds.find((l) => !valid.has(l));
+          if (bad) throw new BadRequestException('label does not belong to this workspace/team');
+          await tx
+            .insert(pmIssueLabels)
+            .values(labelIds.map((l) => ({ tenant_id: tenantId, issue_id: issue!.id, label_id: l })))
+            .onConflictDoNothing();
+        }
+
         // Auto-subscribe creator + assignee (§5.1 companions).
         const subscriberIds = [userId, ...(assignee && assignee !== userId ? [assignee] : [])];
         await tx
@@ -345,6 +365,9 @@ export class PmIssuesService {
               sync: [
                 { t: 'pm_issues', id: issue!.id },
                 { t: 'pm_issue_subscribers', id: issue!.id },
+                // Issue-scoped label set — present even when empty is
+                // harmless, but only named when labels were attached.
+                ...(labelIds.length ? [{ t: 'pm_issue_labels', id: issue!.id }] : []),
               ],
             },
           },

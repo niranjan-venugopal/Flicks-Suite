@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { Suspense, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -9,6 +10,7 @@ import {
   useImportRun,
   useImportBatches,
   useImportUndo,
+  downloadImportTemplate,
   type ImportParseResult,
   type ImportDryRun,
   type ImportBatch,
@@ -24,14 +26,31 @@ const STEPS = ['Upload', 'Map columns', 'Dedupe', 'Dry run', 'Results']
 const OBJECTS: Array<['people' | 'companies' | 'leads', string]> = [['people', 'Contacts'], ['companies', 'Companies'], ['leads', 'Leads']]
 
 export default function ImportPage() {
+  // useSearchParams needs a Suspense boundary in the app router.
+  return (
+    <Suspense fallback={null}>
+      <ImportWizard />
+    </Suspense>
+  )
+}
+
+function ImportWizard() {
   const { toast } = useToast()
   const parse = useImportParse()
   const dryRun = useImportDryRun()
   const run = useImportRun()
   const fileRef = useRef<HTMLInputElement>(null)
+  // Entity pages deep-link here (round B): /crm/import?object=leads
+  const params = useSearchParams()
+  const initialObject = params.get('object')
 
   const [step, setStep] = useState(1)
-  const [object, setObject] = useState<'people' | 'companies' | 'leads'>('people')
+  const [object, setObject] = useState<'people' | 'companies' | 'leads'>(
+    initialObject === 'leads' || initialObject === 'companies' || initialObject === 'people'
+      ? initialObject
+      : 'people',
+  )
+  const [dragOver, setDragOver] = useState(false)
   const [csv, setCsv] = useState('')
   const [fileName, setFileName] = useState('')
   const [parsed, setParsed] = useState<ImportParseResult | null>(null)
@@ -88,12 +107,29 @@ export default function ImportPage() {
       </div>
 
       {step === 1 && (
-        <div className="card" style={{ textAlign: 'center', padding: '44px 24px' }}>
+        <div
+          className="card"
+          // "Drop your CSV" finally accepts a drop (round B) — the copy had
+          // promised it since C14 with no handler behind it.
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const f = e.dataTransfer.files?.[0]
+            if (f) void onFile(f)
+          }}
+          style={{
+            textAlign: 'center', padding: '44px 24px',
+            border: dragOver ? '1px dashed rgba(62,123,250,.6)' : undefined,
+            background: dragOver ? 'rgba(62,123,250,.05)' : undefined,
+          }}
+        >
           <div style={{ width: 56, height: 56, borderRadius: 16, background: 'var(--surf-2)', border: '1px solid var(--bord)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: 'var(--text-mute)' }}>
             <Icon.upload size={24} />
           </div>
           <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Drop your CSV</div>
-          <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>Up to 10,000 rows per file · header row required</div>
+          <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>Up to 10,000 rows per file · header row required · exports from Zoho or HubSpot map automatically</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
             {OBJECTS.map(([k, l]) => (
               <button key={k} onClick={() => setObject(k)} style={{ padding: '7px 14px', borderRadius: 8, cursor: 'pointer', background: object === k ? 'rgba(62,123,250,.14)' : 'var(--surf-1)', border: `1px solid ${object === k ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, color: object === k ? 'var(--blue)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
@@ -104,6 +140,14 @@ export default function ImportPage() {
           <Btn kind="primary" icon={<Icon.upload size={14} />} disabled={parse.isPending} onClick={() => fileRef.current?.click()}>
             {parse.isPending ? 'Reading…' : 'Choose file'}
           </Btn>
+          <div style={{ marginTop: 14 }}>
+            <button
+              onClick={() => void downloadImportTemplate(object)}
+              style={{ background: 'none', border: 'none', color: 'var(--blue)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              Download the {OBJECTS.find(([k]) => k === object)?.[1].toLowerCase()} template
+            </button>
+          </div>
           <PastFallback onCsv={(text) => void onFile(new File([text], 'pasted.csv'))} />
         </div>
       )}
@@ -149,7 +193,7 @@ export default function ImportPage() {
               <div><div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
             </button>
           ))}
-          <div className="t-caption" style={{ marginBottom: 14 }}>Match on: person email · company domain/name</div>
+          <div className="t-caption" style={{ marginBottom: 14 }}>Match on: person email · company domain/name · lead email. Duplicate rows inside the file are skipped.</div>
           <Btn kind="primary" size="sm" style={{ width: '100%', justifyContent: 'center' }} disabled={dryRun.isPending} onClick={() => void doDryRun()}>
             {dryRun.isPending ? 'Planning…' : 'Run dry run'}
           </Btn>
@@ -200,20 +244,64 @@ export default function ImportPage() {
       )}
 
       {step === 5 && result && (
-        <div className="card" style={{ textAlign: 'center', padding: '36px 24px' }}>
-          <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(39,210,128,.14)', color: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
-            <Icon.check size={24} />
+        <div className="card" style={{ padding: '36px 24px' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(39,210,128,.14)', color: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
+              <Icon.check size={24} />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>Import complete</div>
+            <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>
+              {result.rows_created.toLocaleString()} created · {result.rows_updated.toLocaleString()} updated · {result.rows_skipped.toLocaleString()} skipped
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <Btn kind="secondary" size="sm" onClick={() => { setStep(1); setResult(null); setPlan(null); setParsed(null); setCsv('') }}>Import another file</Btn>
+              <Btn kind="primary" size="sm" onClick={() => { window.location.href = object === 'leads' ? '/crm/leads' : object === 'companies' ? '/crm/companies' : '/crm/contacts' }}>
+                View imported records
+              </Btn>
+            </div>
           </div>
-          <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>Import complete</div>
-          <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>
-            {result.rows_created.toLocaleString()} created · {result.rows_updated.toLocaleString()} updated · {result.rows_skipped.toLocaleString()} skipped
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-            <Btn kind="secondary" size="sm" onClick={() => { setStep(1); setResult(null); setPlan(null); setParsed(null); setCsv('') }}>Import another file</Btn>
-            <Btn kind="primary" size="sm" onClick={() => { window.location.href = object === 'leads' ? '/crm/leads' : object === 'companies' ? '/crm/companies' : '/crm/contacts' }}>
-              View imported records
-            </Btn>
-          </div>
+          {/* Round B: the per-row errors were stored since C14 and never
+              shown — the founder's users just saw a smaller count. */}
+          {(result.errors?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 22, textAlign: 'left' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--coral)' }}>
+                  {result.errors!.length} row{result.errors!.length === 1 ? '' : 's'} failed
+                </span>
+                <span style={{ flex: 1 }} />
+                <Btn
+                  kind="ghost"
+                  size="sm"
+                  icon={<Icon.download size={12} />}
+                  onClick={() => {
+                    const csvOut = ['row,error', ...result.errors!.map((e) => `${e.row},"${e.error.replace(/"/g, '""')}"`)].join('\r\n')
+                    const blob = new Blob([csvOut], { type: 'text/csv;charset=utf-8' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `${(fileName || 'import').replace(/\.csv$/i, '')}-errors.csv`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                >
+                  Error report
+                </Btn>
+              </div>
+              <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                <table className="tbl">
+                  <thead><tr><th style={{ width: 70 }}>Row</th><th>Problem</th></tr></thead>
+                  <tbody>
+                    {result.errors!.slice(0, 50).map((e) => (
+                      <tr key={e.row}>
+                        <td className="t-num">{e.row}</td>
+                        <td style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{e.error}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

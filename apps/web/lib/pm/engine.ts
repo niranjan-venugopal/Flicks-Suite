@@ -258,6 +258,7 @@ export class PmSyncEngine {
     estimate?: number | string | null
     project_id?: string | null
     milestone_id?: string | null
+    due_date?: string | null
   }): string {
     const id = crypto.randomUUID()
     const team = this.store.teams.get(input.team_id)
@@ -292,7 +293,7 @@ export class PmSyncEngine {
       project_id: input.project_id ?? null,
       milestone_id: input.milestone_id ?? null,
       cycle_id: null,
-      due_date: null,
+      due_date: input.due_date ?? null,
       board_rank: rankBetween(lastBoard, null),
       backlog_rank: rankBetween(lastBacklog, null),
       source: 'manual',
@@ -320,6 +321,7 @@ export class PmSyncEngine {
         estimate: input.estimate ?? undefined,
         project_id: input.project_id ?? undefined,
         milestone_id: input.milestone_id ?? undefined,
+        due_date: input.due_date ?? undefined,
       },
       inverse: { table: 'pm_issues', id, row: null }, // rollback = remove
       enqueuedAt: Date.now(),

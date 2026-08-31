@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmBoard } from '@/components/pm/board'
+import { IssueComposer } from '@/components/pm/IssueComposer'
 import { SkeletonRows } from '@/components/states'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -272,7 +273,14 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
       </div>
 
       {saveOpen && <SaveViewInline pending={createView.isPending} onSave={(name, shared) => createView.mutate({ name, is_shared: shared })} onClose={() => setSaveOpen(false)} />}
-      {composerOpen && <QuickCreate engine={engine} teamId={team.id} onClose={() => setComposerOpen(false)} />}
+      {/* Round B: the full Linear-style composer replaces the title+priority
+          QuickCreate — description/assignee/labels/etc. at create time. */}
+      <IssueComposer
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        engine={engine}
+        teamId={team.id}
+      />
 
       {viewMode === 'board' ? (
         <PmBoard engine={engine} teamId={team.id} issues={issues} states={states} />
@@ -555,77 +563,6 @@ function RowMenu({ children, onClose }: { children: React.ReactNode; onClose: ()
   )
 }
 
-// ─── P4 quick-create composer ────────────────────────────────────────────────
-
-function QuickCreate({ engine, teamId, onClose }: { engine: PmSyncEngine; teamId: string; onClose: () => void }) {
-  const [title, setTitle] = useState('')
-  const [priority, setPriority] = useState(0)
-  const [createMore, setCreateMore] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  // §15.5 — C honors the team's default template: description/priority/
-  // estimate prefill (an explicit priority pick wins over the template's).
-  const tmpl = useQuery({
-    queryKey: ['pm', 'templates', teamId],
-    queryFn: () => api.get<{ data: Array<{ is_team_default: boolean; description_md: string | null; default_priority: number | null; default_estimate: string | null; title_pattern: string | null }> }>(`/api/v1/pm/teams/${teamId}/templates`),
-    staleTime: 120_000,
-    retry: false,
-  })
-  const defaultTmpl = (tmpl.data?.data ?? []).find((t) => t.is_team_default) ?? null
-
-  const submit = () => {
-    if (!title.trim()) return
-    engine.createIssue({
-      team_id: teamId,
-      title: title.trim(),
-      priority: priority || (defaultTmpl?.default_priority ?? 0),
-      description: defaultTmpl?.description_md ?? undefined,
-      estimate: defaultTmpl?.default_estimate ?? undefined,
-    })
-    setTitle('')
-    if (!createMore) onClose()
-    else inputRef.current?.focus()
-  }
-
-  return (
-    <div className="card" style={{ padding: 12, marginBottom: 14, border: '1px solid var(--bord-2)' }}>
-      <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
-        <input
-          ref={inputRef}
-          autoFocus
-          className="input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && title.trim()) submit()
-            if (e.key === 'Escape') onClose()
-          }}
-          placeholder="Issue title — describe the task, not a user story"
-          style={{ flex: 1, height: 38 }}
-        />
-        <div style={{ display: 'flex', gap: 3 }}>
-          {[0, 1, 2, 3, 4].map((p) => (
-            <button key={p} onClick={() => setPriority(p)} title={PM_PRIORITY_LABEL[p]}
-              style={{ width: 26, height: 26, borderRadius: 6, border: `1px solid ${priority === p ? 'var(--bord-2)' : 'var(--bord)'}`, background: priority === p ? 'var(--surf-3)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-              <PriorityGlyph p={p} size={12} />
-            </button>
-          ))}
-        </div>
-        <Btn kind="primary" size="sm" disabled={!title.trim()} onClick={submit}>Create</Btn>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}>
-        <Toggle on={createMore} onChange={setCreateMore} />
-        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)' }}>Create more</span>
-        <span style={{ flex: 1 }} />
-        <span style={{ display: 'inline-flex', gap: 10 }}>
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', display: 'inline-flex', gap: 5, alignItems: 'center' }}><Kbd>Enter</Kbd> create</span>
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', display: 'inline-flex', gap: 5, alignItems: 'center' }}><Kbd>Esc</Kbd> close</span>
-        </span>
-      </div>
-    </div>
-  )
-}
-
 // ─── REST MODE (kill-switch fallback) ────────────────────────────────────────
 
 function RestIssues() {
@@ -641,16 +578,14 @@ function RestIssues() {
     queryFn: () => api.get<{ data: PmIssueRow[] }>(`/api/v1/pm/issues?team_id=${team!.id}`),
     enabled: !!team,
   })
-  const create = useMutation({
-    mutationFn: (title: string) => api.post('/api/v1/pm/issues', { team_id: team!.id, title }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm', 'issues'] }),
-  })
   const move = useMutation({
     mutationFn: ({ id, state_id }: { id: string; state_id: string }) =>
       api.post(`/api/v1/pm/issues/${id}/move-state`, { state_id }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pm', 'issues'] }),
   })
-  const [title, setTitle] = useState('')
+  // Round B: the kill-switch view gets the same full composer as sync mode
+  // (it used to be a bare title input).
+  const [composerOpen, setComposerOpen] = useState(false)
 
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 1060, margin: '0 auto' }}>
@@ -659,15 +594,20 @@ function RestIssues() {
         sub="Create, assign and track the work for this team"
         right={<Pill tone="yellow" dot>basic view</Pill>}
       />
-      <div style={{ display: 'flex', gap: 9, marginBottom: 16 }}>
-        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && title.trim() && team) { create.mutate(title.trim()); setTitle('') } }}
-          placeholder="Issue title" style={{ flex: 1, height: 38 }} />
-        <Btn kind="primary" size="sm" disabled={!title.trim() || !team || create.isPending}
-          onClick={() => { create.mutate(title.trim()); setTitle('') }}>
-          {create.isPending ? 'Creating…' : 'Create'}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} disabled={!team} onClick={() => setComposerOpen(true)}>
+          New issue
         </Btn>
       </div>
+      {team && (
+        <IssueComposer
+          open={composerOpen}
+          onClose={() => setComposerOpen(false)}
+          engine={null}
+          teamId={team.id}
+          onCreated={() => void qc.invalidateQueries({ queryKey: ['pm', 'issues'] })}
+        />
+      )}
       {issues.isLoading ? (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <SkeletonRows rows={6} />

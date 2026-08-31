@@ -35,7 +35,14 @@ export default function CompaniesPage() {
       <SectionHead
         title="Companies"
         sub={data ? `${data.pagination.total} ${data.pagination.total === 1 ? 'company' : 'companies'}` : 'Organisations in your directory'}
-        right={<Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New company</Btn>}
+        right={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <a href="/crm/import?object=companies" style={{ textDecoration: 'none' }}>
+              <Btn kind="secondary" size="sm">Import</Btn>
+            </a>
+            <Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New company</Btn>
+          </div>
+        }
       />
 
       <FilterBar search={q} onSearch={setQ} searchPlaceholder="Search companies…" />

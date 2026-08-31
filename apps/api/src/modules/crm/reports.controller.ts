@@ -87,7 +87,14 @@ export class ReportsController {
     return this.reports.setGoal(user.tenantId, user.sub, dto);
   }
 
-  // ─── Import (C14) ────────────────────────────────────────────────────────────
+  // ─── Import (C14; round B parity) ────────────────────────────────────────────
+
+  @Get('import/template')
+  @RequireGrant('crm', 'view')
+  @ApiOperation({ summary: 'Starter CSV per entity — its columns auto-map 100% on upload' })
+  template(@Query('object') object: string) {
+    return this.imports.template(object as ImportObject);
+  }
 
   @Post('import/parse')
   @RequireGrant('crm', 'edit')

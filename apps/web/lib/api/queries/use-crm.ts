@@ -1048,6 +1048,23 @@ export interface ImportBatch {
   rows_skipped: number
   status: string
   created_at: string
+  /** Per-row failures (first 200) — stored since C14, surfaced in round B. */
+  errors?: Array<{ row: number; error: string }> | null
+}
+
+/** Starter CSV per entity — its columns auto-map 100% on upload (round B). */
+export function downloadImportTemplate(object: string) {
+  return api
+    .get<{ data: { file_name: string; csv: string } }>(`/api/v1/crm/import/template?object=${object}`)
+    .then((res) => {
+      const blob = new Blob([res.data.csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.data.file_name
+      a.click()
+      URL.revokeObjectURL(url)
+    })
 }
 
 export function useImportParse() {

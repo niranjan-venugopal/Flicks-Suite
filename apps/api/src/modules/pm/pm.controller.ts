@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
   IsIn,
@@ -61,6 +62,8 @@ class CreateIssueDto {
   @IsOptional() @IsUUID() project_id?: string;
   // At-create milestone link — must belong to project_id
   @IsOptional() @IsUUID() milestone_id?: string;
+  // At-create labels (round B composer) — workspace labels or this team's
+  @IsOptional() @IsArray() @IsUUID('all', { each: true }) label_ids?: string[];
 }
 
 class UpdateIssueDto {

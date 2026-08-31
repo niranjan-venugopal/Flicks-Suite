@@ -43,7 +43,14 @@ export default function ContactsPage() {
       <SectionHead
         title="Contacts"
         sub={data ? `${data.pagination.total} ${data.pagination.total === 1 ? 'contact' : 'contacts'}` : 'People in your directory'}
-        right={<Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New contact</Btn>}
+        right={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <a href="/crm/import?object=people" style={{ textDecoration: 'none' }}>
+              <Btn kind="secondary" size="sm">Import</Btn>
+            </a>
+            <Btn kind="primary" size="sm" icon={<Plus size={14} />} onClick={() => setModal(true)}>New contact</Btn>
+          </div>
+        }
       />
 
       <FilterBar

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { rankBetween } from '@flicks/shared/pm'
 import { Icon, avBg, initials } from '@/components/proto'
+import { IssueComposer } from '@/components/pm/IssueComposer'
 import { PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
@@ -25,8 +26,9 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
   const [dragId, setDragId] = useState<string | null>(null)
   const [overCol, setOverCol] = useState<string | null>(null)
   const [overCard, setOverCard] = useState<string | null>(null)
+  // Round B: the column's + opens the full composer, pre-picked to that
+  // state (it used to be a bare title input).
   const [addingIn, setAddingIn] = useState<string | null>(null)
-  const [addTitle, setAddTitle] = useState('')
 
   const ordered = states
     .slice()
@@ -52,12 +54,6 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
     if (issue.state_id !== stateId) engine.moveIssueState(dragId, stateId)
     engine.rankIssue(dragId, 'board_rank', rank)
     setDragId(null); setOverCol(null); setOverCard(null)
-  }
-
-  const quickAdd = (stateId: string) => {
-    if (!addTitle.trim()) return
-    engine.createIssue({ team_id: teamId, title: addTitle.trim(), state_id: stateId })
-    setAddTitle('')
   }
 
   return (
@@ -87,28 +83,11 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
                   {points}
                 </span>
               )}
-              <button onClick={() => { setAddingIn(addingIn === state.id ? null : state.id); setAddTitle('') }} title="Quick add"
+              <button onClick={() => setAddingIn(state.id)} title="New issue in this state"
                 style={{ width: 20, height: 20, borderRadius: 5, background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Icon.plus size={12} />
               </button>
             </div>
-
-            {addingIn === state.id && (
-              <div style={{ padding: '0 4px 8px' }}>
-                <input
-                  autoFocus
-                  className="input"
-                  value={addTitle}
-                  onChange={(e) => setAddTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && addTitle.trim()) quickAdd(state.id)
-                    if (e.key === 'Escape') setAddingIn(null)
-                  }}
-                  placeholder="Title + Enter"
-                  style={{ width: '100%', height: 32, fontSize: 12 }}
-                />
-              </div>
-            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 40 }}>
               {rows.map((issue) => (
@@ -123,7 +102,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
                   onDragOverCard={() => setOverCard(issue.id)}
                 />
               ))}
-              {rows.length === 0 && !addingIn && (
+              {rows.length === 0 && (
                 <div style={{ padding: '14px 8px', textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', border: '1px dashed var(--bord)', borderRadius: 9 }}>
                   Drop issues here
                 </div>
@@ -132,6 +111,13 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
           </div>
         )
       })}
+      <IssueComposer
+        open={addingIn !== null}
+        onClose={() => setAddingIn(null)}
+        engine={engine}
+        teamId={teamId}
+        stateId={addingIn ?? undefined}
+      />
     </div>
   )
 })

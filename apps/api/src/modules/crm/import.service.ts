@@ -78,7 +78,7 @@ function suggestTarget(header: string, object: ImportObject): string | null {
   if (has('industry')) return pick('industry');
   if (has('city')) return pick('city');
   if (has('country')) return pick('country_code');
-  if (has('note', 'message', 'comment')) return pick('note');
+  if (has('note', 'message', 'comment', 'description')) return pick('note');
   if (has('source', 'channel')) return pick('source');
   if (has('name') && object === 'companies') return pick('name');
   return null;
@@ -99,6 +99,43 @@ export class ImportService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
   ) {}
+
+  /**
+   * Downloadable starter file per entity (round B — HubSpot and Zoho both
+   * hand out sample import files; neither of our importers ever did).
+   * Columns are the real mapping targets, so a filled template auto-maps
+   * 100% on upload; the sample rows show the expected shapes.
+   */
+  template(object: ImportObject) {
+    this.assertObject(object);
+    const files: Record<ImportObject, { headers: string[]; samples: string[][] }> = {
+      leads: {
+        headers: ['First Name', 'Last Name', 'Email', 'Phone', 'Company', 'Lead Source', 'Description'],
+        samples: [
+          ['Asha', 'Rao', 'asha@ripenlabs.in', '+91 98400 12345', 'Ripen Labs', 'Website', 'Asked for a demo of the HRMS'],
+          ['Vikram', 'Iyer', 'vikram@meridian.co.in', '', 'Meridian Textiles', 'Referral', ''],
+        ],
+      },
+      people: {
+        headers: ['First Name', 'Last Name', 'Email', 'Phone', 'Job Title', 'Company'],
+        samples: [
+          ['Priya', 'Menon', 'priya@zenithworks.in', '+91 98110 22334', 'Head of Operations', 'Zenith Works'],
+          ['Rahul', 'Shah', 'rahul.shah@cobaltapps.com', '', 'CTO', 'Cobalt Apps'],
+        ],
+      },
+      companies: {
+        headers: ['Name', 'Domain', 'Website', 'Industry', 'Phone', 'City', 'Country'],
+        samples: [
+          ['Zenith Works', 'zenithworks.in', 'https://zenithworks.in', 'Manufacturing', '+91 44 2811 0000', 'Chennai', 'IN'],
+          ['Cobalt Apps', 'cobaltapps.com', 'https://cobaltapps.com', 'Software', '', 'Pune', 'IN'],
+        ],
+      },
+    };
+    const f = files[object];
+    const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+    const csv = [f.headers, ...f.samples].map((r) => r.map(esc).join(',')).join('\r\n') + '\r\n';
+    return { data: { file_name: `flicks-${object}-template.csv`, csv } };
+  }
 
   /** Step 1–2: parse, return headers + suggested mapping + sample rows. */
   parse(object: ImportObject, csvText: string, fileName?: string) {
@@ -270,6 +307,7 @@ export class ImportService {
 
     const personByEmail = new Map<string, string>();
     const companyByKey = new Map<string, string>();
+    const leadByEmail = new Map<string, string>();
     if (object === 'people' && emails.length) {
       const found = await tx.select({ id: directoryPeople.id, email: directoryPeople.email }).from(directoryPeople)
         .where(and(inArray(sql`lower(${directoryPeople.email}::text)`, emails), isNull(directoryPeople.deleted_at)));
@@ -283,12 +321,35 @@ export class ImportService {
         companyByKey.set(`n:${f.name.toLowerCase()}`, f.id);
       }
     }
+    // Round B — leads were NEVER deduped: this branch simply didn't exist, so
+    // the Step-3 strategy screen was a no-op for the most-imported entity and
+    // re-uploading a leads file silently doubled every lead (Zoho and HubSpot
+    // both match leads on email). Discarded leads don't block a re-import.
+    if (object === 'leads' && emails.length) {
+      const found = await tx.select({ id: leads.id, email: leads.email }).from(leads)
+        .where(and(inArray(sql`lower(${leads.email}::text)`, emails), sql`${leads.status} <> 'discarded'`));
+      for (const f of found) if (f.email) leadByEmail.set(f.email.toLowerCase(), f.id);
+    }
+
+    // Within-file duplicates (both competitors skip these): the FIRST row
+    // wins, later rows carrying the same key are skipped whatever the
+    // strategy — "update" repeatedly rewriting one record row-by-row is
+    // never what anyone means by importing a file.
+    const seenInFile = new Set<string>();
 
     return values.map((v, i) => {
       const row = i + 2; // 1-based + header
+      const fileKey =
+        object === 'companies'
+          ? (v.domain?.toLowerCase().replace(/^www\./, '') || v.name?.toLowerCase() || '')
+          : v.email?.toLowerCase() || '';
+      const dupInFile = fileKey ? seenInFile.has(fileKey) : false;
+      if (fileKey) seenInFile.add(fileKey);
+
       if (object === 'people') {
         if (!v.first_name && !v.email) return { row, action: 'error' as const, reason: 'needs a name or email', values: v };
         if (v.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) return { row, action: 'error' as const, reason: 'invalid email', values: v };
+        if (dupInFile) return { row, action: 'skip' as const, reason: 'duplicate in file', values: v };
         const match = v.email ? personByEmail.get(v.email.toLowerCase()) : undefined;
         if (match) {
           if (strategy === 'skip') return { row, action: 'skip' as const, reason: 'email match', values: v, existing_id: match };
@@ -298,6 +359,7 @@ export class ImportService {
       }
       if (object === 'companies') {
         if (!v.name) return { row, action: 'error' as const, reason: 'company name required', values: v };
+        if (dupInFile) return { row, action: 'skip' as const, reason: 'duplicate in file', values: v };
         const domain = v.domain?.toLowerCase().replace(/^www\./, '');
         const match = (domain && companyByKey.get(`d:${domain}`)) || companyByKey.get(`n:${v.name.toLowerCase()}`);
         if (match) {
@@ -309,6 +371,12 @@ export class ImportService {
       // leads
       if (!v.first_name && !v.email) return { row, action: 'error' as const, reason: 'needs a name or email', values: v };
       if (v.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) return { row, action: 'error' as const, reason: 'invalid email', values: v };
+      if (dupInFile) return { row, action: 'skip' as const, reason: 'duplicate in file', values: v };
+      const leadMatch = v.email ? leadByEmail.get(v.email.toLowerCase()) : undefined;
+      if (leadMatch) {
+        if (strategy === 'skip') return { row, action: 'skip' as const, reason: 'email match', values: v, existing_id: leadMatch };
+        if (strategy === 'update') return { row, action: 'update' as const, reason: 'email match', values: v, existing_id: leadMatch };
+      }
       return { row, action: 'create' as const, values: v };
     });
   }
@@ -369,6 +437,16 @@ export class ImportService {
 
   private async writeLead(tx: Db, tenantId: string, batchId: string, p: RowPlan) {
     const v = p.values;
+    if (p.action === 'update' && p.existing_id) {
+      const patch: Record<string, unknown> = { updated_at: new Date() };
+      if (v.first_name) patch.first_name = v.first_name;
+      if (v.last_name) patch.last_name = v.last_name;
+      if (v.company_name) patch.company_name = v.company_name;
+      if (v.phone) patch.phone = v.phone;
+      if (v.note) patch.note = v.note;
+      await tx.update(leads).set(patch).where(and(eq(leads.id, p.existing_id), eq(leads.tenant_id, tenantId)));
+      return;
+    }
     await tx.insert(leads).values({
       tenant_id: tenantId,
       first_name: v.first_name || v.email!.split('@')[0]!,
