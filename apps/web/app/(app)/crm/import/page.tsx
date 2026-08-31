@@ -23,7 +23,34 @@ import {
 // ─────────────────────────────────────────────────────────
 
 const STEPS = ['Upload', 'Map columns', 'Dedupe', 'Dry run', 'Results']
-const OBJECTS: Array<['people' | 'companies' | 'leads', string]> = [['people', 'Contacts'], ['companies', 'Companies'], ['leads', 'Leads']]
+// 'all' (round C): one combined file — a Type column decides contact vs lead
+// per row, and company columns build the contact's company in the directory.
+type WizardObject = 'people' | 'companies' | 'leads' | 'all'
+const OBJECTS: Array<[WizardObject, string]> = [['all', 'One file (everything)'], ['people', 'Contacts'], ['companies', 'Companies'], ['leads', 'Leads']]
+
+/**
+ * .xlsx → CSV in the browser (round C — "when the client has their own
+ * excel"). The API contract stays CSV-only; the parser is dynamically imported
+ * so the wizard's normal bundle never carries it. First sheet only. Legacy
+ * .xls (pre-2007 BIFF) is not supported — Excel's own "Save As → .xlsx" is
+ * the escape hatch, and the accept filter doesn't offer .xls.
+ */
+async function excelToCsv(f: File): Promise<string> {
+  const { readSheet } = await import('read-excel-file/browser')
+  const rows = await readSheet(f)
+  const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s)
+  return rows
+    .map((r) =>
+      r
+        .map((cell) => {
+          if (cell == null) return ''
+          if (cell instanceof Date) return cell.toISOString().slice(0, 10)
+          return esc(String(cell))
+        })
+        .join(','),
+    )
+    .join('\r\n')
+}
 
 export default function ImportPage() {
   // useSearchParams needs a Suspense boundary in the app router.
@@ -45,10 +72,10 @@ function ImportWizard() {
   const initialObject = params.get('object')
 
   const [step, setStep] = useState(1)
-  const [object, setObject] = useState<'people' | 'companies' | 'leads'>(
-    initialObject === 'leads' || initialObject === 'companies' || initialObject === 'people'
+  const [object, setObject] = useState<WizardObject>(
+    initialObject === 'leads' || initialObject === 'companies' || initialObject === 'people' || initialObject === 'all'
       ? initialObject
-      : 'people',
+      : 'all',
   )
   const [dragOver, setDragOver] = useState(false)
   const [csv, setCsv] = useState('')
@@ -56,12 +83,14 @@ function ImportWizard() {
   const [parsed, setParsed] = useState<ImportParseResult | null>(null)
   const [mapping, setMapping] = useState<Record<string, string>>({})
   const [strategy, setStrategy] = useState<'skip' | 'update' | 'create'>('update')
+  // 'all' runs: what a row with a blank/unmapped Type column becomes.
+  const [fallbackType, setFallbackType] = useState<'contact' | 'lead'>('contact')
   const [plan, setPlan] = useState<ImportDryRun | null>(null)
   const [result, setResult] = useState<ImportBatch | null>(null)
 
   const onFile = async (f: File) => {
-    const text = await f.text()
     try {
+      const text = /\.xlsx$/i.test(f.name) ? await excelToCsv(f) : await f.text()
       const res = await parse.mutateAsync({ object, csv: text, file_name: f.name })
       setCsv(text)
       setFileName(f.name)
@@ -75,7 +104,7 @@ function ImportWizard() {
 
   const doDryRun = async () => {
     try {
-      const res = await dryRun.mutateAsync({ object, csv, mapping, strategy, file_name: fileName })
+      const res = await dryRun.mutateAsync({ object, csv, mapping, strategy, file_name: fileName, fallback_type: object === 'all' ? fallbackType : undefined })
       setPlan(res.data)
       setStep(4)
     } catch (err) {
@@ -85,7 +114,7 @@ function ImportWizard() {
 
   const doRun = async () => {
     try {
-      const res = await run.mutateAsync({ object, csv, mapping, strategy, file_name: fileName })
+      const res = await run.mutateAsync({ object, csv, mapping, strategy, file_name: fileName, fallback_type: object === 'all' ? fallbackType : undefined })
       setResult(res.data)
       setStep(5)
     } catch (err) {
@@ -128,14 +157,14 @@ function ImportWizard() {
           <div style={{ width: 56, height: 56, borderRadius: 16, background: 'var(--surf-2)', border: '1px solid var(--bord)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: 'var(--text-mute)' }}>
             <Icon.upload size={24} />
           </div>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Drop your CSV</div>
-          <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>Up to 10,000 rows per file · header row required · exports from Zoho or HubSpot map automatically</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Drop your CSV or Excel file</div>
+          <div className="t-mute" style={{ fontSize: 12, marginBottom: 16 }}>.csv or .xlsx · up to 10,000 rows per file · header row required · exports from Zoho or HubSpot map automatically</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
             {OBJECTS.map(([k, l]) => (
               <button key={k} onClick={() => setObject(k)} style={{ padding: '7px 14px', borderRadius: 8, cursor: 'pointer', background: object === k ? 'rgba(62,123,250,.14)' : 'var(--surf-1)', border: `1px solid ${object === k ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, color: object === k ? 'var(--blue)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
             ))}
           </div>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+          <input ref={fileRef} type="file" accept=".csv,.xlsx,text/csv" style={{ display: 'none' }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void onFile(f) }} />
           <Btn kind="primary" icon={<Icon.upload size={14} />} disabled={parse.isPending} onClick={() => fileRef.current?.click()}>
             {parse.isPending ? 'Reading…' : 'Choose file'}
@@ -145,7 +174,7 @@ function ImportWizard() {
               onClick={() => void downloadImportTemplate(object)}
               style={{ background: 'none', border: 'none', color: 'var(--blue)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
             >
-              Download the {OBJECTS.find(([k]) => k === object)?.[1].toLowerCase()} template
+              Download the {object === 'all' ? 'combined' : OBJECTS.find(([k]) => k === object)?.[1].toLowerCase()} template
             </button>
           </div>
           <PastFallback onCsv={(text) => void onFile(new File([text], 'pasted.csv'))} />
@@ -194,6 +223,20 @@ function ImportWizard() {
             </button>
           ))}
           <div className="t-caption" style={{ marginBottom: 14 }}>Match on: person email · company domain/name · lead email. Duplicate rows inside the file are skipped.</div>
+          {object === 'all' && (
+            <div style={{ marginBottom: 14 }}>
+              <div className="t-h3" style={{ fontSize: 12.5, marginBottom: 8 }}>Rows without a Type column become…</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {([['contact', 'Contacts', 'saved people, linked to their company'], ['lead', 'Leads', 'raw prospects for the leads queue']] as const).map(([k, l, s]) => (
+                  <button key={k} onClick={() => setFallbackType(k)} style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: fallbackType === k ? 'rgba(62,123,250,.08)' : 'var(--surf-1)', border: `1px solid ${fallbackType === k ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
+                    <span style={{ width: 15, height: 15, borderRadius: '50%', flexShrink: 0, marginTop: 1, border: `4.5px solid ${fallbackType === k ? 'var(--blue)' : 'var(--bord-2)'}` }} />
+                    <div><div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
+                  </button>
+                ))}
+              </div>
+              <div className="t-caption" style={{ marginTop: 6 }}>A Type value of Contact or Lead on the row always wins; anything else shows as a row error in the dry run.</div>
+            </div>
+          )}
           <Btn kind="primary" size="sm" style={{ width: '100%', justifyContent: 'center' }} disabled={dryRun.isPending} onClick={() => void doDryRun()}>
             {dryRun.isPending ? 'Planning…' : 'Run dry run'}
           </Btn>
@@ -255,6 +298,7 @@ function ImportWizard() {
             </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
               <Btn kind="secondary" size="sm" onClick={() => { setStep(1); setResult(null); setPlan(null); setParsed(null); setCsv('') }}>Import another file</Btn>
+              {/* 'all' lands on Contacts — the leads it made are one click away. */}
               <Btn kind="primary" size="sm" onClick={() => { window.location.href = object === 'leads' ? '/crm/leads' : object === 'companies' ? '/crm/companies' : '/crm/contacts' }}>
                 View imported records
               </Btn>

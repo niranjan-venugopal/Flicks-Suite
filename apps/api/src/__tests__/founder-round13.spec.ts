@@ -66,7 +66,7 @@ const pmNotifications = new NotificationsService(
   new ConfigService(),
   emitter,
 );
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, pmNotifications, visibility);
 

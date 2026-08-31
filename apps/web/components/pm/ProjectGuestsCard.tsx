@@ -85,7 +85,7 @@ export function ProjectGuestsCard({ projectId, leadUserId }: { projectId: string
             key={g.userId}
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}
           >
-            <PmAv name={g.fullName ?? g.email} size={18} />
+            <PmAv name={g.fullName ?? g.email} src={g.avatarUrl} size={18} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{

@@ -288,7 +288,9 @@ export class WorkflowsService {
             const target = resolveUser(action.target);
             if (!target) throw new Error('nobody to notify');
             const link = ctx.deal_id ? `/crm/deals/${ctx.deal_id as string}` : ctx.lead_id ? '/crm/leads' : '/crm';
-            await this.notifications.createInAppNotification(
+            // Detached (round C): never throws at source, so the awaited
+            // version couldn't fail this step either — it only added latency.
+            void this.notifications.createInAppNotification(
               target,
               'crm.workflow.notify',
               action.message?.slice(0, 300) || `Workflow “${wf.name}” fired`,

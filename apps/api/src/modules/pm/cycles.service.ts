@@ -297,10 +297,10 @@ export class PmCyclesService {
       for (const l of teamLeads) recipients.add(l.user_id);
       for (const i of returned) if (i.assignee_user_id) recipients.add(i.assignee_user_id);
       const msg = `${returned.length} issue${returned.length === 1 ? '' : 's'} didn't make Cycle ${cycle.number} — re-plan or leave in backlog.`;
+      // Detached loop (round C): the whole fan-out is best-effort and never
+      // throws at source; the cycle-close CTA shouldn't wait per recipient.
       for (const uid of recipients) {
-        await this.notifications
-          .createInAppNotification(uid, 'pm.cycle.review', msg, '/pm/cycle', team.tenant_id)
-          .catch(() => undefined);
+        void this.notifications.createInAppNotification(uid, 'pm.cycle.review', msg, '/pm/cycle', team.tenant_id);
       }
     }
   }

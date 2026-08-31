@@ -427,6 +427,8 @@ export class OnboardingService {
     // platform-global table (no tenant_id) — the is_platform_admin predicate
     // IS the scope for this service-role read. Best-effort: a notification
     // hiccup must never fail signup (house rule 6).
+    // Stays awaited (round C looked at detaching it): signup fires once per
+    // tenant ever, and the round-11 spec pins the synchronous fan-out.
     try {
       const platformAdmins = await this.db
         .select({ id: users.id })
@@ -434,16 +436,14 @@ export class OnboardingService {
         .where(and(eq(users.is_platform_admin, true), eq(users.status, 'active')));
       await Promise.all(
         platformAdmins.map((a) =>
-          this.notificationsService
-            .createInAppNotification(
-              a.id,
-              'tenant.signup',
-              `New workspace signup: ${tenant.name} (${tenant.slug}) — pending verification.`,
-              `/fam/verify?tenant=${tenant.id}`,
-              null,
-              { groupKey: `tenant.signup:${tenant.id}` },
-            )
-            .catch(() => undefined),
+          this.notificationsService.createInAppNotification(
+            a.id,
+            'tenant.signup',
+            `New workspace signup: ${tenant.name} (${tenant.slug}) — pending verification.`,
+            `/fam/verify?tenant=${tenant.id}`,
+            null,
+            { groupKey: `tenant.signup:${tenant.id}` },
+          ),
         ),
       );
     } catch (e) {

@@ -5,6 +5,7 @@ import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { MediaService } from '../media/media.service';
 import { MembersPublicService } from '../members/public';
 
 /**
@@ -23,6 +24,7 @@ export class PmGuestsService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
     private readonly membersPublic: MembersPublicService,
+    private readonly media: MediaService,
   ) {}
 
   private async loadProject(tx: Db, tenantId: string, id: string) {
@@ -146,6 +148,7 @@ export class PmGuestsService {
           email: users.email,
           fullName: users.full_name,
           avatarUrl: users.avatar_url,
+          avatarKey: users.avatar_key,
           role: memberships.role,
           status: memberships.status,
           invitedAt: memberships.invited_at,
@@ -168,7 +171,15 @@ export class PmGuestsService {
         )
         .orderBy(pmProjectMembers.created_at);
     });
-    return { data: rows, total: rows.length };
+    // Sign outside the tenant transaction (round C — the raw key rendered as
+    // a broken image / initials fallback on the guests card).
+    const data = await Promise.all(
+      rows.map(async ({ avatarKey, ...r }) => ({
+        ...r,
+        avatarUrl: await this.media.servedUrl(avatarKey ?? null, r.avatarUrl, 64),
+      })),
+    );
+    return { data, total: data.length };
   }
 
   async revoke(

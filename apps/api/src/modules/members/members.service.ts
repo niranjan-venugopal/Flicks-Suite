@@ -469,6 +469,8 @@ export class MembersService {
         })
         .returning(),
     );
+    // The guard caches contexts for 60s (round C) — a grant change bites now.
+    this.moduleAccess.invalidateMembership(tenantId, membershipId);
 
     await this.auditService.log({
       tenantId,
@@ -507,6 +509,8 @@ export class MembersService {
           ),
         ),
     );
+    // Same 60s guard cache — a reset-to-role-default bites now.
+    this.moduleAccess.invalidateMembership(tenantId, membershipId);
     await this.auditService.log({
       tenantId,
       actorUserId,
@@ -647,7 +651,7 @@ export class MembersService {
     membershipId: string,
     inputs: GrantInputDto[],
   ) {
-    return this.db.withTenant(tenantId, async (tx) => {
+    const rows = await this.db.withTenant(tenantId, async (tx) => {
       await tx
         .delete(membershipGrants)
         .where(eq(membershipGrants.membership_id, membershipId));
@@ -666,6 +670,9 @@ export class MembersService {
         )
         .returning();
     });
+    // The guard caches contexts for 60s (round C) — a grant change bites now.
+    this.moduleAccess.invalidateMembership(tenantId, membershipId);
+    return rows;
   }
 
   private scopeSummary(

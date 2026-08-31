@@ -48,7 +48,7 @@ const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const notificationsSvc = new NotificationsService(db as never, dbAdmin as never, new ConfigService(), emitter);
 const visibility = new PmVisibilityService(dbSvc);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
 const imports = new ImportService(dbSvc, audit, { publish: jest.fn(async () => 'evt') } as never);
 

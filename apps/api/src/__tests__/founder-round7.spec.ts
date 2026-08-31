@@ -53,12 +53,12 @@ import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const rid = () => crypto.randomBytes(4).toString('hex');
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 const audit = new AuditService(db as never, dbAdmin as never, dbSvc);
 const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const visibility = new PmVisibilityService(dbSvc);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const notificationsSvc = new NotificationsService(
   db as never,
   dbAdmin as never,
@@ -94,6 +94,7 @@ const guestsSvc = new PmGuestsService(
   audit,
   domainEventsSvc,
   new MembersPublicService(membersSvc),
+  { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
 );
 
 let tenantId: string;

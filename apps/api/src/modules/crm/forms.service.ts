@@ -315,9 +315,9 @@ export class FormsService {
     });
     if (owner) {
       const who = [nameParts[0], values.company ? `@ ${values.company}` : ''].filter(Boolean).join(' ');
-      await this.notifications
-        .createInAppNotification(owner, 'crm.lead.assigned', `New lead assigned to you: ${who || 'form submission'}`, '/crm/leads', form.tenant_id)
-        .catch(() => undefined); // best-effort
+      // Detached (round C): best-effort by contract, never throws at source.
+      void this.notifications
+        .createInAppNotification(owner, 'crm.lead.assigned', `New lead assigned to you: ${who || 'form submission'}`, '/crm/leads', form.tenant_id);
       // Speed-to-lead follow-up: every assigned form lead gets a "Call within
       // 1h" task on the owner's plate (the C8 loop), so capture always ends
       // with a next step. Best-effort — a task hiccup must not fail the

@@ -125,6 +125,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
               teamIds={store.projectTeams.get(p.id) ?? []}
               teams={store.teams as never}
               leadName={p.lead_user_id ? store.users.get(p.lead_user_id)?.name ?? '' : ''}
+              leadAvatarUrl={p.lead_user_id ? store.users.get(p.lead_user_id)?.avatar_url ?? null : null}
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
               onDelete={
                 canDeleteProject(currentUser?.role, p.lead_user_id, me)
@@ -172,12 +173,13 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
   )
 })
 
-function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen, onDelete }: {
+function ProjectRow({ p, progress, teamIds, teams, leadName, leadAvatarUrl, onOpen, onDelete }: {
   p: PmProjectRow
   progress: { scope: number; started: number; done: number }
   teamIds: string[]
   teams: Map<string, never>
   leadName: string
+  leadAvatarUrl: string | null
   onOpen: () => void
   /** Omitted when the viewer may not delete this project — see canDeleteProject. */
   onDelete?: () => void
@@ -205,7 +207,7 @@ function ProjectRow({ p, progress, teamIds, teams, leadName, onOpen, onDelete }:
       <span style={{ fontSize: 10, fontWeight: 700, color: overdue ? 'var(--yellow)' : 'var(--text-faint)', width: 62, textAlign: 'right' }}>
         {p.target_date ? new Date(p.target_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
       </span>
-      {leadName && <PmAv name={leadName} size={18} />}
+      {leadName && <PmAv name={leadName} src={leadAvatarUrl} size={18} />}
       {/* stopPropagation: the whole row is the "open project" click target
           (crm/companies/page.tsx does exactly this for its trash button). */}
       {onDelete && (
@@ -273,6 +275,10 @@ function RestProjects() {
     () => new Map((teamsQ.data?.data.teams ?? []).map((t) => [t.id, t])),
     [teamsQ.data],
   )
+  const usersById = useMemo(
+    () => new Map((usersQ.data?.data ?? []).map((u) => [u.id, u])),
+    [usersQ.data],
+  )
   const d = projectsQ.data?.data
   // REST mode has no local graph, so this is a real round-trip with a spinner.
   const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
@@ -308,7 +314,8 @@ function RestProjects() {
               progress={d.progress[p.id] ?? { scope: 0, started: 0, done: 0 }}
               teamIds={d.teams[p.id] ?? []}
               teams={teamMap as never}
-              leadName=""
+              leadName={p.lead_user_id ? usersById.get(p.lead_user_id)?.name ?? '' : ''}
+              leadAvatarUrl={p.lead_user_id ? usersById.get(p.lead_user_id)?.avatar_url ?? null : null}
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
               onDelete={
                 canDeleteProject(currentUser?.role, p.lead_user_id, currentUser?.id ?? '')

@@ -4,7 +4,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { and, eq, ilike, or, desc, sql, asc, isNull, isNotNull } from 'drizzle-orm';
+import { and, eq, ilike, inArray, or, desc, sql, asc, isNull, isNotNull } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -17,6 +17,7 @@ import {
   tenants,
   invoicingSettings,
   creditNotes,
+  items,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
@@ -307,6 +308,7 @@ export class InvoicesService {
           ...computed.lines[i]!,
         })),
       );
+      await this.bumpItemUsage(tx, tenantId, dto.line_items);
       return inv!;
     });
 
@@ -459,6 +461,7 @@ export class InvoicesService {
             ...computed.lines[i]!,
           })),
         );
+        await this.bumpItemUsage(tx, tenantId, dto.line_items);
       } else {
         // Lines unchanged but treatment/discount/TDS may have moved — refresh
         // the stored per-line tax columns.
@@ -486,6 +489,27 @@ export class InvoicesService {
       afterState: updated as unknown as Record<string, unknown>,
     });
     return { data: updated };
+  }
+
+  /**
+   * Catalogue items picked onto a saved invoice get usage stats (round C —
+   * the columns existed but were never written; the Items page can now sort
+   * by what actually gets billed).
+   */
+  private async bumpItemUsage(
+    tx: Db,
+    tenantId: string,
+    lineItems: Array<{ item_id?: string | null }>,
+  ) {
+    const ids = [...new Set(lineItems.map((l) => l.item_id).filter((x): x is string => !!x))];
+    if (!ids.length) return;
+    await tx
+      .update(items)
+      .set({
+        usage_count: sql`coalesce(${items.usage_count}, 0) + 1`,
+        last_used_at: new Date(),
+      })
+      .where(and(eq(items.tenant_id, tenantId), inArray(items.id, ids)));
   }
 
   // ─── duplicate ─────────────────────────────────────────────────────────────

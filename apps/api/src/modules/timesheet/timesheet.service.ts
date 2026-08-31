@@ -646,21 +646,16 @@ export class TimesheetService {
     }
 
     // In-app notification for the approver — surfaces in the Topbar bell
-    // even when the email lands in spam or is disabled.
+    // even when the email lands in spam or is disabled. Detached (round C):
+    // createInAppNotification never throws at source.
     if (approver?.userId) {
-      try {
-        await this.notificationsService.createInAppNotification(
-          approver.userId,
-          'timesheet.submitted',
-          `${submitterName} submitted a timesheet for ${period.period_start}.`,
-          '/team/timesheets',
-          tenantId,
-        );
-      } catch (e) {
-        this.logger.warn(
-          `Could not create timesheet-submitted in-app notification: ${(e as Error).message}`,
-        );
-      }
+      void this.notificationsService.createInAppNotification(
+        approver.userId,
+        'timesheet.submitted',
+        `${submitterName} submitted a timesheet for ${period.period_start}.`,
+        '/team/timesheets',
+        tenantId,
+      );
     }
 
     await this.auditService.log({
@@ -847,19 +842,15 @@ export class TimesheetService {
           : dto.action === 'reject'
             ? 'rejected'
             : 'sent back for changes';
-      try {
-        await this.notificationsService.createInAppNotification(
-          ownerUser.userId,
-          `timesheet.${dto.action}`,
-          `Your timesheet for ${period.period_start} was ${verb}.`,
-          '/timesheets',
-          period.tenant_id,
-        );
-      } catch (e) {
-        this.logger.warn(
-          `Could not create timesheet-review in-app notification: ${(e as Error).message}`,
-        );
-      }
+      // Detached (round C): createInAppNotification never throws at source
+      // and the reviewer's CTA shouldn't wait for the inbox row.
+      void this.notificationsService.createInAppNotification(
+        ownerUser.userId,
+        `timesheet.${dto.action}`,
+        `Your timesheet for ${period.period_start} was ${verb}.`,
+        '/timesheets',
+        period.tenant_id,
+      );
 
       if (ownerUser.email) {
         const tpl =

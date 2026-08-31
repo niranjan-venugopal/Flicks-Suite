@@ -663,7 +663,7 @@ export const importBatches = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     tenant_id: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
-    object_type: text('object_type').notNull(), // people|companies|leads
+    object_type: text('object_type').notNull(), // people|companies|leads|all (+ pm_issues|pm_projects)
     file_name: text('file_name'),
     rows_read: integer('rows_read').notNull().default(0),
     rows_created: integer('rows_created').notNull().default(0),

@@ -166,7 +166,9 @@ export class ActivitiesService {
       userId,
     ).then(async (res) => {
       // Outside the tx: ping the assignee when it isn't the creator (DND-aware).
-      await this.pingAssignee(tenantId, res.data.assignee_user_id, userId, res.data);
+      // Detached (round C): the ping is best-effort by contract; the activity
+      // CTA shouldn't wait on a presence lookup + inbox write.
+      void this.pingAssignee(tenantId, res.data.assignee_user_id, userId, res.data);
       return res;
     });
   }

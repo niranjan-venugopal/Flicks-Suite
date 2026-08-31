@@ -8,6 +8,7 @@ import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/componen
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmBoard } from '@/components/pm/board'
 import { IssueComposer } from '@/components/pm/IssueComposer'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SkeletonRows } from '@/components/states'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -68,6 +69,8 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
   const [menu, setMenu] = useState<{ kind: 'state' | 'assignee'; issueId: string } | null>(null)
   const [bulkMenu, setBulkMenu] = useState<'state' | 'assignee' | null>(null)
   const [saveOpen, setSaveOpen] = useState(false)
+  // Round C: per-row delete behind one hoisted confirm.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const team = store.teamList()[0]
   const states = team ? store.statesForTeam(team.id) : []
@@ -282,6 +285,22 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
         teamId={team.id}
       />
 
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        onClose={() => setConfirmDeleteId(null)}
+        title="Delete issue"
+        body={(() => {
+          const row = confirmDeleteId ? store.issues.get(confirmDeleteId) : null
+          return `“${team.key}-${row?.number ?? ''} · ${row?.title ?? ''}” moves to Recently deleted — restorable for 30 days from Settings → Workspace.`
+        })()}
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => {
+          if (confirmDeleteId) engine.deleteIssue(confirmDeleteId)
+          setConfirmDeleteId(null)
+        }}
+      />
+
       {viewMode === 'board' ? (
         <PmBoard engine={engine} teamId={team.id} issues={issues} states={states} />
       ) : (
@@ -311,6 +330,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
                     openMenu={(kind) => setMenu({ kind, issueId: issue.id })}
                     closeMenu={() => setMenu(null)}
                     states={states}
+                    onDelete={() => setConfirmDeleteId(issue.id)}
                   />
                 ))}
               </div>
@@ -445,7 +465,7 @@ function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; s
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
-const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onOpen, onToggleSel, menu, openMenu, closeMenu, states }: {
+const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onOpen, onToggleSel, menu, openMenu, closeMenu, states, onDelete }: {
   issue: PmIssueRow
   state: PmStateRow
   teamKey: string
@@ -460,6 +480,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
   openMenu: (kind: 'state' | 'assignee') => void
   closeMenu: () => void
   states: PmStateRow[]
+  onDelete: () => void
 }) {
   const store = engine.store
   const assignee = issue.assignee_user_id ? store.users.get(issue.assignee_user_id) : null
@@ -525,6 +546,15 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
               <StateGlyph cat={s.category} size={12} /> {s.name}
             </button>
           ))}
+          {/* Round C: delete finally has a UI door (round 20 built the
+              machinery — Recently deleted, restore — with no caller). */}
+          <div style={{ height: 1, background: 'var(--bord)', margin: '4px 0' }} />
+          <button
+            onClick={(e) => { e.stopPropagation(); closeMenu(); onDelete() }}
+            style={{ ...menuRowStyle(false), color: 'var(--coral)' }}
+          >
+            <Icon.trash size={12} /> Delete issue…
+          </button>
         </RowMenu>
       )}
       {menu === 'assignee' && (
@@ -567,6 +597,7 @@ function RowMenu({ children, onClose }: { children: React.ReactNode; onClose: ()
 
 function RestIssues() {
   const qc = useQueryClient()
+  const router = useRouter()
   const teams = useQuery({
     queryKey: ['pm', 'teams'],
     queryFn: () => api.get<{ data: { teams: Array<{ id: string; key: string; name: string }>; states: PmStateRow[] } }>('/api/v1/pm/teams'),
@@ -618,12 +649,17 @@ function RestIssues() {
             const st = states.find((s) => s.id === i.state_id)
             const next = states[(states.findIndex((s) => s.id === i.state_id) + 1) % Math.max(states.length, 1)]
             return (
-              <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, padding: '0 12px', borderBottom: idx < arr.length - 1 ? '1px solid var(--bord)' : 'none' }}>
+              // Round C: the row opens the detail page — REST tenants had no
+              // path into it at all (rows were plain, unclickable divs).
+              <div key={i.id} onClick={() => router.push(`/pm/issues/${i.id}`)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, padding: '0 12px', borderBottom: idx < arr.length - 1 ? '1px solid var(--bord)' : 'none', cursor: 'pointer', transition: 'background .12s ease-out' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
                 {st && <StateGlyph cat={st.category} size={13} />}
                 <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58 }}>{team?.key}-{i.number}</span>
                 <PriorityGlyph p={i.priority} size={13} />
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>{i.title}</span>
-                {next && <Btn kind="ghost" size="sm" disabled={move.isPending} onClick={() => move.mutate({ id: i.id, state_id: next.id })}>Next state</Btn>}
+                {next && <Btn kind="ghost" size="sm" disabled={move.isPending} onClick={(e) => { e.stopPropagation(); move.mutate({ id: i.id, state_id: next.id }) }}>Next state</Btn>}
               </div>
             )
           })}

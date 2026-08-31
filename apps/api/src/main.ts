@@ -9,6 +9,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './core/common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import helmet from 'helmet';
 
 async function bootstrap() {
@@ -88,6 +89,12 @@ async function bootstrap() {
 
   // Cookie parser
   app.use(cookieParser());
+
+  // Gzip responses (round C). The PM sync bootstrap and detail payloads are
+  // hundreds of KB of highly repetitive JSON — compression cuts them ~5-10x
+  // for clients on Indian mobile links. Default threshold (1kb) leaves tiny
+  // CTA responses untouched.
+  app.use(compression());
 
   // Global prefix — /healthz and /readyz stay at the root so monitor/probe URLs
   // are clean (e.g. https://api.flickssuite.com/healthz). The public API

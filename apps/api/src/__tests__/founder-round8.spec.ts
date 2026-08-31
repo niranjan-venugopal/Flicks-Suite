@@ -73,7 +73,7 @@ const media = {
 } as unknown as MediaService;
 
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 const emitter = new EventEmitter2();
 
 const employeesService = new EmployeesService(

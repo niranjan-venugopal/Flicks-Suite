@@ -38,7 +38,7 @@ import type { AuditService } from '../modules/audit/audit.service';
 const rid = () => crypto.randomBytes(4).toString('hex');
 const audit = { log: async () => undefined } as unknown as AuditService;
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 
 /**
  * Run the REAL RolesGuard for a `@Roles(...)` requirement against a synthetic

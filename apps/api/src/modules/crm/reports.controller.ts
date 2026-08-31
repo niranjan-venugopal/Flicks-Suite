@@ -8,7 +8,7 @@ import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { ReportsService } from './reports.service';
-import { ImportService, type DupeStrategy, type ImportObject } from './import.service';
+import { ImportService, type DupeStrategy, type ImportFallbackType, type ImportObject } from './import.service';
 import { MergeService } from './merge.service';
 import { SampleDataService } from './sample-data.service';
 
@@ -19,7 +19,7 @@ class SetGoalDto {
 }
 
 class ImportParseDto {
-  @IsIn(['people', 'companies', 'leads']) object!: ImportObject;
+  @IsIn(['people', 'companies', 'leads', 'all']) object!: ImportObject;
   @IsString() @MaxLength(5_000_000) csv!: string;
   @IsOptional() @IsString() @MaxLength(200) file_name?: string;
 }
@@ -29,6 +29,8 @@ class ImportRunDto extends ImportParseDto {
   // untyped JSON map otherwise (same gotcha as workflow actions).
   @IsObject() @Type(() => Object) mapping!: Record<string, string>;
   @IsIn(['skip', 'update', 'create']) strategy!: DupeStrategy;
+  /** 'all' runs: what a row with a blank Type column becomes (round C). */
+  @IsOptional() @IsIn(['contact', 'lead']) fallback_type?: ImportFallbackType;
 }
 
 class MergeDto {
@@ -108,14 +110,14 @@ export class ReportsController {
   @Roles('owner', 'admin', 'manager')
   @ApiOperation({ summary: 'Plan the import — nothing is written' })
   dryRun(@Body() dto: ImportRunDto, @CurrentUser() user: JwtPayload) {
-    return this.imports.dryRun(user.tenantId, dto.object, dto.csv, dto.mapping, dto.strategy);
+    return this.imports.dryRun(user.tenantId, dto.object, dto.csv, dto.mapping, dto.strategy, dto.fallback_type);
   }
 
   @Post('import/run')
   @RequireGrant('crm', 'edit')
   @Roles('owner', 'admin', 'manager')
   run(@Body() dto: ImportRunDto, @CurrentUser() user: JwtPayload) {
-    return this.imports.run(user.tenantId, user.sub, dto.object, dto.csv, dto.mapping, dto.strategy, dto.file_name);
+    return this.imports.run(user.tenantId, user.sub, dto.object, dto.csv, dto.mapping, dto.strategy, dto.file_name, dto.fallback_type);
   }
 
   @Get('import/batches')

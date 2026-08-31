@@ -61,7 +61,10 @@ function getPosition(): Promise<GeolocationPosition | null> {
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve(pos),
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 8_000, maximumAge: 30_000 },
+      // Round C (founder decision — "punch fast"): a cached fix ≤30s old is
+      // used instantly; a cold GPS gets ~3s (was 8s), then the punch goes
+      // through without coordinates rather than holding the button hostage.
+      { enableHighAccuracy: true, timeout: 3_000, maximumAge: 30_000 },
     )
   })
 }

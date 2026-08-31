@@ -18,6 +18,7 @@ import { PM_STATE_CATEGORIES } from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { MediaService } from '../media/media.service';
 import { PmVisibilityService } from './sync/visibility.service';
 
 /**
@@ -55,6 +56,7 @@ export class PmTeamsService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
     private readonly visibility: PmVisibilityService,
+    private readonly media: MediaService,
   ) {}
 
   /** Seed states + counter for a team inside the caller's tx. */
@@ -535,7 +537,7 @@ export class PmTeamsService {
 
   /** users-lite roster for assignee pickers / avatar rendering (bootstrap model). */
   async usersLite(tenantId: string, userId: string) {
-    return this.db.withTenant(
+    const rows = await this.db.withTenant(
       tenantId,
       async (tx) => {
         // Guests never see the whole directory — only people connected to
@@ -588,20 +590,28 @@ export class PmTeamsService {
           }
         }
 
-        const rows = await tx
+        const people = await tx
           .select({
             id: users.id,
             name: users.full_name,
             avatar_url: users.avatar_url,
-            // Signed by the controller — the upload path writes only the key.
             avatar_key: users.avatar_key,
           })
           .from(users)
           .innerJoin(memberships, eq(memberships.user_id, users.id))
           .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
-        return allowedIds ? rows.filter((r) => allowedIds.has(r.id)) : rows;
+        return allowedIds ? people.filter((r) => allowedIds.has(r.id)) : people;
       },
       userId,
+    );
+    // Sign here, not at the REST door: the sync bootstrap ships these rows
+    // verbatim (round C — unsigned rows rendered as placeholder initials in
+    // sync mode). Signing stays outside the tenant transaction.
+    return Promise.all(
+      rows.map(async ({ avatar_key, ...r }) => ({
+        ...r,
+        avatar_url: await this.media.servedUrl(avatar_key ?? null, r.avatar_url, 64),
+      })),
     );
   }
 

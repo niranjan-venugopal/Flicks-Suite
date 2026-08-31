@@ -955,21 +955,25 @@ export class LeaveService {
               ),
             );
           const holidayDates = new Set(holidayRows.map((h) => h.d));
-          for (const day of businessDays(
-            req.start_date,
-            req.end_date,
-            holidayDates,
-          )) {
+          // Round C: ONE bulk upsert — the serial per-day loop cost a
+          // round-trip per business day (a two-week leave = 10 extra RTs on
+          // the approver's click).
+          const days = [
+            ...businessDays(req.start_date, req.end_date, holidayDates),
+          ];
+          if (days.length) {
             await tx
               .insert(attendanceRecords)
-              .values({
-                tenant_id: tenantId,
-                employee_id: req.employee_id,
-                attendance_date: day,
-                attendance_status: 'on_leave',
-                source: 'system',
-                notes: `Leave: ${req.reason ?? ''}`.slice(0, 500),
-              })
+              .values(
+                days.map((day) => ({
+                  tenant_id: tenantId,
+                  employee_id: req.employee_id,
+                  attendance_date: day,
+                  attendance_status: 'on_leave' as const,
+                  source: 'system' as const,
+                  notes: `Leave: ${req.reason ?? ''}`.slice(0, 500),
+                })),
+              )
               .onConflictDoUpdate({
                 target: [
                   attendanceRecords.tenant_id,
@@ -1057,23 +1061,21 @@ export class LeaveService {
         );
     }
 
-    // Real-time in-app ping to the requester with the decision. Best-effort.
+    // Real-time in-app ping to the requester with the decision. Best-effort,
+    // detached (round C) — createInAppNotification never throws at source.
     if (result.requesterUserId) {
       const approved = dto.action === 'approve';
-      await this.notificationsService
-        .createInAppNotification(
-          result.requesterUserId,
-          approved ? 'leave.approved' : 'leave.rejected',
-          `Your ${result.leaveTypeName} (${result.startDate} – ${result.endDate}) was ${approved ? 'approved' : 'declined'}${result.reviewerName ? ` by ${result.reviewerName}` : ''}.`,
-          '/leave',
-          tenantId,
-        )
-        .catch((err) =>
-          this.logger.warn(`Leave-review in-app notification failed: ${err}`),
-        );
+      void this.notificationsService.createInAppNotification(
+        result.requesterUserId,
+        approved ? 'leave.approved' : 'leave.rejected',
+        `Your ${result.leaveTypeName} (${result.startDate} – ${result.endDate}) was ${approved ? 'approved' : 'declined'}${result.reviewerName ? ` by ${result.reviewerName}` : ''}.`,
+        '/leave',
+        tenantId,
+      );
     }
 
-    await this.auditService.log({
+    // Detached (round C): committed decision; audit must not delay the CTA.
+    void this.auditService.log({
       tenantId,
       actorUserId: reviewerUserId,
       action: `leave.${result.updated.status}`,

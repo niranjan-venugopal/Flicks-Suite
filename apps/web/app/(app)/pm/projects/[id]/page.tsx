@@ -9,7 +9,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IssueComposer } from '@/components/pm/IssueComposer'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
-import { PmAv } from '@/components/pm/projects'
+import { PmAv, PROJECT_ICONS } from '@/components/pm/projects'
 import { ProjectGuestsCard } from '@/components/pm/ProjectGuestsCard'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -126,6 +126,21 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
     else restPatch.mutate(patch)
   }
 
+  // ── Rename / re-icon in place (founder round C) ───────────────────────────
+  // The backend and engine accepted {name, icon} since P11; only the header UI
+  // was missing. Blank names are dropped client-side to match the server's
+  // non-blank guard; an icon outside the stock list is offered as-is so the
+  // select doesn't silently rewrite it.
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const commitName = () => {
+    setEditingName(false)
+    const next = nameDraft.trim()
+    if (next && next !== project.name) patchProject({ name: next })
+  }
+  const currentIcon = project.icon ?? '🎯'
+  const iconOptions = PROJECT_ICONS.includes(currentIcon) ? PROJECT_ICONS : [currentIcon, ...PROJECT_ICONS]
+
   // ── Delete this project (founder round 20) ────────────────────────────────
   // Same engine-or-REST branch as patchProject above. Either way we leave for
   // the list afterwards: this page's own "not found" state would otherwise be
@@ -221,8 +236,38 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
       {/* Header */}
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 9, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 20 }}>{project.icon ?? '🎯'}</span>
-          <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em' }}>{project.name}</span>
+          <select
+            className="input"
+            title="Project icon"
+            aria-label="Project icon"
+            value={currentIcon}
+            onChange={(e) => patchProject({ icon: e.target.value })}
+            style={{ height: 30, width: 52, padding: '0 6px', fontSize: 16 }}
+          >
+            {iconOptions.map((e) => <option key={e}>{e}</option>)}
+          </select>
+          {editingName ? (
+            <input
+              autoFocus
+              className="input"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitName()
+                if (e.key === 'Escape') setEditingName(false)
+              }}
+              style={{ height: 32, width: 280, fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}
+            />
+          ) : (
+            <span
+              title="Rename project"
+              onClick={() => { setNameDraft(project.name); setEditingName(true) }}
+              style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em', cursor: 'text' }}
+            >
+              {project.name}
+            </span>
+          )}
           {project._pending && <PendingDot />}
           <select className="input" value={project.status} onChange={(e) => patchProject({ status: e.target.value as PmProjectRow['status'] })}
             style={{ height: 28, width: 130, fontSize: 11, fontWeight: 800 }}>
@@ -232,7 +277,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           <span style={{ flex: 1 }} />
           {leadName && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700 }}>
-              <PmAv name={leadName} size={18} />{leadName}
+              <PmAv name={leadName} src={project.lead_user_id ? users?.get(project.lead_user_id)?.avatar_url : null} size={18} />{leadName}
             </span>
           )}
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center' }}>
@@ -376,7 +421,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             return (
               <div key={u.id} style={{ paddingBottom: 11, marginBottom: 11, borderBottom: ui < updates.length - 1 ? '1px solid var(--bord)' : 'none' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
-                  <PmAv name={author} size={16} />
+                  <PmAv name={author} src={u.author_user_id ? users?.get(u.author_user_id)?.avatar_url : null} size={16} />
                   <span style={{ fontSize: 10.5, fontWeight: 800 }}>{author}</span>
                   <HealthChip h={u.health} small />
                   <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, color: 'var(--text-faint)' }}>

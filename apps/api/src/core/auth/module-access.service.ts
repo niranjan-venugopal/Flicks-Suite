@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import {
   membershipGrants,
@@ -6,8 +6,10 @@ import {
   tenantModuleToggles,
   tenantRoleModuleDefaults,
 } from '@flicks/db/schema';
+import type { DbAdmin } from '@flicks/db';
 import type { UserRole } from '@flicks/shared/types';
 import { DatabaseService } from '../database/database.service';
+import { DB_SERVICE_ROLE } from '../database/database.module';
 import type { GrantModule } from './decorators/require-grant.decorator';
 
 export type AccessLevel = 'none' | 'view' | 'edit';
@@ -58,6 +60,27 @@ export interface ResolvedAccess {
 }
 
 const DEFAULTS_TTL_MS = 30_000;
+// Grant-row cache (round C, founder decision): every CRM/PM/invoicing request
+// paid a ~4-round-trip TRANSACTION in ModuleGrantGuard before the controller
+// even ran. Now the guard runs flat, parallel service-role reads (explicit
+// tenant predicates — house rule 1) with NO transaction, and only the
+// slow-moving membership_grants row is cached: 60s staleness on a grant
+// change was accepted explicitly, and writes through MembersService bust it
+// immediately in-process (single API instance — revisit alongside the
+// socket.io Redis adapter). Membership liveness/role and the FAM module
+// toggle are deliberately NOT cached — a deactivated membership or a
+// platform kill-switch must bite on the very next request (the Sprint-10
+// liveness contract).
+const GRANT_TTL_MS = 60_000;
+const GRANT_CACHE_MAX = 10_000;
+
+interface GuardContext {
+  moduleEnabled: boolean;
+  membershipActive: boolean;
+  liveRole: UserRole | null;
+  grant: { level: AccessLevel; capabilities: Record<string, boolean> } | null;
+}
+type GrantRow = GuardContext['grant'];
 
 /**
  * The one place that answers "what access does this membership have to this
@@ -83,12 +106,29 @@ export class ModuleAccessService {
     string,
     { map: Map<string, AccessLevel>; at: number }
   >();
+  private grantCache = new Map<string, { value: GrantRow; at: number }>();
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
+  ) {}
 
-  /** Drop the cached role policy for a tenant (call after a policy write). */
+  /**
+   * Drop everything cached for a tenant — the role policy AND every cached
+   * grant row (call after a policy write or any broad access change).
+   */
   invalidateTenant(tenantId: string): void {
     this.defaultsCache.delete(tenantId);
+    for (const key of this.grantCache.keys()) {
+      if (key.startsWith(`${tenantId}|`)) this.grantCache.delete(key);
+    }
+  }
+
+  /** Drop cached grant rows for one membership (call after a grant write). */
+  invalidateMembership(tenantId: string, membershipId: string): void {
+    for (const key of this.grantCache.keys()) {
+      if (key.startsWith(`${tenantId}|${membershipId}|`)) this.grantCache.delete(key);
+    }
   }
 
   private async roleDefaults(
@@ -136,87 +176,93 @@ export class ModuleAccessService {
      * would let an invoicing:edit row unlock org_financial.
      */
     grantModule: GrantModule = module,
-  ): Promise<{
-    moduleEnabled: boolean;
-    membershipActive: boolean;
-    liveRole: UserRole | null;
-    grant: { level: AccessLevel; capabilities: Record<string, boolean> } | null;
-  }> {
-    return this.db.withTenant(
-      tenantId,
-      async (tx) => {
-        const [toggleRows, memberRows, grantRows] = await Promise.all([
-          tx
-            .select({ enabled: tenantModuleToggles.enabled })
-            .from(tenantModuleToggles)
+  ): Promise<GuardContext> {
+    void userId; // liveness reads run on the service role, not the RLS session
+    const [toggleRows, memberRows, grant] = await Promise.all([
+      // FAM kill-switch: live on every request — a disabled module must slam
+      // shut immediately, so it is never cached.
+      this.dbAdmin
+        .select({ enabled: tenantModuleToggles.enabled })
+        .from(tenantModuleToggles)
+        .where(
+          and(
+            eq(tenantModuleToggles.tenant_id, tenantId),
+            eq(tenantModuleToggles.module, module),
+          ),
+        )
+        .limit(1),
+      // Membership liveness + live role: also never cached (a deactivated or
+      // expired membership is denied on its very next request — Sprint 10 §C).
+      membershipId
+        ? this.dbAdmin
+            .select({
+              status: memberships.status,
+              expires: memberships.access_expires_at,
+              role: memberships.role,
+            })
+            .from(memberships)
             .where(
               and(
-                eq(tenantModuleToggles.tenant_id, tenantId),
-                eq(tenantModuleToggles.module, module),
+                eq(memberships.id, membershipId),
+                eq(memberships.tenant_id, tenantId),
               ),
             )
-            .limit(1),
-          membershipId
-            ? tx
-                .select({
-                  status: memberships.status,
-                  expires: memberships.access_expires_at,
-                  role: memberships.role,
-                })
-                .from(memberships)
-                .where(
-                  and(
-                    eq(memberships.id, membershipId),
-                    eq(memberships.tenant_id, tenantId),
-                  ),
-                )
-                .limit(1)
-            : Promise.resolve(
-                [] as Array<{
-                  status: string;
-                  expires: Date | null;
-                  role: string;
-                }>,
-              ),
-          membershipId
-            ? tx
-                .select({
-                  level: membershipGrants.access_level,
-                  capabilities: membershipGrants.capabilities,
-                })
-                .from(membershipGrants)
-                .where(
-                  and(
-                    eq(membershipGrants.membership_id, membershipId),
-                    eq(membershipGrants.module, grantModule),
-                  ),
-                )
-                .limit(1)
-            : Promise.resolve(
-                [] as Array<{ level: string; capabilities: unknown }>,
-              ),
-        ]);
+            .limit(1)
+        : Promise.resolve(
+            [] as Array<{
+              status: string;
+              expires: Date | null;
+              role: string;
+            }>,
+          ),
+      membershipId ? this.grantRow(tenantId, membershipId, grantModule) : Promise.resolve(null),
+    ]);
 
-        const m = memberRows[0];
-        const g = grantRows[0];
-        return {
-          // Toggle default = ENABLED when no row exists (§3.5).
-          moduleEnabled: toggleRows.length === 0 ? true : toggleRows[0]!.enabled,
-          membershipActive:
-            !!m &&
-            m.status === 'active' &&
-            (!m.expires || new Date(m.expires).getTime() > Date.now()),
-          liveRole: (m?.role as UserRole | undefined) ?? null,
-          grant: g
-            ? {
-                level: g.level as AccessLevel,
-                capabilities: (g.capabilities ?? {}) as Record<string, boolean>,
-              }
-            : null,
-        };
-      },
-      userId,
-    );
+    const m = memberRows[0];
+    return {
+      // Toggle default = ENABLED when no row exists (§3.5).
+      moduleEnabled: toggleRows.length === 0 ? true : toggleRows[0]!.enabled,
+      membershipActive:
+        !!m &&
+        m.status === 'active' &&
+        (!m.expires || new Date(m.expires).getTime() > Date.now()),
+      liveRole: (m?.role as UserRole | undefined) ?? null,
+      grant,
+    };
+  }
+
+  /** The member's grant row for one module — the only cached piece. */
+  private async grantRow(
+    tenantId: string,
+    membershipId: string,
+    grantModule: GrantModule,
+  ): Promise<GrantRow> {
+    const cacheKey = `${tenantId}|${membershipId}|${grantModule}`;
+    const hit = this.grantCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < GRANT_TTL_MS) return hit.value;
+    const [g] = await this.dbAdmin
+      .select({
+        level: membershipGrants.access_level,
+        capabilities: membershipGrants.capabilities,
+      })
+      .from(membershipGrants)
+      .where(
+        and(
+          eq(membershipGrants.tenant_id, tenantId),
+          eq(membershipGrants.membership_id, membershipId),
+          eq(membershipGrants.module, grantModule),
+        ),
+      )
+      .limit(1);
+    const value: GrantRow = g
+      ? {
+          level: g.level as AccessLevel,
+          capabilities: (g.capabilities ?? {}) as Record<string, boolean>,
+        }
+      : null;
+    if (this.grantCache.size >= GRANT_CACHE_MAX) this.grantCache.clear();
+    this.grantCache.set(cacheKey, { value, at: Date.now() });
+    return value;
   }
 
   /** Does this role hold the module outright, regardless of any row? */

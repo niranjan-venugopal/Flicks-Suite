@@ -50,6 +50,21 @@ export class PmSyncEngine {
 
   onReject: ((message: string) => void) | null = null
 
+  /**
+   * Fires after a flush batch is ACKED by the server, with the applied ops'
+   * {op, id}. This is the only react-query coupling point the engine offers:
+   * pages that render server-side detail payloads (lazy-loaded description,
+   * comments) subscribe and invalidate their query once their row's write is
+   * really on the server — replacing refetch-on-a-guessed-timer, which used
+   * to race this very flush and revert freshly typed text (founder round C).
+   */
+  private flushListeners = new Set<(acked: Array<{ op: string; id: string }>) => void>()
+
+  onFlushed(listener: (acked: Array<{ op: string; id: string }>) => void): () => void {
+    this.flushListeners.add(listener)
+    return () => { this.flushListeners.delete(listener) }
+  }
+
   constructor(
     private readonly tenantId: string,
     private readonly userId: string,
@@ -850,10 +865,12 @@ export class PmSyncEngine {
         items: batch.map(({ clientMutationId, op, id, fields }) => ({ clientMutationId, op, id, fields })),
       })
       const byId = new Map(res.results.map((r) => [r.clientMutationId, r]))
+      const acked: Array<{ op: string; id: string }> = []
       for (const item of batch) {
         const result = byId.get(item.clientMutationId)
         if (!result) continue
         if (result.status === 'applied' || result.status === 'duplicate') {
+          acked.push({ op: item.op, id: item.id })
           for (const [table, rows] of Object.entries(result.rows ?? {})) {
             this.store.applyRows(table, rows)
           }
@@ -893,6 +910,11 @@ export class PmSyncEngine {
       void this.pullDelta()
       if (this.db) void persistPending(this.db, this.queue)
       this.schedulePersist()
+      if (acked.length) {
+        for (const listener of this.flushListeners) {
+          try { listener(acked) } catch { /* a listener must never break the flush */ }
+        }
+      }
     } catch {
       // network failure — queue stays; retried on reconnect/next enqueue/poll
     } finally {

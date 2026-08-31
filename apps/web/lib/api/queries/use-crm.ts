@@ -1076,7 +1076,7 @@ export function useImportParse() {
 
 export function useImportDryRun() {
   return useMutation({
-    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string }) =>
+    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string; fallback_type?: 'contact' | 'lead' }) =>
       api.post<{ data: ImportDryRun }>('/api/v1/crm/import/dry-run', body),
   })
 }
@@ -1084,7 +1084,7 @@ export function useImportDryRun() {
 export function useImportRun() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string }) =>
+    mutationFn: (body: { object: string; csv: string; file_name?: string; mapping: Record<string, string>; strategy: string; fallback_type?: 'contact' | 'lead' }) =>
       api.post<{ data: ImportBatch }>('/api/v1/crm/import/run', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['crm'] })

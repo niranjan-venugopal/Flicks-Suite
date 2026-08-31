@@ -18,7 +18,7 @@ import { ModuleAccessService } from '../core/auth/module-access.service';
 
 const audit = { log: async () => {} } as unknown as AuditService;
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 const customers = new CustomersService(dbSvc, audit);
 const items = new ItemsService(dbSvc, audit);
 const hsnSac = new HsnSacService(dbSvc, audit);

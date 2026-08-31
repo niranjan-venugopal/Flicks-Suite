@@ -70,7 +70,7 @@ const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const notificationsSvc = new NotificationsService(db as never, dbAdmin as never, new ConfigService(), emitter);
 const visibility = new PmVisibilityService(dbSvc);
-const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility);
+const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
 const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
 const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
@@ -563,6 +563,7 @@ describe('Round A — guest invites: the project lead, plus manager and above', 
       },
       revokeGuestMembership: async () => undefined,
     } as never,
+    { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never,
   );
 
   let managerUserId: string;

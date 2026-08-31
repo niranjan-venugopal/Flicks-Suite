@@ -34,7 +34,7 @@ export function PmAv({ name, src, size = 18 }: { name: string; src?: string | nu
   )
 }
 
-const PROJECT_ICONS = ['🤝', '⚡', '📣', '🚀', '🛠️', '🎯']
+export const PROJECT_ICONS = ['🤝', '⚡', '📣', '🚀', '🛠️', '🎯']
 
 export function ProjectCreateModal({
   open,

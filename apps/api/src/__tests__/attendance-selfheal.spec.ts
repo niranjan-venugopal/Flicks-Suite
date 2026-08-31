@@ -123,9 +123,16 @@ describe('Punch overrides a stale manual Set-status (PRD v4 §5)', () => {
 
     // …then clocks in through the REAL endpoint handler. The punch is the
     // newer, explicit availability signal — it must clear the manual pin.
+    // Round C: clearStatus is detached from the response (the PRD promises
+    // ≤5s propagation, not same-response), so poll briefly.
     const jwtUser = { sub: u!.id, tenantId, membershipId: mem!.id, role: 'employee' } as never;
     await controller.punchIn({}, jwtUser, { ip: '127.0.0.1', headers: {} } as never);
-    ;[resolved] = await presence.resolve(tenantId, [u!.id], new Map());
+    const start = Date.now();
+    do {
+      ;[resolved] = await presence.resolve(tenantId, [u!.id], new Map());
+      if (resolved!.manual === false) break;
+      await new Promise((r) => setTimeout(r, 50));
+    } while (Date.now() - start < 5_000);
     expect(resolved!.manual).toBe(false);
     expect(resolved!.status).toBe('in_office'); // open punch → green, org-wide
     await dbAdmin.delete(users).where(eq(users.id, u!.id));

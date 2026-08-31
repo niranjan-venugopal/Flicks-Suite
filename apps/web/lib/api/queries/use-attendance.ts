@@ -251,12 +251,18 @@ export function usePendingRegularizations() {
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
 
-// Awaitable so mutations don't resolve until the today snapshot has been
-// refetched — otherwise the calling component may re-render with the stale
-// cached state before React Query's background refetch lands, leaving the
-// Clock-In button on the wrong label even though the punch went through.
+// Round C: fire-and-forget, and narrowed to the caller's own attendance
+// (['attendance','me'] covers today + history + month). This used to be
+// AWAITED over the whole ['attendance'] prefix, so isPending — and the
+// frozen button — outlived the server response by the refetch of every
+// attendance query on screen, burying the optimistic updates below.
 function invalidateAttendance(qc: ReturnType<typeof useQueryClient>) {
-  return qc.invalidateQueries({ queryKey: ['attendance'] })
+  void qc.invalidateQueries({ queryKey: ['attendance', 'me'] })
+}
+// Review mutations touch the TEAM queues too — keep the wide prefix there,
+// still without awaiting it.
+function invalidateAttendanceAll(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['attendance'] })
 }
 
 export function usePunchIn() {
@@ -287,9 +293,9 @@ export function usePunchIn() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
     },
-    onSuccess: async () => {
+    onSuccess: () => {
       track(EVENTS.ATTENDANCE_CLOCKED_IN)
-      await invalidateAttendance(qc)
+      invalidateAttendance(qc)
     },
   })
 }
@@ -313,9 +319,9 @@ export function usePunchOut() {
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(['attendance', 'me', 'today'], ctx.prev)
     },
-    onSuccess: async () => {
+    onSuccess: () => {
       track(EVENTS.ATTENDANCE_CLOCKED_OUT)
-      await invalidateAttendance(qc)
+      invalidateAttendance(qc)
     },
   })
 }
@@ -327,8 +333,8 @@ export function useBreakStart() {
       api.post<{ id: string; punchedAt: string; type: 'break_start' }>(
         '/api/v1/attendance/break-start',
       ),
-    onSuccess: async () => {
-      await invalidateAttendance(qc)
+    onSuccess: () => {
+      invalidateAttendance(qc)
     },
   })
 }
@@ -340,8 +346,8 @@ export function useBreakEnd() {
       api.post<{ id: string; punchedAt: string; type: 'break_end' }>(
         '/api/v1/attendance/break-end',
       ),
-    onSuccess: async () => {
-      await invalidateAttendance(qc)
+    onSuccess: () => {
+      invalidateAttendance(qc)
     },
   })
 }
@@ -360,8 +366,8 @@ export function useRequestRegularization() {
         '/api/v1/attendance/regularizations',
         payload,
       ),
-    onSuccess: async () => {
-      await invalidateAttendance(qc)
+    onSuccess: () => {
+      invalidateAttendanceAll(qc)
     },
   })
 }
@@ -382,8 +388,8 @@ export function useReviewRegularization() {
         `/api/v1/attendance/regularizations/${id}/review`,
         { action, comment },
       ),
-    onSuccess: async () => {
-      await invalidateAttendance(qc)
+    onSuccess: () => {
+      invalidateAttendanceAll(qc)
     },
   })
 }

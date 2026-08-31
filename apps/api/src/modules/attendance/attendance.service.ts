@@ -187,7 +187,44 @@ export class AttendanceService {
     userId: string,
     tenantId: string,
   ): Promise<string> {
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    const healed = await this.databaseService.withTenant(tenantId, (tx) =>
+      this.getEmployeeIdForUserTx(tx, userId, tenantId),
+    );
+    this.logSelfHeal(tenantId, userId, healed);
+    return healed.employeeId;
+  }
+
+  /**
+   * Round C: hoisted out of the transaction (audit opens its own tx) and
+   * detached — the self-heal is already durable; its paper trail is not
+   * worth a serial round-trip on the clock-in path.
+   */
+  private logSelfHeal(
+    tenantId: string,
+    userId: string,
+    healed: { employeeId: string; selfHealed: boolean; linkedExisting: boolean },
+  ) {
+    if (!healed.selfHealed) return;
+    void this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'attendance.employee_autolink',
+      resourceType: 'employee',
+      resourceId: healed.employeeId,
+      metadata: { linked_existing: healed.linkedExisting },
+    });
+    this.logger.log(
+      `attendance self-heal: ${healed.linkedExisting ? 'linked' : 'created'} employee ${healed.employeeId} for user ${userId}`,
+    );
+  }
+
+  /** Tx-taking variant so punch-in/out can share ONE transaction (round C). */
+  private async getEmployeeIdForUserTx(
+    tx: Db,
+    userId: string,
+    tenantId: string,
+  ): Promise<{ employeeId: string; selfHealed: boolean; linkedExisting: boolean }> {
+    {
       const [m] = await tx
         .select({ membershipId: memberships.id, employeeId: memberships.employee_id })
         .from(memberships)
@@ -203,7 +240,7 @@ export class AttendanceService {
           'No membership found for the current user',
         );
       }
-      if (m.employeeId) return m.employeeId;
+      if (m.employeeId) return { employeeId: m.employeeId, selfHealed: false, linkedExisting: false };
 
       const [u] = await tx
         .select({ email: users.email, fullName: users.full_name })
@@ -253,19 +290,8 @@ export class AttendanceService {
         .update(memberships)
         .set({ employee_id: employeeId! })
         .where(eq(memberships.id, m.membershipId));
-      await this.auditService.log({
-        tenantId,
-        actorUserId: userId,
-        action: 'attendance.employee_autolink',
-        resourceType: 'employee',
-        resourceId: employeeId!,
-        metadata: { linked_existing: !!existing },
-      });
-      this.logger.log(
-        `attendance self-heal: ${existing ? 'linked' : 'created'} employee ${employeeId} for user ${userId}`,
-      );
-      return employeeId!;
-    });
+      return { employeeId: employeeId!, selfHealed: true, linkedExisting: !!existing };
+    }
   }
 
   /**
@@ -277,7 +303,19 @@ export class AttendanceService {
     employeeId: string,
     attendanceDate: string, // YYYY-MM-DD
   ) {
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    return this.databaseService.withTenant(tenantId, (tx) =>
+      this.resolveShiftTemplateTx(tx, tenantId, employeeId, attendanceDate),
+    );
+  }
+
+  /** Tx-taking variant so punch-in/out can share ONE transaction (round C). */
+  private async resolveShiftTemplateTx(
+    tx: Db,
+    tenantId: string,
+    employeeId: string,
+    attendanceDate: string, // YYYY-MM-DD
+  ) {
+    {
       // Active employee_shifts assignment for that date
       const [assignment] = await tx
         .select({
@@ -343,7 +381,7 @@ export class AttendanceService {
         .returning();
       this.logger.log(`attendance self-heal: seeded default shift for tenant ${tenantId}`);
       return seeded!;
-    });
+    }
   }
 
   // ─── Geofence resolution (PRD §6.4) ───────────────────────────────────────
@@ -423,31 +461,34 @@ export class AttendanceService {
     ip?: string,
     userAgent?: string,
   ) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
-
-    // Resolve shift first so we know the timezone for "today"
     const today = dateInTimezone(now, 'Asia/Kolkata'); // bootstrap default
-    const shift = await this.resolveShiftTemplate(tenantId, employeeId, today);
-    const attendanceDate = dateInTimezone(now, shift.timezone);
 
-    // Late check
-    const shiftStartUTC = localTimeToUTC(
-      attendanceDate,
-      shift.start_time,
-      shift.timezone,
-    );
-    const lateThreshold = new Date(
-      shiftStartUTC.getTime() + shift.grace_period_minutes * 60_000,
-    );
-    const isLate = now > lateThreshold;
-    const lateBy = isLate
-      ? Math.floor((now.getTime() - shiftStartUTC.getTime()) / 60_000)
-      : 0;
-
+    // Round C: employee resolution, shift lookup and the punch share ONE
+    // transaction — this path used to open five (incl. two awaited audit
+    // writes), ~24 serial round-trips per click through Supavisor.
     const result = await this.databaseService.withTenant(
       tenantId,
       async (tx) => {
+        const healed = await this.getEmployeeIdForUserTx(tx, userId, tenantId);
+        const employeeId = healed.employeeId;
+        const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, today);
+        const attendanceDate = dateInTimezone(now, shift.timezone);
+
+        // Late check
+        const shiftStartUTC = localTimeToUTC(
+          attendanceDate,
+          shift.start_time,
+          shift.timezone,
+        );
+        const lateThreshold = new Date(
+          shiftStartUTC.getTime() + shift.grace_period_minutes * 60_000,
+        );
+        const isLate = now > lateThreshold;
+        const lateBy = isLate
+          ? Math.floor((now.getTime() - shiftStartUTC.getTime()) / 60_000)
+          : 0;
+
         // Geofence resolution (PRD §6.4): office when inside, remote when the
         // coordinates land outside, unknown (NULL) when either side is missing.
         const fence = await this.getEmployeeGeofence(tx, tenantId, employeeId);
@@ -549,21 +590,29 @@ export class AttendanceService {
           isWithinGeofence,
           workMode,
           locationName: fence.locationName,
+          healed,
+          shift,
+          attendanceDate,
+          isLate,
+          lateBy,
         };
       },
     );
 
-    await this.auditService.log({
+    this.logSelfHeal(tenantId, userId, result.healed);
+    // Detached (round C): the punch is committed — its audit row must not
+    // hold the button hostage for another transaction's round-trips.
+    void this.auditService.log({
       tenantId,
       actorUserId: userId,
       action: 'attendance.punched_in',
       resourceType: 'attendance_record',
       resourceId: result.record_id,
       metadata: {
-        attendanceDate,
-        isLate,
-        lateBy,
-        timezone: shift.timezone,
+        attendanceDate: result.attendanceDate,
+        isLate: result.isLate,
+        lateBy: result.lateBy,
+        timezone: result.shift.timezone,
         isWithinGeofence: result.isWithinGeofence,
         workMode: result.workMode,
       },
@@ -572,13 +621,13 @@ export class AttendanceService {
     return {
       id: result.punch.id,
       attendanceRecordId: result.record_id,
-      attendanceDate,
+      attendanceDate: result.attendanceDate,
       punchedAt: result.punch.punched_at.toISOString(),
       type: 'in' as const,
-      isLate,
-      lateByMinutes: lateBy,
-      shiftStart: shift.start_time,
-      shiftTimezone: shift.timezone,
+      isLate: result.isLate,
+      lateByMinutes: result.lateBy,
+      shiftStart: result.shift.start_time,
+      shiftTimezone: result.shift.timezone,
       isWithinGeofence: result.isWithinGeofence,
       workMode: result.workMode,
       locationName: result.locationName,
@@ -592,15 +641,18 @@ export class AttendanceService {
     ip?: string,
     userAgent?: string,
   ) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
     const today = dateInTimezone(now, 'Asia/Kolkata');
-    const shift = await this.resolveShiftTemplate(tenantId, employeeId, today);
-    const attendanceDate = dateInTimezone(now, shift.timezone);
 
+    // Round C: one transaction, same shape as punchIn above.
     const result = await this.databaseService.withTenant(
       tenantId,
       async (tx) => {
+        const healed = await this.getEmployeeIdForUserTx(tx, userId, tenantId);
+        const employeeId = healed.employeeId;
+        const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, today);
+        const attendanceDate = dateInTimezone(now, shift.timezone);
+
         const [record] = await tx
           .select()
           .from(attendanceRecords)
@@ -712,18 +764,22 @@ export class AttendanceService {
           status,
           isEarly,
           earlyBy,
+          healed,
+          attendanceDate,
         };
       },
     );
 
-    await this.auditService.log({
+    this.logSelfHeal(tenantId, userId, result.healed);
+    // Detached (round C) — same reasoning as punchIn.
+    void this.auditService.log({
       tenantId,
       actorUserId: userId,
       action: 'attendance.punched_out',
       resourceType: 'attendance_record',
       resourceId: result.recordId,
       metadata: {
-        attendanceDate,
+        attendanceDate: result.attendanceDate,
         workedMin: result.workedMin,
         breakMin: result.breakMin,
         status: result.status,
@@ -733,7 +789,7 @@ export class AttendanceService {
     return {
       id: result.punch.id,
       attendanceRecordId: result.recordId,
-      attendanceDate,
+      attendanceDate: result.attendanceDate,
       punchedAt: result.punch.punched_at.toISOString(),
       type: 'out' as const,
       totalWorkedMinutes: result.workedMin,
@@ -757,13 +813,16 @@ export class AttendanceService {
     tenantId: string,
     punchType: 'break_start' | 'break_end',
   ) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
     const today = dateInTimezone(now, 'Asia/Kolkata');
-    const shift = await this.resolveShiftTemplate(tenantId, employeeId, today);
-    const attendanceDate = dateInTimezone(now, shift.timezone);
 
+    // Round C: one transaction (was three) — breaks are CTAs too.
     return this.databaseService.withTenant(tenantId, async (tx) => {
+      const healed = await this.getEmployeeIdForUserTx(tx, userId, tenantId);
+      const employeeId = healed.employeeId;
+      const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, today);
+      const attendanceDate = dateInTimezone(now, shift.timezone);
+
       const [record] = await tx
         .select({ id: attendanceRecords.id })
         .from(attendanceRecords)
@@ -823,19 +882,19 @@ export class AttendanceService {
   // ─── Today + history ──────────────────────────────────────────────────────
 
   async getMyToday(userId: string, tenantId: string) {
-    const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
     // Use the employee's effective shift to determine "today"
     const bootDate = dateInTimezone(now, 'Asia/Kolkata');
-    const shift = await this.resolveShiftTemplate(
-      tenantId,
-      employeeId,
-      bootDate,
-    );
-    const attendanceDate = dateInTimezone(now, shift.timezone);
 
-    const [record] = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    // Round C: all six lookups share ONE transaction — this endpoint used to
+    // open six (≈24 serial round-trips) and is refetched after every punch.
+    const out = await this.databaseService.withTenant(tenantId, async (tx) => {
+      const healed = await this.getEmployeeIdForUserTx(tx, userId, tenantId);
+      const employeeId = healed.employeeId;
+      const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, bootDate);
+      const attendanceDate = dateInTimezone(now, shift.timezone);
+
+      const [record] = await tx
         .select()
         .from(attendanceRecords)
         .where(
@@ -845,21 +904,19 @@ export class AttendanceService {
             eq(attendanceRecords.attendance_date, attendanceDate),
           ),
         )
-        .limit(1),
-    );
+        .limit(1);
 
-    // Determine isOnBreak by inspecting last punch
-    let isOnBreak = false;
-    let lastPunchType: string | null = null;
-    let lastPunchGeo: {
-      lat: number;
-      lng: number;
-      accuracyM: number | null;
-      isWithinGeofence: boolean | null;
-    } | null = null;
-    if (record) {
-      const punches = await this.databaseService.withTenant(tenantId, (tx) =>
-        tx
+      // Determine isOnBreak by inspecting last punch
+      let isOnBreak = false;
+      let lastPunchType: string | null = null;
+      let lastPunchGeo: {
+        lat: number;
+        lng: number;
+        accuracyM: number | null;
+        isWithinGeofence: boolean | null;
+      } | null = null;
+      if (record) {
+        const punches = await tx
           .select({
             punch_type: attendancePunches.punch_type,
             punched_at: attendancePunches.punched_at,
@@ -867,14 +924,12 @@ export class AttendanceService {
           .from(attendancePunches)
           .where(eq(attendancePunches.attendance_record_id, record.id))
           .orderBy(desc(attendancePunches.punched_at))
-          .limit(1),
-      );
-      lastPunchType = punches[0]?.punch_type ?? null;
-      isOnBreak = lastPunchType === 'break_start';
+          .limit(1);
+        lastPunchType = punches[0]?.punch_type ?? null;
+        isOnBreak = lastPunchType === 'break_start';
 
-      // The clock-in position feeds the geofence strip on the clock card.
-      const [inPunch] = await this.databaseService.withTenant(tenantId, (tx) =>
-        tx
+        // The clock-in position feeds the geofence strip on the clock card.
+        const [inPunch] = await tx
           .select({
             lat: attendancePunches.geo_lat,
             lng: attendancePunches.geo_lng,
@@ -889,23 +944,26 @@ export class AttendanceService {
             ),
           )
           .orderBy(desc(attendancePunches.punched_at))
-          .limit(1),
-      );
-      if (inPunch && inPunch.lat !== null && inPunch.lng !== null) {
-        lastPunchGeo = {
-          lat: inPunch.lat,
-          lng: inPunch.lng,
-          accuracyM: inPunch.accuracyM,
-          isWithinGeofence: inPunch.isWithinGeofence,
-        };
+          .limit(1);
+        if (inPunch && inPunch.lat !== null && inPunch.lng !== null) {
+          lastPunchGeo = {
+            lat: inPunch.lat,
+            lng: inPunch.lng,
+            accuracyM: inPunch.accuracyM,
+            isWithinGeofence: inPunch.isWithinGeofence,
+          };
+        }
       }
-    }
 
-    // Assigned office + geofence — the web pre-checks the fence client-side
-    // before punch-in so it can offer "Mark as WFH today" instead of failing.
-    const fence = await this.databaseService.withTenant(tenantId, (tx) =>
-      this.getEmployeeGeofence(tx, tenantId, employeeId),
-    );
+      // Assigned office + geofence — the web pre-checks the fence client-side
+      // before punch-in so it can offer "Mark as WFH today" instead of failing.
+      const fence = await this.getEmployeeGeofence(tx, tenantId, employeeId);
+
+      return { healed, employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence };
+    });
+
+    this.logSelfHeal(tenantId, userId, out.healed);
+    const { employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence } = out;
 
     // Working day check (per shift's working_days)
     const dow = dayOfWeekInTimezone(now, shift.timezone);
@@ -1348,7 +1406,8 @@ export class AttendanceService {
         this.logger.warn(`Regularization notification failed: ${err}`),
     );
 
-    await this.auditService.log({
+    // Detached (round C): committed request; audit must not delay the CTA.
+    void this.auditService.log({
       tenantId,
       actorUserId: userId,
       action: 'attendance.regularization.requested',
@@ -1709,22 +1768,19 @@ export class AttendanceService {
     // Real-time in-app ping to the requester with the decision. Best-effort.
     if (result.requester?.userId) {
       const approved = dto.action === 'approve';
-      await this.notificationsService
-        .createInAppNotification(
-          result.requester.userId,
-          approved ? 'regularization.approved' : 'regularization.rejected',
-          `Your regularization for ${result.updated.attendance_date} was ${approved ? 'approved' : 'declined'}.`,
-          '/attendance',
-          tenantId,
-        )
-        .catch((err) =>
-          this.logger.warn(
-            `Regularization-review in-app notification failed: ${err}`,
-          ),
-        );
+      // Detached (round C): createInAppNotification never throws (enforced
+      // at source) and the reviewer's CTA shouldn't wait for the inbox row.
+      void this.notificationsService.createInAppNotification(
+        result.requester.userId,
+        approved ? 'regularization.approved' : 'regularization.rejected',
+        `Your regularization for ${result.updated.attendance_date} was ${approved ? 'approved' : 'declined'}.`,
+        '/attendance',
+        tenantId,
+      );
     }
 
-    await this.auditService.log({
+    // Detached (round C): committed review; audit must not delay the CTA.
+    void this.auditService.log({
       tenantId,
       actorUserId: reviewerUserId,
       action: `attendance.regularization.${result.updated.status}`,

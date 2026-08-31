@@ -61,7 +61,7 @@ const authService = new AuthService(
 );
 
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 const members = new MembersService(dbSvc, dbAdmin as never, audit, notifications, authService, moduleAccess, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 
 describe('Auditor invite magic link (real verify path)', () => {

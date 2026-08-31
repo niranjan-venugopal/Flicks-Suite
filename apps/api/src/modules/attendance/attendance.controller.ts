@@ -68,8 +68,13 @@ export class AttendanceController {
     // A punch is an explicit availability signal, so it OVERRIDES any stale
     // manual "Set status" (Busy / Away / Appear offline) — otherwise the
     // profile dot never changes on clock-in and reads as broken.
-    await this.presence.clearStatus(user.tenantId, user.sub);
-    this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
+    // Detached (round C): ≤5s gives plenty of room; the response shouldn't
+    // wait on the presence write. The changed event still fires immediately —
+    // its consumers re-read presence, which resolves after the clear settles.
+    void this.presence
+      .clearStatus(user.tenantId, user.sub)
+      .then(() => this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub }))
+      .catch(() => undefined);
     return res;
   }
 
@@ -91,8 +96,11 @@ export class AttendanceController {
       req.headers['user-agent'],
     );
     // Same rule on the way out — the punch wins over a stale manual status.
-    await this.presence.clearStatus(user.tenantId, user.sub);
-    this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub });
+    // Detached (round C) — same reasoning as punch-in above.
+    void this.presence
+      .clearStatus(user.tenantId, user.sub)
+      .then(() => this.events.emit('presence.changed', { tenantId: user.tenantId, userId: user.sub }))
+      .catch(() => undefined);
     return res;
   }
 

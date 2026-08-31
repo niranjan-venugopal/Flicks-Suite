@@ -1,10 +1,11 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { use, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -75,9 +76,35 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const [mentionIdx, setMentionIdx] = useState(0)
   const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | 'milestone' | null>(null)
 
+  // Round C — Save must never need a refresh. Two pieces:
+  //
+  // 1. Dirty guard. This reseed effect used to accept ANY server payload,
+  //    and saveDesc scheduled a refetch on a 600ms guess-timer that raced the
+  //    engine's debounced flush — when the refetch won, the stale payload
+  //    REVERTED the just-saved text, and nothing ever corrected it. Now a
+  //    save-in-flight blocks reseeding until the server echoes what we saved.
+  // 2. The refetch is driven by the engine's flush ack (below), not a timer.
+  const lastSavedDescRef = useRef<string | null>(null)
   useEffect(() => {
-    if (d?.issue.description != null && !editingDesc) setDesc(d.issue.description)
+    const server = d?.issue.description
+    if (server == null || editingDesc) return
+    if (lastSavedDescRef.current !== null) {
+      if (server !== lastSavedDescRef.current) return
+      lastSavedDescRef.current = null
+    }
+    setDesc(server)
   }, [d?.issue.description, editingDesc])
+
+  // Sync mode: refetch the lazy detail (description, comments, history) when
+  // OUR write for this issue is acked — correct-by-construction, not timed.
+  useEffect(() => {
+    if (!engine) return
+    return engine.onFlushed((acked) => {
+      if (acked.some((a) => a.id === id)) {
+        void qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] })
+      }
+    })
+  }, [engine, id, qc])
 
   const restMove = useMutation({
     mutationFn: (state_id: string) => api.post(`/api/v1/pm/issues/${id}/move-state`, { state_id }),
@@ -121,6 +148,26 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
       api.post(`/api/v1/pm/issues/${id}/project`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
   })
+
+  // ── Delete (round C): the machinery shipped in round 20 — softDelete,
+  //    Recently deleted, restore — but nothing in the UI ever called it. ──
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const restDelete = useMutation({
+    mutationFn: () => api.post(`/api/v1/pm/issues/${id}/delete`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pm'] })
+      router.push('/pm/issues')
+    },
+  })
+  const doDelete = () => {
+    if (engine) {
+      engine.deleteIssue(id)
+      setConfirmDelete(false)
+      router.push('/pm/issues')
+    } else {
+      restDelete.mutate()
+    }
+  }
   const projectsQ = useQuery({
     queryKey: ['pm', 'projects'],
     queryFn: () => api.get<{ data: { projects: Array<{ id: string; name: string; icon: string | null }> } }>('/api/v1/pm/projects'),
@@ -156,10 +203,10 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     enabled: FEATURES.pm_github,
   })
   const saveDesc = () => {
+    lastSavedDescRef.current = desc
     if (engine) engine.updateIssue(id, { description: desc })
     else restUpdate.mutate({ description: desc })
     setEditingDesc(false)
-    setTimeout(() => qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] }), 600)
   }
 
   // ⌘⇧B — copy branch name; personal automation assigns me + moves to started
@@ -250,7 +297,22 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             Branch <Kbd style={{ marginLeft: 5 }}>⌘⇧B</Kbd>
           </Btn>
         )}
+        <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} onClick={() => setConfirmDelete(true)} title="Delete issue">
+          Delete
+        </Btn>
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete issue"
+        body={`“${team?.key}-${issue.number} · ${issue.title}” moves to Recently deleted — you can put it back for 30 days from Settings → Workspace; after that it is gone for good.`}
+        confirmLabel="Delete"
+        danger
+        loading={restDelete.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={doDelete}
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20, alignItems: 'start' }}>
         {/* ── Doc pane ── */}

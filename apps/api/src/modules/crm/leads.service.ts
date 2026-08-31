@@ -312,7 +312,7 @@ export class LeadsService {
       });
 
       // Step 3 — fill in the back-links (status is already 'converted' from the claim).
-      return await this.db.withTenant(
+      const converted = await this.db.withTenant(
         tenantId,
         async (tx) => {
           const [row] = await tx
@@ -326,7 +326,6 @@ export class LeadsService {
             })
             .where(eq(leads.id, id))
             .returning();
-          await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.convert', resourceType: 'lead', resourceId: id });
           await this.domainEvents.publish(
             { name: 'crm.lead.converted', tenantId, actorUserId: userId, payload: { lead_id: id, deal_id: deal.data.id, person_id: resolved.personId, company_id: resolved.companyId } },
             tx,
@@ -335,6 +334,11 @@ export class LeadsService {
         },
         userId,
       );
+      // Round C: the audit call opens its OWN transaction, so awaiting it
+      // INSIDE the one above nested two pool clients per convert. Hoisted
+      // out and detached — the conversion is already durable.
+      void this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.convert', resourceType: 'lead', resourceId: id });
+      return converted;
     } catch (err) {
       // Release the claim so the lead can be converted again.
       await this.db.withTenant(

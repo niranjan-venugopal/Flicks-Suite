@@ -37,7 +37,7 @@ const authStub = { issueInviteMagicLink: async () => 'http://x/verify?token=t' }
 const configStub = { get: (_k: string, f?: unknown) => f } as never;
 
 const dbSvc = new DatabaseService();
-const moduleAccess = new ModuleAccessService(dbSvc);
+const moduleAccess = new ModuleAccessService(dbSvc, dbAdmin as never);
 const members = new MembersService(dbSvc, dbAdmin as never, audit, notificationsStub, authStub, moduleAccess, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const numbering = new NumberingService(dbSvc, audit);
 const customers = new CustomersService(dbSvc, audit);

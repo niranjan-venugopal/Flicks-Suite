@@ -1143,7 +1143,30 @@ export class NotificationsService {
     return { event, channel, enabled };
   }
 
+  /**
+   * NEVER throws (house rule 6, enforced at source since round C): an inbox
+   * row is a courtesy — a DB hiccup here must not fail the punch-in / leave
+   * approval / invoice that triggered it. Call sites on hot CTAs may also
+   * detach (`void this.notifications.createInAppNotification(...)`).
+   */
   async createInAppNotification(
+    userId: string,
+    type: string,
+    message: string,
+    linkUrl?: string | null,
+    tenantId?: string | null,
+    opts?: { groupKey?: string },
+  ): Promise<void> {
+    try {
+      await this.createInAppNotificationInner(userId, type, message, linkUrl, tenantId, opts);
+    } catch (err) {
+      this.logger.error(
+        `In-app notification [${type}] for ${userId} failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private async createInAppNotificationInner(
     userId: string,
     type: string,
     message: string,

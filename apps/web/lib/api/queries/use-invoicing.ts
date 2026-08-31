@@ -95,6 +95,8 @@ export interface Item {
   unit: string
   hsn_sac_code?: string | null
   default_gst_rate?: string | null
+  cess_rate?: string | null
+  intl_tax_rate?: string | null
   status: string
 }
 export type ItemInput = Partial<Omit<Item, 'id' | 'item_code' | 'status'>> & {
@@ -103,7 +105,10 @@ export type ItemInput = Partial<Omit<Item, 'id' | 'item_code' | 'status'>> & {
   item_code?: string
 }
 
-export function useItems(params: { page?: number; q?: string; status?: string } = {}) {
+export function useItems(
+  params: { page?: number; q?: string; status?: string } = {},
+  opts: { enabled?: boolean } = {},
+) {
   const qs = new URLSearchParams()
   if (params.page) qs.set('page', String(params.page))
   if (params.q) qs.set('q', params.q)
@@ -111,6 +116,7 @@ export function useItems(params: { page?: number; q?: string; status?: string } 
   return useQuery({
     queryKey: ['invoicing', 'items', params],
     queryFn: () => api.get<Paginated<Item>>(`/api/v1/items?${qs.toString()}`),
+    enabled: opts.enabled ?? true,
   })
 }
 

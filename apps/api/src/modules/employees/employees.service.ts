@@ -1272,21 +1272,20 @@ export class EmployeesService {
     );
 
     if (employee.userId && user) {
-      await this.notificationsService
-        .createInAppNotification(
-          employee.userId,
-          'onboarding.rejected',
-          reason
-            ? `Your onboarding was sent back for changes: ${reason}`
-            : 'Your onboarding was sent back for changes. Please review and resubmit.',
-          // The wizard's real route — /employees/me/onboarding never existed.
-          '/onboarding/employee',
-          tenantId,
-        )
-        .catch(() => undefined);
+      // Detached (round C): best-effort; the reviewer's CTA shouldn't wait.
+      void this.notificationsService.createInAppNotification(
+        employee.userId,
+        'onboarding.rejected',
+        reason
+          ? `Your onboarding was sent back for changes: ${reason}`
+          : 'Your onboarding was sent back for changes. Please review and resubmit.',
+        // The wizard's real route — /employees/me/onboarding never existed.
+        '/onboarding/employee',
+        tenantId,
+      );
 
       const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-      await this.notificationsService
+      void this.notificationsService
         .sendEmail('onboarding-rejected', user.email, {
           employeeName: user.full_name,
           reason,
@@ -1603,6 +1602,9 @@ export class EmployeesService {
       // owner must never be invited to review their own profile). The
       // People → Onboarding queue is the canonical surface. Owner/admin
       // self-serve completions notify nobody — there is nothing to review.
+      // Stays awaited (round C looked at detaching it): submit fires once
+      // per employee ever, and four review-flow specs pin the synchronous
+      // fan-out — not a CTA worth loosening.
       try {
         const info = await this.databaseService.withTenant(
           tenantId,
@@ -1669,18 +1671,16 @@ export class EmployeesService {
           reviewers = await findReviewers(['owner', 'admin']);
         const recipientIds = [...new Set(reviewers.map((r) => r.userId))];
         for (const reviewerId of recipientIds) {
-          await this.notificationsService
-            .createInAppNotification(
-              reviewerId,
-              'onboarding.submitted',
-              `${info?.employeeName || 'A new hire'} submitted onboarding for review.`,
-              // Deep link straight into the review dialog for THIS employee —
-              // a bare queue URL left reviewers with nothing to act on.
-              `/employees/onboarding?employee=${employeeId}`,
-              tenantId,
-              { groupKey: `onboarding:${employeeId}` },
-            )
-            .catch(() => undefined);
+          await this.notificationsService.createInAppNotification(
+            reviewerId,
+            'onboarding.submitted',
+            `${info?.employeeName || 'A new hire'} submitted onboarding for review.`,
+            // Deep link straight into the review dialog for THIS employee —
+            // a bare queue URL left reviewers with nothing to act on.
+            `/employees/onboarding?employee=${employeeId}`,
+            tenantId,
+            { groupKey: `onboarding:${employeeId}` },
+          );
         }
       } catch (e) {
         this.logger.warn(
@@ -1861,15 +1861,14 @@ export class EmployeesService {
     );
 
     if (employee.userId) {
-      await this.notificationsService
-        .createInAppNotification(
-          employee.userId as string,
-          'employee.details_change_requested',
-          'HR updated your details — please review and confirm the change.',
-          '/profile',
-          tenantId,
-        )
-        .catch(() => undefined);
+      // Detached (round C): best-effort; the save CTA shouldn't wait.
+      void this.notificationsService.createInAppNotification(
+        employee.userId as string,
+        'employee.details_change_requested',
+        'HR updated your details — please review and confirm the change.',
+        '/profile',
+        tenantId,
+      );
     }
 
     await this.auditService.log({
@@ -1995,19 +1994,18 @@ export class EmployeesService {
     if (request.requested_by_user_id) {
       const summary = (request.summary as Array<{ field: string }>) ?? [];
       const fields = summary.map((s) => s.field).slice(0, 3).join(', ');
-      await this.notificationsService
-        .createInAppNotification(
-          request.requested_by_user_id,
-          action === 'confirm'
-            ? 'employee.details_change_confirmed'
-            : 'employee.details_change_rejected',
-          action === 'confirm'
-            ? `Details change confirmed by the employee (${fields}).`
-            : `Details change rejected by the employee${reason ? `: ${reason}` : ''} (${fields}).`,
-          `/employees/${employeeId}`,
-          tenantId,
-        )
-        .catch(() => undefined);
+      // Detached (round C): best-effort; the confirm CTA shouldn't wait.
+      void this.notificationsService.createInAppNotification(
+        request.requested_by_user_id,
+        action === 'confirm'
+          ? 'employee.details_change_confirmed'
+          : 'employee.details_change_rejected',
+        action === 'confirm'
+          ? `Details change confirmed by the employee (${fields}).`
+          : `Details change rejected by the employee${reason ? `: ${reason}` : ''} (${fields}).`,
+        `/employees/${employeeId}`,
+        tenantId,
+      );
     }
 
     await this.auditService.log({
@@ -2168,18 +2166,17 @@ export class EmployeesService {
     );
 
     if (employee.user_id && user) {
-      await this.notificationsService
-        .createInAppNotification(
-          employee.user_id,
-          'onboarding.approved',
-          'Your onboarding was approved — your profile is now active. Welcome aboard!',
-          '/dashboard',
-          tenantId,
-        )
-        .catch(() => undefined);
+      // Detached (round C): best-effort; the approve CTA shouldn't wait.
+      void this.notificationsService.createInAppNotification(
+        employee.user_id,
+        'onboarding.approved',
+        'Your onboarding was approved — your profile is now active. Welcome aboard!',
+        '/dashboard',
+        tenantId,
+      );
 
       const loginUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
-      await this.notificationsService
+      void this.notificationsService
         .sendEmail('onboarding-approved', user.email, {
           employeeName: user.full_name,
           loginUrl,

@@ -8,12 +8,14 @@ import { useOrganization } from '@/lib/api/queries/use-settings'
 import { useInvSettings } from '@/lib/api/queries/use-inv-settings'
 import {
   useCustomers,
+  useItems,
   useSaveInvoice,
   useSendInvoice,
   useBankAccounts,
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
+  type Item,
 } from '@/lib/api/queries/use-invoicing'
 import { computeTotals } from '@/lib/invoicing/totals'
 import {
@@ -32,7 +34,7 @@ import { TDS_CODES, isGstCurrency, taxLabel } from '@/lib/invoicing/constants'
 import { DateField } from '@/components/ui/date-picker'
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
-const emptyLine = (): InvoiceLineInput => ({ item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
+const emptyLine = (): InvoiceLineInput => ({ item_id: undefined, item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
 const today = () => new Date().toISOString().slice(0, 10)
 const plusDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`)
@@ -175,6 +177,34 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
 
   const setLine = (i: number, patch: Partial<InvoiceLineInput>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+
+  // ── Items catalogue picker (round C): typing in a Description cell searches
+  // the tenant's Items server-side (the HSN picker pattern from ItemModal —
+  // client-filtering would truncate at the API's page size); picking a result
+  // links item_id and autofills rate/HSN/unit/tax. Free text stays allowed —
+  // no pick, no link, exactly today's behavior.
+  const [pickerFor, setPickerFor] = useState<number | null>(null)
+  const [itemQ, setItemQ] = useState('')
+  const itemSearch = useItems(
+    { q: itemQ.trim(), status: 'active' },
+    { enabled: pickerFor !== null && itemQ.trim().length >= 2 },
+  )
+  const itemResults = itemSearch.data?.data ?? []
+  const pickItem = (i: number, it: Item) => {
+    setLine(i, {
+      item_id: it.id,
+      item_name: it.name,
+      description: it.description ?? undefined,
+      hsn_sac_code: it.hsn_sac_code ?? undefined,
+      unit: it.unit ?? undefined,
+      rate: it.default_rate,
+      cess_rate: it.cess_rate ?? '0',
+      // One tax cell per line: GST % on domestic invoices, VAT % on foreign.
+      gst_rate: isDomestic ? (it.default_gst_rate ?? '18') : (it.intl_tax_rate ?? '0'),
+    })
+    setPickerFor(null)
+    setItemQ('')
+  }
   const addLine = () => setLines((ls) => [...ls, emptyLine()])
   const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls))
   const onLineKeyDown = (e: React.KeyboardEvent) => {
@@ -374,13 +404,66 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
             </div>
             {lines.map((l, i) => (
               <div key={i} style={{ display: 'grid', gridTemplateColumns: lineGrid, gap: 8, marginBottom: 10, alignItems: 'center' }}>
-                <input
-                  style={invoField(true)}
-                  placeholder="Description"
-                  value={l.item_name}
-                  onChange={(e) => setLine(i, { item_name: e.target.value })}
-                  onKeyDown={onLineKeyDown}
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    style={invoField(true)}
+                    placeholder="Description — type to search Items"
+                    value={l.item_name}
+                    onChange={(e) => {
+                      setLine(i, { item_name: e.target.value })
+                      setPickerFor(i)
+                      setItemQ(e.target.value)
+                    }}
+                    onFocus={() => { setPickerFor(i); setItemQ('') }}
+                    onBlur={() => setTimeout(() => setPickerFor((p) => (p === i ? null : p)), 150)}
+                    onKeyDown={onLineKeyDown}
+                  />
+                  {pickerFor === i && itemQ.trim().length >= 2 && itemResults.length > 0 && (
+                    <div
+                      className="glass"
+                      style={{
+                        position: 'absolute',
+                        zIndex: 20,
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        marginTop: 4,
+                        borderRadius: 9,
+                        maxHeight: 220,
+                        overflowY: 'auto',
+                        border: '1px solid var(--line)',
+                      }}
+                    >
+                      {itemResults.slice(0, 8).map((it) => (
+                        <button
+                          key={it.id}
+                          type="button"
+                          // preventDefault keeps focus in the input so this
+                          // click lands before the blur-close above.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickItem(i, it)}
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '8px 11px',
+                            fontSize: 13,
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--text)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <strong>{it.name}</strong>{' '}
+                          <span style={{ color: 'var(--muted)' }}>
+                            · {symbol(it.currency)}{it.default_rate}
+                            {it.hsn_sac_code ? ` · ${it.hsn_sac_code}` : ''}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {isDomestic && (
                   <input
                     style={invoField(true)}
