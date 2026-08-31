@@ -9,6 +9,7 @@ import { usePresence } from '@/lib/api/queries/use-presence'
 import {
   useEmployees,
   useImportEmployees,
+  useRestoreEmployee,
   type Employee,
   type ImportEmployeeRow,
   type ImportResult,
@@ -102,8 +103,13 @@ export default function EmployeesPage() {
   const [parsedRows, setParsedRows] = useState<ImportEmployeeRow[]>([])
   const [parseError, setParseError] = useState<string | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
-  const list = useEmployees({})
+  // "Removed" is a separate server-side view (deleted_at IS NOT NULL), not a
+  // status value — round 21's archive-on-remove keeps these out of every
+  // normal directory read.
+  const removedView = filterStatus === 'removed'
+  const list = useEmployees(removedView ? { removed: true } : {})
   const importEmployees = useImportEmployees()
+  const restore = useRestoreEmployee()
   const { toast } = useToast()
 
   const handleFile = async (file: File | undefined) => {
@@ -153,7 +159,7 @@ export default function EmployeesPage() {
   // D9 (PRD v4 §5) — seed batched presence for the visible people.
   usePresence(all.map((e) => e.userId).filter((id): id is string => !!id))
   const filtered = all.filter((e) => {
-    if (filterStatus !== 'all' && e.status !== filterStatus) return false
+    if (filterStatus !== 'all' && !removedView && e.status !== filterStatus) return false
     if (filterDept !== 'all' && (e.department ?? '') !== filterDept) return false
     if (search) {
       const q = search.toLowerCase()
@@ -247,6 +253,7 @@ export default function EmployeesPage() {
             <option value="inactive">Inactive</option>
             <option value="on_leave">On leave</option>
             <option value="on_notice">On notice</option>
+            <option value="removed">Removed</option>
           </select>
         </div>
 
@@ -288,9 +295,11 @@ export default function EmployeesPage() {
                 fontWeight: 600,
               }}
             >
-              {all.length === 0
-                ? 'No employees yet. Invite your first teammate.'
-                : `No employees match the current filters (${all.length} total).`}
+              {removedView
+                ? 'Nobody has been removed. Removed employees appear here and can be restored.'
+                : all.length === 0
+                  ? 'No employees yet. Invite your first teammate.'
+                  : `No employees match the current filters (${all.length} total).`}
             </div>
           ) : (
             <table className="tbl" style={{ width: '100%' }}>
@@ -347,13 +356,40 @@ export default function EmployeesPage() {
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                       {fmtJoin(e.joinDate)}
                     </td>
-                    <td>{statusPill(e.status)}</td>
+                    <td>{removedView ? <Pill tone="coral" dot>Removed</Pill> : statusPill(e.status)}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <Link href={`/employees/${e.id}`} style={{ textDecoration: 'none' }}>
-                        <Btn kind="ghost" size="sm" iconRight={<Icon.chevR size={12} />}>
-                          View
+                      {removedView ? (
+                        <Btn
+                          kind="secondary"
+                          size="sm"
+                          icon={<Icon.refresh size={12} />}
+                          disabled={restore.isPending}
+                          onClick={async () => {
+                            try {
+                              await restore.mutateAsync(e.id)
+                              toast({
+                                title: `${e.name} restored`,
+                                description:
+                                  'Their record is back in the directory. Their sign-in stays revoked — re-invite them if they need access.',
+                              })
+                            } catch (err) {
+                              toast({
+                                title: 'Could not restore',
+                                description: err instanceof Error ? err.message : 'Try again',
+                                variant: 'destructive',
+                              })
+                            }
+                          }}
+                        >
+                          Restore
                         </Btn>
-                      </Link>
+                      ) : (
+                        <Link href={`/employees/${e.id}`} style={{ textDecoration: 'none' }}>
+                          <Btn kind="ghost" size="sm" iconRight={<Icon.chevR size={12} />}>
+                            View
+                          </Btn>
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 ))}

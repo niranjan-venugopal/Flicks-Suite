@@ -87,6 +87,8 @@ interface EmployeesFilters {
   department?: string
   location?: string
   status?: string
+  /** true = the directory's Removed view (round 21). */
+  removed?: boolean
   page?: number
   limit?: number
 }
@@ -99,6 +101,7 @@ export function useEmployees(filters?: EmployeesFilters) {
       if (filters?.department) params.set('departmentId', filters.department)
       if (filters?.location) params.set('locationId', filters.location)
       if (filters?.status) params.set('status', filters.status)
+      if (filters?.removed) params.set('removed', 'true')
       if (filters?.page) params.set('page', String(filters.page))
       if (filters?.limit) params.set('limit', String(filters.limit))
       const res = await api.get<{
@@ -280,6 +283,65 @@ export function useUpdateEmployee() {
     // Backend route is PUT /api/v1/employees/:id (HR/Owner only).
     mutationFn: ({ id, ...data }: UpdateEmployeePayload) =>
       api.put<Employee>(`/api/v1/employees/${id}`, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['employees', variables.id] })
+      queryClient.invalidateQueries({ queryKey: ['employees'] })
+    },
+  })
+}
+
+// ─── Offboarding + removal (round 21) ────────────────────────────────────────
+
+export interface RemovalPreview {
+  /** delete = no history, the row goes for good; archive = kept and hidden. */
+  mode: 'delete' | 'archive'
+  name: string
+  attendance: number
+  punches: number
+  leave: number
+  timesheets: number
+  documents: number
+  historyRows: number
+  total: number
+}
+
+export function useRemovalPreview(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['employees', id, 'removal-preview'],
+    queryFn: () => api.get<{ data: RemovalPreview }>(`/api/v1/employees/${id}/removal-preview`),
+    enabled: enabled && !!id,
+    staleTime: 0,
+  })
+}
+
+export function useRemoveEmployee() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ data: { removed: true } }>(`/api/v1/employees/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees'] }),
+  })
+}
+
+export function useRestoreEmployee() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/employees/${id}/restore`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees'] }),
+  })
+}
+
+export interface TerminatePayload {
+  id: string
+  reason: string
+  lastWorkingDate?: string
+  separationType?: 'resigned' | 'terminated' | 'absconded' | 'retired' | 'end_of_contract'
+}
+
+export function useTerminateEmployee() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: TerminatePayload) =>
+      api.post(`/api/v1/employees/${id}/terminate`, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['employees', variables.id] })
       queryClient.invalidateQueries({ queryKey: ['employees'] })

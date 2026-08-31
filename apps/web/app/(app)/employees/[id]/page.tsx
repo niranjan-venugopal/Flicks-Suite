@@ -2,11 +2,16 @@
 
 import { use, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   useEmployee,
   useEmployees,
+  useRemovalPreview,
+  useRemoveEmployee,
+  useTerminateEmployee,
   useUpdateEmployee,
   type EmployeeDetail,
 } from '@/lib/api/queries/use-employees'
@@ -135,6 +140,44 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   const [editingDetails, setEditingDetails] = useState(false)
   const contactEmail = e.workEmail || e.userEmail || e.personalEmail || undefined
 
+  // ── Offboard + Remove (founder round 21: "We had an option to delete the
+  //    employee right?. Why it is not showing?") ─────────────────────────────
+  const router = useRouter()
+  const { toast } = useToast()
+  const [offboarding, setOffboarding] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  // The preview decides the confirm copy: a mistake with no history is
+  // deleted for good; anyone with records on the books is archived.
+  const preview = useRemovalPreview(e.id, confirmRemove)
+  const removeEmp = useRemoveEmployee()
+  const alreadyOff = e.status === 'separated' || e.status === 'absconded'
+  const pv = preview.data?.data
+  const doRemove = async () => {
+    try {
+      await removeEmp.mutateAsync(e.id)
+      toast({
+        title: pv?.mode === 'delete' ? `${name} deleted` : `${name} removed`,
+        description:
+          pv?.mode === 'delete'
+            ? 'The record is gone for good and their sign-in is revoked.'
+            : 'Their records are kept — restore them any time from Employees → Removed.',
+      })
+      router.push('/employees')
+    } catch (err) {
+      toast({
+        title: 'Could not remove',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+      setConfirmRemove(false)
+    }
+  }
+  const removeBody = !pv
+    ? 'Checking what removing this employee would touch…'
+    : pv.mode === 'delete'
+      ? `${name} has no attendance, leave or timesheet history yet, so their record is deleted for good and their sign-in access is revoked. This cannot be undone.`
+      : `${name} has history on the books (${pv.attendance} attendance day${pv.attendance === 1 ? '' : 's'}, ${pv.leave} leave request${pv.leave === 1 ? '' : 's'}, ${pv.timesheets} timesheet entr${pv.timesheets === 1 ? 'y' : 'ies'}). They will leave every list and their sign-in is revoked, but the records are kept for compliance — you can bring them back from Employees → status filter → Removed.`
+
   return (
     <div
       style={{
@@ -214,6 +257,24 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
             >
               Edit details
             </Btn>
+            {!alreadyOff && (
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.out size={13} />}
+                onClick={() => setOffboarding(true)}
+              >
+                Offboard
+              </Btn>
+            )}
+            <Btn
+              kind="danger"
+              size="sm"
+              icon={<Icon.trash size={13} />}
+              onClick={() => setConfirmRemove(true)}
+            >
+              Remove
+            </Btn>
           </>
         )}
       </div>
@@ -224,7 +285,138 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
       {canEdit && (
         <EditDetailsDialog e={e} open={editingDetails} onClose={() => setEditingDetails(false)} />
       )}
+      {canEdit && (
+        <OffboardDialog
+          e={e}
+          name={name}
+          open={offboarding}
+          onClose={() => setOffboarding(false)}
+        />
+      )}
+      {canEdit && (
+        <ConfirmDialog
+          open={confirmRemove}
+          onClose={() => setConfirmRemove(false)}
+          title={pv?.mode === 'delete' ? 'Delete employee' : 'Remove employee'}
+          body={removeBody}
+          confirmLabel={pv?.mode === 'delete' ? 'Delete for good' : 'Remove'}
+          danger
+          loading={removeEmp.isPending}
+          loadingLabel="Removing…"
+          onConfirm={doRemove}
+        />
+      )}
     </div>
+  )
+}
+
+// Offboarding = the proper exit: separation type, last working day and a
+// reason, through the existing terminate flow. Removal (above) is for
+// mistakes; this is for people actually leaving.
+function OffboardDialog({
+  e,
+  name,
+  open,
+  onClose,
+}: {
+  e: EmployeeDetail
+  name: string
+  open: boolean
+  onClose: () => void
+}) {
+  const terminate = useTerminateEmployee()
+  const { toast } = useToast()
+  const [reason, setReason] = useState('')
+  const [lastDay, setLastDay] = useState('')
+  const [type, setType] = useState<'resigned' | 'terminated' | 'absconded' | 'retired' | 'end_of_contract'>('resigned')
+
+  const submit = async () => {
+    if (!reason.trim()) {
+      toast({ title: 'A reason is required', variant: 'destructive' })
+      return
+    }
+    try {
+      await terminate.mutateAsync({
+        id: e.id,
+        reason: reason.trim(),
+        separationType: type,
+        ...(lastDay ? { lastWorkingDate: lastDay } : {}),
+      })
+      toast({
+        title: `${name} is being offboarded`,
+        description: lastDay ? `Last working day ${fmtDate(lastDay)}.` : undefined,
+      })
+      onClose()
+    } catch (err) {
+      toast({
+        title: 'Could not start offboarding',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Offboard {name}</DialogTitle>
+        </DialogHeader>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Separation type
+              </label>
+              <select
+                className="input"
+                value={type}
+                onChange={(ev) => setType(ev.target.value as typeof type)}
+                style={{ width: '100%' }}
+              >
+                <option value="resigned">Resigned</option>
+                <option value="terminated">Terminated</option>
+                <option value="retired">Retired</option>
+                <option value="end_of_contract">End of contract</option>
+                <option value="absconded">Absconded</option>
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Last working day
+              </label>
+              <DateField value={lastDay} onChange={setLastDay} />
+            </div>
+          </div>
+          <div>
+            <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+              Reason <span style={{ color: 'var(--coral)' }}>*</span>
+            </label>
+            <textarea
+              className="input"
+              value={reason}
+              onChange={(ev) => setReason(ev.target.value)}
+              rows={3}
+              placeholder="e.g. Resigned — moving to a new role"
+              style={{ width: '100%', resize: 'vertical', paddingTop: 8 }}
+              autoFocus
+            />
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.5 }}>
+            This records the exit and starts their notice — it does not delete
+            anything. Use Remove only for records added by mistake.
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+          <Btn kind="ghost" onClick={onClose} disabled={terminate.isPending}>
+            Cancel
+          </Btn>
+          <Btn kind="primary" onClick={submit} disabled={terminate.isPending}>
+            {terminate.isPending ? 'Saving…' : 'Start offboarding'}
+          </Btn>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
