@@ -305,6 +305,12 @@ export class PmImportService {
         const createdIds: string[] = [];
         const updatedIds: string[] = [];
         const projectCreatedIds: string[] = [];
+        // Issues whose labels this run attached — the completion event must
+        // name them (pm_issue_labels is issue-scoped in the delta) or a live
+        // client receives the issues WITHOUT their labels. That stale label
+        // set is what the triage editor then wrote back through setLabels'
+        // full replace, erasing the imported labels (founder round A).
+        const labelledIssueIds: string[] = [];
         const projectIds = new Map<string, string>(); // name → id (find-or-create once)
 
         const resolveProject = async (name: string): Promise<string | null> => {
@@ -457,6 +463,7 @@ export class PmImportService {
                   .insert(pmIssueLabels)
                   .values(labels.map((labelId) => ({ tenant_id: tenantId, issue_id: issue!.id, label_id: labelId })))
                   .onConflictDoNothing();
+                labelledIssueIds.push(issue!.id);
               }
             }
           } catch (err) {
@@ -480,10 +487,15 @@ export class PmImportService {
           resourceId: batchId,
           metadata: { preset: dto.preset, created, updated, skipped, errors: errors.length },
         });
-        // Chunked catch-up events — FSE clients pull the imported rows via delta.
+        // Chunked catch-up events — FSE clients pull the imported rows via
+        // delta. Labels ride along: pm_labels for the definitions this run
+        // auto-created, pm_issue_labels (issue-scoped) for every issue whose
+        // set changed, so no live client is left holding a stale label set.
         const allRefs = [
           ...[...createdIds, ...updatedIds].map((id) => ({ t: 'pm_issues', id })),
           ...projectCreatedIds.map((id) => ({ t: 'pm_projects', id })),
+          ...[...labelIds.values()].map((id) => ({ t: 'pm_labels', id })),
+          ...labelledIssueIds.map((id) => ({ t: 'pm_issue_labels', id })),
         ];
         for (let i = 0; i < allRefs.length; i += EVENT_CHUNK) {
           await this.domainEvents.publish(

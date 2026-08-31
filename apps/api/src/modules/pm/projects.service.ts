@@ -820,17 +820,43 @@ export class PmProjectsService {
           .limit(1);
         if (!init) throw new NotFoundException('Initiative not found');
         const clean = [...new Set(projectIds)];
+        // Validate against the tenant WITH deleted rows: a client can
+        // legitimately still hold the id of a project that was soft-deleted a
+        // moment ago, and rejecting the whole write for it turned an "add one
+        // project to this lane" into a hard failure. Only truly foreign ids
+        // are an error. Soft-deleted ids are accepted and simply not
+        // re-inserted — their lane rows are preserved below.
+        let liveIds: string[] = [];
         if (clean.length) {
           const rows = await tx
-            .select({ id: pmProjects.id })
+            .select({ id: pmProjects.id, deleted_at: pmProjects.deleted_at })
             .from(pmProjects)
-            .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, clean), isNull(pmProjects.deleted_at)));
+            .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, clean)));
           if (rows.length !== clean.length) throw new BadRequestException('project_ids contain a project outside this workspace');
+          liveIds = rows.filter((r) => !r.deleted_at).map((r) => r.id);
         }
-        await tx.delete(pmInitiativeProjects).where(and(eq(pmInitiativeProjects.tenant_id, tenantId), eq(pmInitiativeProjects.initiative_id, id)));
-        if (clean.length) {
+        // Replace only the LIVE projects' lane rows. A soft-deleted project's
+        // row stays put whatever the client sent: the client cannot see it
+        // (tombstoned locally), so a full replace built from the client's view
+        // silently destroyed it — and the project then came back from
+        // Recently deleted without its lane placement, unrecoverably
+        // (founder round A, the destructive full-set-replace class).
+        await tx.delete(pmInitiativeProjects).where(
+          and(
+            eq(pmInitiativeProjects.tenant_id, tenantId),
+            eq(pmInitiativeProjects.initiative_id, id),
+            inArray(
+              pmInitiativeProjects.project_id,
+              tx
+                .select({ id: pmProjects.id })
+                .from(pmProjects)
+                .where(and(eq(pmProjects.tenant_id, tenantId), isNull(pmProjects.deleted_at))),
+            ),
+          ),
+        );
+        if (liveIds.length) {
           await tx.insert(pmInitiativeProjects).values(
-            clean.map((project_id, i) => ({ tenant_id: tenantId, initiative_id: id, project_id, position: i })),
+            liveIds.map((project_id, i) => ({ tenant_id: tenantId, initiative_id: id, project_id, position: i })),
           );
         }
         await this.domainEvents.publish(

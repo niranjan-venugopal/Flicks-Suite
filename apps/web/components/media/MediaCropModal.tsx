@@ -160,7 +160,7 @@ export function MediaCropModal({
       >
         {/* Header */}
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}>
               {kind === 'logo' ? 'Update company logo' : 'Update photo'}
             </div>

@@ -515,34 +515,33 @@ export class PmController {
     return this.projects.restore(user.tenantId, user.sub, id, user.role);
   }
 
-  // ─── Guest seats (round 7) — admin+ (it mints a workspace membership,
-  //     mirroring invite-auditor) ─────────────────────────────────────────────
+  // ─── Guest seats (round 7; widened in round A) — the project lead, plus
+  //     manager and above. No @Roles here: the lead exception is per-project,
+  //     so the whole gate lives in PmGuestsService.assertMayManageGuests —
+  //     a decorator would either block leads or be redundant with it. ────────
 
   @Post('projects/:id/guests')
   @RequireGrant('pm', 'edit')
-  @Roles('admin')
   @Throttle({ short: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'Invite an external guest to exactly this project' })
   inviteGuest(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: InviteGuestDto) {
-    return this.guests.invite(user.tenantId, user.sub, id, dto);
+    return this.guests.invite(user.tenantId, user.sub, user.role, id, dto);
   }
 
   @Get('projects/:id/guests')
   @RequireGrant('pm', 'view')
-  @Roles('admin')
   listGuests(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
-    return this.guests.list(user.tenantId, id);
+    return this.guests.list(user.tenantId, user.sub, user.role, id);
   }
 
   @Post('projects/:id/guests/:userId/remove')
   @RequireGrant('pm', 'edit')
-  @Roles('admin')
   revokeGuest(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
     @Param('userId') userId: string,
   ) {
-    return this.guests.revoke(user.tenantId, user.sub, id, userId);
+    return this.guests.revoke(user.tenantId, user.sub, user.role, id, userId);
   }
 
   @Post('milestones')

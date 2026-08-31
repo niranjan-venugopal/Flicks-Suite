@@ -10,7 +10,7 @@ import {
   stateCodeFromGstin,
   RESERVED_TENANT_SLUGS,
 } from '@flicks/shared/constants';
-import { eq, and, asc, count, ne, sql } from 'drizzle-orm';
+import { eq, and, asc, count, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import {
   tenants,
   locations,
@@ -254,6 +254,24 @@ export class SettingsService {
 
   // ─── Departments ───────────────────────────────────────────────────────────
 
+  /**
+   * Everyone currently on the books — invited, active, on leave, on notice —
+   * excluding only separated/absconded and removed rows, so Settings agrees
+   * with the directory (founder round A).
+   *
+   * These counters are real JOIN + GROUP BY aggregations, NOT correlated
+   * sub-queries: on a joinless select, Drizzle renders columns inside raw
+   * sql`` templates UNQUALIFIED, so `employees.department_id = departments.id`
+   * reached Postgres as `"department_id" = "id"` — a comparison of two
+   * employees columns that is never true. Valid SQL, silently 0 forever.
+   */
+  private onTheBooks() {
+    return and(
+      notInArray(employees.status, ['separated', 'absconded']),
+      isNull(employees.deleted_at),
+    );
+  }
+
   async listDepartments(tenantId: string) {
     const rows = await this.dbAdmin
       .select({
@@ -265,16 +283,19 @@ export class SettingsService {
         description: departments.description,
         isActive: departments.is_active,
         createdAt: departments.created_at,
-        // headcount = active employees in this department
-        headcount: sql<number>`(
-          SELECT COUNT(*)::int FROM ${employees}
-          WHERE ${employees.tenant_id} = ${departments.tenant_id}
-            AND ${employees.department_id} = ${departments.id}
-            AND ${employees.status} = 'active'
-        )`.as('headcount'),
+        headcount: sql<number>`COUNT(${employees.id})::int`,
       })
       .from(departments)
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.department_id, departments.id),
+          this.onTheBooks(),
+        ),
+      )
       .where(eq(departments.tenant_id, tenantId))
+      .groupBy(departments.id)
       .orderBy(asc(departments.name));
 
     return { data: rows, total: rows.length };
@@ -431,15 +452,20 @@ export class SettingsService {
         ipAllowlist: locations.ip_allowlist,
         isActive: locations.is_active,
         createdAt: locations.created_at,
-        headcount: sql<number>`(
-          SELECT COUNT(*)::int FROM ${employees}
-          WHERE ${employees.tenant_id} = ${locations.tenant_id}
-            AND ${employees.location_id} = ${locations.id}
-            AND ${employees.status} = 'active'
-        )`.as('headcount'),
+        // Join + group, not a sub-query — see listDepartments.
+        headcount: sql<number>`COUNT(${employees.id})::int`,
       })
       .from(locations)
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.location_id, locations.id),
+          this.onTheBooks(),
+        ),
+      )
       .where(eq(locations.tenant_id, tenantId))
+      .groupBy(locations.id)
       .orderBy(asc(locations.name));
 
     return { data: rows, total: rows.length };
@@ -784,16 +810,24 @@ export class SettingsService {
         departmentName: departments.name,
         isActive: designations.is_active,
         createdAt: designations.created_at,
-        headcount: sql<number>`(
-          SELECT COUNT(*)::int FROM ${employees}
-          WHERE ${employees.tenant_id} = ${designations.tenant_id}
-            AND ${employees.designation_id} = ${designations.id}
-            AND ${employees.status} = 'active'
-        )`.as('headcount'),
+        // Join + group, not a sub-query — see listDepartments. This one's SQL
+        // was already valid (the departments join forced qualification), but
+        // it counted only status='active', so a workspace mid-onboarding —
+        // everyone still 'inactive' until approval — showed 0 everywhere.
+        headcount: sql<number>`COUNT(${employees.id})::int`,
       })
       .from(designations)
       .leftJoin(departments, eq(designations.department_id, departments.id))
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.designation_id, designations.id),
+          this.onTheBooks(),
+        ),
+      )
       .where(eq(designations.tenant_id, tenantId))
+      .groupBy(designations.id, departments.id)
       .orderBy(asc(designations.level), asc(designations.title));
 
     return { data: rows, total: rows.length };
@@ -925,16 +959,30 @@ export class SettingsService {
         isDefault: shiftTemplates.is_default,
         isActive: shiftTemplates.is_active,
         createdAt: shiftTemplates.created_at,
-        // assigned headcount = unique employees with an effective shift mapping
-        assigned: sql<number>`(
-          SELECT COUNT(DISTINCT ${employeeShifts.employee_id})::int FROM ${employeeShifts}
-          WHERE ${employeeShifts.tenant_id} = ${shiftTemplates.tenant_id}
-            AND ${employeeShifts.shift_template_id} = ${shiftTemplates.id}
-            AND (${employeeShifts.effective_to} IS NULL OR ${employeeShifts.effective_to} >= CURRENT_DATE)
-        )`.as('assigned'),
+        // Join + group, not a sub-query — see listDepartments. Assigned =
+        // unique on-the-books employees with an effective mapping; the join
+        // to employees keeps departed people out of the count.
+        assigned: sql<number>`COUNT(DISTINCT ${employees.id})::int`,
       })
       .from(shiftTemplates)
+      .leftJoin(
+        employeeShifts,
+        and(
+          eq(employeeShifts.tenant_id, tenantId),
+          eq(employeeShifts.shift_template_id, shiftTemplates.id),
+          sql`(${employeeShifts.effective_to} IS NULL OR ${employeeShifts.effective_to} >= CURRENT_DATE)`,
+        ),
+      )
+      .leftJoin(
+        employees,
+        and(
+          eq(employees.tenant_id, tenantId),
+          eq(employees.id, employeeShifts.employee_id),
+          this.onTheBooks(),
+        ),
+      )
       .where(eq(shiftTemplates.tenant_id, tenantId))
+      .groupBy(shiftTemplates.id)
       .orderBy(asc(shiftTemplates.name));
 
     return { data: rows, total: rows.length };

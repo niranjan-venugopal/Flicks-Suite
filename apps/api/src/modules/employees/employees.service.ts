@@ -8,7 +8,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull } from 'drizzle-orm';
+import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull, lte, gte, lt } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -30,6 +30,8 @@ import {
   timesheetEntries,
   dataConsents,
   employeeChangeRequests,
+  shiftTemplates,
+  employeeShifts,
 } from '@flicks/db/schema';
 
 // Bump when the privacy policy / consent copy materially changes so we can
@@ -186,6 +188,7 @@ export class EmployeesService {
       designationId?: string | null;
       locationId?: string | null;
       managerEmployeeId?: string | null;
+      shiftTemplateId?: string | null;
     },
   ): Promise<void> {
     if (refs.departmentId) {
@@ -219,6 +222,66 @@ export class EmployeesService {
         .where(and(eq(employees.id, refs.managerEmployeeId), eq(employees.tenant_id, tenantId)))
         .limit(1);
       if (!row) throw new BadRequestException('managerId does not belong to this workspace');
+    }
+    if (refs.shiftTemplateId) {
+      const [row] = await db
+        .select({ id: shiftTemplates.id })
+        .from(shiftTemplates)
+        .where(
+          and(
+            eq(shiftTemplates.id, refs.shiftTemplateId),
+            eq(shiftTemplates.tenant_id, tenantId),
+            eq(shiftTemplates.is_active, true),
+          ),
+        )
+        .limit(1);
+      if (!row) throw new BadRequestException('shiftTemplateId does not belong to this workspace');
+    }
+  }
+
+  /**
+   * Point `employeeId` at `shiftTemplateId` from `fromDate` (YYYY-MM-DD)
+   * onward, or back at the tenant default when null. History is preserved:
+   * an already-running mapping is closed the day before, while one that never
+   * took effect (starts today or later) is replaced outright. The attendance
+   * engine reads these rows per-day (resolveShiftTemplate), so lateness and
+   * worked-hours math follows the change from `fromDate` without rewriting
+   * the past.
+   */
+  private async writeShiftAssignment(
+    db: Db,
+    tenantId: string,
+    employeeId: string,
+    shiftTemplateId: string | null,
+    fromDate: string,
+  ): Promise<void> {
+    await db
+      .update(employeeShifts)
+      .set({ effective_to: sql`(${fromDate}::date - 1)` })
+      .where(
+        and(
+          eq(employeeShifts.tenant_id, tenantId),
+          eq(employeeShifts.employee_id, employeeId),
+          lt(employeeShifts.effective_from, fromDate),
+          or(isNull(employeeShifts.effective_to), gte(employeeShifts.effective_to, fromDate)),
+        ),
+      );
+    await db
+      .delete(employeeShifts)
+      .where(
+        and(
+          eq(employeeShifts.tenant_id, tenantId),
+          eq(employeeShifts.employee_id, employeeId),
+          gte(employeeShifts.effective_from, fromDate),
+        ),
+      );
+    if (shiftTemplateId) {
+      await db.insert(employeeShifts).values({
+        tenant_id: tenantId,
+        employee_id: employeeId,
+        shift_template_id: shiftTemplateId,
+        effective_from: fromDate,
+      });
     }
   }
 
@@ -267,6 +330,7 @@ export class EmployeesService {
           designationId: dto.designationId,
           locationId: dto.locationId,
           managerEmployeeId: dto.managerId,
+          shiftTemplateId: dto.shiftTemplateId,
         });
 
         // Check for duplicate employee code within tenant. REMOVED employees
@@ -331,6 +395,14 @@ export class EmployeesService {
             },
           })
           .returning();
+
+        // The Add-employee form's shift pick finally lands somewhere: without
+        // this row the attendance engine silently ran everyone on the tenant
+        // default shift, so lateness and worked hours were wrong for anyone
+        // hired onto another shift (founder round A).
+        if (dto.shiftTemplateId) {
+          await this.writeShiftAssignment(db, tenantId, employee.id, dto.shiftTemplateId, joiningDate!);
+        }
 
         // Create or update membership
         const existingMembership = await db
@@ -595,7 +667,7 @@ export class EmployeesService {
       }
 
       // ─── Sibling collections ──────────────────────────────────────────────
-      const [emergencyList, leaveBalanceRows, monthStats] = await Promise.all([
+      const [emergencyList, leaveBalanceRows, monthStats, shiftRows] = await Promise.all([
         // Emergency contacts (primary first)
         db
           .select({
@@ -671,6 +743,33 @@ export class EmployeesService {
               sql`${attendanceRecords.attendance_date} <= current_date`,
             ),
           ),
+
+        // Shift effective TODAY (round A). Null → the tenant default applies;
+        // mirrors attendance's resolveShiftTemplate so the profile shows the
+        // same shift the lateness math actually uses.
+        db
+          .select({
+            shiftTemplateId: employeeShifts.shift_template_id,
+            name: shiftTemplates.name,
+            startTime: shiftTemplates.start_time,
+            endTime: shiftTemplates.end_time,
+            effectiveFrom: employeeShifts.effective_from,
+          })
+          .from(employeeShifts)
+          .innerJoin(shiftTemplates, eq(employeeShifts.shift_template_id, shiftTemplates.id))
+          .where(
+            and(
+              eq(employeeShifts.tenant_id, tenantId),
+              eq(employeeShifts.employee_id, employeeId),
+              sql`${employeeShifts.effective_from} <= current_date`,
+              or(
+                isNull(employeeShifts.effective_to),
+                sql`${employeeShifts.effective_to} >= current_date`,
+              ),
+            ),
+          )
+          .orderBy(desc(employeeShifts.effective_from))
+          .limit(1),
       ]);
 
       const month = monthStats[0] ?? {
@@ -697,6 +796,7 @@ export class EmployeesService {
           hoursWorked: Math.round(Number(month.minutesWorked ?? 0) / 60),
           leaveTaken: Number(month.onLeave ?? 0),
         },
+        currentShift: shiftRows[0] ?? null,
         emergencyContacts: emergencyList,
         leaveBalances: leaveBalanceRows.map((b) => ({
           leaveTypeId: b.leaveTypeId,
@@ -848,7 +948,17 @@ export class EmployeesService {
           designationId: dto.designationId,
           locationId: dto.locationId,
           managerEmployeeId: dto.reportingManagerId,
+          shiftTemplateId: dto.shiftTemplateId,
         });
+        if (dto.reportingManagerId !== undefined && dto.reportingManagerId === employeeId) {
+          throw new BadRequestException('An employee cannot report to themselves');
+        }
+
+        // Shift change takes effect today; null reverts to the tenant default.
+        if (dto.shiftTemplateId !== undefined) {
+          const today = new Date().toISOString().split('T')[0]!;
+          await this.writeShiftAssignment(db, tenantId, employeeId, dto.shiftTemplateId, today);
+        }
 
         const [updated] = await db
           .update(employees)
@@ -920,6 +1030,9 @@ export class EmployeesService {
         probationEndDate: dto.probationEndDate,
         dateOfConfirmation: dto.dateOfConfirmation,
         noticePeriodDays: dto.noticePeriodDays,
+        ...(dto.shiftTemplateId !== undefined
+          ? { shiftTemplateId: dto.shiftTemplateId }
+          : {}),
       },
     });
 

@@ -47,8 +47,18 @@ export class PmStore {
   online = true
   pendingCount = 0
 
+  /**
+   * Every id ever tombstoned this session, across tables. Pages that merge
+   * live rows with a lazily-fetched REST payload need this to tell "the store
+   * never had this row" (keep the REST copy) apart from "the store deleted
+   * it" (the REST copy is stale — drop it). Session-scoped on purpose: a
+   * fresh load re-fetches REST, so old deletions never reach the merge.
+   */
+  tombstoned = observable.set<string>()
+
   constructor() {
     makeAutoObservable(this, {
+      tombstoned: false,
       teams: false,
       states: false,
       labels: false,
@@ -124,6 +134,9 @@ export class PmStore {
   applyRows(table: string, rows: Record<string, unknown>[]) {
     runInAction(() => {
       for (const row of rows) {
+        // A row upserted after a tombstone (rollback of a rejected delete, a
+        // server-side restore) is alive again — forget the tombstone.
+        if (typeof row.id === 'string') this.tombstoned.delete(row.id)
         switch (table) {
           case 'pm_teams':
             this.teams.set(row.id as string, row as unknown as PmTeamRow)
@@ -245,6 +258,7 @@ export class PmStore {
   applyTombstones(table: string, ids: string[]) {
     runInAction(() => {
       for (const id of ids) {
+        this.tombstoned.add(id)
         if (table === 'pm_issues') this.issues.delete(id)
         else if (table === 'pm_teams') {
           // Losing a team (deleted OR visibility revoked, §16) purges every
@@ -254,6 +268,7 @@ export class PmStore {
           for (const [sid, s] of this.states) if (s.team_id === id) this.states.delete(sid)
           for (const [iid, i] of this.issues) {
             if (i.team_id === id) {
+              this.tombstoned.add(iid)
               this.issues.delete(iid)
               this.issueLabels.delete(iid)
               this.issueSubscribers.delete(iid)
@@ -266,11 +281,16 @@ export class PmStore {
           this.projects.delete(id)
           this.projectTeams.delete(id)
           this.projectMembers.delete(id)
-          for (const [mid, m] of this.milestones) if (m.project_id === id) this.milestones.delete(mid)
-          for (const [uid, u] of this.projectUpdates) if (u.project_id === id) this.projectUpdates.delete(uid)
-          for (const [iid, list] of this.initiativeProjects) {
-            if (list.includes(id)) this.initiativeProjects.set(iid, list.filter((p) => p !== id))
-          }
+          for (const [mid, m] of this.milestones) if (m.project_id === id) { this.tombstoned.add(mid); this.milestones.delete(mid) }
+          for (const [uid, u] of this.projectUpdates) if (u.project_id === id) { this.tombstoned.add(uid); this.projectUpdates.delete(uid) }
+          // Deliberately NOT pruned from initiative lanes. The server keeps
+          // pm_initiative_projects across a soft delete, so pruning here made
+          // the local lane a strict subset of the truth — and the next
+          // "add a project to this lane" wrote that subset back through
+          // setInitiativeProjects, destroying the pruned links in Postgres
+          // (founder round A). Renderers already skip ids with no project row
+          // (roadmap builds lanes via projects.get(pid) + filter), so a stale
+          // id in the list is invisible, not broken.
         } else if (table === 'pm_project_milestones') this.milestones.delete(id)
         else if (table === 'pm_project_updates') this.projectUpdates.delete(id)
         else if (table === 'pm_cycles') this.cycles.delete(id)
@@ -301,7 +321,10 @@ export class PmStore {
   }
 
   restoreIssue(row: PmIssueRow) {
-    runInAction(() => this.issues.set(row.id, row))
+    runInAction(() => {
+      this.tombstoned.delete(row.id)
+      this.issues.set(row.id, row)
+    })
   }
 
   setCursor(seq: number) {
@@ -373,6 +396,7 @@ export class PmStore {
       this.projectMembers.clear()
       this.initiativeProjects.clear()
       this.cycles.clear()
+      this.tombstoned.clear()
       this.cursor = 0
       this.hydrated = false
     })

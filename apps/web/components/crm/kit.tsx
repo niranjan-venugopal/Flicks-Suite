@@ -219,7 +219,7 @@ export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () =>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
           <Icon.keyboard size={16} style={{ color: 'var(--blue)' }} />
           <span style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>Keyboard</span>
-          <button onClick={onClose} style={{ width: 26, height: 26, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer' }}><Icon.x size={13} /></button>
+          <button onClick={onClose} style={{ width: 26, height: 26, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-2)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Icon.x size={13} /></button>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {rows.map((r, i) => (

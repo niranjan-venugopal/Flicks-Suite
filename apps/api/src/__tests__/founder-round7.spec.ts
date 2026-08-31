@@ -171,7 +171,7 @@ describe('guest invite / list / revoke', () => {
   const guestEmail = `r7-guest-${rid()}@client.test`;
 
   it('invites a guest: external membership + pm grant + project row', async () => {
-    const res = await guestsSvc.invite(tenantId, ownerId, projectA, {
+    const res = await guestsSvc.invite(tenantId, ownerId, 'owner', projectA, {
       email: guestEmail,
       full_name: 'Priya Client',
     });
@@ -207,7 +207,7 @@ describe('guest invite / list / revoke', () => {
   });
 
   it('re-inviting the same email is idempotent (no duplicate rows)', async () => {
-    await guestsSvc.invite(tenantId, ownerId, projectA, { email: guestEmail });
+    await guestsSvc.invite(tenantId, ownerId, 'owner', projectA, { email: guestEmail });
     const rows = await dbAdmin
       .select()
       .from(pmProjectMembers)
@@ -223,18 +223,18 @@ describe('guest invite / list / revoke', () => {
   it('rejects inviting an existing workspace member as a guest', async () => {
     const [owner] = await dbAdmin.select().from(users).where(eq(users.id, ownerId));
     await expect(
-      guestsSvc.invite(tenantId, ownerId, projectA, { email: owner!.email }),
+      guestsSvc.invite(tenantId, ownerId, 'owner', projectA, { email: owner!.email }),
     ).rejects.toThrow(/already a member/i);
   });
 
   it("a project from ANOTHER tenant is NotFound (in-tenant existence check)", async () => {
     await expect(
-      guestsSvc.invite(tenantId, ownerId, otherTenantProject, { email: `x-${rid()}@t.test` }),
+      guestsSvc.invite(tenantId, ownerId, 'owner', otherTenantProject, { email: `x-${rid()}@t.test` }),
     ).rejects.toThrow(/not found/i);
   });
 
   it('lists the guest for the project', async () => {
-    const res = await guestsSvc.list(tenantId, projectA);
+    const res = await guestsSvc.list(tenantId, ownerId, 'owner', projectA);
     expect(res.data.map((g) => g.userId)).toContain(guestUserId);
   });
 });
@@ -424,7 +424,7 @@ describe('guests are non-billable and outside every member pool', () => {
 
 describe('guest revoke', () => {
   it('removing the last project deactivates the membership', async () => {
-    const res = await guestsSvc.revoke(tenantId, ownerId, projectA, guestUserId);
+    const res = await guestsSvc.revoke(tenantId, ownerId, 'owner', projectA, guestUserId);
     expect(res.data.membershipRevoked).toBe(true);
     const [m] = await dbAdmin
       .select()

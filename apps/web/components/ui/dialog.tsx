@@ -47,16 +47,24 @@ const DialogContent = React.forwardRef<
       )}
       {...props}
     >
+      {/*
+        Close-button contract (founder round A): the X is pinned to the CARD,
+        not the scroll region — on a tall dialog it used to scroll out of
+        view — sits on the p-6 (24px) gutter instead of 8px inside it, and is
+        vertically centred on the title's line (text-lg ⇒ 28px line at 24px
+        top padding ⇒ centreline 38px; the 24px hit box starts at 26px).
+        Consumer classNames are width-only (audited), so moving padding+scroll
+        to the inner region is invisible to all 25 call sites.
+      */}
       <div
         className={cn(
-          'relative pointer-events-auto w-full max-w-lg glass rounded-md border border-white/10 p-6 shadow-xl',
-          'max-h-[90vh] overflow-y-auto',
-          'grid gap-4',
+          'relative pointer-events-auto flex w-full max-w-lg flex-col glass rounded-md border border-white/10 shadow-xl',
+          'max-h-[90vh]',
           className,
         )}
       >
-        {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-50 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-white/30 disabled:pointer-events-none">
+        <div className="grid gap-4 overflow-y-auto p-6">{children}</div>
+        <DialogPrimitive.Close className="absolute right-5 top-[26px] rounded-sm p-1 opacity-50 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-white/30 disabled:pointer-events-none">
           <X className="h-4 w-4 text-white" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
@@ -71,7 +79,9 @@ const DialogHeader = ({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
-    className={cn('flex flex-col space-y-1.5 text-left', className)}
+    // pr-8 reserves the close button's column so a long title truncates
+    // beside the X instead of running underneath it.
+    className={cn('flex flex-col space-y-1.5 pr-8 text-left', className)}
     {...props}
   />
 )

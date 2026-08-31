@@ -79,11 +79,13 @@ const CRM_CHILDREN: NavChild[] = [
   { href: '/crm/templates', label: 'Email settings' },
   { href: '/crm/forms', label: 'Web forms' },
   { href: '/crm/automation', label: 'Automation' },
-  { href: '/crm/reports', label: 'Reports' },
   { href: '/crm/contacts', label: 'Contacts' },
   { href: '/crm/companies', label: 'Companies' },
   { href: '/crm/import', label: 'Import' },
   { href: '/crm/merge', label: 'Data hygiene' },
+  // Reports closes the group (founder round A) — safe under both feature-flag
+  // states, since withoutParkedCrm only ever removes entries.
+  { href: '/crm/reports', label: 'Reports' },
 ]
 
 // PRD v6 §16 — PM is org-open: every tenant role works issues the same way, so

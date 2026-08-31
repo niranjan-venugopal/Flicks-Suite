@@ -56,7 +56,10 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
             gap: 24,
           }}
         >
-          <div>
+          {/* flex:1 + minWidth:0 so a long unbreakable title truncates inside
+              the card instead of shoving the X out through overflow:hidden
+              (founder round A — clipped close buttons). */}
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div className="t-h3">{title}</div>
             {sub && (
               <div className="t-mute" style={{ marginTop: 4 }}>
@@ -64,7 +67,11 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
               </div>
             )}
           </div>
-          <Btn kind="ghost" size="sm" icon={<Icon.x size={16} />} onClick={onClose} />
+          {/* Negative margins centre the 32px button on the title line's
+              ~19px centreline without growing the header. */}
+          <div style={{ margin: '-6px -8px 0 0', flexShrink: 0 }}>
+            <Btn kind="ghost" size="sm" icon={<Icon.x size={16} />} onClick={onClose} />
+          </div>
         </div>
         <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1 }}>{children}</div>
         {footer && (

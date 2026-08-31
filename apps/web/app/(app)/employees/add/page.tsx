@@ -171,6 +171,9 @@ export default function InviteEmployeePage() {
       ...(designationId ? { designationId } : {}),
       ...(locationId ? { locationId } : {}),
       ...(managerId ? { managerId } : {}),
+      // The Shift dropdown finally reaches the server (founder round A) —
+      // the API writes an employee_shifts mapping from the joining date.
+      ...(shiftTemplateId ? { shiftTemplateId } : {}),
       ...(form.employmentType ? { employmentType: form.employmentType } : {}),
       ...(form.joiningDate ? { joiningDate: form.joiningDate } : {}),
       ...(form.personalPhone.trim()

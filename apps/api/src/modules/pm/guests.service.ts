@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { pmProjects, pmProjectMembers, memberships, users } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -27,7 +27,7 @@ export class PmGuestsService {
 
   private async loadProject(tx: Db, tenantId: string, id: string) {
     const [project] = await tx
-      .select({ id: pmProjects.id, name: pmProjects.name })
+      .select({ id: pmProjects.id, name: pmProjects.name, lead_user_id: pmProjects.lead_user_id })
       .from(pmProjects)
       .where(
         and(
@@ -41,9 +41,40 @@ export class PmGuestsService {
     return project;
   }
 
+  /**
+   * Who may manage this project's guests: the PROJECT LEAD, plus manager and
+   * above (founder round A — "Full access" holders kept hitting a wall here).
+   * Enforced in the service, not only the route decorator, because the lead
+   * exception is per-project and a decorator can't express it — and so any
+   * future second door (sync ops, jobs) hits the same bar. Matches the
+   * team-creation precedent (@Roles('owner','admin','manager')) with the
+   * lead carve-out project deletion already has.
+   */
+  private assertMayManageGuests(
+    project: { lead_user_id: string | null },
+    actorUserId: string,
+    role: string,
+  ) {
+    if (['fam', 'owner', 'admin', 'manager'].includes(role)) return;
+    // The lead exception is for MEMBERS who lead the project — an external
+    // guest or read-only auditor never manages seats, lead or not.
+    if (
+      role !== 'guest' &&
+      role !== 'auditor' &&
+      project.lead_user_id &&
+      project.lead_user_id === actorUserId
+    ) {
+      return;
+    }
+    throw new ForbiddenException(
+      'Guest invites are for the project lead, or a manager and above',
+    );
+  }
+
   async invite(
     tenantId: string,
     actorUserId: string,
+    role: string,
     projectId: string,
     dto: { email: string; full_name?: string },
   ) {
@@ -52,6 +83,7 @@ export class PmGuestsService {
     const project = await this.db.withTenant(tenantId, (tx) =>
       this.loadProject(tx, tenantId, projectId),
     );
+    this.assertMayManageGuests(project, actorUserId, role);
 
     const invite = await this.membersPublic.inviteExternalGuest(
       tenantId,
@@ -102,9 +134,11 @@ export class PmGuestsService {
     };
   }
 
-  async list(tenantId: string, projectId: string) {
+  async list(tenantId: string, actorUserId: string, role: string, projectId: string) {
     const rows = await this.db.withTenant(tenantId, async (tx) => {
-      await this.loadProject(tx, tenantId, projectId);
+      const project = await this.loadProject(tx, tenantId, projectId);
+      // Same audience as invite/revoke — the list carries guest emails.
+      this.assertMayManageGuests(project, actorUserId, role);
       return tx
         .select({
           userId: pmProjectMembers.user_id,
@@ -140,11 +174,13 @@ export class PmGuestsService {
   async revoke(
     tenantId: string,
     actorUserId: string,
+    role: string,
     projectId: string,
     guestUserId: string,
   ) {
     const remaining = await this.db.withTenant(tenantId, async (tx) => {
-      await this.loadProject(tx, tenantId, projectId);
+      const project = await this.loadProject(tx, tenantId, projectId);
+      this.assertMayManageGuests(project, actorUserId, role);
 
       await tx
         .delete(pmProjectMembers)

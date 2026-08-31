@@ -38,6 +38,26 @@ interface DetailResponse {
   }
 }
 
+// Union of the lazy REST payload and the live engine rows, keyed by id, live
+// winning per row. Rows only REST knows survive (bootstrap subsets, history
+// past the store's window); rows only the store knows survive (created
+// optimistically moments ago); rows the store tombstoned this session are
+// dropped even if a stale REST payload still carries them. The previous pick
+// — whichever whole ARRAY was longer — flipped sources wholesale, so rows
+// present only on the shorter side silently vanished (founder round A).
+function mergeById<T extends { id: string }>(
+  rest: T[],
+  live: T[] | null,
+  tombstoned: { has(id: string): boolean } | undefined,
+  sort: (a: T, b: T) => number,
+): T[] {
+  if (!live) return rest
+  const byId = new Map<string, T>()
+  for (const row of rest) if (!tombstoned?.has(row.id)) byId.set(row.id, row)
+  for (const row of live) byId.set(row.id, row)
+  return [...byId.values()].sort(sort)
+}
+
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { mode, engine } = usePm()
@@ -73,10 +93,15 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const qc = useQueryClient()
   const live = engine?.store.projects.get(id)
   const project = { ...d.project, ...(live ?? {}) }
-  const liveMilestones = engine ? engine.store.milestonesForProject(id) : null
-  const milestones = liveMilestones && liveMilestones.length >= d.milestones.length ? liveMilestones : d.milestones
-  const liveUpdates = engine ? engine.store.updatesForProject(id) : null
-  const updates = liveUpdates && liveUpdates.length >= d.updates.length ? liveUpdates : d.updates
+  const tombstoned = engine?.store.tombstoned
+  const milestones = mergeById(
+    d.milestones, engine ? engine.store.milestonesForProject(id) : null, tombstoned,
+    (a, b) => a.position - b.position || (a.created_at < b.created_at ? -1 : 1),
+  )
+  const updates = mergeById(
+    d.updates, engine ? engine.store.updatesForProject(id) : null, tombstoned,
+    (a, b) => (a.created_at < b.created_at ? 1 : -1),
+  )
   const progress = engine ? engine.store.projectProgress(id) : d.progress
   const issues: Array<Pick<PmIssueRow, 'id' | 'team_id' | 'number' | 'title' | 'state_id' | 'priority'>> = engine
     ? [...engine.store.issues.values()].filter((i) => i.project_id === id && !i.deleted_at).sort((a, b) => a.number - b.number)
@@ -133,14 +158,17 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
 
   const postUpdate = () => {
     if (!upTxt.trim()) return
-    if (engine) engine.postProjectUpdate(id, health, upTxt.trim())
+    // Both branches refresh the REST detail: in sync mode the merge above
+    // shows the new row instantly from the store, but a stale REST payload
+    // would otherwise keep resurrecting rows the server has since replaced.
+    if (engine) { engine.postProjectUpdate(id, health, upTxt.trim()); invalidate() }
     else void api.post(`/api/v1/pm/projects/${id}/updates`, { health, body_md: upTxt.trim() }).then(invalidate)
     setUpTxt('')
   }
 
   const addMilestone = () => {
     if (!msName.trim()) return
-    if (engine) engine.createMilestone(id, msName.trim(), msDate || null)
+    if (engine) { engine.createMilestone(id, msName.trim(), msDate || null); invalidate() }
     else void api.post('/api/v1/pm/milestones', { project_id: id, name: msName.trim(), target_date: msDate || null }).then(invalidate)
     setMsName(''); setMsDate(''); setAddMs(false)
   }
@@ -329,6 +357,11 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           </div>
         </div>
 
+        {/* Right rail: health updates + guests. One wrapper div, because the
+            grid is '1fr 300px' — a third auto-placed child lands in row 2
+            column 1 (full width), which is where the Guests card had been
+            rendering (founder round A). */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {/* Health updates rail */}
         <div className="card" style={{ padding: '12px 14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -380,8 +413,9 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           </div>
         </div>
 
-        {/* Round 7: project-scoped guest seats (Owner/Admin only) */}
-        <ProjectGuestsCard projectId={id} />
+        {/* Round 7 guest seats; round A: lead + manager-and-above */}
+        <ProjectGuestsCard projectId={id} leadUserId={project.lead_user_id} />
+        </div>
       </div>
 
       <ConfirmDialog

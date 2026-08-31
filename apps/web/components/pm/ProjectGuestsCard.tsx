@@ -13,14 +13,22 @@ import {
 
 /**
  * Project guests (round 7): Linear-style external seats scoped to exactly
- * this project. Owner/Admin only — inviting mints a workspace membership
- * (role guest, non-billable) plus a pm_project_members row; removing the
- * last project revokes the membership entirely.
+ * this project. Round A widened who manages them: the PROJECT LEAD, plus
+ * manager and above (mirrors the service gate in PmGuestsService) — module
+ * "Full access" alone was never going to satisfy an admin-only route, which
+ * is what users kept reporting as a bug. Inviting mints a workspace
+ * membership (role guest, non-billable) plus a pm_project_members row;
+ * removing the last project revokes the membership entirely.
  */
-export function ProjectGuestsCard({ projectId }: { projectId: string }) {
+export function ProjectGuestsCard({ projectId, leadUserId }: { projectId: string; leadUserId?: string | null }) {
   const { currentUser } = useAuthStore()
-  const isAdmin = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
-  const guests = usePmProjectGuests(projectId, isAdmin)
+  const mayManage =
+    currentUser?.role === 'FAM' ||
+    currentUser?.role === 'OWNER' ||
+    currentUser?.role === 'HR_ADMIN' ||
+    currentUser?.role === 'MANAGER' ||
+    (!!leadUserId && currentUser?.id === leadUserId)
+  const guests = usePmProjectGuests(projectId, mayManage)
   const invite = useInvitePmGuest(projectId)
   const revoke = useRevokePmGuest(projectId)
   const { toast } = useToast()
@@ -28,7 +36,7 @@ export function ProjectGuestsCard({ projectId }: { projectId: string }) {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
 
-  if (!isAdmin) return null
+  if (!mayManage) return null
   const rows = guests.data?.data ?? []
 
   const submit = async () => {

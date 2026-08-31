@@ -105,9 +105,13 @@ export class PmMutationExecutor {
         userId,
       );
       if (seen.length) {
+        // The ledger remembers HOW it ended. A mutation ledgered as rejected
+        // must replay as rejected — 'duplicate' is treated as success by the
+        // client (engine.ts flushQueue), so answering it for a rejected row
+        // silently skipped the rollback on every retry (founder round A).
         results.push({
           clientMutationId: item.clientMutationId,
-          status: 'duplicate',
+          status: seen[0]!.status === 'rejected' ? 'rejected' : 'duplicate',
           errorCode: seen[0]!.error_code ?? undefined,
         });
         continue;

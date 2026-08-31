@@ -73,6 +73,7 @@ export interface InviteEmployeePayload {
   departmentId?: string
   locationId?: string
   managerId?: string
+  shiftTemplateId?: string
   employmentType?: string
   joiningDate?: string
   personalPhone?: string
@@ -207,6 +208,14 @@ export interface EmployeeDetail {
   }
   emergencyContacts: EmergencyContact[]
   leaveBalances: EmployeeLeaveBalance[]
+  // Shift effective today; null = the tenant default shift applies.
+  currentShift: {
+    shiftTemplateId: string
+    name: string
+    startTime: string
+    endTime: string
+    effectiveFrom: string
+  } | null
 }
 
 export function useEmployee(id: string) {
@@ -253,7 +262,10 @@ export interface UpdateEmployeePayload {
   employeeCode?: string
   departmentId?: string
   locationId?: string
-  reportingManagerId?: string
+  // null clears the reporting line.
+  reportingManagerId?: string | null
+  // Shift effective today; null reverts to the tenant default shift.
+  shiftTemplateId?: string | null
   employmentType?: string
   dateOfJoining?: string
   probationEndDate?: string

@@ -6,10 +6,11 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
 import {
   useEmployee,
+  useEmployees,
   useUpdateEmployee,
   type EmployeeDetail,
 } from '@/lib/api/queries/use-employees'
-import { useDepartments, useDesignations, useLocations } from '@/lib/api/queries/use-settings'
+import { useDepartments, useDesignations, useLocations, useShifts } from '@/lib/api/queries/use-settings'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
 import {
@@ -241,6 +242,9 @@ function EditProfileDialog({
   const departments = useDepartments()
   const designations = useDesignations()
   const locations = useLocations()
+  const shifts = useShifts()
+  // Reporting-manager pool: everyone on the books except this person.
+  const directory = useEmployees({ limit: 500 })
   const initialName =
     [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || ''
   const [fullName, setFullName] = useState(initialName)
@@ -257,6 +261,11 @@ function EditProfileDialog({
   const [noticePeriodDays, setNoticePeriodDays] = useState(
     e.noticePeriodDays != null ? String(e.noticePeriodDays) : '',
   )
+  const [managerId, setManagerId] = useState(e.reportingManagerId ?? '')
+  // Shift is a MAPPING, not a column: only send it when the pick actually
+  // changed, or every save would rewrite the assignment's effective date.
+  const initialShiftId = e.currentShift?.shiftTemplateId ?? ''
+  const [shiftId, setShiftId] = useState(initialShiftId)
 
   const handleSave = async () => {
     if (!fullName.trim()) {
@@ -294,6 +303,8 @@ function EditProfileDialog({
         noticePeriodDays: noticePeriodDays.trim()
           ? Number(noticePeriodDays)
           : undefined,
+        reportingManagerId: managerId || null,
+        ...(shiftId !== initialShiftId ? { shiftTemplateId: shiftId || null } : {}),
       })
       toast({ title: 'Profile updated', description: fullName.trim() })
       onClose()
@@ -456,6 +467,52 @@ function EditProfileDialog({
                 onChange={setDateOfConfirmation}
                 min={dateOfJoining || undefined}
               />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            {/* Both were invisible after onboarding (founder round A):
+                the manager could only ever be set at invite time, and the
+                shift had no writer anywhere. */}
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Reporting manager
+              </label>
+              <select
+                className="input"
+                value={managerId}
+                onChange={(ev) => setManagerId(ev.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">— No manager —</option>
+                {(directory.data?.employees ?? [])
+                  .filter((m) => m.id !== e.id)
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                      {m.employeeCode ? ` · ${m.employeeCode}` : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Shift
+              </label>
+              <select
+                className="input"
+                value={shiftId}
+                onChange={(ev) => setShiftId(ev.target.value)}
+                style={{ width: '100%' }}
+              >
+                <option value="">Workspace default</option>
+                {(shifts.data?.data ?? [])
+                  .filter((s) => s.isActive || s.id === shiftId)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} · {s.startTime}–{s.endTime}
+                    </option>
+                  ))}
+              </select>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12 }}>

@@ -6,6 +6,7 @@ import {
   pmCycleSnapshots,
   pmInitiativeProjects,
   pmInitiatives,
+  pmIssueLabels,
   pmIssues,
   pmLabels,
   pmProjectMilestones,
@@ -83,10 +84,81 @@ export class PmSampleDataService {
     private readonly issues: PmIssuesService,
   ) {}
 
+  /**
+   * The user's OWN rows that removal would touch (founder round A: "Remove
+   * sample data" was one unconfirmed click that silently nulled real issues'
+   * project/cycle links and cascaded away their sample-label tags). The ids
+   * feed remove()'s explicit detach + sync refs; the counts feed the confirm
+   * dialog so it can say what will actually happen before the click.
+   */
+  private async collateral(tx: Db, tenantId: string, ids: Record<string, string[]>) {
+    const sampleIssues = new Set(ids.pm_issues ?? []);
+    const notSample = (rows: { id: string }[]) => rows.map((r) => r.id).filter((id) => !sampleIssues.has(id));
+
+    const inProjects = ids.pm_projects?.length
+      ? notSample(
+          await tx
+            .select({ id: pmIssues.id })
+            .from(pmIssues)
+            .where(
+              and(
+                eq(pmIssues.tenant_id, tenantId),
+                inArray(pmIssues.project_id, ids.pm_projects),
+                isNull(pmIssues.deleted_at),
+              ),
+            ),
+        )
+      : [];
+    const inCycles = ids.pm_cycles?.length
+      ? notSample(
+          await tx
+            .select({ id: pmIssues.id })
+            .from(pmIssues)
+            .where(
+              and(
+                eq(pmIssues.tenant_id, tenantId),
+                inArray(pmIssues.cycle_id, ids.pm_cycles),
+                isNull(pmIssues.deleted_at),
+              ),
+            ),
+        )
+      : [];
+    const withLabels = ids.pm_labels?.length
+      ? notSample(
+          (
+            await tx
+              .selectDistinct({ id: pmIssueLabels.issue_id })
+              .from(pmIssueLabels)
+              .where(
+                and(
+                  eq(pmIssueLabels.tenant_id, tenantId),
+                  inArray(pmIssueLabels.label_id, ids.pm_labels),
+                ),
+              )
+          ).map((r) => ({ id: r.id })),
+        )
+      : [];
+    return { inProjects, inCycles, withLabels };
+  }
+
   async status(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
       const [pack] = await tx.select().from(pmSamplePacks).limit(1);
-      return { data: { loaded: !!pack, created_at: pack?.created_at ?? null } };
+      if (!pack) return { data: { loaded: false, created_at: null } };
+      const ids = pack.record_ids as Record<string, string[]>;
+      const c = await this.collateral(tx, tenantId, ids);
+      return {
+        data: {
+          loaded: true,
+          created_at: pack.created_at,
+          sample_issues: ids.pm_issues?.length ?? 0,
+          sample_projects: ids.pm_projects?.length ?? 0,
+          // Real work sitting inside the pack — the confirm dialog's truth.
+          own_issues_in_sample_projects: c.inProjects.length,
+          own_issues_in_sample_cycles: c.inCycles.length,
+          own_issues_with_sample_labels: c.withLabels.length,
+        },
+      };
     });
   }
 
@@ -129,7 +201,16 @@ export class PmSampleDataService {
     await this.db.withTenant(
       tenantId,
       async (tx) => {
-        // Cycles + triage on — the whole point of the pack is seeing them work.
+        // Cycles + triage on — the whole point of the pack is seeing them
+        // work. The team's PRE-SEED settings go into the pack (record_ids is
+        // jsonb) so remove() can put them back: loading a demo must not
+        // permanently reconfigure the workspace (founder round A).
+        (ids as Record<string, unknown>)._team_before = {
+          team_id: team.id,
+          cycles_enabled: team.cycles_enabled,
+          triage_enabled: team.triage_enabled,
+          cooldown_days: team.cooldown_days,
+        };
         await tx
           .update(pmTeams)
           .set({ cycles_enabled: true, triage_enabled: true, cooldown_days: 2 })
@@ -410,6 +491,25 @@ export class PmSampleDataService {
         const [pack] = await tx.select().from(pmSamplePacks).limit(1);
         if (!pack) throw new NotFoundException('No sample data is loaded');
         const ids = pack.record_ids as Record<string, string[]>;
+
+        // Real issues touching the pack (founder round A). Deleting a sample
+        // project/cycle used to strip these silently — the project FK is
+        // SET NULL and pm_issue_labels CASCADEs off pm_labels, so the damage
+        // happened inside Postgres with no code, no count and no sync refs,
+        // which is exactly the "creating something deleted something else"
+        // the founder watched. Detach them EXPLICITLY instead, so the change
+        // is audited and every affected row is named in the sync event.
+        const own = await this.collateral(tx, tenantId, ids);
+        if (own.inProjects.length) {
+          // milestone_id goes with project_id: the milestones being deleted
+          // belong to the sample projects, and a milestone without its
+          // project is an invariant violation the rest of PM never expects.
+          await tx
+            .update(pmIssues)
+            .set({ project_id: null, milestone_id: null, updated_at: new Date() })
+            .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, own.inProjects)));
+        }
+
         // FK-safe order; child rows (labels/subscribers/comments/history,
         // project links, snapshots) cascade from their parents.
         if (ids.pm_issues?.length) await tx.delete(pmIssues).where(inArray(pmIssues.id, ids.pm_issues));
@@ -423,7 +523,29 @@ export class PmSampleDataService {
         }
         if (ids.pm_labels?.length) await tx.delete(pmLabels).where(inArray(pmLabels.id, ids.pm_labels));
         await tx.delete(pmSamplePacks).where(eq(pmSamplePacks.tenant_id, tenantId));
+
+        // Loading the pack flipped cycles/triage on for the team; put back
+        // whatever was there before. Packs seeded before this fix carry no
+        // snapshot — leave those teams as they are rather than guessing.
+        const before = (ids as Record<string, unknown>)._team_before as
+          | { team_id: string; cycles_enabled: boolean; triage_enabled: boolean; cooldown_days: number }
+          | undefined;
+        if (before?.team_id) {
+          await tx
+            .update(pmTeams)
+            .set({
+              cycles_enabled: before.cycles_enabled,
+              triage_enabled: before.triage_enabled,
+              cooldown_days: before.cooldown_days,
+            })
+            .where(and(eq(pmTeams.id, before.team_id), eq(pmTeams.tenant_id, tenantId)));
+        }
         // Sync clients tombstone via refs (delta re-fetch finds nothing).
+        // The user's OWN touched issues are named too: their project/cycle
+        // links changed and their label sets shrank, and without refs a live
+        // client would keep rendering the old state (or worse, later write it
+        // back — the destructive full-set-replace class from this round).
+        const ownTouched = [...new Set([...own.inProjects, ...own.inCycles, ...own.withLabels])];
         await this.domainEvents.publish(
           {
             name: 'pm.issue.deleted',
@@ -439,13 +561,37 @@ export class PmSampleDataService {
                 ...(ids.pm_labels ?? []).map((id) => ({ t: 'pm_labels', id })),
                 ...(ids.pm_project_milestones ?? []).map((id) => ({ t: 'pm_project_milestones', id })),
                 ...(ids.pm_project_updates ?? []).map((id) => ({ t: 'pm_project_updates', id })),
+                ...ownTouched.map((id) => ({ t: 'pm_issues', id })),
+                // pm_issue_labels is issue-scoped: the ref id is the ISSUE id,
+                // and the delta replaces that issue's complete label set.
+                ...own.withLabels.map((id) => ({ t: 'pm_issue_labels', id })),
               ],
             },
           },
           tx,
         );
-        await this.audit.log({ tenantId, actorUserId: userId, action: 'pm.sample_data.remove', resourceType: 'tenant', resourceId: tenantId });
-        return { data: { loaded: false } };
+        await this.audit.log({
+          tenantId,
+          actorUserId: userId,
+          action: 'pm.sample_data.remove',
+          resourceType: 'tenant',
+          resourceId: tenantId,
+          // A hard delete leaves nothing to count afterwards — record what
+          // the removal touched beyond the pack itself.
+          metadata: {
+            own_issues_detached_from_projects: own.inProjects.length,
+            own_issues_cleared_from_cycles: own.inCycles.length,
+            own_issues_stripped_of_sample_labels: own.withLabels.length,
+          },
+        });
+        return {
+          data: {
+            loaded: false,
+            own_issues_detached: own.inProjects.length,
+            own_issues_uncycled: own.inCycles.length,
+            own_issues_unlabelled: own.withLabels.length,
+          },
+        };
       },
       userId,
     );

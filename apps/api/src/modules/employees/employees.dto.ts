@@ -57,6 +57,14 @@ export class InviteEmployeeDto {
   @IsOptional()
   managerId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Shift template to assign from the joining date. Omitted → the tenant default shift applies.',
+  })
+  @IsUUID()
+  @IsOptional()
+  shiftTemplateId?: string;
+
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
@@ -150,10 +158,21 @@ export class UpdateEmployeeDto {
   @IsOptional()
   locationId?: string;
 
+  // null = clear the reporting line (reports to nobody).
   @ApiPropertyOptional()
   @IsUUID()
   @IsOptional()
-  reportingManagerId?: string;
+  reportingManagerId?: string | null;
+
+  // null = clear the assignment and fall back to the tenant default shift.
+  // @IsOptional skips validation for null AND undefined, so both pass; the
+  // service keys on `!== undefined` to tell "clear" from "not sent".
+  @ApiPropertyOptional({
+    description: 'Shift template effective today; null reverts to the tenant default shift.',
+  })
+  @IsUUID()
+  @IsOptional()
+  shiftTemplateId?: string | null;
 
   @ApiPropertyOptional({ enum: ['full_time', 'part_time', 'contract', 'intern', 'consultant', 'probation'] })
   @IsIn(['full_time', 'part_time', 'contract', 'intern', 'consultant', 'probation'])

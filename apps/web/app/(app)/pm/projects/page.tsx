@@ -352,11 +352,27 @@ function RestProjects() {
 
 // ─── Appendix B sample data (one-click, removable) ───────────────────────────
 
+interface SampleStatus {
+  data: {
+    loaded: boolean
+    sample_issues?: number
+    sample_projects?: number
+    own_issues_in_sample_projects?: number
+    own_issues_in_sample_cycles?: number
+    own_issues_with_sample_labels?: number
+  }
+}
+
 function SampleDataButton({ onAfterChange }: { onAfterChange?: () => void }) {
   const qc = useQueryClient()
+  // Removal destroys data, so it gets a ConfirmDialog like every other delete
+  // in the app (founder round A: this was a one-click toggle sitting next to
+  // "New project", and a second click after seeding wiped the pack with no
+  // warning). Loading stays one click — it only adds.
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const status = useQuery({
     queryKey: ['pm', 'sample-data'],
-    queryFn: () => api.get<{ data: { loaded: boolean } }>('/api/v1/pm/sample-data'),
+    queryFn: () => api.get<SampleStatus>('/api/v1/pm/sample-data'),
   })
   const toggle = useMutation({
     mutationFn: () =>
@@ -364,17 +380,41 @@ function SampleDataButton({ onAfterChange }: { onAfterChange?: () => void }) {
         ? api.post('/api/v1/pm/sample-data/remove', {})
         : api.post('/api/v1/pm/sample-data', {}),
     onSuccess: () => {
+      setConfirmRemove(false)
       void qc.invalidateQueries({ queryKey: ['pm'] })
       onAfterChange?.()
     },
   })
-  const loaded = status.data?.data.loaded ?? false
+  const s = status.data?.data
+  const loaded = s?.loaded ?? false
+  const ownTouched =
+    (s?.own_issues_in_sample_projects ?? 0) +
+    (s?.own_issues_in_sample_cycles ?? 0) +
+    (s?.own_issues_with_sample_labels ?? 0)
   return (
-    <Btn kind="secondary" size="sm"
-      icon={loaded ? <Icon.trash size={13} /> : <Icon.spark size={13} />}
-      disabled={toggle.isPending || status.isLoading}
-      onClick={() => toggle.mutate()}>
-      {toggle.isPending ? 'Working…' : loaded ? 'Remove sample data' : 'Load sample data'}
-    </Btn>
+    <>
+      <Btn kind="secondary" size="sm"
+        icon={loaded ? <Icon.trash size={13} /> : <Icon.spark size={13} />}
+        disabled={toggle.isPending || status.isLoading}
+        onClick={() => (loaded ? setConfirmRemove(true) : toggle.mutate())}>
+        {toggle.isPending ? 'Working…' : loaded ? 'Remove sample data' : 'Load sample data'}
+      </Btn>
+      <ConfirmDialog
+        open={confirmRemove}
+        onClose={() => setConfirmRemove(false)}
+        title="Remove sample data"
+        body={
+          `The ${s?.sample_issues ?? 0} sample issues, ${s?.sample_projects ?? 0} sample projects and their labels, cycles and initiatives will be removed for good.` +
+          (ownTouched > 0
+            ? ` ${ownTouched === 1 ? '1 issue of your own touches' : `${ownTouched} issues of your own touch`} the sample data — ${ownTouched === 1 ? 'it' : 'they'} will be kept, but moved out of sample projects and cycles and untagged from sample labels.`
+            : ' None of your own work is attached to it.')
+        }
+        confirmLabel="Remove"
+        danger
+        loading={toggle.isPending}
+        loadingLabel="Removing…"
+        onConfirm={() => toggle.mutate()}
+      />
+    </>
   )
 }

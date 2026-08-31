@@ -368,7 +368,20 @@ export class PmSyncService {
       .orderBy(asc(domainEvents.sync_seq))
       .limit(5000);
 
-    const latestSeq = await this.latestSeq(tenantId);
+    // The cursor may only advance over events this response actually covers.
+    // When the 5000-row window is full there are more events beyond it, and
+    // reporting the tenant's true latest seq made the client skip them FOREVER
+    // — it stores latest_seq as its cursor (engine.ts pullDelta), so every
+    // event past the window was never delivered and never retried. That is
+    // how a live client's store silently went stale, which is the precondition
+    // for the destructive full-set-replace bugs in this round (labels,
+    // initiative lanes) and the project page's disappearing milestones.
+    // Capping the cursor at the last event we actually processed means the
+    // client's next poll picks up exactly where this response stopped.
+    const windowFull = events.length === 5000;
+    const latestSeq = windowFull
+      ? events[events.length - 1]!.seq
+      : await this.latestSeq(tenantId);
     const touched = new Map<string, Set<string>>(); // table → ids
     for (const ev of events) {
       const refs = (ev.payload as { sync?: SyncRef[] })?.sync ?? [];

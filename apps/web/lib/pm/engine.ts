@@ -115,16 +115,28 @@ export class PmSyncEngine {
     }
   }
 
-  /** "Reset local data" — wipe the cache and re-bootstrap (§3.7). */
+  /**
+   * "Reset local data" — wipe the cache and re-bootstrap (§3.7). The pending
+   * queue SURVIVES the wipe: reset also runs automatically when the server
+   * answers a delta pull with 410/RE_BOOTSTRAP (cursor too old), and dropping
+   * the queue there silently discarded every unflushed offline mutation
+   * (founder round A). Unflushed work is the one thing the server can't give
+   * back — the cached rows are all re-fetchable, the queue is not. Optimistic
+   * rows for queued creates disappear until the post-reset flush lands, which
+   * is honest: the server hasn't seen them yet.
+   */
   async reset(): Promise<void> {
-    this.queue = []
+    const pending = this.queue
     this.store.clearAll()
-    this.store.setPendingCount(0)
+    this.store.setPendingCount(pending.length)
     this.db?.close() // deleteDatabase blocks while our own connection is open
     this.db = null
     await destroyPmDb(this.tenantId, this.userId)
-    this.db = await openPmDb(this.tenantId, this.userId)
+    const db = await openPmDb(this.tenantId, this.userId)
+    this.db = db
+    if (db && pending.length) void persistPending(db, pending)
     await this.bootstrap()
+    if (pending.length) void this.flushQueue()
   }
 
   private handleOnline = () => {
@@ -845,19 +857,38 @@ export class PmSyncEngine {
           }
         } else {
           // Rejected: roll back exactly this item's optimistic patch.
+          //
+          // `row === null` is NOT enough to mean "this was a create". Eleven
+          // update ops also produce a null pre-image whenever their lookup
+          // failed (sendToTriage on a team with no triage state, patchIssue on
+          // an id the store no longer holds, …) — and those are precisely the
+          // mutations the server rejects. Treating them as creates removed a
+          // real issue from the screen on every such rejection (founder round
+          // A, "I watched data disappear"). Undo-the-create is therefore keyed
+          // on the OP, the one thing that says what actually happened.
           if (item.inverse) {
+            const wasCreate = item.op.endsWith('.create')
             if (item.inverse.table === 'pm_projects') {
-              if (item.inverse.row === null) this.store.applyTombstones('pm_projects', [item.inverse.id])
-              else this.store.applyRows('pm_projects', [item.inverse.row])
-            } else if (item.inverse.row === null) this.store.removeIssue(item.inverse.id)
-            else this.store.restoreIssue(item.inverse.row as unknown as PmIssueRow)
+              if (wasCreate) this.store.applyTombstones('pm_projects', [item.inverse.id])
+              else if (item.inverse.row !== null) this.store.applyRows('pm_projects', [item.inverse.row])
+            } else if (wasCreate) this.store.removeIssue(item.inverse.id)
+            else if (item.inverse.row !== null) this.store.restoreIssue(item.inverse.row as unknown as PmIssueRow)
+            // update with no pre-image: nothing was optimistically applied,
+            // so there is nothing to undo — surface the rejection and stop.
           }
           this.onReject?.(result.errorCode ?? 'Change rejected by the server')
         }
       }
       this.queue = this.queue.filter((q) => !byId.has(q.clientMutationId))
       this.store.setPendingCount(this.queue.length)
-      this.store.setCursor(res.latest_seq)
+      // Deliberately NOT setCursor(res.latest_seq): that value is the seq
+      // head at flush time, but this response carries rows for OUR mutations
+      // only. Jumping the cursor over a concurrent event from someone else in
+      // the tenant meant the next delta never delivered it — the third stale-
+      // client enabler found in founder round A (with the delta window cap
+      // and rejected-replay-as-duplicate). A delta pull advances the cursor
+      // the honest way: over events it actually returned.
+      void this.pullDelta()
       if (this.db) void persistPending(this.db, this.queue)
       this.schedulePersist()
     } catch {
