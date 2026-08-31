@@ -111,6 +111,26 @@ export class PmSyncEngine {
       window.addEventListener('offline', this.handleOffline)
       this.store.setOnline(navigator.onLine)
     }
+    // Round D — faces must not freeze: pm_users_lite only ever arrived via
+    // bootstrap, so a WARM boot rendered whatever avatar_url the snapshot
+    // captured, forever. An avatar uploaded on the employee profile emits no
+    // pm.* sync event, so delta never repairs it either — and signed avatar
+    // URLs age out anyway. One small roster fetch per session keeps faces
+    // fresh; a failure is harmless (the cached roster + initials stand).
+    void this.refreshUsers()
+  }
+
+  private async refreshUsers(): Promise<void> {
+    try {
+      const res = await api.get<{ data: Array<{ id: string; name: string | null; avatar_url: string | null }> }>(
+        '/api/v1/pm/users',
+      )
+      if (this.destroyed) return
+      this.store.applyRows('pm_users_lite', res.data as unknown as Record<string, unknown>[])
+      this.schedulePersist()
+    } catch {
+      // offline / racing a logout — the persisted roster keeps rendering
+    }
   }
 
   destroy(): void {

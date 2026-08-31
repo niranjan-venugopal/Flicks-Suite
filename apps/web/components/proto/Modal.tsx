@@ -34,7 +34,10 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="card-glass"
+        // modal-card: opaque face — a glass card nested inside this overlay's
+        // blur composites unreliably and disappears on near-black pages
+        // (founder round D, the Delete-client dialog).
+        className="card-glass modal-card"
         style={{
           width: '100%',
           maxWidth: width,

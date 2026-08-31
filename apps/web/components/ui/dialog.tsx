@@ -58,7 +58,10 @@ const DialogContent = React.forwardRef<
       */}
       <div
         className={cn(
-          'relative pointer-events-auto flex w-full max-w-lg flex-col glass rounded-md border border-white/10 shadow-xl',
+          // modal-card: opaque face — the glass recipe nested inside the
+          // overlay's backdrop-blur composites unreliably and disappears on
+          // near-black pages (founder round D).
+          'relative pointer-events-auto flex w-full max-w-lg flex-col glass modal-card rounded-md border border-white/10 shadow-xl',
           'max-h-[90vh]',
           className,
         )}

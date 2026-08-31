@@ -219,7 +219,7 @@ export default function PmWorkspacePage() {
 
       {resetOpen && (
         <div onClick={() => setResetOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 400, borderRadius: 15, padding: '22px 24px' }}>
+          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 400, borderRadius: 15, padding: '22px 24px' }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Reset local data?</div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 10 }}>Re-bootstrap takes ~2s on this workspace</div>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.6, marginBottom: 16 }}>

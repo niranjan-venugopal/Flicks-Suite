@@ -215,7 +215,7 @@ export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () =>
   ]
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 430, borderRadius: 16, padding: '20px 22px' }}>
+      <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 430, borderRadius: 16, padding: '20px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
           <Icon.keyboard size={16} style={{ color: 'var(--blue)' }} />
           <span style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>Keyboard</span>

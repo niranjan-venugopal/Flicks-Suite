@@ -178,7 +178,7 @@ function QuickAddModal({ initialTab, onClose }: { initialTab: QuickAddKind; onCl
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '10vh 24px 24px' }}>
-      <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 560, borderRadius: 16, padding: 0, overflow: 'visible' }}>
+      <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 560, borderRadius: 16, padding: 0, overflow: 'visible' }}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 13.5, fontWeight: 800, flex: 1 }}>New deal</span>
           <span className="t-caption">press N anywhere · all three tabs land in one click</span>

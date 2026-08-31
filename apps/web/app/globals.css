@@ -257,6 +257,20 @@ option:disabled { color: var(--text-faint); }
   box-shadow: var(--e1);
 }
 
+/* Dialog faces are OPAQUE (founder round D). The glass recipe is 2–8% white
+   over whatever the page shows — on near-black screens (invoicing) the card
+   face vanished and dialogs read as loose slabs. Worse, a dialog card's
+   backdrop-filter sits NESTED inside its overlay's own blur, which Chromium
+   composites unreliably (sections of the card can fail to paint). Every
+   overlay-hosted card pairs this with card-glass; declared after it so the
+   cascade wins at equal specificity. */
+.modal-card {
+  background: linear-gradient(160deg, #16172a 0%, #0d0e1b 100%);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--e3);
+}
+
 /* ─── Avatar ─── */
 .avatar {
   width: 34px; height: 34px; border-radius: 50%;

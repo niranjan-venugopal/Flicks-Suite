@@ -618,7 +618,7 @@ function SaveViewModal({ onClose, onSave }: { onClose: () => void; onSave: (name
   const [shared, setShared] = useState(false)
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 380, borderRadius: 16, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 380, borderRadius: 16, padding: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>Save view</div>
         <div className="label">Name</div>
         <input autoFocus className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Enterprise · Q3" style={{ width: '100%' }} />

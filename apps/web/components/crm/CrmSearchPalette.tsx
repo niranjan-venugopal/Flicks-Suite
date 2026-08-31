@@ -75,7 +75,7 @@ export function CrmSearchPalette() {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="card"
+        className="card modal-card"
         style={{ width: 'min(620px, 92vw)', padding: 0, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,.5)' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--bord)' }}>

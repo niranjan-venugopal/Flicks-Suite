@@ -283,7 +283,7 @@ export function NotificationsTab() {
           onClick={() => closeCoach(false)}
           style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
         >
-          <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 430, borderRadius: 15, padding: '22px 24px', textAlign: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 430, borderRadius: 15, padding: '22px 24px', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 5, marginBottom: 16 }}>
               {[0, 1, 2].map((s) => (
                 <span key={s} style={{ width: s === coachStep ? 20 : 7, height: 7, borderRadius: 99, background: s === coachStep ? 'var(--blue)' : 'var(--surf-3)', transition: 'width .15s ease-out' }} />

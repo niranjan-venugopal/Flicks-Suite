@@ -143,7 +143,7 @@ export default function PmTeamsPage() {
 
       {createOpen && (
         <div onClick={() => setCreateOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
+          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>New team</div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 14 }}>Owner / Admin / Manager · ready to use with zero setup</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>

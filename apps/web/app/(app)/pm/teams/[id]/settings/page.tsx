@@ -439,7 +439,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
       {/* Make-private confirm (§4.4 — audited) */}
       {privateConfirm && (
         <div onClick={() => setPrivateConfirm(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
+          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Make {team.name} private?</div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 12 }}>Visibility change — audit-logged</div>
             <ul style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.7, paddingLeft: 18, marginBottom: 16 }}>
