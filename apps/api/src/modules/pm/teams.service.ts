@@ -87,6 +87,15 @@ export class PmTeamsService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // Fast path (round E): almost every bootstrap hits an already-seeded
+        // workspace — check BEFORE the advisory lock so concurrent bootstraps
+        // don't serialize on it for nothing.
+        const [seeded] = await tx
+          .select({ id: pmTeams.id })
+          .from(pmTeams)
+          .where(and(eq(pmTeams.tenant_id, tenantId), isNull(pmTeams.deleted_at)))
+          .limit(1);
+        if (seeded) return false;
         // Concurrent first hits (StrictMode double-mount, two tabs) race the
         // check-then-seed and the loser dies on pm_teams_tenant_id_key_key —
         // a tx-scoped advisory lock serializes seeders per tenant so the
@@ -539,74 +548,90 @@ export class PmTeamsService {
   async usersLite(tenantId: string, userId: string) {
     const rows = await this.db.withTenant(
       tenantId,
-      async (tx) => {
-        // Guests never see the whole directory — only people connected to
-        // their projects (fellow project members, assignees/creators of
-        // in-project issues, members of the render-set teams). Enough for
-        // avatars + pickers, nothing more.
-        const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
-        let allowedIds: Set<string> | null = null;
-        if (guestScope) {
-          allowedIds = new Set<string>([userId]);
-          if (guestScope.projectIds.length) {
-            const projMembers = await tx
-              .select({ user_id: pmProjectMembers.user_id })
-              .from(pmProjectMembers)
-              .where(
-                and(
-                  eq(pmProjectMembers.tenant_id, tenantId),
-                  inArray(pmProjectMembers.project_id, guestScope.projectIds),
-                ),
-              );
-            for (const r of projMembers) allowedIds.add(r.user_id);
-            const issuePeople = await tx
-              .select({
-                assignee: pmIssues.assignee_user_id,
-                creator: pmIssues.creator_user_id,
-              })
-              .from(pmIssues)
-              .where(
-                and(
-                  eq(pmIssues.tenant_id, tenantId),
-                  inArray(pmIssues.project_id, guestScope.projectIds),
-                ),
-              );
-            for (const r of issuePeople) {
-              if (r.assignee) allowedIds.add(r.assignee);
-              if (r.creator) allowedIds.add(r.creator);
-            }
-          }
-          if (guestScope.teamIds.length) {
-            const teamMembers = await tx
-              .select({ user_id: pmTeamMemberships.user_id })
-              .from(pmTeamMemberships)
-              .where(
-                and(
-                  eq(pmTeamMemberships.tenant_id, tenantId),
-                  inArray(pmTeamMemberships.team_id, guestScope.teamIds),
-                ),
-              );
-            for (const r of teamMembers) allowedIds.add(r.user_id);
-          }
-        }
-
-        const people = await tx
-          .select({
-            id: users.id,
-            name: users.full_name,
-            avatar_url: users.avatar_url,
-            avatar_key: users.avatar_key,
-          })
-          .from(users)
-          .innerJoin(memberships, eq(memberships.user_id, users.id))
-          .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
-        return allowedIds ? people.filter((r) => allowedIds.has(r.id)) : people;
-      },
+      (tx) => this.usersLiteTx(tx, tenantId, userId),
       userId,
     );
-    // Sign here, not at the REST door: the sync bootstrap ships these rows
-    // verbatim (round C — unsigned rows rendered as placeholder initials in
-    // sync mode). Signing stays outside the tenant transaction.
+    return this.signUsersLite(rows);
+  }
+
+  /**
+   * Round E — tx variant so the sync bootstrap reads the roster inside ITS
+   * transaction instead of opening a second withTenant (two pool connections
+   * held per bootstrap). Rows come back UNSIGNED — pair with signUsersLite.
+   */
+  async usersLiteTx(tx: Db, tenantId: string, userId: string) {
+    // Guests never see the whole directory — only people connected to
+    // their projects (fellow project members, assignees/creators of
+    // in-project issues, members of the render-set teams). Enough for
+    // avatars + pickers, nothing more.
+    const guestScope = await this.visibility.guestScopeTx(tx, tenantId, userId);
+    let allowedIds: Set<string> | null = null;
+    if (guestScope) {
+      allowedIds = new Set<string>([userId]);
+      if (guestScope.projectIds.length) {
+        const projMembers = await tx
+          .select({ user_id: pmProjectMembers.user_id })
+          .from(pmProjectMembers)
+          .where(
+            and(
+              eq(pmProjectMembers.tenant_id, tenantId),
+              inArray(pmProjectMembers.project_id, guestScope.projectIds),
+            ),
+          );
+        for (const r of projMembers) allowedIds.add(r.user_id);
+        const issuePeople = await tx
+          .select({
+            assignee: pmIssues.assignee_user_id,
+            creator: pmIssues.creator_user_id,
+          })
+          .from(pmIssues)
+          .where(
+            and(
+              eq(pmIssues.tenant_id, tenantId),
+              inArray(pmIssues.project_id, guestScope.projectIds),
+            ),
+          );
+        for (const r of issuePeople) {
+          if (r.assignee) allowedIds.add(r.assignee);
+          if (r.creator) allowedIds.add(r.creator);
+        }
+      }
+      if (guestScope.teamIds.length) {
+        const teamMembers = await tx
+          .select({ user_id: pmTeamMemberships.user_id })
+          .from(pmTeamMemberships)
+          .where(
+            and(
+              eq(pmTeamMemberships.tenant_id, tenantId),
+              inArray(pmTeamMemberships.team_id, guestScope.teamIds),
+            ),
+          );
+        for (const r of teamMembers) allowedIds.add(r.user_id);
+      }
+    }
+
+    const people = await tx
+      .select({
+        id: users.id,
+        name: users.full_name,
+        avatar_url: users.avatar_url,
+        avatar_key: users.avatar_key,
+      })
+      .from(users)
+      .innerJoin(memberships, eq(memberships.user_id, users.id))
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')));
+    return allowedIds ? people.filter((r) => allowedIds.has(r.id)) : people;
+  }
+
+  /**
+   * Sign here, not at the REST door: the sync bootstrap ships these rows
+   * verbatim (round C — unsigned rows rendered as placeholder initials in
+   * sync mode). Signing is pure local crypto (a presigned-URL computation, no
+   * network), so callers may run it inside or outside a tenant transaction.
+   */
+  async signUsersLite(
+    rows: Array<{ id: string; name: string | null; avatar_url: string | null; avatar_key: string | null }>,
+  ) {
     return Promise.all(
       rows.map(async ({ avatar_key, ...r }) => ({
         ...r,

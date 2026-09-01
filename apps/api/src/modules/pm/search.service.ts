@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { pmIssues, pmTeams } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { PmVisibilityService } from './sync/visibility.service';
@@ -34,6 +34,7 @@ export class PmSearchService {
 
         // Guests search only inside their invited projects; members inside
         // their visible teams — the SAME rule as list/bootstrap/delta.
+        // Round E: private projects the member isn't in stay out of results.
         const base = scope.guest
           ? and(
               eq(pmIssues.tenant_id, tenantId),
@@ -44,6 +45,9 @@ export class PmSearchService {
               eq(pmIssues.tenant_id, tenantId),
               inArray(pmIssues.team_id, scope.teamIds),
               isNull(pmIssues.deleted_at),
+              ...(scope.hiddenProjectIds.length
+                ? [or(isNull(pmIssues.project_id), notInArray(pmIssues.project_id, scope.hiddenProjectIds))]
+                : []),
             );
         const pick = {
           id: pmIssues.id,

@@ -97,3 +97,46 @@ export function useRemoveLogo() {
     },
   })
 }
+
+// ─── Project logo (round E) — same pipeline, per PM project ─────────────────
+
+/**
+ * Plain helper (not a hook) for the create-project flow, which only knows the
+ * new project's id after the create lands. The server center-crops with
+ * sharp, so an uncropped file is fine here.
+ */
+export function uploadProjectLogoBlob(projectId: string, blob: Blob) {
+  return uploadFile(`/api/v1/pm/projects/${projectId}/logo`, blob)
+}
+
+function invalidateProjectLogo(qc: ReturnType<typeof useQueryClient>, projectId: string) {
+  void qc.invalidateQueries({ queryKey: ['pm', 'project-detail', projectId] })
+  void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
+}
+
+export function useUploadProjectLogo(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (blob: Blob) => uploadFile(`/api/v1/pm/projects/${projectId}/logo`, blob),
+    onSuccess: () => invalidateProjectLogo(qc, projectId),
+  })
+}
+
+export function useRemoveProjectLogo(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      // POST …/logo/remove (not DELETE): parity with the PM controller's
+      // action-route convention.
+      const res = await fetch(`${BASE_URL}/api/v1/pm/projects/${projectId}/logo/remove`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { message?: string }
+        throw new Error(json?.message ?? `Remove failed (${res.status})`)
+      }
+    },
+    onSuccess: () => invalidateProjectLogo(qc, projectId),
+  })
+}

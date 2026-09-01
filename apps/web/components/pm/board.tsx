@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { rankBetween } from '@flicks/shared/pm'
-import { Icon, avBg, initials } from '@/components/proto'
+import { Icon } from '@/components/proto'
 import { IssueComposer } from '@/components/pm/IssueComposer'
+import { PmAv } from '@/components/pm/projects'
 import { PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
@@ -17,11 +18,14 @@ import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
 
 const CAT_ORDER = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
 
-export const PmBoard = observer(function PmBoard({ engine, teamId, issues, states }: {
+export const PmBoard = observer(function PmBoard({ engine, teamId, issues, states, onOpen }: {
   engine: PmSyncEngine
   teamId: string
   issues: PmIssueRow[]
   states: PmStateRow[]
+  // Round E — cards had drag handlers but nothing listening for a click, so
+  // "clicking an issue in board view" went nowhere.
+  onOpen: (id: string) => void
 }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [overCol, setOverCol] = useState<string | null>(null)
@@ -100,6 +104,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
                   onDragStart={() => setDragId(issue.id)}
                   onDragEnd={() => { setDragId(null); setOverCol(null); setOverCard(null) }}
                   onDragOverCard={() => setOverCard(issue.id)}
+                  onOpen={() => onOpen(issue.id)}
                 />
               ))}
               {rows.length === 0 && (
@@ -122,7 +127,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
   )
 })
 
-const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver, onDragStart, onDragEnd, onDragOverCard }: {
+const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver, onDragStart, onDragEnd, onDragOverCard, onOpen }: {
   issue: PmIssueRow
   engine: PmSyncEngine
   dragging: boolean
@@ -130,18 +135,23 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
   onDragStart: () => void
   onDragEnd: () => void
   onDragOverCard: () => void
+  onOpen: () => void
 }) {
   const store = engine.store
   const team = store.teams.get(issue.team_id)
   const assignee = issue.assignee_user_id ? store.users.get(issue.assignee_user_id) : null
+  // Chromium suppresses click after a real drag, but not every browser does —
+  // the ref makes "drop never opens the issue" a guarantee, not a quirk.
+  const didDrag = useRef(false)
   return (
     <div
       draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      onDragStart={() => { didDrag.current = true; onDragStart() }}
+      onDragEnd={() => { onDragEnd(); setTimeout(() => { didDrag.current = false }, 0) }}
       onDragOver={(e) => { e.preventDefault(); onDragOverCard() }}
+      onClick={() => { if (!didDrag.current) onOpen() }}
       style={{
-        borderRadius: 10, padding: '9px 11px', cursor: 'grab',
+        borderRadius: 10, padding: '9px 11px', cursor: 'pointer',
         background: 'var(--surf-1)', border: `1px solid ${isOver ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
         opacity: dragging ? 0.45 : 1, transition: 'opacity .1s ease-out, border-color .12s ease-out',
         boxShadow: isOver ? '0 -2px 0 0 var(--blue)' : 'none',
@@ -171,9 +181,7 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
         )}
         <span style={{ flex: 1 }} />
         {assignee?.name ? (
-          <span style={{ width: 17, height: 17, borderRadius: '50%', background: avBg(assignee.name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 6.5 }}>
-            {initials(assignee.name)}
-          </span>
+          <PmAv name={assignee.name} src={assignee.avatar_url} size={17} />
         ) : (
           <span style={{ width: 17, height: 17, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', boxSizing: 'border-box' }} />
         )}

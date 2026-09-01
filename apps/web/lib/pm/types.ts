@@ -91,6 +91,8 @@ export interface PmProjectRow {
   color: string | null
   status: 'backlog' | 'planned' | 'in_progress' | 'paused' | 'completed' | 'canceled'
   health: 'on_track' | 'at_risk' | 'off_track'
+  is_private: boolean
+  logo_url: string | null
   lead_user_id: string | null
   start_date: string | null
   target_date: string | null

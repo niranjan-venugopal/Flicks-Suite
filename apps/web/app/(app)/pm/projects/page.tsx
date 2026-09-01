@@ -7,10 +7,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
-import { PmAv, ProjectCreateModal, TeamKeyChips } from '@/components/pm/projects'
+import { PmAv, ProjectCreateModal, ProjectLogo, TeamKeyChips } from '@/components/pm/projects'
 import { GuestWorkspaceNudge } from '@/components/pm/GuestWorkspaceNudge'
 import { FirstRunChecklist } from '@/components/pm/FirstRunChecklist'
 import { api } from '@/lib/api/client'
+import { uploadProjectLogoBlob } from '@/lib/api/queries/use-media'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
@@ -72,6 +73,10 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
   const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
   const projects = store.projectList().filter((p) => (tab === 'mine' ? p.lead_user_id === me : true))
   const sorted = [...projects].sort((a, b) => (a.target_date ?? '9999') < (b.target_date ?? '9999') ? -1 : 1)
+  // Round E — one pass over the issue graph for every row's progress bar
+  // (this render body used to scan all issues once PER project).
+  const progressAll = store.projectProgressAll()
+  const emptyProgress = { scope: 0, started: 0, done: 0 }
   // Sync mode: the engine applies the delete optimistically and flushes it —
   // no await, no spinner. The row is gone the moment the dialog closes.
   const confirmDelete = () => {
@@ -121,7 +126,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {sorted.map((p) => (
             <ProjectRow key={p.id} p={p}
-              progress={store.projectProgress(p.id)}
+              progress={progressAll.get(p.id) ?? emptyProgress}
               teamIds={store.projectTeams.get(p.id) ?? []}
               teams={store.teams as never}
               leadName={p.lead_user_id ? store.users.get(p.lead_user_id)?.name ?? '' : ''}
@@ -164,8 +169,20 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
         teams={store.teamList()}
         users={[...store.users.values()]}
         meId={me}
-        onCreate={(input) => {
+        onCreate={(input, logoFile) => {
           const id = engine.createProject(input)
+          if (logoFile) {
+            // The optimistic id isn't on the server yet — upload once the
+            // create op is ACKED (round E; onFlushed is the same hook the
+            // issue page uses), then pull the delta for the signed logo_url.
+            const off = engine.onFlushed((acked) => {
+              if (!acked.some((a) => a.id === id)) return
+              off()
+              void uploadProjectLogoBlob(id, logoFile)
+                .then(() => engine.pullDelta())
+                .catch(() => undefined) // logo is optional — the project stands
+            })
+          }
           router.push(`/pm/projects/${id}`)
         }}
       />
@@ -190,8 +207,11 @@ function ProjectRow({ p, progress, teamIds, teams, leadName, leadAvatarUrl, onOp
       style={{ display: 'flex', alignItems: 'center', gap: 11, height: 44, padding: '0 14px', borderBottom: '1px solid var(--bord)', cursor: 'pointer', transition: 'background .12s ease-out' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)' }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
-      <span style={{ fontSize: 14 }}>{p.icon ?? '🎯'}</span>
-      <span style={{ fontSize: 12.5, fontWeight: 800, minWidth: 150, color: '#fff' }}>{p.name}</span>
+      <ProjectLogo logoUrl={p.logo_url} icon={p.icon} size={20} />
+      <span style={{ fontSize: 12.5, fontWeight: 800, minWidth: 150, color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        {p.name}
+        {p.is_private && <Icon.lock size={11} style={{ color: 'var(--text-faint)' }} />}
+      </span>
       <HealthChip h={p.health} small />
       {p.deal_id && (
         <span title="Created from a CRM deal" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', height: 16, borderRadius: 99, background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.35)', fontSize: 9, fontWeight: 800, color: 'var(--green)' }}>
@@ -345,8 +365,9 @@ function RestProjects() {
         teams={(teamsQ.data?.data.teams ?? []) as never}
         users={(usersQ.data?.data ?? []) as never}
         meId={currentUser?.id ?? ''}
-        onCreate={(input) => {
-          void api.post<{ data: { id: string } }>('/api/v1/pm/projects', input).then((res) => {
+        onCreate={(input, logoFile) => {
+          void api.post<{ data: { id: string } }>('/api/v1/pm/projects', input).then(async (res) => {
+            if (logoFile) await uploadProjectLogoBlob(res.data.id, logoFile).catch(() => undefined)
             void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
             router.push(`/pm/projects/${res.data.id}`)
           })

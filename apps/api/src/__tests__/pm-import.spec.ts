@@ -46,7 +46,7 @@ const notificationsSvc = new NotificationsService(db as never, dbAdmin as never,
 const visibility = new PmVisibilityService(dbSvc);
 const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
-const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
+const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? 'signed:' + k : l) } as never);
 const importSvc = new PmImportService(dbSvc, audit, domainEventsSvc);
 const templatesSvc = new PmTemplatesService(dbSvc, audit, domainEventsSvc, visibility);
 

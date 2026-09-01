@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { rankBetween } from '@flicks/shared/pm'
-import { api } from '@/lib/api/client'
+import { api, silentRefresh } from '@/lib/api/client'
 import { PmStore } from './store'
 import { openPmDb, destroyPmDb, loadSnapshot, persistTables, persistPending, type PmDb } from './idb'
 import type { PendingMutation, PmIssueRow, PmProjectRow, PmUpdateRow } from './types'
@@ -185,7 +185,14 @@ export class PmSyncEngine {
   // ─── bootstrap / delta ───────────────────────────────────────────────────
 
   private async bootstrap(): Promise<void> {
-    const res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include' })
+    let res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include' })
+    // Round E — an expired 15-minute access cookie made this raw fetch 401,
+    // and the throw silently downgraded the whole session to REST mode (no
+    // board, slower everything). Redeem the refresh cookie once and retry,
+    // exactly like every JSON request already does.
+    if (res.status === 401 && (await silentRefresh())) {
+      res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include' })
+    }
     if (res.status === 400) throw new Error('SYNC_DISABLED')
     if (!res.ok) throw new Error(`bootstrap failed: ${res.status}`)
     const text = await res.text()
@@ -214,20 +221,30 @@ export class PmSyncEngine {
           ? Math.max(0, hintSeq - 1) // healing: a stale-looking ping still re-pulls
           : this.store.cursor
       const res = await api.get<DeltaResponse>(`/api/v1/pm/sync/delta?since=${since}`)
+      let changed = false
       for (const [table, value] of Object.entries(res.upserts ?? {})) {
         if (table.endsWith('__scope')) continue
         const scope = (res.upserts as Record<string, unknown>)[`${table}__scope`] as string[] | undefined
         if (scope) {
           this.store.replaceScopedCollections(table, scope, value as Record<string, unknown>[])
-        } else {
+          changed = true
+        } else if ((value as unknown[]).length) {
           this.store.applyRows(table, value as Record<string, unknown>[])
+          changed = true
         }
       }
       for (const [table, ids] of Object.entries(res.tombstones ?? {})) {
+        if (!ids.length) continue
         this.store.applyTombstones(table, ids)
+        changed = true
       }
       this.store.setCursor(res.latest_seq)
-      this.schedulePersist()
+      // Round E — persistence used to run UNCONDITIONALLY here, so the 30s
+      // fallback poll re-serialized every row into IndexedDB even when the
+      // delta was empty: a recurring main-thread stall proportional to
+      // workspace size. A cursor-only advance skips the write — the next warm
+      // boot simply re-pulls a tiny (idempotent) delta from the older cursor.
+      if (changed) this.schedulePersist()
     } catch (err) {
       if (err instanceof Error && /410|RE_BOOTSTRAP/.test(err.message)) {
         await this.reset()
@@ -668,6 +685,8 @@ export class PmSyncEngine {
       color: null,
       status: input.status ?? 'planned',
       health: 'on_track',
+      is_private: false,
+      logo_url: null,
       lead_user_id: input.lead_user_id ?? this.userId,
       start_date: input.start_date ?? null,
       target_date: input.target_date ?? null,

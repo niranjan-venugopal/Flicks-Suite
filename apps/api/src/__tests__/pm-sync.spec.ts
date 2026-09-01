@@ -58,8 +58,8 @@ const notificationsSvc = new NotificationsService(
   emitter,
 );
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
-const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
-const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
+const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
+const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? 'signed:' + k : l) } as never);
 const gatewayStub = { emitSeq: jest.fn() };
 const executor = new PmMutationExecutor(dbSvc, issuesSvc, projectsSvc, syncSvc, gatewayStub as never);
 

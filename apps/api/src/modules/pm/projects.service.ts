@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmProjects,
   pmProjectTeams,
@@ -12,12 +12,14 @@ import {
   pmTeams,
   pmWorkflowStates,
   memberships,
+  users,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { PM_PROJECT_STATUSES, PM_PROJECT_HEALTH } from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { MediaService } from '../media/media.service';
 import { PmVisibilityService } from './sync/visibility.service';
 
 /**
@@ -59,7 +61,21 @@ export class PmProjectsService {
     private readonly audit: AuditService,
     private readonly domainEvents: DomainEventsService,
     private readonly visibility: PmVisibilityService,
+    private readonly media: MediaService,
   ) {}
+
+  /**
+   * Round E — the raw R2 storage key never leaves the API: REST payloads
+   * carry a signed logo_url instead (pure local crypto; the sync projections
+   * do the same in sync.service.ts).
+   */
+  private async stripAndSignLogo<T extends { logo_key: string | null }>(row: T) {
+    const { logo_key, ...rest } = row;
+    return {
+      ...rest,
+      logo_url: logo_key ? await this.media.servedUrl(logo_key, null, 64) : null,
+    };
+  }
 
   // ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -181,7 +197,9 @@ export class PmProjectsService {
         const teams: Record<string, string[]> = {};
         for (const l of links) (teams[l.project_id] ??= []).push(l.team_id);
         const progress = Object.fromEntries(await this.computeProgress(tx, tenantId, visible));
-        return { data: { projects, teams, progress } };
+        return {
+          data: { projects: await Promise.all(projects.map((p) => this.stripAndSignLogo(p))), teams, progress },
+        };
       },
       userId,
     );
@@ -229,7 +247,7 @@ export class PmProjectsService {
         const progress = (await this.computeProgress(tx, tenantId, [id])).get(id)!;
         return {
           data: {
-            project,
+            project: await this.stripAndSignLogo(project),
             milestones,
             updates,
             team_ids: teamLinks.map((t) => t.team_id),
@@ -293,7 +311,7 @@ export class PmProjectsService {
           },
           tx,
         );
-        return { data: project! };
+        return { data: await this.stripAndSignLogo(project!) };
       },
       userId,
     );
@@ -310,7 +328,7 @@ export class PmProjectsService {
         for (const f of PROJECT_PATCH_FIELDS) {
           if (f in patch) clean[f] = patch[f];
         }
-        if (!Object.keys(clean).length) return { data: project };
+        if (!Object.keys(clean).length) return { data: await this.stripAndSignLogo(project) };
         if ('name' in clean && !String(clean.name ?? '').trim()) {
           throw new BadRequestException('Project name is required');
         }
@@ -346,7 +364,7 @@ export class PmProjectsService {
           },
           tx,
         );
-        return { data: row! };
+        return { data: await this.stripAndSignLogo(row!) };
       },
       userId,
     );
@@ -577,10 +595,365 @@ export class PmProjectsService {
           },
           tx,
         );
-        return { data: row! };
+        return { data: await this.stripAndSignLogo(row!) };
       },
       userId,
     );
+  }
+
+  // ─── project members + privacy (round E) ──────────────────────────────────
+
+  /**
+   * Who may manage a project's members or flip its privacy: the guests bar
+   * verbatim (guests.service.ts `assertMayManageGuests`) — the project lead,
+   * plus manager and above. Enforced in the service because the sync door
+   * carries no @Roles.
+   */
+  private assertMayManageMembers(
+    project: { lead_user_id: string | null },
+    actorUserId: string,
+    role: string | undefined,
+    what: string,
+  ) {
+    if (role && ['fam', 'owner', 'admin', 'manager'].includes(role)) return;
+    if (
+      role &&
+      role !== 'guest' &&
+      role !== 'auditor' &&
+      project.lead_user_id &&
+      project.lead_user_id === actorUserId
+    ) {
+      return;
+    }
+    throw new ForbiddenException(`${what} is for the project lead, or a manager and above`);
+  }
+
+  /** Refs for every LIVE issue in the project (privacy flips + membership on
+   *  private projects must converge issues on affected clients too). */
+  private async liveIssueRefs(tx: Db, tenantId: string, id: string) {
+    const rows = await tx
+      .select({ id: pmIssues.id })
+      .from(pmIssues)
+      .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, id), isNull(pmIssues.deleted_at)));
+    return rows.map((r) => ({ t: 'pm_issues', id: r.id }));
+  }
+
+  /** Members list with identity + workspace role, avatars signed (round E). */
+  async listMembers(tenantId: string, userId: string, id: string) {
+    const project = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertProjectAccess(tx, tenantId, userId, id);
+        return this.loadProject(tx, tenantId, id);
+      },
+      userId,
+    );
+    const rows = await this.db.withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .select({
+            user_id: pmProjectMembers.user_id,
+            added_at: pmProjectMembers.created_at,
+            name: users.full_name,
+            email: users.email,
+            avatar_url: users.avatar_url,
+            avatar_key: users.avatar_key,
+            role: memberships.role,
+          })
+          .from(pmProjectMembers)
+          .innerJoin(users, eq(pmProjectMembers.user_id, users.id))
+          .innerJoin(
+            memberships,
+            and(eq(memberships.user_id, pmProjectMembers.user_id), eq(memberships.tenant_id, tenantId)),
+          )
+          .where(
+            and(
+              eq(pmProjectMembers.tenant_id, tenantId),
+              eq(pmProjectMembers.project_id, id),
+              // Guests keep their own card (guests.service list) — the members
+              // panel is the INTERNAL roster.
+              sql`${memberships.role} <> 'guest'`,
+            ),
+          )
+          .orderBy(asc(pmProjectMembers.created_at)),
+      userId,
+    );
+    const data = await Promise.all(
+      rows.map(async ({ avatar_key, ...r }) => ({
+        ...r,
+        avatar_url: await this.media.servedUrl(avatar_key ?? null, r.avatar_url, 64),
+        is_lead: project.lead_user_id === r.user_id,
+      })),
+    );
+    return { data, total: data.length };
+  }
+
+  async addMember(tenantId: string, actorUserId: string, role: string | undefined, id: string, memberUserId: string) {
+    const result = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertProjectAccess(tx, tenantId, actorUserId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        this.assertMayManageMembers(project, actorUserId, role, 'Managing project members');
+        // Target must be an active, internal workspace member (house rule #2 —
+        // the id comes from a DTO). Guests come through the guest invite flow,
+        // which provisions their seat + billing; never through this door.
+        const [target] = await tx
+          .select({ role: memberships.role })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.user_id, memberUserId),
+              eq(memberships.status, 'active'),
+            ),
+          )
+          .limit(1);
+        if (!target) throw new BadRequestException('user is not an active member of this workspace');
+        if (target.role === 'guest') {
+          throw new BadRequestException('Guests are invited from the Guests card, not added as members');
+        }
+        await tx
+          .insert(pmProjectMembers)
+          .values({ tenant_id: tenantId, project_id: id, user_id: memberUserId })
+          .onConflictDoNothing();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.project.member_added',
+            tenantId,
+            actorUserId,
+            payload: {
+              project_id: id,
+              user_id: memberUserId,
+              sync: [
+                { t: 'pm_project_members', id },
+                // A private project APPEARS for the new member via these refs.
+                ...(project.is_private
+                  ? [{ t: 'pm_projects', id }, { t: 'pm_project_teams', id }, ...(await this.liveIssueRefs(tx, tenantId, id))]
+                  : []),
+              ],
+            },
+          },
+          tx,
+        );
+        return { data: { project_id: id, user_id: memberUserId } };
+      },
+      actorUserId,
+    );
+    await this.audit.log({
+      tenantId,
+      actorUserId,
+      action: 'pm.project.member_added',
+      resourceType: 'pm_project',
+      resourceId: id,
+      metadata: { user_id: memberUserId },
+    });
+    return result;
+  }
+
+  async removeMember(tenantId: string, actorUserId: string, role: string | undefined, id: string, memberUserId: string) {
+    const result = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertProjectAccess(tx, tenantId, actorUserId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        this.assertMayManageMembers(project, actorUserId, role, 'Managing project members');
+        const [target] = await tx
+          .select({ role: memberships.role })
+          .from(memberships)
+          .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, memberUserId)))
+          .limit(1);
+        if (target?.role === 'guest') {
+          throw new BadRequestException('Guest access is revoked from the Guests card');
+        }
+        await tx
+          .delete(pmProjectMembers)
+          .where(
+            and(
+              eq(pmProjectMembers.tenant_id, tenantId),
+              eq(pmProjectMembers.project_id, id),
+              eq(pmProjectMembers.user_id, memberUserId),
+            ),
+          );
+        await this.domainEvents.publish(
+          {
+            name: 'pm.project.member_removed',
+            tenantId,
+            actorUserId,
+            payload: {
+              project_id: id,
+              user_id: memberUserId,
+              sync: [
+                { t: 'pm_project_members', id },
+                // A private project DISAPPEARS for the removed member: the
+                // delta's re-fetch misses become tombstones on their client.
+                ...(project.is_private
+                  ? [{ t: 'pm_projects', id }, { t: 'pm_project_teams', id }, ...(await this.liveIssueRefs(tx, tenantId, id))]
+                  : []),
+              ],
+            },
+          },
+          tx,
+        );
+        return { data: { project_id: id, user_id: memberUserId, removed: true } };
+      },
+      actorUserId,
+    );
+    await this.audit.log({
+      tenantId,
+      actorUserId,
+      action: 'pm.project.member_removed',
+      resourceType: 'pm_project',
+      resourceId: id,
+      metadata: { user_id: memberUserId },
+    });
+    return result;
+  }
+
+  /**
+   * Flip a project Private/public (round E, founder decision). Private =
+   * visible only to its members, its lead, and owner/admin-class roles — the
+   * rule itself lives in PmVisibilityService. Default false, so existing
+   * projects are untouched. Refs name the project AND its live issues so
+   * every affected client converges (appear or tombstone) without a reload.
+   */
+  async setVisibilityFlag(tenantId: string, actorUserId: string, role: string | undefined, id: string, isPrivate: boolean) {
+    const result = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.assertProjectAccess(tx, tenantId, actorUserId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        this.assertMayManageMembers(project, actorUserId, role, 'Changing project visibility');
+        if (project.is_private === isPrivate) return { data: await this.stripAndSignLogo(project) };
+        const [row] = await tx
+          .update(pmProjects)
+          .set({ is_private: isPrivate, updated_at: new Date() })
+          .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)))
+          .returning();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.project.updated',
+            tenantId,
+            actorUserId,
+            payload: {
+              project_id: id,
+              is_private: isPrivate,
+              sync: [
+                { t: 'pm_projects', id },
+                { t: 'pm_project_teams', id },
+                { t: 'pm_project_members', id },
+                ...(await this.liveIssueRefs(tx, tenantId, id)),
+              ],
+            },
+          },
+          tx,
+        );
+        return { data: await this.stripAndSignLogo(row!) };
+      },
+      actorUserId,
+    );
+    await this.audit.log({
+      tenantId,
+      actorUserId,
+      action: isPrivate ? 'pm.project.made_private' : 'pm.project.made_public',
+      resourceType: 'pm_project',
+      resourceId: id,
+    });
+    return result;
+  }
+
+  // ─── project logo (round E) ───────────────────────────────────────────────
+
+  /**
+   * Upload/replace the project logo. Authorization + the previous-key
+   * snapshot happen inside a tenant tx; the R2 upload is network and stays
+   * OUTSIDE any transaction (house rule 7); then the key lands in a second
+   * tx that also publishes the sync ref, so every client's project row
+   * refreshes with a newly signed logo_url. Same bar as renaming (any
+   * non-guest who can see the project) — the logo is part of editing it.
+   */
+  async uploadLogo(tenantId: string, userId: string, id: string, buffer: Buffer) {
+    const prevKey = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
+        await this.assertProjectAccess(tx, tenantId, userId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        return project.logo_key;
+      },
+      userId,
+    );
+    const media = await this.media.processImage(buffer, `tenants/${tenantId}/pm-projects/${id}/logo`, true);
+    const row = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [updated] = await tx
+          .update(pmProjects)
+          .set({ logo_key: media.key256, logo_updated_at: new Date(), updated_at: new Date() })
+          .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)))
+          .returning();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.project.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { project_id: id, sync: [{ t: 'pm_projects', id }] },
+          },
+          tx,
+        );
+        return updated!;
+      },
+      userId,
+    );
+    if (prevKey) void this.media.deleteImage(prevKey).catch(() => undefined);
+    await this.audit.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'pm.project.logo_updated',
+      resourceType: 'pm_project',
+      resourceId: id,
+    });
+    return { data: await this.stripAndSignLogo(row) };
+  }
+
+  async removeLogo(tenantId: string, userId: string, id: string) {
+    const { row, prevKey } = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
+        await this.assertProjectAccess(tx, tenantId, userId, id);
+        const project = await this.loadProject(tx, tenantId, id);
+        if (!project.logo_key) return { row: project, prevKey: null as string | null };
+        const [updated] = await tx
+          .update(pmProjects)
+          .set({ logo_key: null, logo_updated_at: new Date(), updated_at: new Date() })
+          .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)))
+          .returning();
+        await this.domainEvents.publish(
+          {
+            name: 'pm.project.updated',
+            tenantId,
+            actorUserId: userId,
+            payload: { project_id: id, sync: [{ t: 'pm_projects', id }] },
+          },
+          tx,
+        );
+        return { row: updated!, prevKey: project.logo_key };
+      },
+      userId,
+    );
+    if (prevKey) {
+      void this.media.deleteImage(prevKey).catch(() => undefined);
+      await this.audit.log({
+        tenantId,
+        actorUserId: userId,
+        action: 'pm.project.logo_removed',
+        resourceType: 'pm_project',
+        resourceId: id,
+      });
+    }
+    return { data: await this.stripAndSignLogo(row) };
   }
 
   // ─── milestones (§6.2) ────────────────────────────────────────────────────

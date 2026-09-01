@@ -27,7 +27,7 @@ const emitter = new EventEmitter2();
 const domainEventsSvc = new DomainEventsService(dbAdmin as never, emitter);
 const visibility = new PmVisibilityService(dbSvc);
 const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
-const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
+const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const searchSvc = new PmSearchService(dbSvc, visibility);
 
 let tenantId: string;

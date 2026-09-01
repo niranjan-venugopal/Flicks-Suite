@@ -65,7 +65,10 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
   })
   const enableCycles = useMutation({
     mutationFn: () => api.patch(`/api/v1/pm/teams/${teamId}`, { cycles_enabled: true }),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ['pm', 'cycles', teamId] }), 800),
+    // Round E — the PATCH resolves only after the server has seeded the first
+    // cycles, so the refetch can go out immediately (the 800ms delay was a
+    // guess-timer from before that guarantee).
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm', 'cycles', teamId] }),
   })
 
   const d = statsQ.data?.data

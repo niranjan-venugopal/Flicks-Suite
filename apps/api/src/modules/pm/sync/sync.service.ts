@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import {
   domainEvents,
   pmTeams,
@@ -23,6 +23,7 @@ import type { Db, DbAdmin } from '@flicks/db';
 import type { PmSyncTable } from '@flicks/shared/pm';
 import { DB_SERVICE_ROLE } from '../../../core/database/database.module';
 import { DatabaseService } from '../../../core/database/database.service';
+import { MediaService } from '../../media/media.service';
 import { PmVisibilityService } from './visibility.service';
 import { PmTeamsService } from '../teams.service';
 
@@ -70,6 +71,8 @@ const PM_PROJECT_PROJECTION = {
   color: pmProjects.color,
   status: pmProjects.status,
   health: pmProjects.health,
+  is_private: pmProjects.is_private, // round E — lock chip + members-only visibility
+  logo_key: pmProjects.logo_key, // round E — swapped for a signed logo_url before the wire
   lead_user_id: pmProjects.lead_user_id,
   start_date: pmProjects.start_date,
   target_date: pmProjects.target_date,
@@ -87,7 +90,22 @@ export class PmSyncService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly visibility: PmVisibilityService,
     private readonly teams: PmTeamsService,
+    private readonly media: MediaService,
   ) {}
+
+  /**
+   * Round E — project rows carry logo_key in the DB but the raw storage key
+   * never leaves the API: swap it for a signed URL (pure local crypto, no
+   * network) and strip the key. The emoji icon stays the client fallback.
+   */
+  private async signProjects<T extends { logo_key: string | null }>(rows: T[]) {
+    return Promise.all(
+      rows.map(async ({ logo_key, ...r }) => ({
+        ...r,
+        logo_url: logo_key ? await this.media.servedUrl(logo_key, null, 64) : null,
+      })),
+    );
+  }
 
   /**
    * Cursor head for ONE tenant. Scoped deliberately: a global max would leak
@@ -121,8 +139,11 @@ export class PmSyncService {
       userId,
     );
     if (!guestProbe) await this.teams.ensureWorkspace(tenantId, userId);
-    const latestSeq = await this.latestSeq(tenantId); // BEFORE the snapshot reads
-    const horizon = await this.minSeqHorizon(tenantId);
+    // BEFORE the snapshot reads (overlap with the first delta is idempotent).
+    const [latestSeq, horizon] = await Promise.all([
+      this.latestSeq(tenantId),
+      this.minSeqHorizon(tenantId),
+    ]);
 
     return this.db.withTenant(
       tenantId,
@@ -133,147 +154,156 @@ export class PmSyncService {
         const push = (model: string, rows: unknown[]) =>
           lines.push(JSON.stringify({ model, rows }));
 
-        const teams = visible.length
-          ? await tx
-              .select({
-                id: pmTeams.id, key: pmTeams.key, name: pmTeams.name, icon: pmTeams.icon,
-                color: pmTeams.color, is_private: pmTeams.is_private, timezone: pmTeams.timezone,
-                cycles_enabled: pmTeams.cycles_enabled, cycle_length_weeks: pmTeams.cycle_length_weeks,
-                cooldown_days: pmTeams.cooldown_days, cycle_start_dow: pmTeams.cycle_start_dow,
-                cycle_auto_add_started: pmTeams.cycle_auto_add_started,
-                upcoming_cycles: pmTeams.upcoming_cycles, estimate_scale: pmTeams.estimate_scale,
-                triage_enabled: pmTeams.triage_enabled, default_state_id: pmTeams.default_state_id,
-                created_at: pmTeams.created_at, deleted_at: pmTeams.deleted_at,
-              })
-              .from(pmTeams)
-              .where(and(eq(pmTeams.tenant_id, tenantId), inArray(pmTeams.id, visible)))
-          : [];
+        // Round E — the workspace-shape reads are independent: issue them
+        // together so they pipeline on the connection instead of paying one
+        // full round trip each (this block alone was 5 serialized queries).
+        const [teams, memberships_, states, labels, usersRaw] = await Promise.all([
+          visible.length
+            ? tx
+                .select({
+                  id: pmTeams.id, key: pmTeams.key, name: pmTeams.name, icon: pmTeams.icon,
+                  color: pmTeams.color, is_private: pmTeams.is_private, timezone: pmTeams.timezone,
+                  cycles_enabled: pmTeams.cycles_enabled, cycle_length_weeks: pmTeams.cycle_length_weeks,
+                  cooldown_days: pmTeams.cooldown_days, cycle_start_dow: pmTeams.cycle_start_dow,
+                  cycle_auto_add_started: pmTeams.cycle_auto_add_started,
+                  upcoming_cycles: pmTeams.upcoming_cycles, estimate_scale: pmTeams.estimate_scale,
+                  triage_enabled: pmTeams.triage_enabled, default_state_id: pmTeams.default_state_id,
+                  created_at: pmTeams.created_at, deleted_at: pmTeams.deleted_at,
+                })
+                .from(pmTeams)
+                .where(and(eq(pmTeams.tenant_id, tenantId), inArray(pmTeams.id, visible)))
+            : Promise.resolve([]),
+          // Guests never receive team rosters.
+          !scope.guest && visible.length
+            ? tx
+                .select({
+                  team_id: pmTeamMemberships.team_id, user_id: pmTeamMemberships.user_id,
+                  is_lead: pmTeamMemberships.is_lead, joined_at: pmTeamMemberships.joined_at,
+                })
+                .from(pmTeamMemberships)
+                .where(and(eq(pmTeamMemberships.tenant_id, tenantId), inArray(pmTeamMemberships.team_id, visible)))
+            : Promise.resolve([]),
+          visible.length
+            ? tx
+                .select({
+                  id: pmWorkflowStates.id, team_id: pmWorkflowStates.team_id,
+                  name: pmWorkflowStates.name, color: pmWorkflowStates.color,
+                  category: pmWorkflowStates.category, position: pmWorkflowStates.position,
+                  is_default_for_category: pmWorkflowStates.is_default_for_category,
+                })
+                .from(pmWorkflowStates)
+                .where(and(eq(pmWorkflowStates.tenant_id, tenantId), inArray(pmWorkflowStates.team_id, visible)))
+                .orderBy(asc(pmWorkflowStates.position))
+            : Promise.resolve([]),
+          tx
+            .select({
+              id: pmLabels.id, team_id: pmLabels.team_id, name: pmLabels.name,
+              color: pmLabels.color, description: pmLabels.description,
+            })
+            .from(pmLabels)
+            .where(eq(pmLabels.tenant_id, tenantId)),
+          // Round E — same tx (a second withTenant used to hold two pool
+          // connections per bootstrap); signing is pure local crypto.
+          this.teams.usersLiteTx(tx, tenantId, userId),
+        ]);
         push('pm_teams', teams);
-
-        // Guests never receive team rosters.
-        const memberships_ = !scope.guest && visible.length
-          ? await tx
-              .select({
-                team_id: pmTeamMemberships.team_id, user_id: pmTeamMemberships.user_id,
-                is_lead: pmTeamMemberships.is_lead, joined_at: pmTeamMemberships.joined_at,
-              })
-              .from(pmTeamMemberships)
-              .where(and(eq(pmTeamMemberships.tenant_id, tenantId), inArray(pmTeamMemberships.team_id, visible)))
-          : [];
         push('pm_team_memberships', memberships_);
-
-        const states = visible.length
-          ? await tx
-              .select({
-                id: pmWorkflowStates.id, team_id: pmWorkflowStates.team_id,
-                name: pmWorkflowStates.name, color: pmWorkflowStates.color,
-                category: pmWorkflowStates.category, position: pmWorkflowStates.position,
-                is_default_for_category: pmWorkflowStates.is_default_for_category,
-              })
-              .from(pmWorkflowStates)
-              .where(and(eq(pmWorkflowStates.tenant_id, tenantId), inArray(pmWorkflowStates.team_id, visible)))
-              .orderBy(asc(pmWorkflowStates.position))
-          : [];
         push('pm_workflow_states', states);
-
-        const labels = await tx
-          .select({
-            id: pmLabels.id, team_id: pmLabels.team_id, name: pmLabels.name,
-            color: pmLabels.color, description: pmLabels.description,
-          })
-          .from(pmLabels)
-          .where(eq(pmLabels.tenant_id, tenantId));
         push('pm_labels', labels.filter((l) => !l.team_id || visible.includes(l.team_id)));
-
-        push('pm_users_lite', await this.teams.usersLite(tenantId, userId));
+        push('pm_users_lite', await this.teams.signUsersLite(usersRaw));
 
         // Issues: registry projection (NO description). Members stream the
         // most-recent 2000 per TEAM; guests stream per invited PROJECT —
         // never a whole team's backlog.
+        // Round E — private projects: a member's per-TEAM bucket must not
+        // carry issues of private projects they aren't in (project rule wins
+        // over team rule — same predicate issueVisible applies row-wise).
+        const hidden = scope.hiddenProjectIds;
         const issueBuckets = scope.guest
           ? scope.projectIds.map((projectId) =>
               and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, projectId), isNull(pmIssues.deleted_at)))
           : visible.map((teamId) =>
-              and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.team_id, teamId), isNull(pmIssues.deleted_at)));
-        for (const bucket of issueBuckets) {
-          const rows = await tx
-            .select({
-              id: pmIssues.id, team_id: pmIssues.team_id, number: pmIssues.number,
-              title: pmIssues.title, state_id: pmIssues.state_id, priority: pmIssues.priority,
-              estimate: pmIssues.estimate, assignee_user_id: pmIssues.assignee_user_id,
-              creator_user_id: pmIssues.creator_user_id, parent_issue_id: pmIssues.parent_issue_id,
-              project_id: pmIssues.project_id, milestone_id: pmIssues.milestone_id,
-              cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
-              board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
-              source: pmIssues.source, triaged_at: pmIssues.triaged_at,
-              snoozed_until: pmIssues.snoozed_until,
-              started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
-              canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
-              updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
-            })
-            .from(pmIssues)
-            .where(bucket)
-            .orderBy(desc(pmIssues.updated_at))
-            .limit(2000);
-          if (rows.length) push('pm_issues', rows);
-
-          const issueIds = rows.map((r) => r.id);
-          if (issueIds.length) {
-            push(
-              'pm_issue_labels',
-              await tx
+              and(
+                eq(pmIssues.tenant_id, tenantId),
+                eq(pmIssues.team_id, teamId),
+                isNull(pmIssues.deleted_at),
+                ...(hidden.length
+                  ? [or(isNull(pmIssues.project_id), notInArray(pmIssues.project_id, hidden))]
+                  : []),
+              ));
+        // Round E — this was a serial N+1: 4 awaited queries PER team/project
+        // bucket. Buckets now run concurrently (pipelined on the tx
+        // connection), and each bucket's three join-table fetches go out
+        // together once its issue ids are known.
+        const bucketPayloads = await Promise.all(
+          issueBuckets.map(async (bucket) => {
+            const rows = await tx
+              .select({
+                id: pmIssues.id, team_id: pmIssues.team_id, number: pmIssues.number,
+                title: pmIssues.title, state_id: pmIssues.state_id, priority: pmIssues.priority,
+                estimate: pmIssues.estimate, assignee_user_id: pmIssues.assignee_user_id,
+                creator_user_id: pmIssues.creator_user_id, parent_issue_id: pmIssues.parent_issue_id,
+                project_id: pmIssues.project_id, milestone_id: pmIssues.milestone_id,
+                cycle_id: pmIssues.cycle_id, due_date: pmIssues.due_date,
+                board_rank: pmIssues.board_rank, backlog_rank: pmIssues.backlog_rank,
+                source: pmIssues.source, triaged_at: pmIssues.triaged_at,
+                snoozed_until: pmIssues.snoozed_until,
+                started_at: pmIssues.started_at, completed_at: pmIssues.completed_at,
+                canceled_at: pmIssues.canceled_at, created_at: pmIssues.created_at,
+                updated_at: pmIssues.updated_at, deleted_at: pmIssues.deleted_at,
+              })
+              .from(pmIssues)
+              .where(bucket)
+              .orderBy(desc(pmIssues.updated_at))
+              .limit(2000);
+            if (!rows.length) return null;
+            const issueIds = rows.map((r) => r.id);
+            const [issueLabels, subscribers, relations] = await Promise.all([
+              tx
                 .select({ issue_id: pmIssueLabels.issue_id, label_id: pmIssueLabels.label_id })
                 .from(pmIssueLabels)
                 .where(and(eq(pmIssueLabels.tenant_id, tenantId), inArray(pmIssueLabels.issue_id, issueIds))),
-            );
-            push(
-              'pm_issue_subscribers',
-              await tx
+              tx
                 .select({ issue_id: pmIssueSubscribers.issue_id, user_id: pmIssueSubscribers.user_id })
                 .from(pmIssueSubscribers)
                 .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), inArray(pmIssueSubscribers.issue_id, issueIds))),
-            );
-            push(
-              'pm_issue_relations',
-              await tx
+              tx
                 .select({
                   id: pmIssueRelations.id, issue_id: pmIssueRelations.issue_id,
                   related_issue_id: pmIssueRelations.related_issue_id, type: pmIssueRelations.type,
                 })
                 .from(pmIssueRelations)
                 .where(and(eq(pmIssueRelations.tenant_id, tenantId), inArray(pmIssueRelations.issue_id, issueIds))),
-            );
-          }
+            ]);
+            return { rows, issueLabels, subscribers, relations };
+          }),
+        );
+        for (const b of bucketPayloads) {
+          if (!b) continue;
+          push('pm_issues', b.rows);
+          push('pm_issue_labels', b.issueLabels);
+          push('pm_issue_subscribers', b.subscribers);
+          push('pm_issue_relations', b.relations);
         }
 
         // Projects layer (§6): projects/milestones/initiatives are instant
         // models; project-update BODIES ride along (small text, latest 10/project).
         const visibleProjects = scope.projectIds;
         if (visibleProjects.length) {
-          push(
-            'pm_projects',
-            await tx
+          const [projects, projectTeams, projectMembers, milestones, updates] = await Promise.all([
+            tx
               .select(PM_PROJECT_PROJECTION)
               .from(pmProjects)
               .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, visibleProjects), isNull(pmProjects.deleted_at))),
-          );
-          push(
-            'pm_project_teams',
-            await tx
+            tx
               .select({ project_id: pmProjectTeams.project_id, team_id: pmProjectTeams.team_id })
               .from(pmProjectTeams)
               .where(and(eq(pmProjectTeams.tenant_id, tenantId), inArray(pmProjectTeams.project_id, visibleProjects))),
-          );
-          push(
-            'pm_project_members',
-            await tx
+            tx
               .select({ project_id: pmProjectMembers.project_id, user_id: pmProjectMembers.user_id })
               .from(pmProjectMembers)
               .where(and(eq(pmProjectMembers.tenant_id, tenantId), inArray(pmProjectMembers.project_id, visibleProjects))),
-          );
-          push(
-            'pm_project_milestones',
-            await tx
+            tx
               .select({
                 id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
                 name: pmProjectMilestones.name, target_date: pmProjectMilestones.target_date,
@@ -281,16 +311,20 @@ export class PmSyncService {
               })
               .from(pmProjectMilestones)
               .where(and(eq(pmProjectMilestones.tenant_id, tenantId), inArray(pmProjectMilestones.project_id, visibleProjects))),
-          );
-          const updates = await tx.execute(sql`
-            SELECT id, project_id, health, body_md, author_user_id, created_at FROM (
-              SELECT id, project_id, health, body_md, author_user_id, created_at,
-                     row_number() OVER (PARTITION BY project_id ORDER BY created_at DESC) AS rn
-              FROM pm_project_updates
-              WHERE tenant_id = ${tenantId}
-                AND project_id IN (${sql.join(visibleProjects.map((p) => sql`${p}`), sql`, `)})
-            ) ranked WHERE rn <= 10
-          `);
+            tx.execute(sql`
+              SELECT id, project_id, health, body_md, author_user_id, created_at FROM (
+                SELECT id, project_id, health, body_md, author_user_id, created_at,
+                       row_number() OVER (PARTITION BY project_id ORDER BY created_at DESC) AS rn
+                FROM pm_project_updates
+                WHERE tenant_id = ${tenantId}
+                  AND project_id IN (${sql.join(visibleProjects.map((p) => sql`${p}`), sql`, `)})
+              ) ranked WHERE rn <= 10
+            `),
+          ]);
+          push('pm_projects', await this.signProjects(projects));
+          push('pm_project_teams', projectTeams);
+          push('pm_project_members', projectMembers);
+          push('pm_project_milestones', milestones);
           push('pm_project_updates', updates as unknown as unknown[]);
         }
         // Initiatives are a portfolio surface — guests get empty models.
@@ -485,7 +519,11 @@ export class PmSyncService {
                 .select(PM_PROJECT_PROJECTION)
                 .from(pmProjects)
                 .where(and(eq(pmProjects.tenant_id, tenantId), inArray(pmProjects.id, ids), isNull(pmProjects.deleted_at)));
-              record('pm_projects', idSet, rows.filter((r) => visibleProjects.includes(r.id)));
+              record(
+                'pm_projects',
+                idSet,
+                await this.signProjects(rows.filter((r) => visibleProjects.includes(r.id))),
+              );
               break;
             }
             case 'pm_project_milestones': {

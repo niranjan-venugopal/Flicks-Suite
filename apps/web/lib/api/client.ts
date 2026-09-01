@@ -299,3 +299,9 @@ export const api = {
 }
 
 export { APIError }
+
+// Round E — the PM sync engine's bootstrap streams NDJSON through a raw
+// fetch (the JSON client can't carry it), so it needs the SAME single-flight
+// refresh to recover from an expired 15-minute access cookie instead of
+// silently degrading the whole session to REST mode.
+export { silentRefresh }

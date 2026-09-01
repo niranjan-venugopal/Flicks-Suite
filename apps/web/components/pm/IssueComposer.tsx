@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Modal, Toggle } from '@/components/proto'
+import { Btn, Icon, Modal, Toggle } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
-import { PriorityGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
+import { DiamondGlyph, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
+import { PmAv } from '@/components/pm/projects'
+import { PillOption, PropertyPill } from '@/components/pm/PropertyPill'
 import { api } from '@/lib/api/client'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmLabelRow, PmStateRow } from '@/lib/pm/types'
@@ -37,6 +39,10 @@ interface IssueComposerProps {
   teamOptions?: TeamOption[]
   /** Pre-link the issue to a project (project page). */
   projectId?: string | null
+  /** Round E — the pre-linked project's display name, so the Project pill can
+   *  label itself before the projects list has loaded (the select used to
+   *  show "No project" in that window, which read as "not linked"). */
+  projectName?: string | null
   /** Pre-link a milestone (implies projectId). */
   milestoneId?: string | null
   /** Pre-pick a state (board column's + button). */
@@ -58,6 +64,7 @@ export function IssueComposer({
   teamId,
   teamOptions,
   projectId,
+  projectName,
   milestoneId,
   stateId,
   onCreated,
@@ -105,14 +112,22 @@ export function IssueComposer({
   const [labelIds, setLabelIds] = useState<string[]>([])
   const [createMore, setCreateMore] = useState(false)
 
-  // Re-arm presets each time the composer opens (the parent's context may
-  // have changed — a different board column, another project).
+  // Re-arm presets when the composer OPENS (the parent's context may have
+  // changed — a different board column, another project). Round E: only on
+  // the closed→open transition — this effect used to re-fire on every preset
+  // prop identity change WHILE open (e.g. teamId resolving undefined→id once
+  // teams loaded), silently snapping the user's own project/milestone/state
+  // picks back to the presets. That was the founder's "issue not getting
+  // assigned to the project" in disguise.
+  const prevOpen = useRef(false)
   useEffect(() => {
-    if (!open) return
-    setTeam(teamId ?? '')
-    setState(stateId ?? '')
-    setProject(projectId ?? '')
-    setMilestone(milestoneId ?? '')
+    if (open && !prevOpen.current) {
+      setTeam(teamId ?? '')
+      setState(stateId ?? '')
+      setProject(projectId ?? '')
+      setMilestone(milestoneId ?? '')
+    }
+    prevOpen.current = open
   }, [open, teamId, stateId, projectId, milestoneId])
 
   const effectiveTeam = team || teams[0]?.id || ''
@@ -121,7 +136,7 @@ export function IssueComposer({
     ? engine.store.statesForTeam(effectiveTeam)
     : (teamsQ.data?.data.states ?? []).filter((s) => s.team_id === effectiveTeam)
   const users = (engine ? [...engine.store.users.values()] : usersQ.data?.data ?? [])
-    .map((u) => ({ id: u.id, name: u.name ?? '—' }))
+    .map((u) => ({ id: u.id, name: u.name ?? '—', avatar_url: u.avatar_url ?? null }))
     .sort((a, b) => a.name.localeCompare(b.name))
   const projects = engine
     ? engine.store.projectList().map((p) => ({ id: p.id, name: p.name, icon: p.icon }))
@@ -214,157 +229,262 @@ export function IssueComposer({
     else titleRef.current?.focus()
   }
 
+  // ── Round E: Linear-replica layout — a clean doc (big borderless title +
+  // free-text description) with the properties as compact pills underneath,
+  // and the footer in the modal's footer slot. Same data flow as before.
+  const teamName = teams.find((t) => t.id === effectiveTeam)?.name ?? 'Team'
+  const selState = states.find((s) => s.id === state) ?? null
+  const selUser = users.find((u) => u.id === assignee) ?? null
+  const selProject = projects.find((p) => p.id === project) ?? null
+  const projectLabel = selProject?.name ?? (project ? projectName ?? 'Project…' : 'Project')
+  const selMilestone = milestones.find((m) => m.id === milestone) ?? null
+
   return (
-    <Modal open={open} onClose={onClose} title="New issue" width={640}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {teams.length > 1 && (
-          <select
-            className="input"
-            value={effectiveTeam}
-            onChange={(e) => { setTeam(e.target.value); setState(''); setLabelIds([]) }}
-            style={{ width: 220, height: 30, fontSize: 11.5 }}
-          >
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        )}
-        <input
-          ref={titleRef}
-          autoFocus
-          className="input"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
-            if (e.key === 'Escape') onClose()
-          }}
-          placeholder="Issue title"
-          style={{ height: 38, fontSize: 14, fontWeight: 700 }}
-        />
-        <textarea
-          className="input"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit() }}
-          placeholder={tmpl?.description_md ? 'Description — the team template fills in if left empty' : 'Add a description…'}
-          rows={4}
-          style={{ width: '100%', resize: 'vertical', paddingTop: 8, fontSize: 12.5, lineHeight: 1.55 }}
-        />
-
-        {/* Property row — everything Linear offers at create. */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            className="input"
-            value={state}
-            onChange={(e) => setState(e.target.value)}
-            style={{ width: 140, height: 30, fontSize: 11.5 }}
-          >
-            <option value="">State: default</option>
-            {states.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <div style={{ display: 'flex', gap: 3 }} title="Priority">
-            {[0, 1, 2, 3, 4].map((p) => (
-              <button
-                key={p}
-                onClick={() => setPriority(priority === p ? null : p)}
-                title={PM_PRIORITY_LABEL[p]}
-                style={{
-                  width: 26, height: 26, borderRadius: 6,
-                  border: `1px solid ${priority === p ? 'var(--bord-2)' : 'var(--bord)'}`,
-                  background: priority === p ? 'var(--surf-3)' : 'transparent',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-                }}
-              >
-                <PriorityGlyph p={p} size={12} />
-              </button>
-            ))}
-          </div>
-          <select
-            className="input"
-            value={assignee}
-            onChange={(e) => setAssignee(e.target.value)}
-            style={{ width: 160, height: 30, fontSize: 11.5 }}
-          >
-            <option value="">Unassigned</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
-          <input
-            className="input"
-            value={estimate}
-            onChange={(e) => setEstimate(e.target.value)}
-            placeholder="Est."
-            inputMode="numeric"
-            style={{ width: 56, height: 30, fontSize: 11.5 }}
-            title="Estimate points"
-          />
-          <DateField value={due} onChange={setDue} style={{ height: 30, width: 130, fontSize: 11.5 }} />
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            className="input"
-            value={project}
-            onChange={(e) => { setProject(e.target.value); setMilestone('') }}
-            style={{ width: 200, height: 30, fontSize: 11.5 }}
-          >
-            <option value="">No project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.icon ?? '🎯'} {p.name}</option>
-            ))}
-          </select>
-          {!!project && (
-            <select
-              className="input"
-              value={milestone}
-              onChange={(e) => setMilestone(e.target.value)}
-              style={{ width: 180, height: 30, fontSize: 11.5 }}
-            >
-              <option value="">No milestone</option>
-              {milestones.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {labels.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {labels.map((l) => {
-              const on = labelIds.includes(l.id)
-              return (
-                <button
-                  key={l.id}
-                  onClick={() => toggleLabel(l.id)}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px',
-                    borderRadius: 99, cursor: 'pointer', fontSize: 10.5, fontWeight: 800,
-                    background: on ? `${l.color}26` : 'transparent',
-                    border: `1px solid ${on ? `${l.color}70` : 'var(--bord)'}`,
-                    color: on ? l.color : 'var(--text-2)',
-                  }}
-                >
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: l.color }} />
-                  {l.name}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New issue"
+      width={640}
+      hideHeader
+      bodyPadding="16px 20px 14px"
+      footer={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
           <Toggle on={createMore} onChange={setCreateMore} />
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)' }}>Create more</span>
+          <span
+            onClick={() => setCreateMore((v) => !v)}
+            style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-2)', cursor: 'pointer', userSelect: 'none' }}
+          >
+            Create more
+          </span>
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>⌘↵ create</span>
           <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
           <Btn kind="primary" disabled={!title.trim() || saving} onClick={() => void submit()}>
             {saving ? 'Creating…' : 'Create issue'}
           </Btn>
+        </div>
+      }
+    >
+      <div
+        style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
+          if (e.key === 'Escape') onClose()
+        }}
+      >
+        {/* Breadcrumb: team › New issue, with the close X. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
+          {teams.length > 1 ? (
+            <PropertyPill
+              title="Team"
+              active
+              label={teamName}
+              width={220}
+              menu={(close) => (
+                <>
+                  {teams.map((t) => (
+                    <PillOption
+                      key={t.id}
+                      label={t.name}
+                      selected={t.id === effectiveTeam}
+                      onPick={() => { setTeam(t.id); setState(''); setLabelIds([]); close() }}
+                    />
+                  ))}
+                </>
+              )}
+            />
+          ) : (
+            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>{teamName}</span>
+          )}
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>›</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)' }}>New issue</span>
+          <span style={{ flex: 1 }} />
+          <div style={{ margin: '-4px -8px 0 0' }}>
+            <Btn kind="ghost" size="sm" icon={<Icon.x size={15} />} onClick={onClose} />
+          </div>
+        </div>
+
+        <input
+          ref={titleRef}
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Issue title"
+          style={{
+            width: '100%', background: 'transparent', border: 'none', outline: 'none',
+            fontSize: 17, fontWeight: 700, color: '#fff', padding: '2px 0', letterSpacing: '-0.01em',
+          }}
+        />
+        <textarea
+          value={description}
+          onChange={(e) => {
+            setDescription(e.target.value)
+            e.target.style.height = 'auto'
+            e.target.style.height = `${Math.min(e.target.scrollHeight, 260)}px`
+          }}
+          placeholder={tmpl?.description_md ? 'Add description… (the team template fills in if left empty)' : 'Add description…'}
+          rows={3}
+          style={{
+            width: '100%', background: 'transparent', border: 'none', outline: 'none', resize: 'none',
+            fontSize: 12.5, lineHeight: 1.6, color: 'var(--text)', padding: 0, minHeight: 58,
+          }}
+        />
+
+        {/* Property pills — everything Linear offers at create. */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+          <PropertyPill
+            title="State"
+            active={!!selState}
+            icon={<StateGlyph cat={selState?.category ?? 'backlog'} size={12} />}
+            label={selState?.name ?? 'State'}
+            width={200}
+            menu={(close) => (
+              <>
+                <PillOption label="Default state" selected={!state} onPick={() => { setState(''); close() }} />
+                {states.map((s) => (
+                  <PillOption
+                    key={s.id}
+                    icon={<StateGlyph cat={s.category} size={12} />}
+                    label={s.name}
+                    selected={s.id === state}
+                    onPick={() => { setState(s.id); close() }}
+                  />
+                ))}
+              </>
+            )}
+          />
+          <PropertyPill
+            title="Priority"
+            active={priority !== null && priority !== 0}
+            icon={<PriorityGlyph p={priority ?? 0} size={12} />}
+            label={priority !== null ? PM_PRIORITY_LABEL[priority] : 'Priority'}
+            width={180}
+            menu={(close) => (
+              <>
+                {[0, 1, 2, 3, 4].map((p) => (
+                  <PillOption
+                    key={p}
+                    icon={<PriorityGlyph p={p} size={12} />}
+                    label={PM_PRIORITY_LABEL[p]}
+                    selected={priority === p}
+                    onPick={() => { setPriority(p); close() }}
+                  />
+                ))}
+              </>
+            )}
+          />
+          <PropertyPill
+            title="Assignee"
+            active={!!selUser}
+            icon={
+              selUser ? (
+                <PmAv name={selUser.name} src={selUser.avatar_url} size={15} />
+              ) : (
+                <span style={{ width: 13, height: 13, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
+              )
+            }
+            label={selUser?.name ?? 'Assignee'}
+            width={230}
+            menu={(close) => (
+              <>
+                <PillOption label="Unassigned" selected={!assignee} onPick={() => { setAssignee(''); close() }} />
+                {users.map((u) => (
+                  <PillOption
+                    key={u.id}
+                    icon={<PmAv name={u.name} src={u.avatar_url} size={15} />}
+                    label={u.name}
+                    selected={u.id === assignee}
+                    onPick={() => { setAssignee(u.id); close() }}
+                  />
+                ))}
+              </>
+            )}
+          />
+          <PropertyPill
+            title="Project"
+            active={!!project}
+            icon={<span style={{ fontSize: 11 }}>{selProject?.icon ?? '🎯'}</span>}
+            label={projectLabel}
+            width={240}
+            menu={(close) => (
+              <>
+                <PillOption label="No project" selected={!project} onPick={() => { setProject(''); setMilestone(''); close() }} />
+                {projects.map((p) => (
+                  <PillOption
+                    key={p.id}
+                    icon={<span style={{ fontSize: 11 }}>{p.icon ?? '🎯'}</span>}
+                    label={p.name}
+                    selected={p.id === project}
+                    onPick={() => { setProject(p.id); setMilestone(''); close() }}
+                  />
+                ))}
+              </>
+            )}
+          />
+          {!!project && (
+            <PropertyPill
+              title="Milestone"
+              active={!!selMilestone}
+              icon={<DiamondGlyph size={11} />}
+              label={selMilestone?.name ?? 'Milestone'}
+              width={220}
+              menu={(close) => (
+                <>
+                  <PillOption label="No milestone" selected={!milestone} onPick={() => { setMilestone(''); close() }} />
+                  {milestones.map((m) => (
+                    <PillOption
+                      key={m.id}
+                      icon={<DiamondGlyph size={11} />}
+                      label={m.name}
+                      selected={m.id === milestone}
+                      onPick={() => { setMilestone(m.id); close() }}
+                    />
+                  ))}
+                </>
+              )}
+            />
+          )}
+          <input
+            value={estimate}
+            onChange={(e) => setEstimate(e.target.value)}
+            placeholder="Est."
+            inputMode="numeric"
+            title="Estimate points"
+            style={{
+              width: 52, height: 26, borderRadius: 7, background: estimate ? 'var(--surf-2)' : 'var(--surf-1)',
+              border: '1px solid var(--bord)', color: estimate ? '#fff' : 'var(--text-2)',
+              fontSize: 11, fontWeight: 700, textAlign: 'center', outline: 'none',
+            }}
+          />
+          <DateField value={due} onChange={setDue} style={{ height: 26, width: 120, fontSize: 11, borderRadius: 7 }} />
+          {labels.length > 0 && (
+            <PropertyPill
+              title="Labels"
+              active={labelIds.length > 0}
+              icon={
+                <span style={{ display: 'inline-flex', gap: 2 }}>
+                  {(labelIds.length ? labels.filter((l) => labelIds.includes(l.id)).slice(0, 3) : [{ id: '_', color: 'var(--text-faint)' }]).map((l) => (
+                    <span key={l.id} style={{ width: 6, height: 6, borderRadius: '50%', background: l.color }} />
+                  ))}
+                </span>
+              }
+              label={labelIds.length ? `${labelIds.length} label${labelIds.length > 1 ? 's' : ''}` : 'Labels'}
+              width={220}
+              menu={() => (
+                <>
+                  {labels.map((l) => (
+                    <PillOption
+                      key={l.id}
+                      icon={<span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color }} />}
+                      label={l.name}
+                      selected={labelIds.includes(l.id)}
+                      onPick={() => toggleLabel(l.id)}
+                    />
+                  ))}
+                </>
+              )}
+            />
+          )}
         </div>
       </div>
     </Modal>

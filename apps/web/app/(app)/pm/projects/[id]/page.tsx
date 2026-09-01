@@ -1,7 +1,8 @@
 'use client'
 
-import { use, useMemo, useState } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Modal } from '@/components/proto'
@@ -9,8 +10,15 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IssueComposer } from '@/components/pm/IssueComposer'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, HealthChip, Kbd, PmProgressBar, PriorityGlyph, StateGlyph, PM_HEALTH, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
-import { PmAv, PROJECT_ICONS } from '@/components/pm/projects'
+import { PmAv, PROJECT_ICONS, ProjectLogo } from '@/components/pm/projects'
+import { useUploadProjectLogo, useRemoveProjectLogo } from '@/lib/api/queries/use-media'
+// react-easy-crop is modal-only weight — load it when the modal first opens.
+const MediaCropModal = dynamic(
+  () => import('@/components/media/MediaCropModal').then((m) => m.MediaCropModal),
+  { ssr: false },
+)
 import { ProjectGuestsCard } from '@/components/pm/ProjectGuestsCard'
+import { ProjectMembersCard } from '@/components/pm/ProjectMembersCard'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -68,16 +76,36 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     queryKey: ['pm', 'project-detail', id],
     queryFn: () => api.get<DetailResponse>(`/api/v1/pm/projects/${id}/detail`),
   })
-  const invalidate = () => setTimeout(() => qc.invalidateQueries({ queryKey: ['pm', 'project-detail', id] }), 700)
+  // Round E — the refetch is immediate now: in sync mode the engine's flush
+  // ack (onFlushed, below) drives the authoritative one, and in REST mode the
+  // mutation has already committed by the time onSuccess runs. The old 700ms
+  // guess-timer was the reason fresh milestones/updates blinked in late.
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['pm', 'project-detail', id] })
 
-  if (detail.isLoading) {
+  // Round E — render instantly off the engine graph: the header, milestones,
+  // issues and updates all come from the store, so only a REST-mode first
+  // visit still needs to wait for the detail fetch.
+  const liveProject = mode === 'sync' && engine ? engine.store.projects.get(id) : null
+  if (detail.isLoading && !liveProject) {
     return (
       <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
         <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
       </div>
     )
   }
-  const d = detail.data?.data
+  const d: DetailResponse['data'] | undefined =
+    detail.data?.data ??
+    (liveProject && engine
+      ? {
+          project: { ...liveProject, description_md: null },
+          milestones: [],
+          updates: [],
+          team_ids: engine.store.projectTeams.get(id) ?? [],
+          member_ids: [],
+          issues: [],
+          progress: { scope: 0, started: 0, done: 0 },
+        }
+      : undefined)
   if (!d) {
     return <div className="t-mute" style={{ padding: 60, textAlign: 'center', fontSize: 12.5 }}>Project not found — it may be deleted or private.</div>
   }
@@ -94,6 +122,25 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const qc = useQueryClient()
   const live = engine?.store.projects.get(id)
   const project = { ...d.project, ...(live ?? {}) }
+
+  // Round E — sync mode: refetch the lazy REST detail when OUR writes that
+  // touch this project are acked (the project itself, its milestones, its
+  // health updates, or an issue inside it) — the same correct-by-construction
+  // pattern the issue page uses, replacing this page's 700ms guess-timer.
+  useEffect(() => {
+    if (!engine) return
+    return engine.onFlushed((acked) => {
+      const st = engine.store
+      const touchesProject = acked.some(
+        (a) =>
+          a.id === id ||
+          st.milestones.get(a.id)?.project_id === id ||
+          st.projectUpdates.get(a.id)?.project_id === id ||
+          st.issues.get(a.id)?.project_id === id,
+      )
+      if (touchesProject) void qc.invalidateQueries({ queryKey: ['pm', 'project-detail', id] })
+    })
+  }, [engine, id, qc])
   const tombstoned = engine?.store.tombstoned
   const milestones = mergeById(
     d.milestones, engine ? engine.store.milestonesForProject(id) : null, tombstoned,
@@ -141,6 +188,15 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const currentIcon = project.icon ?? '🎯'
   const iconOptions = PROJECT_ICONS.includes(currentIcon) ? PROJECT_ICONS : [currentIcon, ...PROJECT_ICONS]
 
+  // ── Project logo (round E) — the tenant-logo pipeline per project. The
+  // crop modal is shared with avatars/company logo; upload/remove invalidate
+  // the REST payloads and a delta pull refreshes the engine graph (the
+  // server publishes a pm_projects sync ref on both).
+  const [logoModal, setLogoModal] = useState(false)
+  const uploadLogo = useUploadProjectLogo(id)
+  const removeLogo = useRemoveProjectLogo(id)
+  const logoUrl = (project as { logo_url?: string | null }).logo_url ?? null
+
   // ── Delete this project (founder round 20) ────────────────────────────────
   // Same engine-or-REST branch as patchProject above. Either way we leave for
   // the list afterwards: this page's own "not found" state would otherwise be
@@ -177,14 +233,14 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
     // Both branches refresh the REST detail: in sync mode the merge above
     // shows the new row instantly from the store, but a stale REST payload
     // would otherwise keep resurrecting rows the server has since replaced.
-    if (engine) { engine.postProjectUpdate(id, health, upTxt.trim()); invalidate() }
+    if (engine) engine.postProjectUpdate(id, health, upTxt.trim()) // onFlushed refetches on ack
     else void api.post(`/api/v1/pm/projects/${id}/updates`, { health, body_md: upTxt.trim() }).then(invalidate)
     setUpTxt('')
   }
 
   const addMilestone = () => {
     if (!msName.trim()) return
-    if (engine) { engine.createMilestone(id, msName.trim(), msDate || null); invalidate() }
+    if (engine) engine.createMilestone(id, msName.trim(), msDate || null) // onFlushed refetches on ack
     else void api.post('/api/v1/pm/milestones', { project_id: id, name: msName.trim(), target_date: msDate || null }).then(invalidate)
     setMsName(''); setMsDate(''); setAddMs(false)
   }
@@ -236,6 +292,16 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
       {/* Header */}
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 9, flexWrap: 'wrap' }}>
+          {/* Round E — the project's face: uploaded logo (click to change)
+              or the emoji icon picker. */}
+          <button
+            type="button"
+            title={logoUrl ? 'Change or remove the project logo' : 'Upload a project logo'}
+            onClick={() => setLogoModal(true)}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', padding: 0 }}
+          >
+            {logoUrl ? <ProjectLogo logoUrl={logoUrl} icon={currentIcon} size={30} /> : <Icon.image size={14} style={{ color: 'var(--text-faint)' }} />}
+          </button>
           <select
             className="input"
             title="Project icon"
@@ -266,6 +332,12 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
               style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em', cursor: 'text' }}
             >
               {project.name}
+            </span>
+          )}
+          {project.is_private && (
+            <span title="Private project — only members, the lead and owners/admins can see it"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-mute)', fontSize: 10, fontWeight: 800 }}>
+              <Icon.lock size={12} /> Private
             </span>
           )}
           {project._pending && <PendingDot />}
@@ -352,15 +424,21 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
 
           {/* Embedded issues */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center' }}>
+            <div style={{ padding: '8px 10px 8px 14px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center' }}>
               <span style={{ fontSize: 11.5, fontWeight: 800, flex: 1 }}>Issues · {issues.length}</span>
-              <button
+              {/* Round E — a real button (the old text link read as decoration),
+                  and never dead while teams are still loading: the composer
+                  loads its own team list on open, so only a genuinely
+                  team-less workspace disables it. */}
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.plus size={12} />}
                 onClick={() => setNewIssue(true)}
-                disabled={teamOptions.length === 0}
-                style={{ background: 'none', border: 'none', color: 'var(--blue)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}
+                disabled={allTeams.length === 0 && !teamsQ.isLoading}
               >
-                + New issue
-              </button>
+                New issue
+              </Btn>
             </div>
             {issues.length === 0 && <div className="t-mute" style={{ padding: '16px 14px', fontSize: 11.5 }}>No issues attached — set a project on issues from the list or detail page.</div>}
             {issues.map((i) => {
@@ -437,6 +515,14 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           </div>
         </div>
 
+        {/* Round E — internal members + the Private switch */}
+        <ProjectMembersCard
+          projectId={id}
+          leadUserId={project.lead_user_id}
+          isPrivate={project.is_private ?? false}
+          engine={engine}
+        />
+
         {/* Round 7 guest seats; round A: lead + manager-and-above */}
         <ProjectGuestsCard projectId={id} leadUserId={project.lead_user_id} />
         </div>
@@ -469,8 +555,25 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         teamId={teamOptions[0]?.id}
         teamOptions={teamOptions}
         projectId={id}
+        projectName={project.name}
         onCreated={invalidate}
       />
+
+      {logoModal && (
+        <MediaCropModal
+          kind="logo"
+          hasCurrent={!!logoUrl}
+          onClose={() => setLogoModal(false)}
+          onUpload={async (blob) => {
+            await uploadLogo.mutateAsync(blob)
+            if (engine) void engine.pullDelta() // server published the pm_projects ref
+          }}
+          onRemove={async () => {
+            await removeLogo.mutateAsync()
+            if (engine) void engine.pullDelta()
+          }}
+        />
+      )}
     </div>
   )
 })

@@ -78,7 +78,7 @@ const visibility = new PmVisibilityService(dbSvc);
 const mediaStub = { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never;
 const teamsSvc = new PmTeamsService(dbSvc, audit, domainEventsSvc, visibility, mediaStub);
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
-const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
+const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? 'signed:' + k : l) } as never);
 // list() never touches the members facade — only invite/revoke do.
 const guestsSvc = new PmGuestsService(dbSvc, audit, domainEventsSvc, {} as never, mediaStub);
 const imports = new ImportService(dbSvc, audit, { publish: jest.fn(async () => 'evt') } as never);

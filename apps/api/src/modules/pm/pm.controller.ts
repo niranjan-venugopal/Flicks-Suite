@@ -1,5 +1,18 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -112,6 +125,12 @@ class UpdateProjectDto {
 }
 class SetProjectTeamsDto {
   @IsUUID(undefined, { each: true }) team_ids!: string[];
+}
+class ProjectMemberDto {
+  @IsUUID() user_id!: string;
+}
+class ProjectVisibilityDto {
+  @IsBoolean() is_private!: boolean;
 }
 class PostUpdateDto {
   @IsIn(['on_track', 'at_risk', 'off_track']) health!: string;
@@ -535,6 +554,60 @@ export class PmController {
     @Param('userId') userId: string,
   ) {
     return this.guests.revoke(user.tenantId, user.sub, user.role, id, userId);
+  }
+
+  // ─── Project members + privacy (round E) — same no-@Roles doctrine as
+  //     guests: the lead carve-out is per-project, gate lives in the service. ─
+
+  @Get('projects/:id/members')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Internal members of this project (workspace roles, signed avatars)' })
+  listProjectMembers(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.listMembers(user.tenantId, user.sub, id);
+  }
+
+  @Post('projects/:id/members')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Add an internal workspace member to this project' })
+  addProjectMember(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: ProjectMemberDto) {
+    return this.projects.addMember(user.tenantId, user.sub, user.role, id, dto.user_id);
+  }
+
+  @Post('projects/:id/members/remove')
+  @RequireGrant('pm', 'edit')
+  removeProjectMember(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: ProjectMemberDto) {
+    return this.projects.removeMember(user.tenantId, user.sub, user.role, id, dto.user_id);
+  }
+
+  @Post('projects/:id/visibility')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Mark a project Private (members + lead + owner/admin only) or public' })
+  setProjectVisibility(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: ProjectVisibilityDto) {
+    return this.projects.setVisibilityFlag(user.tenantId, user.sub, user.role, id, dto.is_private);
+  }
+
+  // ─── Project logo (round E) — the tenant-logo pipeline, per project. ──────
+
+  @Post('projects/:id/logo')
+  @RequireGrant('pm', 'edit')
+  @Throttle({ long: { ttl: 60_000, limit: 5 } })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 9 * 1024 * 1024 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a project logo (cropped square, ≤8 MB; alpha kept)' })
+  uploadProjectLogo(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file?.buffer) throw new BadRequestException('Attach the image as "file"');
+    return this.projects.uploadLogo(user.tenantId, user.sub, id, file.buffer);
+  }
+
+  @Post('projects/:id/logo/remove')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Remove the project logo (back to the emoji icon)' })
+  removeProjectLogo(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.projects.removeLogo(user.tenantId, user.sub, id);
   }
 
   @Post('milestones')

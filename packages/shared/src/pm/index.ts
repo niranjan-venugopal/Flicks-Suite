@@ -68,10 +68,13 @@ export const PM_SYNC_TABLES = {
   pm_issue_relations: ['id', 'issue_id', 'related_issue_id', 'type'],
   pm_issue_subscribers: ['issue_id', 'user_id'],
   // Projects layer (0042). pm_projects omits description_md (lazy, like issues).
+  // Round E: is_private (members-only visibility) + logo_url — the SIGNED
+  // serving URL, never the raw storage key (the emoji icon is the fallback
+  // when a persisted signature has aged out).
   pm_projects: [
-    'id', 'name', 'summary', 'icon', 'color', 'status', 'health', 'lead_user_id',
-    'start_date', 'target_date', 'deal_id', 'completed_at', 'created_at',
-    'updated_at', 'deleted_at',
+    'id', 'name', 'summary', 'icon', 'color', 'status', 'health', 'is_private',
+    'logo_url', 'lead_user_id', 'start_date', 'target_date', 'deal_id',
+    'completed_at', 'created_at', 'updated_at', 'deleted_at',
   ],
   pm_project_teams: ['project_id', 'team_id'],
   pm_project_members: ['project_id', 'user_id'],

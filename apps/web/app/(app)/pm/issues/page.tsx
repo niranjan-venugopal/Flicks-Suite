@@ -302,7 +302,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
       />
 
       {viewMode === 'board' ? (
-        <PmBoard engine={engine} teamId={team.id} issues={issues} states={states} />
+        <PmBoard engine={engine} teamId={team.id} issues={issues} states={states} onOpen={(id) => router.push(`/pm/issues/${id}`)} />
       ) : (
         <>
           {groups.map((g) => (
@@ -488,8 +488,10 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
 
   return (
     <div
-      onClick={(e) => { if (e.shiftKey) onToggleSel(true); else onFocus() }}
-      onDoubleClick={onOpen}
+      // Round E — a click OPENS the issue (Linear behavior; double-click used
+      // to be required, which read as "clicking does nothing"). Shift-click
+      // still range-selects, the checkbox still toggles, keyboard focus stays.
+      onClick={(e) => { if (e.shiftKey) onToggleSel(true); else { onFocus(); onOpen() } }}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px',
         cursor: 'pointer', position: 'relative',

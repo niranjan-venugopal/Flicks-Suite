@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import {
   pmIssues,
   pmTeams,
@@ -144,6 +144,15 @@ export class PmIssuesService {
       if (guestScope && !this.visibility.issueVisible(guestScope, issue)) {
         throw new NotFoundException('Issue not found');
       }
+      // Round E — an issue inside a PRIVATE project follows the project's
+      // membership, not the team's (mirrors issueVisible's non-guest branch).
+      if (
+        !guestScope &&
+        issue.project_id &&
+        !(await this.visibility.projectReadableTx(tx, tenantId, userId, issue.project_id))
+      ) {
+        throw new NotFoundException('Issue not found');
+      }
     }
     return issue;
   }
@@ -222,6 +231,11 @@ export class PmIssuesService {
             )
             .limit(1);
           if (!project) throw new BadRequestException('project_id does not belong to this workspace');
+          // Round E — a private project only takes issues from people who can
+          // see it (otherwise the creator's own issue vanishes from them).
+          if (!guestScope && !(await this.visibility.projectReadableTx(tx, tenantId, userId, input.project_id))) {
+            throw new BadRequestException('project_id does not belong to this workspace');
+          }
         }
         // Milestones live under a project — validated in-tenant like the
         // project itself (FK checks bypass RLS — house rule #2).
@@ -871,6 +885,10 @@ export class PmIssuesService {
             .where(and(eq(pmProjects.id, input.project_id), eq(pmProjects.tenant_id, tenantId), isNull(pmProjects.deleted_at)))
             .limit(1);
           if (!project) throw new BadRequestException('project_id does not belong to this workspace');
+          // Round E — can't re-home an issue into a private project you can't see.
+          if (!guestScope && !(await this.visibility.projectReadableTx(tx, tenantId, userId, input.project_id))) {
+            throw new BadRequestException('project_id does not belong to this workspace');
+          }
           if (milestoneId) {
             const [ms] = await tx
               .select({ id: pmProjectMilestones.id })
@@ -1434,7 +1452,14 @@ export class PmIssuesService {
           where.push(inArray(pmIssues.project_id, projectFilter));
           if (query.team_id) where.push(eq(pmIssues.team_id, query.team_id));
         } else {
-          if (query.project_id) where.push(eq(pmIssues.project_id, query.project_id));
+          if (query.project_id) {
+            // Round E — a private project outside the caller's membership
+            // reads as an empty page, never as a probe signal.
+            if (scope.hiddenProjectIds.includes(query.project_id)) {
+              return { data: [], pagination: { page, limit, total: 0 } };
+            }
+            where.push(eq(pmIssues.project_id, query.project_id));
+          }
           if (query.team_id) {
             await this.assertTeamAccess(tx, tenantId, userId, query.team_id);
             where.push(eq(pmIssues.team_id, query.team_id));
@@ -1443,6 +1468,13 @@ export class PmIssuesService {
             const visible = scope.teamIds;
             if (!visible.length) return { data: [], pagination: { page, limit, total: 0 } };
             where.push(sql`${pmIssues.team_id} IN (${sql.join(visible.map((t) => sql`${t}::uuid`), sql`, `)})` as never);
+          }
+          // Round E — issues of private projects the caller isn't in stay out
+          // of team-wide pages (the project rule wins over the team rule).
+          if (scope.hiddenProjectIds.length) {
+            where.push(
+              or(isNull(pmIssues.project_id), notInArray(pmIssues.project_id, scope.hiddenProjectIds)) as never,
+            );
           }
         }
         const rows = await tx

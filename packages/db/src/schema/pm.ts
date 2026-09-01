@@ -224,6 +224,10 @@ export const pmIssues = pgTable(
       .where(sql`${t.deleted_at} IS NULL`),
     index('idx_issues_cycle').on(t.tenant_id, t.cycle_id),
     index('idx_issues_project').on(t.tenant_id, t.project_id),
+    // 0059 — bootstrap + REST list both ORDER BY updated_at DESC per team.
+    index('idx_issues_team_updated')
+      .on(t.tenant_id, t.team_id, t.updated_at.desc())
+      .where(sql`${t.deleted_at} IS NULL`),
     index('idx_issues_parent').on(t.parent_issue_id),
     index('idx_pm_issues_deleted_with_project')
       .on(t.tenant_id, t.deleted_with_project_id)
@@ -446,6 +450,11 @@ export const pmProjects = pgTable(
     color: text('color'),
     status: text('status').notNull().default('planned'), // backlog|planned|in_progress|paused|completed|canceled
     health: text('health').notNull().default('on_track'), // denormalized latest; pm_project_updates is the log
+    // 0059 — opt-in: visible only to members + lead + full-access roles.
+    is_private: boolean('is_private').notNull().default(false),
+    // 0059 — uploaded logo (R2 WebP variants); raw key never serialized out.
+    logo_key: text('logo_key'),
+    logo_updated_at: timestamp('logo_updated_at', { withTimezone: true }),
     lead_user_id: uuid('lead_user_id').references(() => users.id, { onDelete: 'set null' }),
     start_date: date('start_date'),
     target_date: date('target_date'),
@@ -458,7 +467,11 @@ export const pmProjects = pgTable(
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),
   },
-  (t) => [index('idx_pm_projects_deal').on(t.tenant_id, t.deal_id)],
+  (t) => [
+    index('idx_pm_projects_deal').on(t.tenant_id, t.deal_id),
+    // 0059 — visibility scoping reads the live project set on every request.
+    index('idx_pm_projects_tenant_live').on(t.tenant_id).where(sql`${t.deleted_at} IS NULL`),
+  ],
 );
 
 export const pmProjectTeams = pgTable(

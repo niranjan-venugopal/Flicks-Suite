@@ -66,9 +66,9 @@ const notificationsSvc = new NotificationsService(
   emitter,
 );
 const issuesSvc = new PmIssuesService(dbSvc, audit, domainEventsSvc, notificationsSvc, visibility);
-const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility);
+const projectsSvc = new PmProjectsService(dbSvc, audit, domainEventsSvc, visibility, { servedUrl: async (k: string | null, l: string | null) => (k ? 'signed:' + k : l) } as never);
 const searchSvc = new PmSearchService(dbSvc, visibility);
-const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc);
+const syncSvc = new PmSyncService(dbSvc, dbAdmin as never, visibility, teamsSvc, { servedUrl: async (k: string | null, l: string | null) => (k ? `signed:${k}` : l) } as never);
 const executor = new PmMutationExecutor(
   dbSvc,
   issuesSvc,

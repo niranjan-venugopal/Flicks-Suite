@@ -189,6 +189,20 @@ export class MediaService {
     return { data: { removed: true } };
   }
 
+  // ─── Generic building blocks (round E — project logos live in the PM
+  //     module, which owns its row write, sync refs and audit) ────────────────
+
+  /** Validate + re-encode + upload under the prefix; caller owns the row. */
+  async processImage(buffer: Buffer, prefix: string, keepAlpha = true): Promise<ProcessedMedia> {
+    await this.validate(buffer);
+    return this.process(buffer, prefix, keepAlpha);
+  }
+
+  /** Delete both stored variants of a 256 key (replace/remove flows). */
+  async deleteImage(key256: string): Promise<void> {
+    await this.r2.deleteObjects(this.variants(key256));
+  }
+
   // ─── Signed-URL serialization helpers ──────────────────────────────────────
 
   /** Signed URL for a stored key, or the legacy URL fallback (§4/D6). */

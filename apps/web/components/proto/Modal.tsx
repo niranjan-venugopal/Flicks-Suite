@@ -12,9 +12,14 @@ interface ModalProps {
   children: ReactNode
   footer?: ReactNode
   width?: number
+  /** Round E — chrome-less dialogs (the Linear-style composer) render their
+   *  own header row; `title` still labels the dialog for callers/tests. */
+  hideHeader?: boolean
+  /** Round E — override the body's default 22/24 padding. */
+  bodyPadding?: number | string
 }
 
-export function Modal({ open, onClose, title, sub, children, footer, width = 560 }: ModalProps) {
+export function Modal({ open, onClose, title, sub, children, footer, width = 560, hideHeader, bodyPadding }: ModalProps) {
   if (!open) return null
 
   return (
@@ -49,6 +54,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
           overflow: 'hidden',
         }}
       >
+        {!hideHeader && (
         <div
           style={{
             padding: '22px 24px',
@@ -76,7 +82,8 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
             <Btn kind="ghost" size="sm" icon={<Icon.x size={16} />} onClick={onClose} />
           </div>
         </div>
-        <div style={{ padding: '22px 24px', overflow: 'auto', flex: 1 }}>{children}</div>
+        )}
+        <div style={{ padding: bodyPadding ?? '22px 24px', overflow: 'auto', flex: 1 }}>{children}</div>
         {footer && (
           <div
             style={{

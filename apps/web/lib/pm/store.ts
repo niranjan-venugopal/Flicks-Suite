@@ -129,6 +129,27 @@ export class PmStore {
     return out
   }
 
+  /**
+   * Round E — same formula, every project in ONE pass over the issue graph.
+   * The projects list used to call projectProgress per row, i.e.
+   * O(projects × issues) on every render of an observer component.
+   */
+  projectProgressAll(): Map<string, { scope: number; started: number; done: number }> {
+    const out = new Map<string, { scope: number; started: number; done: number }>()
+    for (const i of this.issues.values()) {
+      if (!i.project_id || i.deleted_at) continue
+      const cat = this.states.get(i.state_id)?.category
+      if (cat === 'canceled') continue
+      const w = i.estimate != null ? Number(i.estimate) : 1
+      let agg = out.get(i.project_id)
+      if (!agg) out.set(i.project_id, (agg = { scope: 0, started: 0, done: 0 }))
+      agg.scope += w
+      if (cat === 'completed') agg.done += w
+      else if (cat === 'started') agg.started += w
+    }
+    return out
+  }
+
   // ─── writes (engine only) ─────────────────────────────────────────────────
 
   applyRows(table: string, rows: Record<string, unknown>[]) {

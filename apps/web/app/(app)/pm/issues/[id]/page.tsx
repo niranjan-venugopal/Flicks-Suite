@@ -8,6 +8,7 @@ import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
+import { Sk, SkeletonRows } from '@/components/states'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -236,7 +237,12 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     ...Object.fromEntries([0, 1, 2, 3, 4].map((p) => [String(p), () => doPriority(p)])),
   })
 
-  if (detail.isLoading || !issue) {
+  // Round E — clicking an issue must feel instant. In sync mode the engine
+  // row already carries everything the header + properties rail render, so
+  // only the truly-lazy parts (description, comments, history, sub-issues)
+  // wait on the detail fetch — as skeletons, not a full-page spinner. REST
+  // mode still needs the fetch for the row itself.
+  if (!issue) {
     return (
       <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
         <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
@@ -338,6 +344,12 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                   <Btn kind="primary" size="sm" onClick={saveDesc}>Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>⌘↵</Kbd></Btn>
                 </div>
               </>
+            ) : detail.isLoading && !desc ? (
+              // Don't claim "Add a description…" before we know there isn't one.
+              <div style={{ minHeight: 40, display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
+                <Sk w="72%" h={10} />
+                <Sk w="46%" h={10} />
+              </div>
             ) : (
               <div onClick={() => setEditingDesc(true)} style={{ cursor: 'text', minHeight: 40 }}>
                 {desc ? (
@@ -408,6 +420,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               <span className="t-caption">Activity</span>
             </div>
             <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {detail.isLoading && <SkeletonRows rows={2} height={34} />}
               {(d?.history ?? []).slice(0, 8).reverse().map((h) => (
                 <div key={h.id} style={{ display: 'flex', gap: 8, padding: '7px 14px', fontSize: 11, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)' }}>
                   <span style={{ fontWeight: 800, color: 'var(--text-2)' }}>{users.find((u) => u.id === h.actor_user_id)?.name ?? '—'}</span>

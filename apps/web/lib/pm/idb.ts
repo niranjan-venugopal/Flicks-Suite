@@ -78,11 +78,18 @@ export async function loadSnapshot(db: PmDb): Promise<{
   try {
     const cursor = ((await db.get('meta', 'cursor')) as number | undefined) ?? null
     if (cursor == null) return null
+    // Round E — these reads were awaited one-by-one: 17 serialized IndexedDB
+    // round trips before the first paint of every warm boot. Issued together
+    // they overlap, cutting the hydration wait severalfold on big workspaces.
+    const [tableArrays, pendingRaw] = await Promise.all([
+      Promise.all(TABLE_STORES.map((s) => db.getAll(s))),
+      db.getAll('pending'),
+    ])
     const tables: Record<string, Record<string, unknown>[]> = {}
-    for (const s of TABLE_STORES) {
-      tables[s] = (await db.getAll(s)) as Record<string, unknown>[]
-    }
-    const pending = ((await db.getAll('pending')) as PendingMutation[]).sort(
+    TABLE_STORES.forEach((s, i) => {
+      tables[s] = tableArrays[i] as Record<string, unknown>[]
+    })
+    const pending = (pendingRaw as PendingMutation[]).sort(
       (a, b) => a.enqueuedAt - b.enqueuedAt,
     )
     return { cursor, tables, pending }

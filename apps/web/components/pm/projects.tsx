@@ -36,6 +36,27 @@ export function PmAv({ name, src, size = 18 }: { name: string; src?: string | nu
 
 export const PROJECT_ICONS = ['🤝', '⚡', '📣', '🚀', '🛠️', '🎯']
 
+/**
+ * Round E — a project's face: the uploaded logo when there is one, the emoji
+ * icon otherwise. Signed logo URLs age out (they persist in IndexedDB
+ * between sessions), so a broken image falls back to the emoji — the next
+ * bootstrap/delta re-signs it.
+ */
+export function ProjectLogo({ logoUrl, icon, size = 18 }: { logoUrl?: string | null; icon?: string | null; size?: number }) {
+  const [broken, setBroken] = useState(false)
+  if (logoUrl && !broken) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        onError={() => setBroken(true)}
+        style={{ width: size, height: size, borderRadius: Math.max(4, size * 0.22), objectFit: 'cover', flexShrink: 0, display: 'inline-block' }}
+      />
+    )
+  }
+  return <span style={{ fontSize: size * 0.78, lineHeight: 1, flexShrink: 0 }}>{icon ?? '🎯'}</span>
+}
+
 export function ProjectCreateModal({
   open,
   onClose,
@@ -49,25 +70,31 @@ export function ProjectCreateModal({
   teams: PmTeamRow[]
   users: PmUserLite[]
   meId: string
-  onCreate: (input: {
-    name: string
-    icon: string
-    lead_user_id: string
-    target_date: string | null
-    team_ids: string[]
-  }) => void
+  onCreate: (
+    input: {
+      name: string
+      icon: string
+      lead_user_id: string
+      target_date: string | null
+      team_ids: string[]
+    },
+    /** Round E — optional logo picked at create; the caller uploads it once
+     *  the new project's id exists (server center-crops + re-encodes). */
+    logoFile?: File | null,
+  ) => void
 }) {
   const [name, setName] = useState('')
   const [icon, setIcon] = useState('🤝')
   const [lead, setLead] = useState(meId)
   const [target, setTarget] = useState('')
   const [teamIds, setTeamIds] = useState<string[]>([])
+  const [logoFile, setLogoFile] = useState<File | null>(null)
   if (!open) return null
   const tog = (id: string) => setTeamIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))
   const submit = () => {
     if (!name.trim()) return
-    onCreate({ name: name.trim(), icon, lead_user_id: lead, target_date: target || null, team_ids: teamIds })
-    setName(''); setTarget(''); setTeamIds([])
+    onCreate({ name: name.trim(), icon, lead_user_id: lead, target_date: target || null, team_ids: teamIds }, logoFile)
+    setName(''); setTarget(''); setTeamIds([]); setLogoFile(null)
     onClose()
   }
   return (
@@ -96,6 +123,26 @@ export function ProjectCreateModal({
         <div>
           <div className="label">Target date</div>
           <DateField value={target} onChange={setTarget} style={{ height: 38 }} />
+        </div>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <div className="label" style={{ marginBottom: 4 }}>Logo (optional)</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+            style={{ fontSize: 11, color: 'var(--text-2)' }}
+          />
+          {logoFile && (
+            <button type="button" onClick={() => setLogoFile(null)}
+              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 10.5, fontWeight: 700 }}>
+              Clear
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', marginTop: 3 }}>
+          JPG/PNG/WebP, squared automatically. The emoji icon stays the fallback.
         </div>
       </div>
       <div className="label" style={{ marginBottom: 6 }}>Teams</div>
