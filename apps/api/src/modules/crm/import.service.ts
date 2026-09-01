@@ -566,14 +566,14 @@ export class ImportService {
       const [byDomain] = await tx
         .select({ id: directoryCompanies.id })
         .from(directoryCompanies)
-        .where(and(sql`lower(${directoryCompanies.domain}::text) = ${domain}`, isNull(directoryCompanies.deleted_at)))
+        .where(and(eq(directoryCompanies.tenant_id, tenantId), sql`lower(${directoryCompanies.domain}::text) = ${domain}`, isNull(directoryCompanies.deleted_at)))
         .limit(1);
       if (byDomain) return byDomain.id;
     }
     const [existing] = await tx
       .select({ id: directoryCompanies.id })
       .from(directoryCompanies)
-      .where(and(sql`lower(${directoryCompanies.name}) = ${c.name.toLowerCase()}`, isNull(directoryCompanies.deleted_at)))
+      .where(and(eq(directoryCompanies.tenant_id, tenantId), sql`lower(${directoryCompanies.name}) = ${c.name.toLowerCase()}`, isNull(directoryCompanies.deleted_at)))
       .limit(1);
     if (existing) return existing.id;
     const [created] = await tx

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
-import { EmptyState, fmtCur } from '@/components/crm/kit'
+import { fmtCur } from '@/components/crm/kit'
 import { ACT_META, dueLabel, useCompleteWithNext } from '@/components/crm/activity-widgets'
 import { useQuickAdd } from '@/lib/stores/quick-add.store'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -46,7 +46,6 @@ export default function CrmOverviewPage() {
   const noNext = cards.filter((d) => !d.next_activity_at)
   const acts = mine.data?.data
   const totalOpenDeals = f?.open_count ?? 0
-  const anyActivity = !!acts && (acts.overdue.length + acts.today.length + acts.upcoming.length + acts.completed.length > 0)
 
   const [dismissed, setDismissed] = useState(true)
   useEffect(() => { setDismissed(localStorage.getItem(DISMISS_KEY) === '1') }, [])
@@ -77,21 +76,11 @@ export default function CrmOverviewPage() {
   ]
   const doneCount = steps.filter((s) => s.done).length
 
-  if (!board.isLoading && cards.length === 0 && totalOpenDeals === 0 && !anyActivity) {
-    return (
-      <div style={{ padding: '28px 32px 64px' }}>
-        <SectionHead title="CRM" sub="Your pipeline at a glance." />
-        <EmptyState
-          icon={<Icon.funnel size={22} />}
-          line="Your CRM is ready. Create your first deal — or load sample data to explore every screen (removable in one click, C22)."
-          cta="New deal"
-          onCta={() => quickAdd.openWith('deal')}
-          secondary={<SampleDataButton />}
-        />
-      </div>
-    )
-  }
-
+  // Round G (founder decision): the Overview ALWAYS renders the real
+  // dashboard — no full-page "Your CRM is ready" takeover. The old gate only
+  // looked at deals+activities, so a workspace living on imported leads got a
+  // "fresh CRM" screen that read as data loss. Zeros are honest; the
+  // quick-start card (with Load sample data) carries onboarding.
   return (
     <div style={{ padding: '28px 32px 64px' }}>
       <SectionHead title="CRM" sub="Your pipeline at a glance — deals, follow-ups and what needs attention." />
@@ -100,12 +89,15 @@ export default function CrmOverviewPage() {
       {checklistSettled && !dismissed && doneCount < steps.length && (
         <div className="card" style={{ position: 'relative', borderColor: 'rgba(62,123,250,.35)', marginBottom: 16 }}>
           <button onClick={dismiss} title="Dismiss" style={{ position: 'absolute', top: 12, right: 12, width: 24, height: 24, borderRadius: 7, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text-mute)', cursor: 'pointer' }}><Icon.x size={12} /></button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, paddingRight: 30 }}>
             <div style={{ width: 32, height: 32, borderRadius: 9, background: 'rgba(62,123,250,.16)', color: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon.zap size={16} /></div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13.5, fontWeight: 800 }}>Get set up</div>
               <div className="t-mute" style={{ fontSize: 11 }}>{doneCount} of {steps.length} done</div>
             </div>
+            {/* Round G: sample data moved here from the removed EmptyState —
+                still one click to explore every screen, one click to remove. */}
+            <SampleDataButton />
             <div style={{ width: 120, height: 6, borderRadius: 99, background: 'var(--surf-2)', overflow: 'hidden' }}>
               <div style={{ width: `${(doneCount / steps.length) * 100}%`, height: '100%', borderRadius: 99, background: 'var(--blue)', transition: 'width .3s' }} />
             </div>
