@@ -291,14 +291,18 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
 
       {/* Header */}
       <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 9, flexWrap: 'wrap' }}>
+        {/* One line, always (founder round E follow-up: the delete button
+            wrapped under the logo once the name + dates filled the row).
+            Nothing wraps — the NAME is the only element allowed to give up
+            width (ellipsis), everything else is flexShrink: 0. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9, minWidth: 0 }}>
           {/* Round E — the project's face: uploaded logo (click to change)
               or the emoji icon picker. */}
           <button
             type="button"
             title={logoUrl ? 'Change or remove the project logo' : 'Upload a project logo'}
             onClick={() => setLogoModal(true)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', padding: 0 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
           >
             {logoUrl ? <ProjectLogo logoUrl={logoUrl} icon={currentIcon} size={30} /> : <Icon.image size={14} style={{ color: 'var(--text-faint)' }} />}
           </button>
@@ -308,7 +312,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             aria-label="Project icon"
             value={currentIcon}
             onChange={(e) => patchProject({ icon: e.target.value })}
-            style={{ height: 30, width: 52, padding: '0 6px', fontSize: 16 }}
+            style={{ height: 30, width: 46, padding: '0 4px', fontSize: 16, flexShrink: 0 }}
           >
             {iconOptions.map((e) => <option key={e}>{e}</option>)}
           </select>
@@ -323,53 +327,56 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
                 if (e.key === 'Enter') commitName()
                 if (e.key === 'Escape') setEditingName(false)
               }}
-              style={{ height: 32, width: 280, fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}
+              style={{ height: 32, flex: '0 1 280px', minWidth: 120, fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}
             />
           ) : (
             <span
-              title="Rename project"
+              title={project.name}
               onClick={() => { setNameDraft(project.name); setEditingName(true) }}
-              style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em', cursor: 'text' }}
+              style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.02em', cursor: 'text', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
               {project.name}
             </span>
           )}
           {project.is_private && (
             <span title="Private project — only members, the lead and owners/admins can see it"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-mute)', fontSize: 10, fontWeight: 800 }}>
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-mute)', fontSize: 10, fontWeight: 800, flexShrink: 0 }}>
               <Icon.lock size={12} /> Private
             </span>
           )}
           {project._pending && <PendingDot />}
           <select className="input" value={project.status} onChange={(e) => patchProject({ status: e.target.value as PmProjectRow['status'] })}
-            style={{ height: 28, width: 130, fontSize: 11, fontWeight: 800 }}>
+            style={{ height: 28, width: 116, fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
             {Object.entries(PM_PROJECT_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
           <HealthChip h={project.health} />
           <span style={{ flex: 1 }} />
-          {leadName && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700 }}>
-              <PmAv name={leadName} src={project.lead_user_id ? users?.get(project.lead_user_id)?.avatar_url : null} size={18} />{leadName}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
+            {leadName && (
+              <span title={leadName} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700 }}>
+                <PmAv name={leadName} src={project.lead_user_id ? users?.get(project.lead_user_id)?.avatar_url : null} size={18} />
+                <span style={{ maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leadName}</span>
+              </span>
+            )}
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+              <DateField value={project.start_date ?? ''} onChange={(iso) => patchProject({ start_date: iso || null })} style={{ height: 26, width: 112, fontSize: 10 }} />
+              →
+              <DateField value={project.target_date ?? ''} onChange={(iso) => patchProject({ target_date: iso || null })} style={{ height: 26, width: 112, fontSize: 10 }} />
             </span>
-          )}
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center' }}>
-            <DateField value={project.start_date ?? ''} onChange={(iso) => patchProject({ start_date: iso || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
-            →
-            <DateField value={project.target_date ?? ''} onChange={(iso) => patchProject({ target_date: iso || null })} style={{ height: 26, width: 120, fontSize: 10 }} />
+            {mayDelete && (
+              <button
+                type="button"
+                title="Delete project"
+                aria-label="Delete project"
+                onClick={() => setConfirmDelete(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-mute)', cursor: 'pointer' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--coral)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-mute)' }}
+              >
+                <Icon.trash size={14} />
+              </button>
+            )}
           </span>
-          {mayDelete && (
-            <button
-              type="button"
-              title="Delete project"
-              aria-label="Delete project"
-              onClick={() => setConfirmDelete(true)}
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 7, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-mute)', cursor: 'pointer' }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--coral)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-mute)' }}
-            >
-              <Icon.trash size={14} />
-            </button>
-          )}
         </div>
         {d.project.summary && <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>{d.project.summary}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
