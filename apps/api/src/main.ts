@@ -6,6 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { assertTenantIsolation } from '@flicks/db';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './core/common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
@@ -14,6 +15,18 @@ import helmet from 'helmet';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+
+  // Round F — refuse to serve unless tenant isolation is PROVEN effective on
+  // the tenant pool (a BYPASSRLS/superuser DATABASE_URL made RLS a no-op in
+  // production and leaked one tenant's CRM leads to every workspace). The
+  // probe fails closed with an exact remediation message.
+  try {
+    const { user, appRole } = await assertTenantIsolation();
+    logger.log(`Tenant isolation verified (pool user: ${user}, tenant role: ${appRole})`);
+  } catch (err) {
+    logger.error(String(err instanceof Error ? err.message : err));
+    process.exit(1);
+  }
   // rawBody: true preserves the unparsed request buffer on req.rawBody (while
   // still JSON-parsing for normal routes) so the Razorpay webhook can verify the
   // HMAC over the exact bytes Razorpay signed — re-serialized JSON would not match.

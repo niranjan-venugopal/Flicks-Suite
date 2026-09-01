@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, ilike, isNull, or } from 'drizzle-orm';
+import { and, eq, ilike, isNull, or } from 'drizzle-orm';
 import { deals, directoryCompanies, directoryPeople } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 
@@ -29,6 +29,9 @@ export class SearchService {
           .from(directoryCompanies)
           .where(
             and(
+              // Round F: explicit tenant scope on top of RLS — ⌘K must never
+              // search across workspaces even on a mis-roled pool.
+              eq(directoryCompanies.tenant_id, tenantId),
               isNull(directoryCompanies.deleted_at),
               or(ilike(directoryCompanies.name, like), ilike(directoryCompanies.domain, like)),
             ),
@@ -39,6 +42,7 @@ export class SearchService {
           .from(directoryPeople)
           .where(
             and(
+              eq(directoryPeople.tenant_id, tenantId),
               isNull(directoryPeople.deleted_at),
               or(ilike(directoryPeople.display_name, like), ilike(directoryPeople.email, like)),
             ),
@@ -47,7 +51,7 @@ export class SearchService {
         tx
           .select({ id: deals.id, title: deals.title, status: deals.status, value_base_amount: deals.value_base_amount })
           .from(deals)
-          .where(and(isNull(deals.deleted_at), ilike(deals.title, like)))
+          .where(and(eq(deals.tenant_id, tenantId), isNull(deals.deleted_at), ilike(deals.title, like)))
           .limit(cap),
       ]);
       return { data: { query: q, companies, people, deals: dealRows } };

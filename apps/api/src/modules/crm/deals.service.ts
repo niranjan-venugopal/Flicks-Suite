@@ -159,8 +159,8 @@ export class DealsService {
       // the CRM is never a dead end.
       await this.ensureDefaultPipeline(tx, tenantId);
       const pl = pipelineId
-        ? (await tx.select().from(pipelines).where(and(eq(pipelines.id, pipelineId), isNull(pipelines.deleted_at))).limit(1))[0]
-        : (await tx.select().from(pipelines).where(isNull(pipelines.deleted_at)).orderBy(asc(pipelines.display_order)).limit(1))[0];
+        ? (await tx.select().from(pipelines).where(and(eq(pipelines.tenant_id, tenantId), eq(pipelines.id, pipelineId), isNull(pipelines.deleted_at))).limit(1))[0]
+        : (await tx.select().from(pipelines).where(and(eq(pipelines.tenant_id, tenantId), isNull(pipelines.deleted_at))).orderBy(asc(pipelines.display_order)).limit(1))[0];
       if (!pl) throw new NotFoundException('Pipeline not found');
 
       const stages = await tx
@@ -172,7 +172,7 @@ export class DealsService {
       const openDeals = await tx
         .select()
         .from(deals)
-        .where(and(eq(deals.pipeline_id, pl.id), eq(deals.status, 'open'), isNull(deals.deleted_at)))
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.pipeline_id, pl.id), eq(deals.status, 'open'), isNull(deals.deleted_at)))
         .orderBy(desc(deals.updated_at));
 
       // Card enrichment for the C2 prototype: tag chips + owner names in one
@@ -335,7 +335,7 @@ export class DealsService {
         .from(deals)
         .leftJoin(pipelineStages, eq(pipelineStages.id, deals.stage_id))
         .leftJoin(users, eq(users.id, deals.owner_user_id))
-        .where(and(refWhere, isNull(deals.deleted_at)))
+        .where(and(eq(deals.tenant_id, tenantId), refWhere, isNull(deals.deleted_at)))
         .orderBy(desc(deals.updated_at))
         .limit(50);
       return { data: rows, base_currency: base };

@@ -275,7 +275,15 @@ export class ImportService {
 
   async listBatches(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
-      const rows = await tx.select().from(importBatches).orderBy(desc(importBatches.created_at)).limit(20);
+      // Explicit tenant predicate (round F): this is the "Recent imports"
+      // list that showed one tenant's batches to every workspace when a
+      // mis-roled production pool bypassed RLS.
+      const rows = await tx
+        .select()
+        .from(importBatches)
+        .where(eq(importBatches.tenant_id, tenantId))
+        .orderBy(desc(importBatches.created_at))
+        .limit(20);
       return { data: rows };
     });
   }

@@ -191,7 +191,7 @@ export class ActivitiesService {
         })
         .from(activities)
         .innerJoin(users, eq(users.id, activities.assignee_user_id))
-        .where(and(eq(activities.deal_id, dealId), isNull(activities.deleted_at)))
+        .where(and(eq(activities.tenant_id, tenantId), eq(activities.deal_id, dealId), isNull(activities.deleted_at)))
         .orderBy(sql`${activities.completed_at} IS NOT NULL`, asc(activities.due_at));
       return { data: rows };
     });
@@ -228,7 +228,7 @@ export class ActivitiesService {
         })
         .from(activities)
         .innerJoin(users, eq(users.id, activities.assignee_user_id))
-        .where(and(refWhere, isNull(activities.deleted_at)))
+        .where(and(eq(activities.tenant_id, tenantId), refWhere, isNull(activities.deleted_at)))
         .orderBy(sql`${activities.completed_at} IS NOT NULL`, asc(activities.due_at))
         .limit(50);
       return { data: rows };

@@ -89,6 +89,9 @@ export class DirectoryService {
     const offset = (page - 1) * limit;
     return this.db.withTenant(tenantId, async (tx) => {
       const where = and(
+        // Round F: explicit tenant scope on top of RLS — a mis-roled pool must
+        // never turn this tenant-wide list into a platform-wide one.
+        eq(directoryCompanies.tenant_id, tenantId),
         isNull(directoryCompanies.deleted_at),
         query.q ? ilike(directoryCompanies.name, `%${query.q}%`) : undefined,
       );
@@ -320,6 +323,8 @@ export class DirectoryService {
     const offset = (page - 1) * limit;
     return this.db.withTenant(tenantId, async (tx) => {
       const where = and(
+        // Round F: explicit tenant scope on top of RLS (see listCompanies).
+        eq(directoryPeople.tenant_id, tenantId),
         isNull(directoryPeople.deleted_at),
         query.company_id ? eq(directoryPeople.company_id, query.company_id) : undefined,
         query.q

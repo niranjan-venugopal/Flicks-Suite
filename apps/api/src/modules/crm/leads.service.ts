@@ -61,6 +61,10 @@ export class LeadsService {
   async list(tenantId: string, status?: string) {
     return this.db.withTenant(tenantId, async (tx) => {
       const wanted = ['new', 'working', 'converted', 'discarded'].includes(status ?? '') ? status! : 'new';
+      // Explicit tenant predicates on every query in this method (round F —
+      // house rule 1's defense-in-depth): these reads used to lean on RLS
+      // alone, and a mis-roled production DATABASE_URL (BYPASSRLS) turned
+      // that into every tenant seeing every tenant's leads.
       const rows = await tx
         .select({
           lead: leads,
@@ -68,7 +72,7 @@ export class LeadsService {
         })
         .from(leads)
         .leftJoin(users, eq(users.id, leads.owner_user_id))
-        .where(and(eq(leads.status, wanted), isNull(leads.deleted_at)))
+        .where(and(eq(leads.tenant_id, tenantId), eq(leads.status, wanted), isNull(leads.deleted_at)))
         .orderBy(desc(leads.created_at))
         .limit(200);
 
@@ -78,14 +82,14 @@ export class LeadsService {
         ? await tx
             .select({ id: directoryPeople.id, email: directoryPeople.email, display_name: directoryPeople.display_name })
             .from(directoryPeople)
-            .where(and(inArray(sql`lower(${directoryPeople.email}::text)`, emails), isNull(directoryPeople.deleted_at)))
+            .where(and(eq(directoryPeople.tenant_id, tenantId), inArray(sql`lower(${directoryPeople.email}::text)`, emails), isNull(directoryPeople.deleted_at)))
         : [];
       const dupeByEmail = new Map(dupes.map((d) => [d.email?.toLowerCase(), d]));
 
       const counts = await tx
         .select({ status: leads.status, n: sql<number>`count(*)::int` })
         .from(leads)
-        .where(isNull(leads.deleted_at))
+        .where(and(eq(leads.tenant_id, tenantId), isNull(leads.deleted_at)))
         .groupBy(leads.status);
 
       return {
