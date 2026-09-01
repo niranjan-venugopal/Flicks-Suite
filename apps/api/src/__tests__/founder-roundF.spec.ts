@@ -143,6 +143,39 @@ describe('layer 4 — the leaked CRM surfaces are tenant-scoped end to end', () 
     expect(a.data[0]!.file_name).toBe('pauket-leads-flicks-upload.csv');
   });
 
+  it('a real combined import by tenant A is invisible to tenant B, and B importing the SAME email creates its own record', async () => {
+    const tag = rid();
+    const email = `shared-${tag}@import.test`;
+    const csv = [
+      'Type,First Name,Last Name,Email,Company',
+      `Contact,Alice,Pauket${tag},alice-${tag}@import.test,ImportCo${tag}`,
+      `Lead,Bob,Pauket${tag},${email},`,
+    ].join('\n');
+    const mapping = { Type: 'type', 'First Name': 'first_name', 'Last Name': 'last_name', Email: 'email', Company: 'company_name' };
+
+    // Tenant A imports the combined file through the REAL import pipeline.
+    const runA = await importSvc.run(tenantA, ownerA, 'all', csv, mapping, 'skip', `combined-${tag}.csv`);
+    expect(runA.data.rows_created).toBe(2);
+
+    // Tenant B sees NONE of it: no batch, no lead, no contact, no company.
+    const bBatches = await importSvc.listBatches(tenantB);
+    expect(bBatches.data.some((b) => b.file_name === `combined-${tag}.csv`)).toBe(false);
+    const bSearch = await searchSvc.search(tenantB, `ImportCo${tag}`.slice(0, 12));
+    expect(bSearch.data.companies).toHaveLength(0);
+    expect(bSearch.data.people).toHaveLength(0);
+
+    // Tenant B imports a lead with the SAME email under strategy 'update':
+    // dedupe matching must not see tenant A's lead — B gets its OWN new row
+    // and A's row is untouched.
+    const csvB = ['First Name,Email', `Eve,${email}`].join('\n');
+    const runB = await importSvc.run(tenantB, ownerA, 'leads', csvB, { 'First Name': 'first_name', Email: 'email' }, 'update', `b-${tag}.csv`);
+    expect(runB.data.rows_created).toBe(1);
+    expect(runB.data.rows_updated).toBe(0);
+    const aLead = await dbAdmin.select().from(leads).where(sql`${leads.tenant_id} = ${tenantA} AND ${leads.email} = ${email}`);
+    expect(aLead).toHaveLength(1);
+    expect(aLead[0]!.first_name).toBe('Bob'); // A's record untouched by B's import
+  });
+
   it('⌘K search: tenant B finds nothing for tenant A\'s company name', async () => {
     const b = await searchSvc.search(tenantB, companyName.slice(0, 10));
     expect(b.data.companies).toHaveLength(0);

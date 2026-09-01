@@ -54,16 +54,22 @@ configuration mistake can ever reopen it.
    defense-in-depth): `leads.list` (rows + dupe-check + counts),
    `import.listBatches`, directory `listCompanies`/`listPeople`, ⌘K
    `search` (all three buckets), deals `board`/`listForRef`, activities
-   `listForDeal`/`listForRef`.
+   `listForDeal`/`listForRef` — and the **import dedupe matching**
+   (`import.service.ts plan()`: person/company/lead lookups), which decides
+   which existing row an "update" import rewrites and so must never be able
+   to match another tenant's record.
 
 ## Regression spec
 
-`apps/api/src/__tests__/founder-roundF.spec.ts` (6 tests): the exact
+`apps/api/src/__tests__/founder-roundF.spec.ts` (7 tests): the exact
 bypass-pool round-trip sees zero foreign rows and really runs as
 `flicks_app`; a control test reproduces the pre-fix leak (no role pin ⇒
 foreign rows visible — the production bug, pinned forever); the boot probe
-passes on the app pool; and two-tenant end-to-end checks that tenant B sees
-none of tenant A's leads, import batches, or search hits.
+passes on the app pool; two-tenant end-to-end checks that tenant B sees
+none of tenant A's leads, import batches, or search hits; and a REAL
+combined import by tenant A that is invisible to tenant B — including the
+sharpest case: B importing the *same email* under strategy "update"
+creates B's own record and leaves A's untouched.
 
 ## Production remediation (operator runbook)
 

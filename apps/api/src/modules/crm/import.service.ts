@@ -205,7 +205,7 @@ export class ImportService {
     strategy: DupeStrategy,
     fallbackType: ImportFallbackType = 'contact',
   ) {
-    const plans = await this.db.withTenant(tenantId, (tx) => this.plan(tx, object, csvText, mapping, strategy, fallbackType));
+    const plans = await this.db.withTenant(tenantId, (tx) => this.plan(tx, tenantId, object, csvText, mapping, strategy, fallbackType));
     const count = (a: RowPlan['action']) => plans.filter((p) => p.action === a).length;
     return {
       data: {
@@ -233,7 +233,7 @@ export class ImportService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
-        const plans = await this.plan(tx, object, csvText, mapping, strategy, fallbackType);
+        const plans = await this.plan(tx, tenantId, object, csvText, mapping, strategy, fallbackType);
         const [batch] = await tx
           .insert(importBatches)
           .values({ tenant_id: tenantId, object_type: object, file_name: fileName ?? null, rows_read: plans.length, created_by: userId })
@@ -331,7 +331,7 @@ export class ImportService {
 
   // ─── Internals ───────────────────────────────────────────────────────────────
 
-  private async plan(tx: Db, object: ImportObject, csvText: string, mapping: Record<string, string>, strategy: DupeStrategy, fallbackType: ImportFallbackType = 'contact'): Promise<RowPlan[]> {
+  private async plan(tx: Db, tenantId: string, object: ImportObject, csvText: string, mapping: Record<string, string>, strategy: DupeStrategy, fallbackType: ImportFallbackType = 'contact'): Promise<RowPlan[]> {
     this.assertObject(object);
     if (!['skip', 'update', 'create'].includes(strategy)) throw new BadRequestException('Bad duplicate strategy');
     const rows = parseCsv(csvText);
@@ -361,14 +361,17 @@ export class ImportService {
     const personByEmail = new Map<string, string>();
     const companyByKey = new Map<string, string>();
     const leadByEmail = new Map<string, string>();
+    // Round F: dedupe matching decides which EXISTING row an "update" import
+    // rewrites — it must never be able to match another tenant's record, so
+    // every lookup carries an explicit tenant predicate on top of RLS.
     if ((object === 'people' || object === 'all') && emails.length) {
       const found = await tx.select({ id: directoryPeople.id, email: directoryPeople.email }).from(directoryPeople)
-        .where(and(inArray(sql`lower(${directoryPeople.email}::text)`, emails), isNull(directoryPeople.deleted_at)));
+        .where(and(eq(directoryPeople.tenant_id, tenantId), inArray(sql`lower(${directoryPeople.email}::text)`, emails), isNull(directoryPeople.deleted_at)));
       for (const f of found) personByEmail.set(f.email!.toLowerCase(), f.id);
     }
     if (object === 'companies' && (domains.length || names.length)) {
       const found = await tx.select({ id: directoryCompanies.id, domain: directoryCompanies.domain, name: directoryCompanies.name }).from(directoryCompanies)
-        .where(isNull(directoryCompanies.deleted_at));
+        .where(and(eq(directoryCompanies.tenant_id, tenantId), isNull(directoryCompanies.deleted_at)));
       for (const f of found) {
         if (f.domain) companyByKey.set(`d:${f.domain.toLowerCase()}`, f.id);
         companyByKey.set(`n:${f.name.toLowerCase()}`, f.id);
@@ -380,7 +383,7 @@ export class ImportService {
     // both match leads on email). Discarded leads don't block a re-import.
     if ((object === 'leads' || object === 'all') && emails.length) {
       const found = await tx.select({ id: leads.id, email: leads.email }).from(leads)
-        .where(and(inArray(sql`lower(${leads.email}::text)`, emails), sql`${leads.status} <> 'discarded'`));
+        .where(and(eq(leads.tenant_id, tenantId), inArray(sql`lower(${leads.email}::text)`, emails), sql`${leads.status} <> 'discarded'`));
       for (const f of found) if (f.email) leadByEmail.set(f.email.toLowerCase(), f.id);
     }
 
