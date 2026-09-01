@@ -240,9 +240,13 @@ export function TeamToday() {
                     </td>
                     <td style={td}>
                       <span className="inline-flex items-center gap-1.5">
+                        {/* The pin follows the LOCATION, not the punch — it
+                            used to require a clock-in record, so "yet to
+                            clock in" rows showed bare text next to iconed
+                            ones (founder: design inconsistency). */}
                         {r.workMode === 'remote' ? (
                           <Icon.home size={12} style={{ color: 'var(--blue)' }} />
-                        ) : r.recordId && r.locationName ? (
+                        ) : r.locationName ? (
                           <Icon.pin size={12} style={{ color: 'var(--text-mute)' }} />
                         ) : null}
                         {locationLabel(r)}
