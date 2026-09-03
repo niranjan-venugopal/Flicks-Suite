@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
@@ -13,13 +13,14 @@ import {
 } from '@/lib/api/queries/use-auth'
 import { useToast } from '@/components/ui/use-toast'
 
-// Round H — the magic-link page is TWO-STEP. It used to consume the single-use
-// token the moment it loaded, so corporate mail security (Outlook / Defender
-// Safe Links, Google link scanning) that opens links at delivery time burned
-// every invite before the invitee clicked — "already been used" on the very
-// first click. Now: peek (never consumes) → explicit Continue → consume. A
-// burned or expired link recovers into a fresh sign-in code for the same
-// address instead of dead-ending on "Back to sign in".
+// Round H — peek first (never consumes), then:
+//  • GUEST invite links (founder decision) show an explicit Continue button —
+//    corporate mail security (Outlook / Defender Safe Links, Google link
+//    scanning) opens links at delivery time and used to burn the single-use
+//    token before the invitee clicked ("already been used" on the first click).
+//  • Everyone else keeps the one-click sign-in: the page consumes on load.
+// Either way a burned or expired link recovers into a fresh sign-in code for
+// the same address instead of dead-ending on "Back to sign in".
 function VerifyMagicLinkInner() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
@@ -33,6 +34,19 @@ function VerifyMagicLinkInner() {
 
   const data = consume.data
   const requiresTotp = Boolean(consume.isSuccess && data?.requiresTotp && data?.challengeToken)
+
+  // One-click path: a ready link that does NOT need the guest click signs in
+  // on load, exactly as before. Fired once (the backend's 60s idempotency
+  // window also absorbs a StrictMode double effect).
+  const autoFired = useRef(false)
+  useEffect(() => {
+    if (!token || autoFired.current) return
+    if (peek.data?.status === 'ready' && !peek.data.requiresClick) {
+      autoFired.current = true
+      consume.mutate({ token })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peek.data, token])
 
   useEffect(() => {
     if (consume.isSuccess && !requiresTotp) {
@@ -128,18 +142,24 @@ function VerifyMagicLinkInner() {
       )
     }
 
-    if (peek.isLoading) {
+    const status = peek.isError ? 'invalid' : peek.data?.status ?? 'invalid'
+    const email = peek.data?.email
+    const oneClick = status === 'ready' && !peek.data?.requiresClick
+
+    // Checking the link, or signing a non-guest in automatically.
+    if (peek.isLoading || (oneClick && !consume.isError && !consume.isSuccess)) {
       return (
         <div style={{ textAlign: 'center' }}>
           {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.refresh size={26} />)}
-          <div className="t-h2" style={{ marginBottom: 8 }}>Checking your link</div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>One moment…</div>
+          <div className="t-h2" style={{ marginBottom: 8 }}>
+            {peek.isLoading ? 'Checking your link' : 'Verifying your link'}
+          </div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
+            {peek.isLoading ? 'One moment…' : 'Hang tight while we sign you in securely…'}
+          </div>
         </div>
       )
     }
-
-    const status = peek.isError ? 'invalid' : peek.data?.status ?? 'invalid'
-    const email = peek.data?.email
 
     if (status === 'invalid') {
       return (
@@ -210,11 +230,12 @@ function VerifyMagicLinkInner() {
       )
     }
 
-    // status === 'ready': the explicit human step that scanners never take.
+    // status === 'ready' for a GUEST invite: the explicit human step that
+    // scanners never take.
     return (
       <div style={{ textAlign: 'center' }}>
         {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.mail size={26} />)}
-        <div className="t-h2" style={{ marginBottom: 8 }}>Sign in to Flicks Suite</div>
+        <div className="t-h2" style={{ marginBottom: 8 }}>Accept your invite</div>
         <div style={subtle}>
           Continue as <strong style={{ color: '#fff' }}>{email}</strong>
         </div>

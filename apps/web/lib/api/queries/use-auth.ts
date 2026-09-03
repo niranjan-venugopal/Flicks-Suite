@@ -248,6 +248,9 @@ export function useVerifyOtp() {
 export type MagicLinkPeek = {
   status: 'ready' | 'consumed' | 'expired' | 'invalid'
   email?: string
+  // Guest invite links only (founder decision): show an explicit Continue
+  // button. Everyone else signs in on load, one click from the email.
+  requiresClick?: boolean
 }
 
 export function usePeekMagicLinkQuery(token: string | null) {

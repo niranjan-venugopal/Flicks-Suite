@@ -343,9 +343,17 @@ export class AuthService {
    * secret from the recipient's own inbox, so whoever presents it is the
    * recipient — and the recovery path needs the address to send a code to.
    */
-  async peekMagicLink(
-    token: string,
-  ): Promise<{ status: 'ready' | 'consumed' | 'expired' | 'invalid'; email?: string }> {
+  async peekMagicLink(token: string): Promise<{
+    status: 'ready' | 'consumed' | 'expired' | 'invalid';
+    email?: string;
+    /**
+     * Founder decision: the explicit "Continue" click is for GUEST invite
+     * links only — those are the ones corporate scanners burn, and the
+     * invitee is new to the product. Existing licensed users keep the
+     * one-click sign-in; if that fails the page falls back to recovery.
+     */
+    requiresClick?: boolean;
+  }> {
     if (!/^[0-9a-f]{64}$/i.test(token ?? '')) return { status: 'invalid' };
     const tokenHash = sha256(token);
     const [otp] = await this.db
@@ -355,11 +363,35 @@ export class AuthService {
       .orderBy(desc(authOtps.created_at))
       .limit(1);
     if (!otp) return { status: 'invalid' };
-    if (otp.expires_at.getTime() <= Date.now()) return { status: 'expired', email: otp.email };
-    if (otp.consumed_at && otp.consumed_at.getTime() < Date.now() - 60 * 1000) {
-      return { status: 'consumed', email: otp.email };
+
+    // An invite link (issueInviteMagicLink) lives 7 days; a sign-in link
+    // (requestOtp) minutes. Only an invite link held by a guest seat needs
+    // the click.
+    const isInviteLink =
+      otp.expires_at.getTime() - otp.created_at.getTime() > 24 * 60 * 60 * 1000;
+    let requiresClick = false;
+    if (isInviteLink && otp.user_id) {
+      const [guestSeat] = await this.db
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.user_id, otp.user_id),
+            eq(memberships.role, 'guest'),
+            sql`${memberships.status} <> 'deactivated'`,
+          ),
+        )
+        .limit(1);
+      requiresClick = !!guestSeat;
     }
-    return { status: 'ready', email: otp.email };
+
+    if (otp.expires_at.getTime() <= Date.now()) {
+      return { status: 'expired', email: otp.email, requiresClick };
+    }
+    if (otp.consumed_at && otp.consumed_at.getTime() < Date.now() - 60 * 1000) {
+      return { status: 'consumed', email: otp.email, requiresClick };
+    }
+    return { status: 'ready', email: otp.email, requiresClick };
   }
 
   /**

@@ -40,9 +40,13 @@ whether guests can see anything they shouldn't.
 - `GET /auth/magic-link?token=` now only **peeks** (never consumes):
   `{ status: ready | consumed | expired | invalid, email? }`.
 - `POST /auth/magic-link/consume { token }` is the single-use sign-in (same
-  semantics as before, cookies set). The web page shows **"Continue as
-  {email}"** and consumes only on that click — the explicit human step
-  scanners never take.
+  semantics as before, cookies set). **Founder decision:** only **guest
+  invite links** (peek returns `requiresClick: true` — a 7-day invite token
+  held by a guest seat) show **"Continue as {email}"** and consume on that
+  click, the explicit human step scanners never take. Every other link
+  (existing licensed users' sign-in links, auditor/employee invites) keeps
+  the **one-click** behaviour — the page consumes on load — and only falls
+  into recovery if that fails.
 - `POST /auth/magic-link/recover { token }` emails a fresh 6-digit code to the
   token's address (full `requestOtp` semantics: quota, invalidation, auth
   event — no new enum value, no migration) and returns the address; the page

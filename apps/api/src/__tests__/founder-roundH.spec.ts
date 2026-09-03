@@ -197,6 +197,7 @@ describe('Magic link — scanner-proof two-step + recovery + accept-lands-where-
   let ownerY: string;
   let guestUserId: string;
   const guestEmail = `rh-guest-${rid()}@corp.test`;
+  const ownerYEmail = `rh-owner-${rid()}@test.test`;
   let inviteToken: string;
 
   beforeAll(async () => {
@@ -204,7 +205,7 @@ describe('Magic link — scanner-proof two-step + recovery + accept-lands-where-
     const [tY] = await dbAdmin.insert(tenants).values({ name: `RHY${rid()}`, slug: `rh-y-${rid()}`, status: 'active', currency: 'INR' }).returning();
     tenantX = tX!.id;
     tenantY = tY!.id;
-    const [oY] = await dbAdmin.insert(users).values({ email: `rh-owner-${rid()}@test.test`, full_name: 'Owner Y', status: 'active' }).returning();
+    const [oY] = await dbAdmin.insert(users).values({ email: ownerYEmail, full_name: 'Owner Y', status: 'active' }).returning();
     ownerY = oY!.id;
     await dbAdmin.insert(memberships).values({ tenant_id: tenantY, user_id: ownerY, role: 'owner', status: 'active' });
     // The invitee already owns workspace X — the exact "created their own
@@ -235,11 +236,20 @@ describe('Magic link — scanner-proof two-step + recovery + accept-lands-where-
     (await dbAdmin.select().from(authOtps).where(eq(authOtps.magic_link_token, sha256(inviteToken))).limit(1))[0]!;
 
   it('peek never consumes: a scanner opening the page twice leaves the token ready', async () => {
-    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'ready', email: guestEmail });
-    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'ready', email: guestEmail });
+    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'ready', email: guestEmail, requiresClick: true });
+    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'ready', email: guestEmail, requiresClick: true });
     expect((await inviteRow()).consumed_at).toBeNull();
     expect(await authService.peekMagicLink('f'.repeat(64))).toEqual({ status: 'invalid' });
     expect(await authService.peekMagicLink('not-a-token')).toEqual({ status: 'invalid' });
+  });
+
+  it("an existing licensed user's ordinary sign-in link needs NO click (founder: one-click stays for users)", async () => {
+    captured.length = 0;
+    await authService.requestOtp(ownerYEmail, undefined, undefined, 'signin');
+    const mail = captured.find((c) => c.template === 'login-otp')!;
+    expect(mail.props.magicLinkUrl).toBeTruthy(); // existing account → link included
+    const token = new URL(String(mail.props.magicLinkUrl)).searchParams.get('token')!;
+    expect(await authService.peekMagicLink(token)).toEqual({ status: 'ready', email: ownerYEmail, requiresClick: false });
   });
 
   it('consume signs in, activates the guest membership, and lands in the INVITING workspace (not the one they own)', async () => {
@@ -267,7 +277,7 @@ describe('Magic link — scanner-proof two-step + recovery + accept-lands-where-
       .set({ consumed_at: new Date(Date.now() - 5 * 60 * 1000) })
       .where(eq(authOtps.magic_link_token, sha256(inviteToken)));
     await expect(authService.verifyMagicLink(inviteToken)).rejects.toThrow(/already been used/);
-    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'consumed', email: guestEmail });
+    expect(await authService.peekMagicLink(inviteToken)).toEqual({ status: 'consumed', email: guestEmail, requiresClick: true });
   });
 
   it('recover turns the burned link into a fresh sign-in code for the same address', async () => {
