@@ -85,11 +85,14 @@ export interface ActivityItem {
   createdAt: string
 }
 
-export function useAdminOverview() {
+export function useAdminOverview(enabled = true) {
   return useQuery({
     queryKey: ['dashboard', 'admin', 'overview'],
     queryFn: () => api.get<AdminOverview>('/api/v1/dashboard/admin/overview'),
     staleTime: 30_000,
+    // Round H: callers pass their role gate — guests (project-scoped seats)
+    // are refused this route by the API's GuestScopeGuard, so don't ask.
+    enabled,
   })
 }
 

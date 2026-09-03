@@ -240,17 +240,47 @@ export function useVerifyOtp() {
   })
 }
 
-export function useVerifyMagicLink() {
-  const { setUser } = useAuthStore()
+// Round H — the magic-link flow is two-step so mail-security link scanners
+// can't burn the single-use token before the invitee clicks:
+//   peek (GET, never consumes) → explicit Continue → consume (POST).
+// A consumed/expired link recovers into a fresh sign-in code for the same
+// address instead of dead-ending.
+export type MagicLinkPeek = {
+  status: 'ready' | 'consumed' | 'expired' | 'invalid'
+  email?: string
+}
 
+export function usePeekMagicLinkQuery(token: string | null) {
+  return useQuery({
+    queryKey: ['auth', 'peek-magic-link', token],
+    queryFn: () =>
+      api.get<MagicLinkPeek>(
+        `/api/v1/auth/magic-link?token=${encodeURIComponent(token ?? '')}`,
+      ),
+    enabled: !!token,
+    retry: false,
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+}
+
+export function useConsumeMagicLink() {
+  const { setUser } = useAuthStore()
   return useMutation({
     mutationFn: (payload: VerifyMagicLinkPayload) =>
-      api.get<VerifyAuthResponse>(
-        `/api/v1/auth/magic-link?token=${encodeURIComponent(payload.token)}`,
-      ),
+      api.post<VerifyAuthResponse>('/api/v1/auth/magic-link/consume', payload),
     onSuccess: (data) => {
       setUser(adaptUser(data.user, null))
     },
+  })
+}
+
+export function useRecoverMagicLink() {
+  return useMutation({
+    mutationFn: (payload: VerifyMagicLinkPayload) =>
+      api.post<{ email: string }>('/api/v1/auth/magic-link/recover', payload),
   })
 }
 
@@ -295,31 +325,6 @@ export function useLogout() {
  * Note: a separate useVerifyMagicLink mutation exists above; this query-style
  * hook is suffixed with `Query` so it can coexist.
  */
-export function useVerifyMagicLinkQuery(token: string | null) {
-  const { setUser } = useAuthStore()
-
-  return useQuery({
-    queryKey: ['auth', 'verify-magic-link', token],
-    queryFn: async () => {
-      // API exposes this as GET /api/v1/auth/magic-link?token=…
-      const data = await api.get<VerifyAuthResponse>(
-        `/api/v1/auth/magic-link?token=${encodeURIComponent(token ?? '')}`,
-      )
-      setUser(adaptUser(data.user, null))
-      return data
-    },
-    enabled: !!token,
-    retry: false,
-    staleTime: Infinity,
-    // One-shot query: never refetch in the background. Without these flags
-    // a dev-mode StrictMode mount cycle, a window focus, or a network
-    // reconnect would fire the GET a second time and the backend's
-    // idempotency window has to catch it.
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  })
-}
 
 // ─── FAM TOTP (PRD §11.6) ──────────────────────────────────────────────────
 

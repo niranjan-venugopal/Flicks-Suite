@@ -329,6 +329,68 @@ export class AuthService {
     });
   }
 
+  /**
+   * Round H — a NON-consuming look at a magic-link token.
+   *
+   * The invite email lands on the web /verify page, which used to consume the
+   * token the moment it loaded. Corporate mail security (Outlook / Defender
+   * Safe Links, Google link scanning) opens links at delivery time, so the
+   * single-use token was routinely burned minutes before the invitee clicked —
+   * every guest hit "Magic link has already been used" on their FIRST click.
+   * The page now peeks first and consumes only on an explicit button press.
+   *
+   * Returns the row's email for ready/consumed tokens: the 64-hex token is the
+   * secret from the recipient's own inbox, so whoever presents it is the
+   * recipient — and the recovery path needs the address to send a code to.
+   */
+  async peekMagicLink(
+    token: string,
+  ): Promise<{ status: 'ready' | 'consumed' | 'expired' | 'invalid'; email?: string }> {
+    if (!/^[0-9a-f]{64}$/i.test(token ?? '')) return { status: 'invalid' };
+    const tokenHash = sha256(token);
+    const [otp] = await this.db
+      .select()
+      .from(authOtps)
+      .where(eq(authOtps.magic_link_token, tokenHash))
+      .orderBy(desc(authOtps.created_at))
+      .limit(1);
+    if (!otp) return { status: 'invalid' };
+    if (otp.expires_at.getTime() <= Date.now()) return { status: 'expired', email: otp.email };
+    if (otp.consumed_at && otp.consumed_at.getTime() < Date.now() - 60 * 1000) {
+      return { status: 'consumed', email: otp.email };
+    }
+    return { status: 'ready', email: otp.email };
+  }
+
+  /**
+   * Round H — never dead-end a burned link (house rule 8). The holder of a
+   * consumed/expired magic-link token gets a fresh 6-digit code emailed to the
+   * SAME address (full requestOtp semantics: quota, invalidation, auth event),
+   * and the address back so the login page can open straight at the code step.
+   * Tokens older than 30 days are refused — a link that old is not a login
+   * attempt, and the OTP route stays the only way to probe an address.
+   */
+  async recoverMagicLink(token: string, ip?: string, userAgent?: string): Promise<{ email: string }> {
+    if (!/^[0-9a-f]{64}$/i.test(token ?? '')) {
+      throw new UnauthorizedException('Invalid or expired magic link');
+    }
+    const tokenHash = sha256(token);
+    const [otp] = await this.db
+      .select()
+      .from(authOtps)
+      .where(
+        and(
+          eq(authOtps.magic_link_token, tokenHash),
+          gt(authOtps.created_at, new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)),
+        ),
+      )
+      .orderBy(desc(authOtps.created_at))
+      .limit(1);
+    if (!otp) throw new UnauthorizedException('Invalid or expired magic link');
+    await this.requestOtp(otp.email, ip, userAgent, 'signin');
+    return { email: otp.email };
+  }
+
   async verifyMagicLink(token: string, deviceId?: string, ip?: string, userAgent?: string) {
     const tokenHash = sha256(token);
 
@@ -515,7 +577,17 @@ export class AuthService {
     const sortedMemberships = [...userMemberships].sort(
       (a, b) => this.membershipRank(a) - this.membershipRank(b),
     );
-    const activeMembership = sortedMemberships[0];
+    // Round H — accept lands where you were invited. When THIS login flipped
+    // exactly one invited membership to active (i.e. the user just followed an
+    // invite link or signed in right after being invited), land in that
+    // workspace even if the rank would prefer one they own: a guest who
+    // already has their own workspace was otherwise dropped into it and the
+    // project they were invited to looked like it had vanished.
+    const justAccepted =
+      activated.length === 1
+        ? sortedMemberships.find((m) => m.tenantId === activated[0]!.tenant_id)
+        : undefined;
+    const activeMembership = justAccepted ?? sortedMemberships[0];
 
     // A login from a device the user previously chose to trust auto-issues
     // the long (180-day) session — no re-prompt after a logout/login. Rows

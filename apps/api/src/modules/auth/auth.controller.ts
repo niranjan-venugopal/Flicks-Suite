@@ -33,6 +33,7 @@ import {
   RefreshTokenDto,
   SelectTenantDto,
   LogoutDto,
+  MagicLinkVerifyDto,
 } from './auth.dto';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -123,28 +124,64 @@ export class AuthController {
     return result;
   }
 
+  // Round H — the magic-link flow is now two-step. GET only PEEKS (never
+  // consumes) so mail-security link scanners that open the /verify page at
+  // delivery time can no longer burn the single-use token; the web page then
+  // POSTs /consume on an explicit button press, and /recover turns a burned or
+  // expired link into a fresh sign-in code for the same address.
   @Public()
   @Get('magic-link')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ short: { limit: 20, ttl: 60000 } })
+  @Throttle({ short: { limit: 30, ttl: 60000 } })
   @ApiOperation({
-    summary: 'Verify magic link',
-    description: 'Verify the magic link token from email.',
+    summary: 'Peek at a magic link (non-consuming)',
+    description:
+      'Reports whether the token is ready, already consumed, expired or invalid — without consuming it.',
   })
   @ApiQuery({ name: 'token', required: true })
+  @ApiResponse({ status: 200, description: 'Token status' })
+  async peekMagicLink(@Query('token') token: string) {
+    return this.authService.peekMagicLink(token);
+  }
+
+  @Public()
+  @Post('magic-link/recover')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Recover from a consumed/expired magic link',
+    description:
+      'Emails a fresh 6-digit sign-in code to the address the token was issued for and returns that address.',
+  })
+  @ApiResponse({ status: 200, description: 'Code sent' })
+  @ApiResponse({ status: 401, description: 'Unknown token' })
+  async recoverMagicLink(@Body() dto: MagicLinkVerifyDto, @Req() req: Request) {
+    const ip = req.ip ?? req.connection.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+    return this.authService.recoverMagicLink(dto.token, ip, userAgent);
+  }
+
+  @Public()
+  @Post('magic-link/consume')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { limit: 20, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Consume a magic link (sign in)',
+    description: 'Single-use. Verifies the token from the email and issues JWT cookies.',
+  })
   @ApiResponse({ status: 200, description: 'Magic link verified' })
-  @ApiResponse({ status: 401, description: 'Invalid or expired token' })
-  async verifyMagicLink(
-    @Query('token') token: string,
+  @ApiResponse({ status: 401, description: 'Invalid, expired or already-used token' })
+  async consumeMagicLink(
+    @Body() dto: MagicLinkVerifyDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const ip = req.ip ?? req.connection.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const deviceId = this.authService.ensureDeviceId(req, res);
+    const deviceId = this.authService.ensureDeviceId(req, res, dto.deviceId);
 
     const result = await this.authService.verifyMagicLink(
-      token,
+      dto.token,
       deviceId,
       ip,
       userAgent,

@@ -5,32 +5,63 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
-import { useVerifyMagicLinkQuery, useCompleteTotp } from '@/lib/api/queries/use-auth'
+import {
+  usePeekMagicLinkQuery,
+  useConsumeMagicLink,
+  useRecoverMagicLink,
+  useCompleteTotp,
+} from '@/lib/api/queries/use-auth'
 import { useToast } from '@/components/ui/use-toast'
 
+// Round H — the magic-link page is TWO-STEP. It used to consume the single-use
+// token the moment it loaded, so corporate mail security (Outlook / Defender
+// Safe Links, Google link scanning) that opens links at delivery time burned
+// every invite before the invitee clicked — "already been used" on the very
+// first click. Now: peek (never consumes) → explicit Continue → consume. A
+// burned or expired link recovers into a fresh sign-in code for the same
+// address instead of dead-ending on "Back to sign in".
 function VerifyMagicLinkInner() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
-
-  const { isLoading, isSuccess, isError, error, data } = useVerifyMagicLinkQuery(token)
-  const completeTotp = useCompleteTotp()
   const { toast } = useToast()
+
+  const peek = usePeekMagicLinkQuery(token)
+  const consume = useConsumeMagicLink()
+  const recover = useRecoverMagicLink()
+  const completeTotp = useCompleteTotp()
   const [totpCode, setTotpCode] = useState('')
 
-  // Enrolled platform admins get a CHALLENGE from the magic link (no session
-  // yet) — completed inline below. Unenrolled ones have a session and go to
-  // setup; everyone else goes straight in.
-  const requiresTotp = Boolean(isSuccess && data?.requiresTotp && data?.challengeToken)
+  const data = consume.data
+  const requiresTotp = Boolean(consume.isSuccess && data?.requiresTotp && data?.challengeToken)
 
   useEffect(() => {
-    if (isSuccess && !requiresTotp) {
+    if (consume.isSuccess && !requiresTotp) {
       const target = data?.requiresTotpEnrollment ? '/totp-setup' : '/dashboard'
       const timeout = setTimeout(() => {
         window.location.assign(target)
       }, 800)
       return () => clearTimeout(timeout)
     }
-  }, [isSuccess, requiresTotp, data])
+  }, [consume.isSuccess, requiresTotp, data])
+
+  const handleContinue = () => {
+    if (!token || consume.isPending) return
+    consume.mutate({ token })
+  }
+
+  const handleRecover = async () => {
+    if (!token || recover.isPending) return
+    try {
+      const { email } = await recover.mutateAsync({ token })
+      window.location.assign(`/login?email=${encodeURIComponent(email)}&sent=1`)
+    } catch {
+      toast({
+        title: 'Could not send a code',
+        description: 'Please sign in with your email address instead.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const handleTotpSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -63,21 +94,33 @@ function VerifyMagicLinkInner() {
     </div>
   )
 
+  const subtle: React.CSSProperties = {
+    fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 22,
+  }
+
+  // The link was opened before (usually by a mail-security scanner) or has
+  // expired — offer the recovery path rather than a dead end.
+  const renderRecover = (title: string, body: string) => (
+    <div style={{ textAlign: 'center' }}>
+      {iconWrap('var(--coral)', 'rgba(248,120,107,.12)', <Icon.warn size={26} />)}
+      <div className="t-h2" style={{ marginBottom: 8 }}>{title}</div>
+      <div style={subtle}>{body}</div>
+      <Btn kind="primary" style={{ width: '100%', height: 46 }} disabled={recover.isPending} onClick={() => void handleRecover()}>
+        {recover.isPending ? 'Sending…' : 'Email me a sign-in code'}
+      </Btn>
+      <Link href="/login" style={{ display: 'block', marginTop: 12, fontSize: 12.5, fontWeight: 700, color: 'var(--text-mute)' }}>
+        Back to sign in
+      </Link>
+    </div>
+  )
+
   const renderState = () => {
-    if (!token || isError) {
+    if (!token) {
       return (
         <div style={{ textAlign: 'center' }}>
           {iconWrap('var(--coral)', 'rgba(248,120,107,.12)', <Icon.warn size={26} />)}
-          <div className="t-h2" style={{ marginBottom: 8 }}>
-            {!token ? 'Missing token' : 'Link expired or invalid'}
-          </div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5, marginBottom: 22 }}>
-            {!token
-              ? 'This link is missing the verification token. Please request a new one.'
-              : error instanceof Error
-                ? error.message
-                : 'This magic link is no longer valid. Request a new one to continue.'}
-          </div>
+          <div className="t-h2" style={{ marginBottom: 8 }}>Missing token</div>
+          <div style={subtle}>This link is missing the verification token. Please request a new one.</div>
           <Link href="/login" style={{ display: 'block' }}>
             <Btn kind="primary" style={{ width: '100%', height: 46 }}>Back to sign in</Btn>
           </Link>
@@ -85,15 +128,44 @@ function VerifyMagicLinkInner() {
       )
     }
 
-    if (isLoading) {
+    if (peek.isLoading) {
       return (
         <div style={{ textAlign: 'center' }}>
           {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.refresh size={26} />)}
-          <div className="t-h2" style={{ marginBottom: 8 }}>Verifying your link</div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
-            Hang tight while we sign you in securely…
-          </div>
+          <div className="t-h2" style={{ marginBottom: 8 }}>Checking your link</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>One moment…</div>
         </div>
+      )
+    }
+
+    const status = peek.isError ? 'invalid' : peek.data?.status ?? 'invalid'
+    const email = peek.data?.email
+
+    if (status === 'invalid') {
+      return (
+        <div style={{ textAlign: 'center' }}>
+          {iconWrap('var(--coral)', 'rgba(248,120,107,.12)', <Icon.warn size={26} />)}
+          <div className="t-h2" style={{ marginBottom: 8 }}>Link expired or invalid</div>
+          <div style={subtle}>This sign-in link isn&apos;t valid. Sign in with your email address to get a fresh code.</div>
+          <Link href="/login" style={{ display: 'block' }}>
+            <Btn kind="primary" style={{ width: '100%', height: 46 }}>Back to sign in</Btn>
+          </Link>
+        </div>
+      )
+    }
+
+    if (status === 'expired') {
+      return renderRecover(
+        'This link has expired',
+        `Sign-in links stop working after a while. We can email a fresh 6-digit code to ${email ?? 'your address'} right now.`,
+      )
+    }
+
+    // Consumed before we got here, or our own consume attempt lost a race.
+    if (status === 'consumed' || consume.isError) {
+      return renderRecover(
+        'This link has already been opened',
+        `Email security tools often open links before you do, which uses them up. No problem — we can email a fresh 6-digit code to ${email ?? 'your address'}.`,
       )
     }
 
@@ -126,19 +198,40 @@ function VerifyMagicLinkInner() {
       )
     }
 
-    if (isSuccess) {
+    if (consume.isSuccess) {
       return (
         <div style={{ textAlign: 'center' }}>
           {iconWrap('var(--green)', 'rgba(39,210,128,.12)', <Icon.check size={26} />)}
           <div className="t-h2" style={{ marginBottom: 8 }}>You&apos;re in</div>
           <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
-            Redirecting to your dashboard…
+            Taking you to your workspace…
           </div>
         </div>
       )
     }
 
-    return null
+    // status === 'ready': the explicit human step that scanners never take.
+    return (
+      <div style={{ textAlign: 'center' }}>
+        {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.mail size={26} />)}
+        <div className="t-h2" style={{ marginBottom: 8 }}>Sign in to Flicks Suite</div>
+        <div style={subtle}>
+          Continue as <strong style={{ color: '#fff' }}>{email}</strong>
+        </div>
+        <Btn
+          kind="primary"
+          style={{ width: '100%', height: 46 }}
+          disabled={consume.isPending}
+          iconRight={<Icon.arrow size={16} />}
+          onClick={handleContinue}
+        >
+          {consume.isPending ? 'Signing you in…' : 'Continue'}
+        </Btn>
+        <Link href="/login" style={{ display: 'block', marginTop: 12, fontSize: 12.5, fontWeight: 700, color: 'var(--text-mute)' }}>
+          Not you? Sign in with a different email
+        </Link>
+      </div>
+    )
   }
 
   return (
@@ -157,9 +250,9 @@ export default function VerifyMagicLinkPage() {
         <AuthLayout>
           <AuthCard>
             <div style={{ textAlign: 'center', padding: '8px 0' }}>
-              <div className="t-h2" style={{ marginBottom: 8 }}>Verifying your link</div>
+              <div className="t-h2" style={{ marginBottom: 8 }}>Checking your link</div>
               <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)' }}>
-                Hang tight…
+                One moment…
               </div>
             </div>
           </AuthCard>

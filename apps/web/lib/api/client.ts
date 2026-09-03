@@ -14,6 +14,8 @@ const AUTH_PATHS_NO_REDIRECT = [
   '/api/v1/auth/request-otp',
   '/api/v1/auth/verify-otp',
   '/api/v1/auth/magic-link',
+  '/api/v1/auth/magic-link/consume',
+  '/api/v1/auth/magic-link/recover',
   '/api/v1/auth/refresh',
   '/api/v1/notifications/unread',
   '/api/v1/presence',
@@ -27,6 +29,8 @@ const NO_SILENT_REFRESH = [
   '/api/v1/auth/request-otp',
   '/api/v1/auth/verify-otp',
   '/api/v1/auth/magic-link',
+  '/api/v1/auth/magic-link/consume',
+  '/api/v1/auth/magic-link/recover',
   '/api/v1/auth/logout',
 ]
 

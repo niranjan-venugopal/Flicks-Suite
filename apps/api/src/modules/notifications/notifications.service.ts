@@ -486,7 +486,8 @@ export class NotificationsService {
               <a href="${props.magicLinkUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">Accept invite &amp; sign in</a>
             </p>
             <p>If the button doesn't work, just <strong>sign in at ${appName} with this
-            email address</strong> — your access activates automatically.</p>
+            email address</strong> and enter the code we send you — your access
+            activates automatically.</p>
           `,
         };
       }

@@ -42,7 +42,7 @@ function calendarDaysLeft(iso: string): number {
 
 export function BillingBanners() {
   const { currentUser } = useAuthStore()
-  const billing = useBilling()
+  const billing = useBilling({ enabled: currentUser?.role !== 'GUEST' })
   const [dismissed, setDismissed] = useState(true) // assume dismissed until read
   useEffect(() => {
     setDismissed(!!localStorage.getItem(dismissKey()))

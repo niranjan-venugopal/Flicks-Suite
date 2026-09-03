@@ -35,11 +35,14 @@ export interface BillingState {
   }>
 }
 
-export function useBilling(opts?: { poll?: boolean }) {
+export function useBilling(opts?: { poll?: boolean; enabled?: boolean }) {
   return useQuery({
     queryKey: ['billing'],
     queryFn: () => api.get<{ data: BillingState }>('/api/v1/billing'),
     staleTime: 30_000,
+    // Round H: the host workspace's billing state is not a guest's to see —
+    // the API refuses guests, so the shell doesn't ask.
+    enabled: opts?.enabled ?? true,
     // D20: poll for the webhook flip to active while a checkout is pending —
     // either because this page just opened one (opts.poll) or because the
     // server says one exists (survives navigation/reload; the local flag

@@ -21,6 +21,7 @@ import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
 import { JwtAuthGuard } from './core/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './core/auth/guards/roles.guard';
+import { GuestScopeGuard } from './core/auth/guards/guest-scope.guard';
 import { RequestIdInterceptor } from './core/common/interceptors/request-id.interceptor';
 
 // Feature modules
@@ -202,6 +203,9 @@ import { PmJobs } from './jobs/pm.jobs';
     { provide: APP_GUARD, useClass: ExplicitThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Round H: guest seats are project-scoped — deny-by-default allowlist for
+    // the guest role (RolesGuard only ranks routes that carry @Roles).
+    { provide: APP_GUARD, useClass: GuestScopeGuard },
     // Billing paywall LAST: needs req.user + role, blocks mutations on locked
     // workspaces with 402 BILLING_REQUIRED (PRD v4 §8B.5, @BillingExempt opts out).
     { provide: APP_GUARD, useClass: BillingGuard },

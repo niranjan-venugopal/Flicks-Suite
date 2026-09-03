@@ -575,7 +575,7 @@ export function Sidebar({ variant = 'tenant' }: { variant?: SidebarVariant } = {
   // FAM admins live under /fam/* and have no tenant approvals queue.
   const showApprovalsBadge =
     !isFam && (role === 'HR_ADMIN' || role === 'OWNER' || role === 'MANAGER')
-  const overview = useAdminOverview()
+  const overview = useAdminOverview(showApprovalsBadge)
   const pendingCount = showApprovalsBadge ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 
   // Determine which item is active and which parent group to auto-open.

@@ -33,7 +33,7 @@ function InboxContent() {
     router.replace(t === 'notifications' ? pathname : `${pathname}?tab=${t}`, { scroll: false })
 
   const unread = useUnreadNotifications()
-  const overview = useAdminOverview()
+  const overview = useAdminOverview(isApprover)
   const unreadCount = unread.data?.total ?? 0
   const pendingCount = isApprover ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 

@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { Suspense, useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { Btn, Icon } from '@/components/proto'
@@ -17,7 +17,27 @@ const emailSchema = z.object({
 })
 type EmailForm = z.infer<typeof emailSchema>
 
+// useSearchParams() needs a Suspense boundary for Next's static export step
+// (same shape as the /verify page).
 export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <AuthLayout>
+          <AuthCard>
+            <div style={{ textAlign: 'center', padding: '8px 0' }}>
+              <div className="t-h2">Welcome back</div>
+            </div>
+          </AuthCard>
+        </AuthLayout>
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
+  )
+}
+
+function LoginPageInner() {
   const { toast } = useToast()
   const [step, setStep] = useState<'email' | 'otp' | 'totp'>('email')
   const [email, setEmail] = useState('')
@@ -31,6 +51,22 @@ export default function LoginPage() {
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
   const completeTotp = useCompleteTotp()
+
+  // Round H — arriving from a recovered magic link (/verify → "Email me a
+  // sign-in code"): the API has ALREADY emailed a code to this address, so
+  // open straight at the code step without a second request-otp (quota).
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    const prefill = searchParams.get('email')
+    if (prefill && searchParams.get('sent') === '1') {
+      setEmail(prefill)
+      setStep('otp')
+      setCountdown(60)
+      setTimeout(() => otpInputsRef.current[0]?.focus(), 100)
+    }
+    // one-shot on mount — the URL is the only input
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Already-authed visitors (reopened tab / bookmarked /login while the
   // refresh window is still live — the api client silently redeems the
