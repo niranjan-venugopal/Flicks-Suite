@@ -122,6 +122,59 @@ export function usePendingLeaveRequests() {
   })
 }
 
+// ─── Round I — Team → Leave (Pending | Upcoming | History) ────────────────────
+export interface TeamLeaveRequest {
+  id: string
+  employeeId: string
+  employeeUserId: string | null
+  employeeName: string
+  employeeCode: string | null
+  leaveTypeId: string
+  leaveTypeName: string | null
+  leaveTypeCode: string | null
+  startDate: string
+  endDate: string
+  isHalfDay: boolean
+  totalDays: number
+  reason: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'draft' | 'revoked'
+  appliedAt: string
+  approverId: string | null
+  approverName: string | null
+  approverComment: string | null
+  approvedAt: string | null
+  rejectedAt: string | null
+  cancelledAt: string | null
+}
+export interface TeamLeaveParams {
+  status?: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'all'
+  from?: string
+  to?: string
+  page?: number
+  limit?: number
+}
+export function useTeamLeave(params: TeamLeaveParams, enabled = true) {
+  return useQuery({
+    queryKey: ['leave', 'team', params],
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (params.status) qs.set('status', params.status)
+      if (params.from) qs.set('from', params.from)
+      if (params.to) qs.set('to', params.to)
+      if (params.page) qs.set('page', String(params.page))
+      if (params.limit) qs.set('limit', String(params.limit))
+      const s = qs.toString()
+      return api.get<{
+        data: TeamLeaveRequest[]
+        pagination: { page: number; limit: number; total: number; totalPages: number }
+        scope: 'org' | 'team'
+      }>(`/api/v1/leave/team${s ? `?${s}` : ''}`)
+    },
+    enabled,
+    placeholderData: (prev) => prev,
+  })
+}
+
 export interface Holiday {
   id: string
   date: string

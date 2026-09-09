@@ -10,7 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -35,7 +36,17 @@ class CreateDealDto {
 class MoveStageDto {
   @IsString() stage_id!: string;
   @IsOptional() @IsString() lost_reason_id?: string;
-  @IsOptional() @IsString() lost_reason_note?: string;
+  @IsOptional() @IsString() @MaxLength(500) lost_reason_note?: string;
+}
+
+/** Round I — closed-deals list. `closed` (default) = won + lost. */
+class ListDealsQueryDto {
+  @IsOptional() @IsIn(['open', 'won', 'lost', 'closed']) status?: 'open' | 'won' | 'lost' | 'closed';
+  @IsOptional() @IsUUID() owner_user_id?: string;
+  @IsOptional() @IsUUID() pipeline_id?: string;
+  @IsOptional() @IsString() @MaxLength(120) q?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
 
 class AddProductDto {
@@ -105,6 +116,14 @@ export class DealsController {
   @RequireGrant('crm', 'view')
   dealsForCompany(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.deals.listForCompany(user.tenantId, id);
+  }
+
+  // Declared above `deals/:id` so the static segment wins route matching.
+  @Get('deals')
+  @RequireGrant('crm', 'view')
+  @ApiOperation({ summary: 'Closed (won/lost) deals list with outcome + reason; status=open also allowed' })
+  list(@Query() query: ListDealsQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.deals.list(user.tenantId, query);
   }
 
   @Get('deals/:id')

@@ -29,6 +29,7 @@ import {
   UpdateHolidayDto,
   ImportHolidaysDto,
   LeaveListQueryDto,
+  TeamLeaveQueryDto,
 } from './leave.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -101,6 +102,15 @@ export class LeaveController {
     return this.leaveService.cancelLeave(id, user.sub, user.tenantId, dto);
   }
 
+  /**
+   * Round I: the reviewer's scope follows the JWT role the guard trusted —
+   * owner/admin (and platform staff) are workspace-wide, managers see only
+   * their direct reports.
+   */
+  private reviewerRole(user: JwtPayload): string {
+    return user.isPlatformAdmin === true ? 'owner' : user.role;
+  }
+
   @Get('pending')
   @Roles('manager')
   @ApiOperation({ summary: 'List leave requests pending my review' })
@@ -109,7 +119,22 @@ export class LeaveController {
     @Query() query: LeaveListQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.leaveService.listPending(user.sub, user.tenantId, query);
+    return this.leaveService.listPending(user.sub, user.tenantId, query, this.reviewerRole(user));
+  }
+
+  @Get('team')
+  @Roles('manager')
+  @ApiOperation({
+    summary: "My team's leave (any status)",
+    description:
+      'Round I — backs Team → Leave (Pending | Upcoming | History). Managers see their direct reports; owner/admin see the whole workspace.',
+  })
+  @ApiResponse({ status: 200, description: 'Team leave requests' })
+  async listTeam(
+    @Query() query: TeamLeaveQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.leaveService.listTeam(user.sub, user.tenantId, query, this.reviewerRole(user));
   }
 
   @Post(':id/review')
@@ -122,7 +147,13 @@ export class LeaveController {
     @Body() dto: ReviewLeaveDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    const res = await this.leaveService.reviewLeave(id, user.sub, user.tenantId, dto);
+    const res = await this.leaveService.reviewLeave(
+      id,
+      user.sub,
+      user.tenantId,
+      dto,
+      this.reviewerRole(user),
+    );
     // PRD v4 §5 — approving today's leave flips the REQUESTER to Out of office
     // org-wide ≤5s. The gateway resolves employee→user itself.
     const employeeId = (res as { data?: { employee_id?: string } })?.data?.employee_id;

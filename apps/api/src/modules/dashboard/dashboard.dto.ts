@@ -27,6 +27,11 @@ export class ActivityQueryDto {
 
 export interface AdminOverviewDto {
   generatedAt: string;
+  /**
+   * Round I — `team` means every number below is narrowed to the caller's
+   * direct reports (managers); `org` is workspace-wide (owner/admin/finance).
+   */
+  scope: 'org' | 'team';
 
   // Stats grid (4 headline tiles)
   stats: {

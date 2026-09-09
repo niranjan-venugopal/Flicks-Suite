@@ -109,6 +109,31 @@ export class ReviewTimesheetDto {
 
 // ─── Listing ─────────────────────────────────────────────────────────────────
 
+/** Round I — Team → Timesheets (Pending review | All periods). */
+export class TeamTimesheetQueryDto {
+  @ApiPropertyOptional({
+    enum: ['draft', 'submitted', 'approved', 'rejected', 'locked', 'all'],
+    default: 'all',
+  })
+  @IsIn(['draft', 'submitted', 'approved', 'rejected', 'locked', 'all'])
+  @IsOptional()
+  status?: 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked' | 'all';
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Type(() => Number)
+  page?: number = 1;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Type(() => Number)
+  limit?: number = 50;
+}
+
 export class TimesheetListQueryDto {
   @ApiPropertyOptional()
   @IsString()

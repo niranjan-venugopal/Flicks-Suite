@@ -68,6 +68,13 @@ function LoginPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Round I — `?next=` carries the page the visitor was bounced from (an
+  // emailed leave deep link, for instance). Honoured ONLY when it is a
+  // same-origin relative path: a leading "/" that is not "//" or "/\" (which
+  // browsers treat as protocol-relative → open redirect).
+  const nextParam = searchParams.get('next')
+  const nextPath = nextParam && /^\/(?![/\\])/.test(nextParam) ? nextParam : null
+
   // Already-authed visitors (reopened tab / bookmarked /login while the
   // refresh window is still live — the api client silently redeems the
   // refresh cookie when /me first 401s) go straight to their dashboard,
@@ -80,8 +87,8 @@ function LoginPageInner() {
     ).toLowerCase()
     const isPlatformAdmin =
       !me.data.impersonatorUserId && (role === 'fam' || role === 'super_admin')
-    router.replace(isPlatformAdmin ? '/fam/overview' : '/dashboard')
-  }, [me.data, step, router])
+    router.replace(isPlatformAdmin ? '/fam/overview' : (nextPath ?? '/dashboard'))
+  }, [me.data, step, router, nextPath])
 
   const emailForm = useForm<EmailForm>({
     resolver: zodResolver(emailSchema),
@@ -144,7 +151,9 @@ function LoginPageInner() {
         window.location.assign('/totp-setup')
         return
       }
-      window.location.assign('/dashboard')
+      // The (app) layout re-routes guests / platform staff / joiners from
+      // wherever they land, so a deep link is safe to honour here.
+      window.location.assign(nextPath ?? '/dashboard')
     } catch {
       toast({
         title: 'Invalid code',

@@ -2,12 +2,13 @@
 
 import { useState } from 'react'
 import { Btn, Icon, Modal, Pill } from '@/components/proto'
+import { Sk } from '@/components/states'
 import { fmtCur } from './kit'
 
 // ─────────────────────────────────────────────────────────
 // C3 — Won / Lost dialogs (scr-deal.jsx, ported verbatim)
 // Won: celebrate + one-click deal→invoice/quote (§4.4)
-// Lost: reason REQUIRED + optional note (win/loss honesty)
+// Lost: a reason OR a note (win/loss honesty) — never a dead end
 // ─────────────────────────────────────────────────────────
 
 export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote, onCreateProject, busy }: {
@@ -55,43 +56,75 @@ export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote,
   )
 }
 
-export function LostDialog({ open, onClose, reasons, onConfirm, busy }: {
+/** Sentinel id for the always-present "Other" pill (free-text note only). */
+const OTHER = '__other__'
+
+/**
+ * Round I: the dialog can never deadlock. Reasons self-heal server-side (a
+ * tenant created after migration 0032 used to have zero and the button was
+ * hard-disabled for ever), an "Other" pill is always offered, a reason OR a
+ * non-empty note makes the form valid, and a failed load shows an error line
+ * with Retry instead of an empty row.
+ */
+export function LostDialog({ open, onClose, reasons, onConfirm, busy, loading, error, onRetry }: {
   open: boolean
   onClose: () => void
   reasons: Array<{ id: string; label: string }>
-  onConfirm: (reasonId: string, note: string) => void
+  /** `reasonId` is null when the user picked Other (note carries the why). */
+  onConfirm: (reasonId: string | null, note: string) => void
   busy?: boolean
+  loading?: boolean
+  error?: boolean
+  onRetry?: () => void
 }) {
   const [reason, setReason] = useState<string>('')
   const [note, setNote] = useState('')
   if (!open) return null
+  const trimmedNote = note.trim()
+  const isOther = reason === OTHER
+  const valid = (reason && !isOther) || trimmedNote.length > 0
+  const pills = [...reasons, { id: OTHER, label: 'Other' }]
   return (
     <Modal open={open} onClose={onClose} width={440} title="Mark as lost" sub="A reason keeps win/loss reporting honest"
       footer={<>
         <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
-        <Btn kind="danger" icon={<Icon.x size={14} />} disabled={!reason || busy} onClick={() => reason && onConfirm(reason, note)}
-          style={reason ? undefined : { opacity: 0.45, pointerEvents: 'none' }}>
+        <Btn kind="danger" icon={<Icon.x size={14} />} disabled={!valid || busy}
+          onClick={() => valid && onConfirm(isOther || !reason ? null : reason, trimmedNote)}
+          style={valid ? undefined : { opacity: 0.45 }}>
           {busy ? 'Saving…' : 'Mark lost'}
         </Btn>
       </>}>
-      <div className="label">Lost reason <span style={{ color: 'var(--coral)' }}>*</span></div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-        {reasons.map((r) => (
-          <button key={r.id} onClick={() => setReason(r.id)} style={{
-            padding: '8px 13px', borderRadius: 99, cursor: 'pointer',
-            background: reason === r.id ? 'rgba(248,120,107,.14)' : 'var(--surf-1)',
-            border: `1px solid ${reason === r.id ? 'rgba(248,120,107,.45)' : 'var(--bord)'}`,
-            fontSize: 12, fontWeight: 800, color: reason === r.id ? 'var(--coral)' : 'var(--text-2)',
-          }}>{r.label}</button>
-        ))}
-      </div>
-      {!reason && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 700, color: 'var(--coral)', marginBottom: 10 }}>
-          <Icon.warn size={12} /> Pick a reason to continue
+      <div className="label">Lost reason</div>
+      {loading ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }} data-testid="lost-reasons-loading">
+          {[70, 90, 80, 96, 84].map((w, i) => <Sk key={i} w={w} h={32} style={{ borderRadius: 99 }} />)}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {pills.map((r) => (
+            <button key={r.id} type="button" onClick={() => setReason(r.id)} data-testid={`lost-reason-${r.id === OTHER ? 'other' : r.id}`} style={{
+              padding: '8px 13px', borderRadius: 99, cursor: 'pointer',
+              background: reason === r.id ? 'rgba(248,120,107,.14)' : 'var(--surf-1)',
+              border: `1px solid ${reason === r.id ? 'rgba(248,120,107,.45)' : 'var(--bord)'}`,
+              fontSize: 12, fontWeight: 800, color: reason === r.id ? 'var(--coral)' : 'var(--text-2)',
+            }}>{r.label}</button>
+          ))}
         </div>
       )}
-      <div className="label">Note <span style={{ color: 'var(--text-faint)' }}>· optional</span></div>
-      <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Went with a competitor on a 2-year discount…" style={{ height: 64, padding: 11, resize: 'none', width: '100%' }} />
+      {error && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, fontWeight: 700, color: 'var(--coral)', marginBottom: 10 }}>
+          <Icon.warn size={12} /> Couldn&apos;t load the reason list.
+          {onRetry && <Btn kind="ghost" size="sm" onClick={onRetry}>Retry</Btn>}
+          <span style={{ color: 'var(--text-mute)' }}>You can still choose Other and add a note.</span>
+        </div>
+      )}
+      {!valid && !loading && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 10 }}>
+          <Icon.info size={12} /> {isOther ? 'Add a short note to continue' : 'Pick a reason, or choose Other and add a note'}
+        </div>
+      )}
+      <div className="label">Note <span style={{ color: 'var(--text-faint)' }}>· {isOther ? 'required for Other' : 'optional'}</span></div>
+      <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Went with a competitor on a 2-year discount…" style={{ height: 64, padding: 11, resize: 'none', width: '100%' }} />
     </Modal>
   )
 }

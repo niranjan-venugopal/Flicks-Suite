@@ -7,6 +7,7 @@ import { and, asc, eq, isNull } from 'drizzle-orm';
 import { pipelines, pipelineStages, lostReasons } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
+import { ensureDefaultLostReasons } from './lost-reasons.seed';
 
 /**
  * Pipelines, stages & lost reasons (PRD v5 §4.1). Each pipeline enforces
@@ -44,11 +45,14 @@ export class PipelinesService {
 
   async lostReasons(tenantId: string) {
     return this.db.withTenant(tenantId, async (tx) => {
+      // Round I: tenants created after migration 0032 had no reasons at all,
+      // so the "Mark as lost" dialog could never be confirmed. Heal on read.
+      await ensureDefaultLostReasons(tx, tenantId);
       const rows = await tx
         .select()
         .from(lostReasons)
-        .where(eq(lostReasons.archived, false))
-        .orderBy(asc(lostReasons.display_order));
+        .where(and(eq(lostReasons.tenant_id, tenantId), eq(lostReasons.archived, false)))
+        .orderBy(asc(lostReasons.display_order), asc(lostReasons.label));
       return { data: rows };
     });
   }

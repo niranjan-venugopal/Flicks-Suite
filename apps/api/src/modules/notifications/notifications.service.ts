@@ -563,7 +563,11 @@ export class NotificationsService {
       }
 
       case 'leave-requested': {
-        const { employeeName, leaveType, startDate, endDate, days, reason } =
+        // Round I: every interpolated string is user-controlled (names,
+        // leave-type labels, the free-text reason) → escaped. The three
+        // links only OPEN the request in the app; nothing changes until the
+        // reviewer confirms there.
+        const { employeeName, leaveType, startDate, endDate, days, reason, reviewUrl, approveUrl, rejectUrl } =
           props as {
             employeeName: string;
             leaveType: string;
@@ -571,20 +575,37 @@ export class NotificationsService {
             endDate: string;
             days: number;
             reason?: string;
+            reviewUrl?: string;
+            approveUrl?: string;
+            rejectUrl?: string;
           };
+        const btn = (href: string, label: string, bg: string) =>
+          `<a href="${this.esc(href)}" style="display: inline-block; background: ${bg}; color: white; padding: 12px 22px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-right: 10px;">${label}</a>`;
         return {
-          subject: `Leave Request — ${String(employeeName)} (${String(leaveType)})`,
+          subject: `Leave Request — ${this.esc(employeeName)} (${this.esc(leaveType)})`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #1a1a2e;">Leave Request Received</h2>
-              <p>${String(employeeName)} has submitted a leave request:</p>
+              <p>${this.esc(employeeName)} has submitted a leave request:</p>
               <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
-                <tr><td style="padding: 8px; color: #666;">Type:</td><td style="padding: 8px;">${String(leaveType)}</td></tr>
-                <tr><td style="padding: 8px; color: #666;">From:</td><td style="padding: 8px;">${String(startDate)}</td></tr>
-                <tr><td style="padding: 8px; color: #666;">To:</td><td style="padding: 8px;">${String(endDate)}</td></tr>
-                <tr><td style="padding: 8px; color: #666;">Days:</td><td style="padding: 8px;">${String(days)}</td></tr>
-                ${reason ? `<tr><td style="padding: 8px; color: #666;">Reason:</td><td style="padding: 8px;">${String(reason)}</td></tr>` : ''}
+                <tr><td style="padding: 8px; color: #666;">Type:</td><td style="padding: 8px;">${this.esc(leaveType)}</td></tr>
+                <tr><td style="padding: 8px; color: #666;">From:</td><td style="padding: 8px;">${this.esc(startDate)}</td></tr>
+                <tr><td style="padding: 8px; color: #666;">To:</td><td style="padding: 8px;">${this.esc(endDate)}</td></tr>
+                <tr><td style="padding: 8px; color: #666;">Days:</td><td style="padding: 8px;">${this.esc(days)}</td></tr>
+                ${reason ? `<tr><td style="padding: 8px; color: #666;">Reason:</td><td style="padding: 8px;">${this.esc(reason)}</td></tr>` : ''}
               </table>
+              ${
+                approveUrl && rejectUrl
+                  ? `<p style="margin: 24px 0 8px;">${btn(approveUrl, 'Approve', '#22c55e')}${btn(rejectUrl, 'Reject', '#ef4444')}</p>
+              <p style="color: #666; font-size: 12px; margin: 0 0 20px;">Nothing changes until you confirm in the app.</p>`
+                  : ''
+              }
+              ${
+                reviewUrl
+                  ? `<p style="margin: 8px 0;"><a href="${this.esc(reviewUrl)}" style="color: #3E7BFA; font-weight: 600;">Review in ${appName}</a></p>`
+                  : ''
+              }
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">If the buttons don't work, sign in to ${appName} and open Team → Leave.</p>
             </div>
           `,
         };

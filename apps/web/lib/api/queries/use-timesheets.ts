@@ -101,6 +101,51 @@ export function usePendingTimesheets() {
   })
 }
 
+// ─── Round I — Team → Timesheets (Pending review | All periods) ───────────────
+export interface TeamTimesheetPeriod {
+  id: string
+  employeeId: string
+  employeeUserId: string | null
+  employeeCode: string | null
+  employeeName: string
+  periodStart: string
+  periodEnd: string
+  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked'
+  totalHours: number
+  totalBillableHours: number
+  submittedAt: string | null
+  approverId: string | null
+  approverName: string | null
+  approvedAt: string | null
+  rejectedAt: string | null
+  rejectionComment: string | null
+  updatedAt: string
+}
+export interface TeamTimesheetParams {
+  status?: 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked' | 'all'
+  page?: number
+  limit?: number
+}
+export function useTeamTimesheets(params: TeamTimesheetParams, enabled = true) {
+  return useQuery({
+    queryKey: ['timesheet', 'team', params],
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (params.status) qs.set('status', params.status)
+      if (params.page) qs.set('page', String(params.page))
+      if (params.limit) qs.set('limit', String(params.limit))
+      const s = qs.toString()
+      return api.get<{
+        data: TeamTimesheetPeriod[]
+        pagination: { page: number; limit: number; total: number; totalPages: number }
+        scope: 'org' | 'team'
+      }>(`/api/v1/timesheet/team${s ? `?${s}` : ''}`)
+    },
+    enabled,
+    placeholderData: (prev) => prev,
+  })
+}
+
 export function useSaveTimesheetEntries() {
   const qc = useQueryClient()
   return useMutation({

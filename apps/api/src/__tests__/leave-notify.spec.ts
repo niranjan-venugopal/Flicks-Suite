@@ -157,7 +157,8 @@ describe('Leave in-app notifications (launch-readiness)', () => {
     );
     const call = inApp.mock.calls.find((c) => c[1] === 'leave.requested')!;
     expect(call[0]).toBe(managerUserId);
-    expect(call[3]).toBe('/team/leave'); // approver link
+    // Round I: the approver link deep-links to THIS request on Team → Leave.
+    expect(call[3]).toMatch(/^\/team\/leave\?request=[0-9a-f-]{36}$/);
     expect(call[4]).toBe(tenantId);
   });
 

@@ -39,6 +39,9 @@ export class DashboardController {
       includeApprovals:
         isPlatformAdmin ||
         ['owner', 'admin', 'manager', 'fam', 'super_admin'].includes(user.role),
+      // Round I (founder decision): a manager's dashboard is about THEIR
+      // team — direct reports only. Owner/admin/finance stay workspace-wide.
+      scope: !isPlatformAdmin && user.role === 'manager' ? 'team' : 'org',
     });
   }
 

@@ -214,6 +214,8 @@ export interface DealDetail extends DealCard {
   base_currency: string
   pipeline_id: string
   lost_reason_id: string | null
+  /** Round I — resolved label of lost_reason_id (null when none / archived). */
+  lost_reason_label: string | null
   lost_reason_note: string | null
   source: string | null
   won_at: string | null
@@ -282,6 +284,60 @@ export function useDeal(id: string | null) {
     queryKey: ['crm', 'deal', id],
     queryFn: () => api.get<{ data: DealDetail }>(`/api/v1/crm/deals/${id}`),
     enabled: !!id,
+  })
+}
+
+// ─── Round I — closed deals list (the "Closed" view on the deals page) ─────────
+export interface ClosedDealRow {
+  id: string
+  title: string
+  status: 'open' | 'won' | 'lost'
+  pipeline_id: string
+  stage_id: string
+  stage_name: string | null
+  company_id: string | null
+  company_name: string | null
+  owner_user_id: string
+  owner_name: string | null
+  value_amount: string
+  currency: string
+  value_base_amount: string
+  expected_close_date: string | null
+  won_at: string | null
+  lost_at: string | null
+  closed_at: string | null
+  lost_reason_id: string | null
+  lost_reason_label: string | null
+  lost_reason_note: string | null
+  created_at: string
+  updated_at: string
+}
+export interface ClosedDealsParams {
+  status?: 'open' | 'won' | 'lost' | 'closed'
+  owner_user_id?: string
+  pipeline_id?: string
+  q?: string
+  page?: number
+  limit?: number
+}
+export function useClosedDeals(params: ClosedDealsParams, enabled = true) {
+  return useQuery({
+    queryKey: ['crm', 'deals', params],
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (params.status) qs.set('status', params.status)
+      if (params.owner_user_id) qs.set('owner_user_id', params.owner_user_id)
+      if (params.pipeline_id) qs.set('pipeline_id', params.pipeline_id)
+      if (params.q) qs.set('q', params.q)
+      if (params.page) qs.set('page', String(params.page))
+      if (params.limit) qs.set('limit', String(params.limit))
+      const s = qs.toString()
+      return api.get<{ data: ClosedDealRow[]; pagination: { page: number; limit: number; total: number; totalPages: number }; base_currency: string }>(
+        `/api/v1/crm/deals${s ? `?${s}` : ''}`,
+      )
+    },
+    enabled,
+    placeholderData: (prev) => prev,
   })
 }
 
@@ -376,7 +432,10 @@ export function useCreateDeal() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post<{ data: DealCard }>('/api/v1/crm/deals', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
+    },
   })
 }
 
@@ -385,7 +444,13 @@ export function useMoveDeal() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: { stage_id: string; lost_reason_id?: string; lost_reason_note?: string } }) =>
       api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/move`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+    onSuccess: (_r, { id }) => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      // Round I: a won/lost move lands the deal in the Closed view.
+      qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+      qc.invalidateQueries({ queryKey: ['crm', 'forecast'] })
+    },
   })
 }
 
@@ -407,6 +472,9 @@ export function useReopenDeal() {
     onSuccess: (_r, id) => {
       qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
       qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      // Round I: reopening removes the deal from the Closed view.
+      qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'forecast'] })
     },
   })
 }
@@ -415,7 +483,10 @@ export function useDeleteDeal() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/crm/deals/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'board'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+      qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
+    },
   })
 }
 

@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import {
   dealPeople,
   dealProducts,
@@ -14,6 +15,7 @@ import {
   directoryCompanies,
   directoryPeople,
   invoices,
+  lostReasons,
   memberships,
   pipelines,
   pipelineStages,
@@ -29,6 +31,17 @@ import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { InvoicingPublicService } from '../invoicing/public';
 import { FxService } from './fx.service';
+import { ensureDefaultLostReasons } from './lost-reasons.seed';
+
+/** Query for the closed-deals list (Round I). `closed` = won + lost. */
+export interface ListDealsQuery {
+  status?: 'open' | 'won' | 'lost' | 'closed';
+  owner_user_id?: string;
+  pipeline_id?: string;
+  q?: string;
+  page?: number;
+  limit?: number;
+}
 
 /**
  * Deals & the kanban board (PRD v5 §4). Money is stored in the deal's own
@@ -62,10 +75,15 @@ export class DealsService {
    * (idempotent: no-op when any live pipeline exists).
    */
   private async ensureDefaultPipeline(tx: Db, tenantId: string) {
+    // Round I: the lost reasons are healed independently of the pipeline —
+    // a tenant seeded by 0032's pipeline loop but created after its reasons
+    // loop (or with every reason archived) must still be able to mark a deal
+    // lost, so this runs BEFORE the pipeline early-return.
+    await ensureDefaultLostReasons(tx, tenantId);
     const [existing] = await tx
       .select({ id: pipelines.id })
       .from(pipelines)
-      .where(isNull(pipelines.deleted_at))
+      .where(and(eq(pipelines.tenant_id, tenantId), isNull(pipelines.deleted_at)))
       .orderBy(asc(pipelines.display_order))
       .limit(1);
     if (existing) return;
@@ -266,6 +284,15 @@ export class DealsService {
               .limit(1)
           : Promise.resolve([]),
       ]);
+      // Round I: the detail page shows WHY a deal was lost. lost_reason_id is a
+      // bare uuid (no FK), so resolve it with an explicit tenant predicate.
+      const [reason] = d.lost_reason_id
+        ? await tx
+            .select({ label: lostReasons.label })
+            .from(lostReasons)
+            .where(and(eq(lostReasons.tenant_id, tenantId), eq(lostReasons.id, d.lost_reason_id)))
+            .limit(1)
+        : [undefined];
       // Linked billing documents (§4.4 echo chips) — number + status via RLS reads.
       const docIds = [d.invoice_id, d.quote_id].filter((x): x is string => !!x);
       const docs = docIds.length
@@ -279,6 +306,7 @@ export class DealsService {
           ...d,
           base_currency: base,
           owner_name: owner?.name ?? null,
+          lost_reason_label: reason?.label ?? null,
           company: company[0] ?? null,
           stage_history: history,
           products,
@@ -311,6 +339,86 @@ export class DealsService {
 
   async listForCompany(tenantId: string, companyId: string) {
     return this.listForRef(tenantId, eq(deals.company_id, companyId));
+  }
+
+  /**
+   * Round I — the closed-deals list ("Closed" view on the deals page). The
+   * kanban only ever renders open deals, so won/lost deals used to vanish
+   * from the CRM the moment they were closed. Default status is `closed`
+   * (won + lost); `open` is allowed so the same endpoint can back a plain list
+   * later. Every join carries the tenant predicate explicitly — lost_reasons
+   * has no FK from deals, and the list must never resolve another workspace's
+   * label even on a mis-roled pool (Round F rule).
+   */
+  async list(tenantId: string, query: ListDealsQuery = {}) {
+    const status = query.status ?? 'closed';
+    const page = Math.max(1, Math.floor(query.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(query.limit ?? 25)));
+    const q = (query.q ?? '').trim();
+    // Escape ILIKE metacharacters (default escape char is backslash).
+    const like = q ? `%${q.replace(/[\\%_]/g, '\\$&')}%` : null;
+
+    return this.db.withTenant(tenantId, async (tx) => {
+      const base = await this.baseCurrency(tx, tenantId);
+      const where = and(
+        eq(deals.tenant_id, tenantId),
+        isNull(deals.deleted_at),
+        status === 'closed' ? inArray(deals.status, ['won', 'lost']) : eq(deals.status, status),
+        query.owner_user_id ? eq(deals.owner_user_id, query.owner_user_id) : undefined,
+        query.pipeline_id ? eq(deals.pipeline_id, query.pipeline_id) : undefined,
+        like ? ilike(deals.title, like) : undefined,
+      );
+      const closedAt: SQL<string | null> = sql<string | null>`coalesce(${deals.won_at}, ${deals.lost_at})`;
+
+      const [rows, [countRow]] = await Promise.all([
+        tx
+          .select({
+            id: deals.id,
+            title: deals.title,
+            status: deals.status,
+            pipeline_id: deals.pipeline_id,
+            stage_id: deals.stage_id,
+            stage_name: pipelineStages.name,
+            company_id: deals.company_id,
+            company_name: directoryCompanies.name,
+            owner_user_id: deals.owner_user_id,
+            owner_name: users.full_name,
+            value_amount: deals.value_amount,
+            currency: deals.currency,
+            value_base_amount: deals.value_base_amount,
+            expected_close_date: deals.expected_close_date,
+            won_at: deals.won_at,
+            lost_at: deals.lost_at,
+            closed_at: closedAt,
+            lost_reason_id: deals.lost_reason_id,
+            lost_reason_label: lostReasons.label,
+            lost_reason_note: deals.lost_reason_note,
+            created_at: deals.created_at,
+            updated_at: deals.updated_at,
+          })
+          .from(deals)
+          .leftJoin(pipelineStages, and(eq(pipelineStages.id, deals.stage_id), eq(pipelineStages.tenant_id, tenantId)))
+          .leftJoin(users, eq(users.id, deals.owner_user_id))
+          .leftJoin(
+            directoryCompanies,
+            and(eq(directoryCompanies.id, deals.company_id), eq(directoryCompanies.tenant_id, tenantId)),
+          )
+          .leftJoin(lostReasons, and(eq(lostReasons.id, deals.lost_reason_id), eq(lostReasons.tenant_id, tenantId)))
+          .where(where)
+          // Most recently closed first; open deals (closed_at null) fall back
+          // to their last update so `status=open` stays deterministic.
+          .orderBy(sql`coalesce(${deals.won_at}, ${deals.lost_at}, ${deals.updated_at}) desc`, desc(deals.id))
+          .limit(limit)
+          .offset((page - 1) * limit),
+        tx.select({ total: sql<number>`count(*)::int` }).from(deals).where(where),
+      ]);
+      const total = countRow?.total ?? 0;
+      return {
+        data: rows,
+        pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+        base_currency: base,
+      };
+    });
   }
 
   private async listForRef(tenantId: string, refWhere: ReturnType<typeof eq>) {
@@ -506,9 +614,23 @@ export class DealsService {
         }
         if (target.id === d.stage_id) return { deal: d, moved: false, target };
 
-        // Lost stages may require a reason.
-        if (target.stage_type === 'lost' && !dto.lost_reason_id && !dto.lost_reason_note) {
-          // Reason is configurable per tenant; default to optional (accept).
+        // Lost stages: a reason is optional (a free-text note alone — the
+        // dialog's "Other" — is fine), but a SUPPLIED reason id must be one of
+        // this tenant's. lost_reason_id has no FK at all, so nothing else would
+        // stop a stray or cross-tenant id from being stored (house rule 2).
+        let lostReasonId: string | null = null;
+        let lostReasonNote: string | null = null;
+        if (target.stage_type === 'lost') {
+          lostReasonNote = (dto.lost_reason_note ?? '').trim().slice(0, 500) || null;
+          if (dto.lost_reason_id) {
+            const [reason] = await tx
+              .select({ id: lostReasons.id })
+              .from(lostReasons)
+              .where(and(eq(lostReasons.tenant_id, tenantId), eq(lostReasons.id, dto.lost_reason_id)))
+              .limit(1);
+            if (!reason) throw new BadRequestException('lost_reason_id does not belong to this workspace');
+            lostReasonId = reason.id;
+          }
         }
 
         const now = new Date();
@@ -541,8 +663,8 @@ export class DealsService {
           patch.status = 'lost';
           patch.lost_at = now;
           patch.won_at = null;
-          patch.lost_reason_id = dto.lost_reason_id ?? null;
-          patch.lost_reason_note = dto.lost_reason_note ?? null;
+          patch.lost_reason_id = lostReasonId;
+          patch.lost_reason_note = lostReasonNote;
         } else {
           patch.status = 'open';
           patch.won_at = null;
@@ -565,7 +687,7 @@ export class DealsService {
         if (target.stage_type === 'won') {
           await this.domainEvents.publish({ name: 'crm.deal.won', tenantId, actorUserId: userId, payload: { deal_id: id, value_base: parseFloat(updated!.value_base_amount) } }, tx);
         } else if (target.stage_type === 'lost') {
-          await this.domainEvents.publish({ name: 'crm.deal.lost', tenantId, actorUserId: userId, payload: { deal_id: id, lost_reason_id: dto.lost_reason_id ?? null } }, tx);
+          await this.domainEvents.publish({ name: 'crm.deal.lost', tenantId, actorUserId: userId, payload: { deal_id: id, lost_reason_id: lostReasonId } }, tx);
         }
         return { deal: updated!, moved: true, target };
       },

@@ -17,7 +17,7 @@ import { NpsCard } from '@/components/feedback/NpsCard'
 import { BillingBanners, BillingWall } from '@/components/billing/BillingGate'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
-import { APIError } from '@/lib/api/client'
+import { APIError, loginHref } from '@/lib/api/client'
 import { useSwitchCompany } from '@/lib/api/queries/use-members'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
 
@@ -155,7 +155,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && (authRejected || !isAuthenticated)) {
-      router.replace('/login')
+      // Round I: keep the destination across sign-in so an emailed deep link
+      // (e.g. /team/leave?request=…&action=approve) lands where it pointed.
+      // Same rule as the api client's 401 redirect (loginHref).
+      router.replace(loginHref())
       return
     }
     if (isPlatformAdmin) {

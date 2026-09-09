@@ -11,6 +11,8 @@ import { useReviewLeave, useMyLeaveBalances, useHolidays } from '@/lib/api/queri
 import {
   useMyAttendanceToday,
   useReviewRegularization,
+  useTeamToday,
+  type TeamMemberToday,
 } from '@/lib/api/queries/use-attendance'
 import {
   Avatar,
@@ -733,9 +735,37 @@ function prettifyResource(type: string | null, _meta: Record<string, unknown> | 
 
 // ─── Manager dashboard ─────────────────────────────────────────────────────
 
+/** Round I — "Your team today" row state (manager-scoped /attendance/team/today). */
+function teamTodayState(t: TeamMemberToday): { label: string; tone: PillTone } {
+  switch (t.attendanceStatus) {
+    case 'present':
+    case 'on_duty':
+      return { label: t.isLate ? 'Late' : 'In', tone: t.isLate ? 'yellow' : 'green' }
+    case 'late':
+      return { label: 'Late', tone: 'yellow' }
+    case 'work_from_home':
+      return { label: 'Remote', tone: 'green' }
+    case 'on_leave':
+      return { label: 'On leave', tone: 'purple' }
+    case 'holiday':
+    case 'weekend':
+      return { label: 'Off', tone: '' }
+    case 'absent':
+      return { label: 'Absent', tone: 'coral' }
+    default:
+      return { label: 'Not in yet', tone: '' }
+  }
+}
+
+function fmtPunch(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+}
+
 function ManagerDashboard() {
   const { currentUser } = useAuthStore()
   const overview = useAdminOverview()
+  const teamToday = useTeamToday()
   const qc = useQueryClient()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
@@ -743,6 +773,7 @@ function ManagerDashboard() {
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
   const pending = useMemo(() => buildPendingList(data), [data])
+  const roster = teamToday.data ?? []
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
 
@@ -810,12 +841,16 @@ function ManagerDashboard() {
 
         {/* KPI strip — team-scoped */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14, marginBottom: 18 }}>
-          <Kpi
-            label="Direct reports"
-            value={data?.stats.totalEmployees ?? '—'}
-            icon={<Icon.people size={16} />}
-            accent="blue"
-          />
+          {/* Round I: the tile IS the team number (API scope=team) and opens the Direct reports page. */}
+          <Link href="/team" style={{ textDecoration: 'none', color: 'inherit' }} data-testid="kpi-direct-reports" title="Open Direct reports">
+            <Kpi
+              label="Direct reports"
+              value={data?.stats.totalEmployees ?? '—'}
+              delta="View team →"
+              icon={<Icon.people size={16} />}
+              accent="blue"
+            />
+          </Link>
           <Kpi
             label="In office today"
             value={data?.attendanceToday.present ?? '—'}
@@ -840,8 +875,8 @@ function ManagerDashboard() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: 18 }}>
-          {/* Your team today — placeholder until /team roster endpoint ships */}
-          <div className="card">
+          {/* Your team today — Round I: live roster from /attendance/team/today (direct reports). */}
+          <div className="card" data-testid="team-today-card">
             <SectionHead
               title="Your team today"
               right={
@@ -852,21 +887,55 @@ function ManagerDashboard() {
                 </Link>
               }
             />
-            <div
-              style={{
-                padding: '24px 0',
-                textAlign: 'center',
-                color: 'var(--text-mute)',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              Your team roster will appear here.
-              <br />
-              <span style={{ color: 'var(--text-faint)' }}>
-                Use the Approvals queue on the right for the actions you can take today.
-              </span>
-            </div>
+            {teamToday.isLoading ? (
+              <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-mute)', fontSize: 13, fontWeight: 600 }}>
+                Loading your team…
+              </div>
+            ) : roster.length === 0 ? (
+              <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-mute)', fontSize: 13, fontWeight: 600 }}>
+                No direct reports yet.
+                <br />
+                <span style={{ color: 'var(--text-faint)' }}>
+                  Employees with you as their reporting manager show up here.
+                </span>
+              </div>
+            ) : (
+              <>
+                {roster.slice(0, 8).map((t, i, arr) => {
+                  const st = teamTodayState(t)
+                  return (
+                    <div
+                      key={t.employeeId}
+                      data-testid="team-today-row"
+                      style={{
+                        padding: '9px 0',
+                        borderBottom: i < arr.length - 1 ? '1px solid var(--bord)' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                      }}
+                    >
+                      <Avatar name={t.employeeName} size="sm" />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {t.employeeName}
+                        </div>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                          {t.firstPunchInAt ? `In ${fmtPunch(t.firstPunchInAt)}` : 'No punch yet'}
+                          {t.locationName ? ` · ${t.locationName}` : ''}
+                        </div>
+                      </div>
+                      <Pill tone={st.tone} dot>{st.label}</Pill>
+                    </div>
+                  )
+                })}
+                {roster.length > 8 && (
+                  <Link href="/team" style={{ display: 'block', marginTop: 12, textAlign: 'center', fontSize: 12, fontWeight: 800, color: 'var(--blue)', textDecoration: 'none' }}>
+                    + {roster.length - 8} more →
+                  </Link>
+                )}
+              </>
+            )}
           </div>
 
           {/* Approvals queue — live data */}

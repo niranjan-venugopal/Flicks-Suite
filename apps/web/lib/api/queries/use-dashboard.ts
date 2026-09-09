@@ -5,6 +5,11 @@ import { api } from '../client'
 
 export interface AdminOverview {
   generatedAt: string
+  /**
+   * Round I — `team`: every number is narrowed to the caller's direct
+   * reports (managers). `org`: workspace-wide (owner / HR admin / finance).
+   */
+  scope?: 'org' | 'team'
   stats: {
     totalEmployees: number
     presentToday: number

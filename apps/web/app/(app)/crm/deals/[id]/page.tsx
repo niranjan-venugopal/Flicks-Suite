@@ -197,7 +197,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
               </>
             ) : (
               <>
-                <Pill tone={d.status === 'won' ? 'green' : 'coral'}>{d.status === 'won' ? '🏆 Won' : 'Lost'}</Pill>
+                <span data-testid="deal-outcome-pill"><Pill tone={d.status === 'won' ? 'green' : 'coral'}>{d.status === 'won' ? '🏆 Won' : 'Lost'}</Pill></span>
                 <Btn kind="secondary" size="sm" icon={<Icon.refresh size={13} />} onClick={() => reopen.mutate(id)} disabled={reopen.isPending} title="Manager and above">
                   Reopen
                 </Btn>
@@ -231,6 +231,22 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
             <span className="t-caption">{wonStage?.name ?? 'Won'}</span>
           </div>
         </div>
+
+        {/* Round I — closed deals say WHEN and (for lost) WHY. */}
+        {d.status !== 'open' && (
+          <div data-testid="deal-closed-summary" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12, padding: '10px 13px', borderRadius: 10, background: d.status === 'won' ? 'rgba(39,210,128,.07)' : 'rgba(248,120,107,.07)', border: `1px solid ${d.status === 'won' ? 'rgba(39,210,128,.3)' : 'rgba(248,120,107,.3)'}` }}>
+            <Icon.cal size={13} style={{ color: d.status === 'won' ? 'var(--green)' : 'var(--coral)', flexShrink: 0 }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>
+              {d.status === 'won' ? 'Won' : 'Lost'}{(() => { const iso = d.status === 'won' ? d.won_at : d.lost_at; return iso ? ` on ${new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}` : '' })()}
+            </span>
+            {d.status === 'lost' && (
+              <>
+                <Pill tone="coral">{d.lost_reason_label ?? (d.lost_reason_note ? 'Other' : 'No reason recorded')}</Pill>
+                {d.lost_reason_note && <span style={{ fontSize: 12, color: 'var(--text-mute)', fontWeight: 600 }}>{d.lost_reason_note}</span>}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Linked billing documents (§4.4 echo) */}
         {(d.linked_invoice || d.linked_quote || linkedProject.data?.data) && (
@@ -332,9 +348,15 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
           open={lostOpen}
           onClose={() => setLostOpen(false)}
           reasons={lostReasons.data?.data ?? []}
+          loading={lostReasons.isLoading}
+          error={lostReasons.isError}
+          onRetry={() => void lostReasons.refetch()}
           busy={move.isPending}
           onConfirm={async (reasonId, note) => {
-            const ok = await doMove(lostStage.id, { lost_reason_id: reasonId, ...(note ? { lost_reason_note: note } : {}) })
+            const ok = await doMove(lostStage.id, {
+              ...(reasonId ? { lost_reason_id: reasonId } : {}),
+              ...(note ? { lost_reason_note: note } : {}),
+            })
             if (ok) setLostOpen(false)
           }}
         />
@@ -731,6 +753,12 @@ function DetailsTab({ deal, pipelineName, stageName, stageProb }: { deal: DealDe
           onSave={(v) => update.mutate({ id: deal.id, body: { expected_close_date: v || null } })} />
         <Field label={`Value (${deal.currency})`} value={deal.value_amount} type="number"
           onSave={(v) => { const n = parseFloat(v); if (Number.isFinite(n) && n >= 0) update.mutate({ id: deal.id, body: { value_amount: n } }) }} />
+        {deal.status !== 'open' && (
+          <Field label="Closed on" readOnly value={(() => { const iso = deal.status === 'won' ? deal.won_at : deal.lost_at; return iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' })()} />
+        )}
+        {deal.status === 'lost' && (
+          <Field label="Lost reason" readOnly value={`${deal.lost_reason_label ?? (deal.lost_reason_note ? 'Other' : '—')}${deal.lost_reason_note ? ` · ${deal.lost_reason_note}` : ''}`} />
+        )}
         {(customFields.data?.data ?? []).map((f) => (
           f.field_type === 'select' ? (
             <div key={f.id}>

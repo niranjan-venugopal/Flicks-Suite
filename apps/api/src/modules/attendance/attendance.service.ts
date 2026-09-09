@@ -1572,17 +1572,55 @@ export class AttendanceService {
     }));
   }
 
+  /**
+   * Round I (founder decision): owner/admin (and platform staff) review the
+   * whole workspace; a manager reviews only their direct reports. Plain
+   * membership lookup — never the self-healing employee resolver — so a
+   * manager seat without an employee row gets an EMPTY queue, not the
+   * workspace's.
+   */
+  private async resolveReviewerScope(
+    tx: Db,
+    userId: string,
+    tenantId: string,
+    roleHint?: string,
+  ): Promise<{ employeeId: string | null; orgWide: boolean }> {
+    const [m] = await tx
+      .select({ employeeId: memberships.employee_id, role: memberships.role })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.status, 'active'),
+        ),
+      )
+      .limit(1);
+    const role = roleHint ?? m?.role ?? '';
+    return {
+      employeeId: m?.employeeId ?? null,
+      orgWide: ['owner', 'admin', 'fam', 'super_admin'].includes(role),
+    };
+  }
+
   async listPendingRegularizations(
     userId: string,
     tenantId: string,
     query: AttendanceListQueryDto,
+    roleHint?: string,
   ) {
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const data = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    const data = await this.databaseService.withTenant(tenantId, async (tx) => {
+      const reviewer = await this.resolveReviewerScope(tx, userId, tenantId, roleHint);
+      const scope = reviewer.orgWide
+        ? sql`true`
+        : reviewer.employeeId
+          ? sql`${employees.reporting_manager_id} = ${reviewer.employeeId}`
+          : sql`false`;
+      return tx
         .select({
           id: attendanceRegularizations.id,
           employeeId: attendanceRegularizations.employee_id,
@@ -1609,12 +1647,16 @@ export class AttendanceService {
             // onboarding queue). IS DISTINCT FROM keeps rows whose employee
             // has no linked user account.
             sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
+            // Round I: managers see their direct reports only; removed
+            // employees (round 21) never surface.
+            scope,
+            isNull(employees.deleted_at),
           ),
         )
         .orderBy(desc(attendanceRegularizations.created_at))
         .limit(limit)
-        .offset(offset),
-    );
+        .offset(offset);
+    });
 
     return { data, pagination: { page, limit, total: data.length } };
   }
@@ -1624,6 +1666,7 @@ export class AttendanceService {
     reviewerUserId: string,
     tenantId: string,
     dto: ReviewRegularizationDto,
+    roleHint?: string,
   ) {
     const reviewerEmployeeId = await this.getEmployeeIdForUser(
       reviewerUserId,
@@ -1652,7 +1695,10 @@ export class AttendanceService {
         // regularization. Owner/admin clear the @Roles('manager') gate on the
         // route, so without this an owner could self-approve.
         const [applicant] = await tx
-          .select({ userId: employees.user_id })
+          .select({
+            userId: employees.user_id,
+            reportingManagerId: employees.reporting_manager_id,
+          })
           .from(employees)
           .where(
             and(
@@ -1664,6 +1710,13 @@ export class AttendanceService {
         if (applicant?.userId && applicant.userId === reviewerUserId) {
           throw new ForbiddenException(
             'You cannot approve your own regularization request — another approver must review it.',
+          );
+        }
+        // Round I: a manager may only decide on their OWN reports' requests.
+        const reviewer = await this.resolveReviewerScope(tx, reviewerUserId, tenantId, roleHint);
+        if (!reviewer.orgWide && applicant?.reportingManagerId !== reviewerEmployeeId) {
+          throw new ForbiddenException(
+            'You can only review regularization requests from your direct reports.',
           );
         }
 

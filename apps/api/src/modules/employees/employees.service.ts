@@ -887,6 +887,10 @@ export class EmployeesService {
           and(
             eq(employees.tenant_id, tenantId),
             eq(employees.reporting_manager_id, managerEmployeeId),
+            // Round I: same people the manager dashboard counts — removed
+            // (round 21) and separated staff are not "direct reports".
+            isNull(employees.deleted_at),
+            inArray(employees.status, ['active', 'notice_period', 'on_leave']),
           ),
         )
         .orderBy(asc(employees.first_name));

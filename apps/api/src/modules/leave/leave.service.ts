@@ -5,7 +5,9 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   eq,
   and,
@@ -19,6 +21,8 @@ import {
   isNull,
   notInArray,
 } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   leaveTypes,
   leaveBalances,
@@ -43,8 +47,17 @@ import type {
   UpdateHolidayDto,
   ImportHolidaysDto,
   LeaveListQueryDto,
+  TeamLeaveQueryDto,
 } from './leave.dto';
 import { getHolidayPresets, PRESET_COUNTRIES } from './holiday-presets';
+
+/**
+ * Round I (founder decision): reviewers with these workspace roles see and
+ * act on EVERY employee's requests; everyone else who clears the
+ * `@Roles('manager')` gate (i.e. managers) is scoped to their direct reports
+ * via `employees.reporting_manager_id`.
+ */
+const ORG_WIDE_REVIEW_ROLES: ReadonlyArray<string> = ['owner', 'admin', 'fam', 'super_admin'];
 
 /**
  * Holiday types that actually block work. 'optional'/'restricted' holidays
@@ -116,9 +129,64 @@ export class LeaveService {
     private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    // Optional so the many specs that build `new LeaveService(db, audit,
+    // notifications)` keep compiling; only the email deep links need it.
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
+
+  /** Public web origin for links in emails (no trailing slash). */
+  private appUrl(): string {
+    const raw =
+      this.configService?.get<string>('APP_URL') ??
+      process.env.APP_URL ??
+      'http://localhost:3000';
+    return raw.replace(/\/$/, '');
+  }
+
+  /**
+   * Who is reviewing, and how far can they see? `orgWide` for owner/admin
+   * (and platform staff); managers get their own employee id and are scoped
+   * to direct reports. `roleHint` is the JWT role the guard already trusted;
+   * without it (service-level callers) the active membership decides.
+   * Never self-heals an employee row — a manager seat with no employee
+   * record has an EMPTY team, never the whole workspace.
+   */
+  private async resolveReviewer(
+    tx: Db,
+    userId: string,
+    tenantId: string,
+    roleHint?: string,
+  ): Promise<{ employeeId: string | null; orgWide: boolean }> {
+    const [m] = await tx
+      .select({ employeeId: memberships.employee_id, role: memberships.role })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.user_id, userId),
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.status, 'active'),
+        ),
+      )
+      .limit(1);
+    const role = roleHint ?? m?.role ?? '';
+    return {
+      employeeId: m?.employeeId ?? null,
+      orgWide: ORG_WIDE_REVIEW_ROLES.includes(role),
+    };
+  }
+
+  /**
+   * Predicate narrowing `employees` rows to the reviewer's scope: everything
+   * for org-wide roles; direct reports for a manager; nothing for a manager
+   * without an employee row. Requires `employees` to be joined.
+   */
+  private reviewerScope(reviewer: { employeeId: string | null; orgWide: boolean }): SQL {
+    if (reviewer.orgWide) return sql`true`;
+    if (!reviewer.employeeId) return sql`false`;
+    return sql`${employees.reporting_manager_id} = ${reviewer.employeeId}`;
+  }
 
   /** Resolves the employee_id for a logged-in user inside the active tenant. */
   private async getEmployeeIdForUser(
@@ -525,6 +593,7 @@ export class LeaveService {
       startDate: result.request.start_date,
       endDate: result.request.end_date,
       days: Number(result.request.total_days),
+      reason: result.request.reason ?? undefined,
     }).catch((err) => this.logger.warn(`Leave apply notification failed: ${err}`));
 
     await this.auditService.log({
@@ -558,7 +627,7 @@ export class LeaveService {
     employeeId: string,
     requestId: string,
     leaveTypeName: string,
-    dates: { startDate: string; endDate: string; days: number },
+    dates: { startDate: string; endDate: string; days: number; reason?: string },
   ) {
     // Resolve the requesting employee + their manager's email.
     const [employee] = await this.databaseService.withTenant(tenantId, (tx) =>
@@ -588,6 +657,14 @@ export class LeaveService {
     );
     if (reviewers.length === 0) return;
 
+    // Round I: deep links straight to THIS request on the Team → Leave page.
+    // `action=` only pre-selects the decision in a confirm dialog — the link
+    // itself never approves or rejects anything (a scanner following it must
+    // change nothing), and the page still requires a signed-in reviewer.
+    const reviewUrl = `${this.appUrl()}/team/leave?request=${encodeURIComponent(requestId)}`;
+    const approveUrl = `${reviewUrl}&action=approve`;
+    const rejectUrl = `${reviewUrl}&action=reject`;
+
     for (const reviewer of reviewers) {
       // Real-time in-app ping to the approver — surfaces in the Topbar bell
       // even when the email lands in spam or is disabled. Best-effort.
@@ -597,7 +674,7 @@ export class LeaveService {
             reviewer.userId,
             'leave.requested',
             `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'}).`,
-            '/team/leave',
+            `/team/leave?request=${encodeURIComponent(requestId)}`,
             tenantId,
           )
           .catch((err) =>
@@ -607,13 +684,26 @@ export class LeaveService {
 
       if (!reviewer.email) continue;
 
-      await this.notificationsService.sendEmail('leave-requested', reviewer.email, {
-        employeeName,
-        leaveType: leaveTypeName,
-        startDate: dates.startDate,
-        endDate: dates.endDate,
-        days: dates.days,
-      });
+      await this.notificationsService.sendEmail(
+        'leave-requested',
+        reviewer.email,
+        {
+          employeeName,
+          leaveType: leaveTypeName,
+          startDate: dates.startDate,
+          endDate: dates.endDate,
+          days: dates.days,
+          reason: dates.reason,
+          reviewUrl,
+          approveUrl,
+          rejectUrl,
+        },
+        // Preference-gated like the in-app ping already is (a reviewer who
+        // muted leave_requested/email stops getting these).
+        reviewer.userId
+          ? { userId: reviewer.userId, event: 'leave_requested' }
+          : undefined,
+      );
       this.logger.log(
         `Leave-apply email queued to ${reviewer.email} (req=${requestId})`,
       );
@@ -797,13 +887,15 @@ export class LeaveService {
     userId: string,
     tenantId: string,
     query: LeaveListQueryDto,
+    roleHint?: string,
   ) {
     const page = query.page ?? 1;
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const data = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    const data = await this.databaseService.withTenant(tenantId, async (tx) => {
+      const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
+      return tx
         .select({
           id: leaveRequests.id,
           employeeId: leaveRequests.employee_id,
@@ -831,14 +923,107 @@ export class LeaveService {
             // employees.service.ts). IS DISTINCT FROM keeps rows whose
             // employee has no linked user account.
             sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
+            // Round I: managers only see their direct reports' requests;
+            // removed employees (round 21) never surface.
+            this.reviewerScope(reviewer),
+            isNull(employees.deleted_at),
           ),
         )
         .orderBy(desc(leaveRequests.applied_at))
         .limit(limit)
-        .offset(offset),
-    );
+        .offset(offset);
+    });
 
     return { data, pagination: { page, limit, total: data.length } };
+  }
+
+  // ─── Team (Round I: Team → Leave — Pending | Upcoming | History) ───────────
+
+  /**
+   * Every request from the reviewer's team, any status, with the leave type
+   * and the approver resolved. Same scope rule as the pending queue
+   * (owner/admin: whole workspace; manager: direct reports), the caller's own
+   * requests excluded (those live under My leave).
+   */
+  async listTeam(
+    userId: string,
+    tenantId: string,
+    query: TeamLeaveQueryDto,
+    roleHint?: string,
+  ) {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(Math.max(1, query.limit ?? 50), 100);
+    const offset = (page - 1) * limit;
+    const status = query.status ?? 'all';
+
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
+      const approver = alias(employees, 'approver');
+      const where = and(
+        eq(leaveRequests.tenant_id, tenantId),
+        status === 'all' ? undefined : eq(leaveRequests.status, status),
+        query.from ? gte(leaveRequests.end_date, query.from) : undefined,
+        query.to ? lte(leaveRequests.start_date, query.to) : undefined,
+        sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
+        this.reviewerScope(reviewer),
+        isNull(employees.deleted_at),
+      );
+
+      const [data, [countRow]] = await Promise.all([
+        tx
+          .select({
+            id: leaveRequests.id,
+            employeeId: leaveRequests.employee_id,
+            employeeUserId: employees.user_id,
+            employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
+            employeeCode: employees.employee_code,
+            leaveTypeId: leaveRequests.leave_type_id,
+            leaveTypeName: leaveTypes.name,
+            leaveTypeCode: leaveTypes.code,
+            startDate: leaveRequests.start_date,
+            endDate: leaveRequests.end_date,
+            isHalfDay: leaveRequests.is_half_day,
+            totalDays: leaveRequests.total_days,
+            reason: leaveRequests.reason,
+            status: leaveRequests.status,
+            appliedAt: leaveRequests.applied_at,
+            approverId: leaveRequests.approver_id,
+            approverName: sql<string | null>`CASE WHEN ${approver.id} IS NULL THEN NULL ELSE ${approver.first_name} || ' ' || ${approver.last_name} END`,
+            approverComment: leaveRequests.approver_comment,
+            approvedAt: leaveRequests.approved_at,
+            rejectedAt: leaveRequests.rejected_at,
+            cancelledAt: leaveRequests.cancelled_at,
+          })
+          .from(leaveRequests)
+          .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
+          .leftJoin(
+            approver,
+            and(eq(approver.id, leaveRequests.approver_id), eq(approver.tenant_id, tenantId)),
+          )
+          .where(where)
+          .orderBy(
+            // Pending first-in-first-out by application; everything else
+            // most recent leave first.
+            status === 'pending' ? desc(leaveRequests.applied_at) : desc(leaveRequests.start_date),
+            desc(leaveRequests.id),
+          )
+          .limit(limit)
+          .offset(offset),
+        tx
+          .select({ total: sql<number>`COUNT(*)::int` })
+          .from(leaveRequests)
+          .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          .where(where),
+      ]);
+
+      const total = countRow?.total ?? 0;
+      return {
+        data,
+        pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+        scope: reviewer.orgWide ? ('org' as const) : ('team' as const),
+      };
+    });
   }
 
   // ─── Review (approve/reject) ──────────────────────────────────────────────
@@ -848,6 +1033,7 @@ export class LeaveService {
     reviewerUserId: string,
     tenantId: string,
     dto: ReviewLeaveDto,
+    roleHint?: string,
   ) {
     const reviewerEmployeeId = await this.getEmployeeIdForUser(
       reviewerUserId,
@@ -879,7 +1065,10 @@ export class LeaveService {
         // without this an owner could self-approve. Same rule as onboarding
         // review (employees.service.ts) — another approver must act.
         const [applicant] = await tx
-          .select({ userId: employees.user_id })
+          .select({
+            userId: employees.user_id,
+            reportingManagerId: employees.reporting_manager_id,
+          })
           .from(employees)
           .where(
             and(
@@ -891,6 +1080,15 @@ export class LeaveService {
         if (applicant?.userId && applicant.userId === reviewerUserId) {
           throw new ForbiddenException(
             'You cannot approve your own leave request — another approver must review it.',
+          );
+        }
+
+        // Round I: a manager may only decide on their OWN reports' requests.
+        // Owner/admin (and platform staff) review workspace-wide.
+        const reviewerScope = await this.resolveReviewer(tx, reviewerUserId, tenantId, roleHint);
+        if (!reviewerScope.orgWide && applicant?.reportingManagerId !== reviewerEmployeeId) {
+          throw new ForbiddenException(
+            'You can only review leave requests from your direct reports.',
           );
         }
 

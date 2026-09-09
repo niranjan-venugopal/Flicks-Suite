@@ -153,6 +153,42 @@ export class LeaveListQueryDto {
   limit?: number = 20;
 }
 
+/** Round I — Team → Leave (Pending | Upcoming | History). */
+export class TeamLeaveQueryDto {
+  @ApiPropertyOptional({ enum: ['pending', 'approved', 'rejected', 'cancelled', 'all'], default: 'all' })
+  @IsIn(['pending', 'approved', 'rejected', 'cancelled', 'all'])
+  @IsOptional()
+  status?: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'all';
+
+  /** Keep requests whose end_date ≥ from (YYYY-MM-DD). */
+  @ApiPropertyOptional({ example: '2026-09-01' })
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD' })
+  from?: string;
+
+  /** Keep requests whose start_date ≤ to (YYYY-MM-DD). */
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'to must be YYYY-MM-DD' })
+  to?: string;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Type(() => Number)
+  page?: number = 1;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  @Type(() => Number)
+  limit?: number = 50;
+}
+
 // ─── Holidays (admin CRUD — Owner/HR via @Roles('admin')) ────────────────────
 
 export const HOLIDAY_TYPES = [

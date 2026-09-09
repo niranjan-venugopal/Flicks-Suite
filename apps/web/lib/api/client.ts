@@ -121,6 +121,20 @@ function armProactiveRefresh(): void {
   })
 }
 
+/**
+ * Round I — where a signed-out visitor is sent. Carries the current page
+ * (path + query) as `?next=` so an emailed deep link such as
+ * /team/leave?request=…&action=approve survives sign-in. Only a same-origin
+ * relative path is ever carried (leading "/" but not "//" or "/\"); the root
+ * and the dashboard add nothing, so they stay a plain /login.
+ */
+export function loginHref(): string {
+  if (typeof window === 'undefined') return '/login'
+  const here = `${window.location.pathname}${window.location.search}`
+  const carry = here !== '/' && here !== '/dashboard' && /^\/(?![/\\])/.test(here)
+  return carry ? `/login?next=${encodeURIComponent(here)}` : '/login'
+}
+
 interface RequestOptions {
   method?: string
   body?: unknown
@@ -178,7 +192,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       typeof window !== 'undefined' && window.location.pathname.startsWith('/login')
 
     if (!isAuthEndpoint && !onLoginPage && typeof window !== 'undefined') {
-      window.location.href = '/login'
+      window.location.href = loginHref()
     }
 
     const errorData = await response.json().catch(() => null)
@@ -264,7 +278,7 @@ async function download(
     const onLoginPage =
       typeof window !== 'undefined' && window.location.pathname.startsWith('/login')
     if (!onLoginPage && typeof window !== 'undefined') {
-      window.location.href = '/login'
+      window.location.href = loginHref()
     }
     throw new APIError(401, 'Unauthorized')
   }

@@ -7,6 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { and, eq, gte, lte, desc, asc, sql, isNull } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   timesheetPeriods,
   timesheetEntries,
@@ -26,7 +27,11 @@ import type {
   SubmitTimesheetDto,
   ReviewTimesheetDto,
   TimesheetListQueryDto,
+  TeamTimesheetQueryDto,
 } from './timesheet.dto';
+
+/** Round I: roles whose team view is the whole workspace (see leave). */
+const ORG_WIDE_REVIEW_ROLES: ReadonlyArray<string> = ['owner', 'admin', 'fam', 'super_admin'];
 
 /**
  * Returns the 7-day week containing the given date as { start, end } in
@@ -725,6 +730,102 @@ export class TimesheetService {
     });
   }
 
+  // ─── 6b. Team periods (Round I: Team → Timesheets — Pending review | All) ──
+
+  /**
+   * Every period of the caller's team, any status. Unlike `listPending`
+   * (which keys on `approver_id = me`), scope is the org chart itself:
+   * managers get their direct reports' periods, owner/admin the workspace.
+   * Periods created before a manager was assigned still carry
+   * `approver_id NULL` — they show up here with `approverId: null`, and
+   * `reviewTimesheet` stamps the reporting manager on first review.
+   */
+  async listTeam(
+    userId: string,
+    tenantId: string,
+    query: TeamTimesheetQueryDto,
+    roleHint?: string,
+  ) {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(Math.max(1, query.limit ?? 50), 100);
+    const offset = (page - 1) * limit;
+    const status = query.status ?? 'all';
+
+    return this.databaseService.withTenant(tenantId, async (db) => {
+      const [m] = await db
+        .select({ employeeId: memberships.employee_id, role: memberships.role })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.user_id, userId),
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+          ),
+        )
+        .limit(1);
+      const orgWide = ORG_WIDE_REVIEW_ROLES.includes(roleHint ?? m?.role ?? '');
+      const scope = orgWide
+        ? sql`true`
+        : m?.employeeId
+          ? sql`${employees.reporting_manager_id} = ${m.employeeId}`
+          : sql`false`;
+      const approver = alias(employees, 'ts_approver');
+      const where = and(
+        eq(timesheetPeriods.tenant_id, tenantId),
+        status === 'all' ? undefined : eq(timesheetPeriods.status, status),
+        // The caller's own periods live under My timesheets.
+        sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
+        scope,
+        isNull(employees.deleted_at),
+      );
+
+      const [rows, [countRow]] = await Promise.all([
+        db
+          .select({
+            id: timesheetPeriods.id,
+            employeeId: timesheetPeriods.employee_id,
+            employeeUserId: employees.user_id,
+            employeeCode: employees.employee_code,
+            employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
+            periodStart: timesheetPeriods.period_start,
+            periodEnd: timesheetPeriods.period_end,
+            status: timesheetPeriods.status,
+            totalHours: timesheetPeriods.total_hours,
+            totalBillableHours: timesheetPeriods.total_billable_hours,
+            submittedAt: timesheetPeriods.submitted_at,
+            approverId: timesheetPeriods.approver_id,
+            approverName: sql<string | null>`CASE WHEN ${approver.id} IS NULL THEN NULL ELSE COALESCE(${approver.first_name}, '') || ' ' || COALESCE(${approver.last_name}, '') END`,
+            approvedAt: timesheetPeriods.approved_at,
+            rejectedAt: timesheetPeriods.rejected_at,
+            rejectionComment: timesheetPeriods.rejection_comment,
+            updatedAt: timesheetPeriods.updated_at,
+          })
+          .from(timesheetPeriods)
+          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .leftJoin(
+            approver,
+            and(eq(approver.id, timesheetPeriods.approver_id), eq(approver.tenant_id, tenantId)),
+          )
+          .where(where)
+          .orderBy(desc(timesheetPeriods.period_start), asc(employees.first_name), desc(timesheetPeriods.id))
+          .limit(limit)
+          .offset(offset),
+        db
+          .select({ n: sql<number>`COUNT(*)::int` })
+          .from(timesheetPeriods)
+          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .where(where),
+      ]);
+
+      const total = Number(countRow?.n ?? 0);
+      return {
+        data: rows,
+        pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+        scope: orgWide ? ('org' as const) : ('team' as const),
+      };
+    });
+  }
+
   // ─── 7. Review (approve / reject / rework) ─────────────────────────────
 
   async reviewTimesheet(
@@ -755,7 +856,24 @@ export class TimesheetService {
 
         if (!period) throw new NotFoundException('Timesheet period not found');
         if (period.approver_id !== employeeId) {
-          throw new ForbiddenException('You are not the approver for this timesheet');
+          // Round I self-heal: periods created before the employee had a
+          // reporting manager carry approver_id NULL and could never be
+          // reviewed by anyone. If the caller IS that employee's reporting
+          // manager today, stamp them and proceed. Anyone else stays 403.
+          const [emp] = await db
+            .select({ reportingManagerId: employees.reporting_manager_id })
+            .from(employees)
+            .where(and(eq(employees.id, period.employee_id), eq(employees.tenant_id, tenantId)))
+            .limit(1);
+          if (period.approver_id === null && emp?.reportingManagerId === employeeId) {
+            await db
+              .update(timesheetPeriods)
+              .set({ approver_id: employeeId, updated_at: new Date() })
+              .where(and(eq(timesheetPeriods.id, period.id), eq(timesheetPeriods.tenant_id, tenantId)));
+            period.approver_id = employeeId;
+          } else {
+            throw new ForbiddenException('You are not the approver for this timesheet');
+          }
         }
         if (period.status !== 'submitted') {
           throw new BadRequestException(

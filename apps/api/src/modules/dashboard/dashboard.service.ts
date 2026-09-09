@@ -11,6 +11,7 @@ import {
   auditLog,
   users,
   designations,
+  memberships,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { MediaService } from '../media/media.service';
@@ -52,10 +53,20 @@ export class DashboardService {
       includeOnboarding: boolean;
       /** Approver roles only — a plain employee has no approvals queue. */
       includeApprovals: boolean;
+      /**
+       * Round I — `team` narrows every people-derived number (headcount,
+       * attendance today, trends, pending requests) to the caller's DIRECT
+       * REPORTS (`employees.reporting_manager_id`). The manager dashboard
+       * used to label the tenant-wide headcount "Direct reports" while the
+       * Direct reports page showed the manager-scoped list — 7 vs 3. Default
+       * `org` keeps every existing caller unchanged.
+       */
+      scope?: 'org' | 'team';
     },
   ): Promise<AdminOverviewDto> {
     const today = todayISO();
     const thirtyDaysAgo = isoDaysAgo(30);
+    const scope = opts.scope ?? 'org';
 
     /**
      * Approvals a caller may act on: never their own. An owner/admin clears
@@ -85,6 +96,43 @@ export class DashboardService {
         : sql`false`;
 
     return this.databaseService.withTenant(tenantId, async (tx) => {
+      // Team scope: resolve the caller's employee row FIRST (inside the same
+      // tenant transaction) so every query below can be narrowed to their
+      // direct reports. A manager seat without an employee row has no team —
+      // that yields an EMPTY dashboard, never a tenant-wide one.
+      let managerEmployeeId: string | null = null;
+      if (scope === 'team') {
+        const [m] = await tx
+          .select({ employeeId: memberships.employee_id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.user_id, opts.callerUserId),
+              eq(memberships.status, 'active'),
+            ),
+          )
+          .limit(1);
+        managerEmployeeId = m?.employeeId ?? null;
+      }
+      /**
+       * `inScope(employeeIdCol)` — true for every row in org scope; in team
+       * scope, true only when the row's employee reports directly to the
+       * caller (and is not removed). Applied to every people-derived query.
+       */
+      const inScope = (employeeIdCol: SQL | AnyColumn): SQL =>
+        scope === 'org'
+          ? sql`true`
+          : managerEmployeeId
+            ? sql`EXISTS (
+                SELECT 1 FROM employees r
+                 WHERE r.id = ${employeeIdCol}
+                   AND r.tenant_id = ${tenantId}
+                   AND r.reporting_manager_id = ${managerEmployeeId}
+                   AND r.deleted_at IS NULL
+              )`
+            : sql`false`;
+
       const [
         headcountRows,
         attendanceTodayRows,
@@ -107,7 +155,7 @@ export class DashboardService {
           })
           .from(employees)
           // Removed employees leave the headcount tiles (round 21).
-          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at)))
+          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at), inScope(employees.id)))
           .groupBy(employees.status),
 
         // Attendance today by status
@@ -121,6 +169,7 @@ export class DashboardService {
             and(
               eq(attendanceRecords.tenant_id, tenantId),
               eq(attendanceRecords.attendance_date, today),
+              inScope(attendanceRecords.employee_id),
             ),
           )
           .groupBy(attendanceRecords.attendance_status),
@@ -134,6 +183,7 @@ export class DashboardService {
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
               notOwnRequest(leaveRequests.employee_id),
+              inScope(leaveRequests.employee_id),
             ),
           ),
 
@@ -146,6 +196,7 @@ export class DashboardService {
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
               notOwnRequest(attendanceRegularizations.employee_id),
+              inScope(attendanceRegularizations.employee_id),
             ),
           ),
 
@@ -178,6 +229,7 @@ export class DashboardService {
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
               notOwnRequest(leaveRequests.employee_id),
+              inScope(leaveRequests.employee_id),
             ),
           )
           .orderBy(desc(leaveRequests.applied_at))
@@ -210,6 +262,7 @@ export class DashboardService {
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
               notOwnRequest(attendanceRegularizations.employee_id),
+              inScope(attendanceRegularizations.employee_id),
             ),
           )
           .orderBy(desc(attendanceRegularizations.created_at))
@@ -228,6 +281,7 @@ export class DashboardService {
               eq(attendanceRecords.tenant_id, tenantId),
               gte(attendanceRecords.attendance_date, thirtyDaysAgo),
               lt(attendanceRecords.attendance_date, isoDaysAgo(-1)), // up to today inclusive
+              inScope(attendanceRecords.employee_id),
             ),
           ),
 
@@ -242,6 +296,7 @@ export class DashboardService {
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'approved'),
               gte(leaveRequests.start_date, thirtyDaysAgo),
+              inScope(leaveRequests.employee_id),
             ),
           ),
 
@@ -253,7 +308,7 @@ export class DashboardService {
           })
           .from(employees)
           // ...and the 30-day joiners/exits trend.
-          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at))),
+          .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at), inScope(employees.id))),
 
         // Avg working hours for fully-worked days in last 30d
         tx
@@ -267,6 +322,7 @@ export class DashboardService {
               eq(attendanceRecords.tenant_id, tenantId),
               gte(attendanceRecords.attendance_date, thirtyDaysAgo),
               eq(attendanceRecords.attendance_status, 'present'),
+              inScope(attendanceRecords.employee_id),
             ),
           ),
 
@@ -414,6 +470,7 @@ export class DashboardService {
       // ── Build response ──
       return {
         generatedAt: new Date().toISOString(),
+        scope,
         stats: {
           totalEmployees,
           presentToday: att.present + att.late,

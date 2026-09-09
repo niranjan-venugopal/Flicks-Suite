@@ -69,7 +69,9 @@ export default function MyTeamPage() {
       ).length
     }
 
-    const pending = Array.isArray(pendingLeave) ? pendingLeave.length : 0
+    // Round I: /leave/pending returns a { data, pagination } envelope — the
+    // old Array.isArray check made this KPI a permanent 0.
+    const pending = pendingLeave?.data?.length ?? 0
 
     return { directReports, presentToday, onLeave, pending }
   }, [members, today, pendingLeave])

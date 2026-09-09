@@ -214,6 +214,7 @@ export class AttendanceController {
       user.sub,
       user.tenantId,
       query,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
     );
   }
 
@@ -232,6 +233,7 @@ export class AttendanceController {
       user.sub,
       user.tenantId,
       dto,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
     );
   }
 }

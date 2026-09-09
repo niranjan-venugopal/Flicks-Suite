@@ -13,6 +13,7 @@ import { useQuickAdd } from '@/lib/stores/quick-add.store'
 import { TagChip, OwnerAv, EmptyState, SavedViewTabs, FilterBar, BulkBar, KeymapOverlay, fmtCur, type FilterChip } from '@/components/crm/kit'
 import { Sk } from '@/components/states'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
+import { ClosedDealsTable } from '@/components/crm/ClosedDealsTable'
 import {
   useBoard,
   usePipelines,
@@ -115,8 +116,13 @@ export default function DealsBoardPage() {
     { id: 'all', label: 'All open' },
     { id: 'mine', label: 'My deals', priv: true },
     { id: 'rot', label: 'Rotting', priv: true },
+    // Round I: won + lost deals used to vanish from the CRM entirely.
+    { id: 'closed', label: 'Closed' },
     ...(savedViews.data?.data.map((v) => ({ id: `sv:${v.id}`, label: v.name, team: v.is_shared, priv: !v.is_shared })) ?? []),
   ], [savedViews.data])
+  const closedView = view === 'closed'
+  const role = currentUser?.role
+  const canReopen = role === 'OWNER' || role === 'HR_ADMIN' || role === 'MANAGER'
 
   const cardFilter = (d: TDeal): boolean => {
     if (view === 'mine' && d.owner_user_id !== currentUser?.id) return false
@@ -239,7 +245,15 @@ export default function DealsBoardPage() {
         }
       />
 
-      {board.isLoading ? (
+      {closedView ? (
+        <ClosedDealsTable
+          pipelineId={data?.pipeline.id}
+          ownerUserId={ownerFilter}
+          search={search}
+          canReopen={canReopen}
+          onOpen={(id) => router.push(`/crm/deals/${id}`)}
+        />
+      ) : board.isLoading ? (
         // Cold load only — a warm cache renders the board instantly.
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(218px, 1fr))', gap: 12, alignItems: 'start' }}>
           {[0, 1, 2, 3].map((c) => (
@@ -289,7 +303,7 @@ export default function DealsBoardPage() {
       )}
 
       {/* Won / Lost drop zones — fixed bottom bar while dragging */}
-      {drag && (
+      {drag && !closedView && (
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 60, display: 'flex', gap: 12, padding: '14px 24px', background: 'rgba(1,1,13,.9)', backdropFilter: 'blur(10px)', borderTop: '1px solid var(--bord-2)' }}>
           <div onDragOver={(e) => e.preventDefault()} onDrop={dropWon}
             style={{ flex: 1, padding: 16, borderRadius: 12, border: '1.5px dashed rgba(39,210,128,.5)', background: 'rgba(39,210,128,.07)', textAlign: 'center', fontSize: 13, fontWeight: 800, color: 'var(--green)' }}>
@@ -322,12 +336,14 @@ export default function DealsBoardPage() {
         </div>
       )}
 
-      <div className="t-caption" style={{ marginTop: 12, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-        <span>⇧ click — multi-select</span>
-        <span>drag between stages — optimistic, broadcast live</span>
-        <span>drag down — Won / Lost</span>
-        <span>? — keymap</span>
-      </div>
+      {!closedView && (
+        <div className="t-caption" style={{ marginTop: 12, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+          <span>⇧ click — multi-select</span>
+          <span>drag between stages — optimistic, broadcast live</span>
+          <span>drag down — Won / Lost</span>
+          <span>? — keymap</span>
+        </div>
+      )}
 
       <ConfirmDialog
         open={bulkDeleteOpen}
@@ -374,10 +390,16 @@ export default function DealsBoardPage() {
           open
           onClose={() => setLostDeal(null)}
           reasons={lostReasons.data?.data ?? []}
+          loading={lostReasons.isLoading}
+          error={lostReasons.isError}
+          onRetry={() => void lostReasons.refetch()}
           busy={move.isPending}
           onConfirm={async (reasonId, note) => {
-            const ok = await doMove(lostDeal.id, lostStage.id, { lost_reason_id: reasonId, ...(note ? { lost_reason_note: note } : {}) })
-            if (ok) setLostDeal(null)
+            const ok = await doMove(lostDeal.id, lostStage.id, {
+              ...(reasonId ? { lost_reason_id: reasonId } : {}),
+              ...(note ? { lost_reason_note: note } : {}),
+            })
+            if (ok) { setLostDeal(null); toast({ title: 'Marked lost', description: 'Find it under the Closed view any time.' }) }
           }}
         />
       )}

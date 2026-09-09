@@ -20,6 +20,7 @@ import {
   SubmitTimesheetDto,
   ReviewTimesheetDto,
   TimesheetListQueryDto,
+  TeamTimesheetQueryDto,
 } from './timesheet.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -73,6 +74,27 @@ export class TimesheetController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.timesheetService.listMine(user.sub, user.tenantId, query);
+  }
+
+  // Declared above `:periodId/entries` so the static segment wins matching.
+  @Get('team')
+  @Roles('manager')
+  @ApiOperation({
+    summary: "My team's timesheet periods (any status)",
+    description:
+      'Round I — backs Team → Timesheets (Pending review | All periods). Managers see their direct reports; owner/admin see the whole workspace.',
+  })
+  @ApiResponse({ status: 200, description: 'Team timesheet periods' })
+  async listTeam(
+    @Query() query: TeamTimesheetQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.timesheetService.listTeam(
+      user.sub,
+      user.tenantId,
+      query,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
+    );
   }
 
   @Get(':periodId/entries')
