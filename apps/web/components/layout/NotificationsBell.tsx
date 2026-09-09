@@ -24,6 +24,7 @@ function iconFor(type: string) {
   if (type.startsWith('regularization.')) return <Icon.clock size={14} />
   if (type.startsWith('onboarding.')) return <Icon.people size={14} />
   if (type.startsWith('employee.details_')) return <Icon.shield size={14} />
+  if (type.startsWith('calendar.')) return <Icon.cal size={14} />
   return <Icon.bell size={14} />
 }
 

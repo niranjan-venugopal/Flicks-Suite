@@ -62,20 +62,8 @@ export const holidayTypeEnum = pgEnum('holiday_type', [
   'company',
 ]);
 
-export const calendarEventTypeEnum = pgEnum('calendar_event_type', [
-  'leave',
-  'holiday',
-  'attendance',
-  'birthday',
-  'anniversary',
-  'company_event',
-]);
-
-export const calendarVisibilityEnum = pgEnum('calendar_visibility', [
-  'private',
-  'team',
-  'company',
-]);
+// calendar_event_type / calendar_visibility enums and the calendar_events
+// table moved to ./calendar (Round J, migration 0061).
 
 // ─── leave_types ──────────────────────────────────────────────────────────────
 
@@ -233,6 +221,9 @@ export const leaveRequests = pgTable(
     index('leave_requests_start_date_idx').on(t.start_date),
     index('leave_requests_end_date_idx').on(t.end_date),
     index('leave_requests_approver_id_idx').on(t.approver_id),
+    // 0061 — the calendar's week/day range scan (mirrors the migration so
+    // drizzle-kit never proposes dropping it).
+    index('idx_leave_requests_tenant_range').on(t.tenant_id, t.start_date, t.end_date),
   ],
 );
 
@@ -261,42 +252,6 @@ export const holidays = pgTable(
     index('holidays_tenant_id_idx').on(t.tenant_id),
     index('holidays_holiday_date_idx').on(t.holiday_date),
     index('holidays_type_idx').on(t.type),
-  ],
-);
-
-// ─── calendar_events ──────────────────────────────────────────────────────────
-
-export const calendarEvents = pgTable(
-  'calendar_events',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    tenant_id: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.id, { onDelete: 'cascade' }),
-    event_type: calendarEventTypeEnum('event_type').notNull(),
-    source_id: uuid('source_id'), // id of the originating record (leave_request, holiday, etc.)
-    employee_id: uuid('employee_id').references(() => employees.id, {
-      onDelete: 'cascade',
-    }),
-    title: text('title').notNull(),
-    description: text('description'),
-    start_at: timestamp('start_at', { withTimezone: true }).notNull(),
-    end_at: timestamp('end_at', { withTimezone: true }).notNull(),
-    is_all_day: boolean('is_all_day').notNull().default(false),
-    visibility: calendarVisibilityEnum('visibility')
-      .notNull()
-      .default('company'),
-    color: text('color'),
-    created_at: timestamp('created_at', { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => [
-    index('calendar_events_tenant_id_idx').on(t.tenant_id),
-    index('calendar_events_employee_id_idx').on(t.employee_id),
-    index('calendar_events_event_type_idx').on(t.event_type),
-    index('calendar_events_start_at_idx').on(t.start_at),
-    index('calendar_events_end_at_idx').on(t.end_at),
   ],
 );
 
@@ -356,17 +311,6 @@ export const holidaysRelations = relations(holidays, ({ one }) => ({
   }),
 }));
 
-export const calendarEventsRelations = relations(calendarEvents, ({ one }) => ({
-  tenant: one(tenants, {
-    fields: [calendarEvents.tenant_id],
-    references: [tenants.id],
-  }),
-  employee: one(employees, {
-    fields: [calendarEvents.employee_id],
-    references: [employees.id],
-  }),
-}));
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type LeaveType = typeof leaveTypes.$inferSelect;
@@ -377,5 +321,3 @@ export type LeaveRequest = typeof leaveRequests.$inferSelect;
 export type NewLeaveRequest = typeof leaveRequests.$inferInsert;
 export type Holiday = typeof holidays.$inferSelect;
 export type NewHoliday = typeof holidays.$inferInsert;
-export type CalendarEvent = typeof calendarEvents.$inferSelect;
-export type NewCalendarEvent = typeof calendarEvents.$inferInsert;

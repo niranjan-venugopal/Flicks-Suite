@@ -26,4 +26,11 @@ export const FEATURES = {
    * test-suite) is untouched; flip to `true` to restore it as-is.
    */
   pm_github: false,
+  /**
+   * Round J — auto-generated Teams / Google Meet links. Until a Microsoft 365
+   * or Google account can be connected (Settings → Integrations, coming
+   * soon), organizers pick the provider and paste the link; the composer
+   * shows the "generate automatically" hint instead of a Generate button.
+   */
+  calendar_meeting_links: false,
 } as const

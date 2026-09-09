@@ -426,7 +426,7 @@ describe('Bootstrap + delta visibility (§3.3/§3.4/§16)', () => {
     const { CrmPublicService } = await import('../modules/crm/public');
     const { PmViewsService } = await import('../modules/pm/views.service');
     const savedViewsSvc = new SavedViewsService(dbSvc, audit);
-    const crmPublic = new CrmPublicService(null as never, null as never, null as never, savedViewsSvc);
+    const crmPublic = new CrmPublicService(null as never, null as never, null as never, savedViewsSvc, null as never);
     const viewsSvc = new PmViewsService(dbSvc, crmPublic, domainEventsSvc);
 
     const created = await viewsSvc.create(tenantId, ownerId, {

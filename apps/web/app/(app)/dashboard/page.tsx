@@ -826,7 +826,7 @@ function ManagerDashboard() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link href="/team/leave" style={{ textDecoration: 'none' }}>
+            <Link href="/calendar?view=week" style={{ textDecoration: 'none' }}>
               <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />}>
                 Team calendar
               </Btn>

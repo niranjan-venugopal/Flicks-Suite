@@ -20,7 +20,7 @@ export function monthTitle(d: Date): string {
 
 const monthKey = (d: Date) => d.getFullYear() * 12 + d.getMonth()
 
-function RoundNav({ dir, onClick, disabled }: { dir: 'prev' | 'next'; onClick: () => void; disabled?: boolean }) {
+export function RoundNav({ dir, onClick, disabled }: { dir: 'prev' | 'next'; onClick: () => void; disabled?: boolean }) {
   const Ic = dir === 'prev' ? Icon.arrowL : Icon.arrow
   return (
     <button

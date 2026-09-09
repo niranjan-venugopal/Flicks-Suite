@@ -123,6 +123,17 @@ export class NotificationsGateway
     this.server.to(`tenant:${payload.tenantId}`).emit('employees_changed', {});
   }
 
+  /**
+   * Round J — a calendar event was created / changed / cancelled / answered.
+   * Id only, no content: clients refetch their own scoped feed, so nothing a
+   * member is not allowed to see ever travels over the tenant room.
+   */
+  @OnEvent('calendar.changed')
+  handleCalendarChanged(payload: { tenantId?: string; eventId?: string }): void {
+    if (!payload?.tenantId) return;
+    this.server.to(`tenant:${payload.tenantId}`).emit('calendar_changed', { eventId: payload.eventId ?? null });
+  }
+
   // ─── helpers ─────────────────────────────────────────────────────────────
 
   private extractToken(client: Socket): string | null {

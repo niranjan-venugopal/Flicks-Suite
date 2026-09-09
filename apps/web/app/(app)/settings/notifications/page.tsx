@@ -25,9 +25,12 @@ const EVENT_META: Partial<Record<
   regularization_reviewed: { group: 'Attendance', title: 'Regularization reviewed', desc: 'Your regularization was reviewed' },
   onboarding_submitted: { group: 'People', title: 'Onboarding submitted', desc: 'A hire finished self-onboarding' },
   onboarding_reviewed: { group: 'People', title: 'Onboarding reviewed', desc: 'Your onboarding was approved / sent back' },
+  calendar_invited: { group: 'Calendar', title: 'Invited to a meeting', desc: 'Someone added you to an event or meeting (email carries the .ics invite)' },
+  calendar_updated: { group: 'Calendar', title: 'Meeting changed', desc: 'Time, place or link of a meeting you are on changed' },
+  calendar_cancelled: { group: 'Calendar', title: 'Meeting cancelled', desc: 'A meeting you were invited to was cancelled' },
 }
 
-const GROUP_ORDER = ['Leave', 'Timesheet', 'Attendance', 'People']
+const GROUP_ORDER = ['Leave', 'Timesheet', 'Attendance', 'People', 'Calendar']
 
 export default function NotificationsSettingsPage() {
   const { data, isLoading } = useNotificationPreferences()

@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { Users, Clock, Sparkles } from 'lucide-react'
-import { useCalendarEvents } from '@/lib/api/queries/use-calendar'
+import { useCalendarFeed } from '@/lib/api/queries/use-calendar'
 import type { AdminOverview } from '@/lib/api/queries/use-dashboard'
 
 export function TodaysSnapshotCard({
@@ -15,16 +15,16 @@ export function TodaysSnapshotCard({
   // PRD §10.2 Row 2 "Upcoming this week" — pull from the calendar feed for
   // the next 7 days. Reuses the Step 4 hook + endpoint.
   const range = useMemo(() => {
+    // Local dates (toISOString() is UTC — after 17:30 IST it named tomorrow).
+    const local = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     const today = new Date()
     const weekOut = new Date(today)
     weekOut.setDate(today.getDate() + 7)
-    return {
-      from: today.toISOString().slice(0, 10),
-      to: weekOut.toISOString().slice(0, 10),
-    }
+    return { from: local(today), to: local(weekOut) }
   }, [])
-  const events = useCalendarEvents(range.from, range.to)
-  const upcoming = events.data?.slice(0, 4) ?? []
+  const events = useCalendarFeed(range.from, range.to)
+  const upcoming = events.data?.data.slice(0, 4) ?? []
 
   return (
     <div className="glass rounded-xl p-6">

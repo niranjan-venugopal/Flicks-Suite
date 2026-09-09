@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { activities, deals, directoryCompanies, directoryPeople, memberships, users } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
@@ -201,6 +201,42 @@ export class ActivitiesService {
    * My Activities (C8): the signed-in user's open activities bucketed into
    * overdue / today / upcoming, plus recently completed.
    */
+  /**
+   * Round J — the signed-in user's scheduled calls and meetings inside an
+   * instant window, for the Calendar page (read-only chips). Explicit tenant
+   * + assignee predicates; other people's activities never surface here.
+   */
+  async listMyScheduled(tenantId: string, userId: string, from: Date, to: Date) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const rows = await tx
+        .select({
+          id: activities.id,
+          type: activities.type,
+          subject: activities.subject,
+          due_at: activities.due_at,
+          completed_at: activities.completed_at,
+          deal_id: activities.deal_id,
+          deal_title: deals.title,
+        })
+        .from(activities)
+        .leftJoin(deals, and(eq(deals.id, activities.deal_id), eq(deals.tenant_id, tenantId)))
+        .where(
+          and(
+            eq(activities.tenant_id, tenantId),
+            eq(activities.assignee_user_id, userId),
+            inArray(activities.type, ['call', 'meeting']),
+            isNull(activities.deleted_at),
+            isNotNull(activities.due_at),
+            gte(activities.due_at, from),
+            lt(activities.due_at, to),
+          ),
+        )
+        .orderBy(asc(activities.due_at))
+        .limit(500);
+      return rows;
+    });
+  }
+
   /** Activities linked to a contact / company — the detail-page timeline. */
   async listForContact(tenantId: string, personId: string) {
     return this.listForRef(tenantId, eq(activities.person_id, personId));

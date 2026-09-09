@@ -3,6 +3,7 @@ import { DirectoryService } from './directory.service';
 import { DealsService } from './deals.service';
 import { LeadsService, type CreateLeadDto } from './leads.service';
 import { SavedViewsService } from './saved-views.service';
+import { ActivitiesService } from './activities.service';
 
 /**
  * CRM public facade (PRD v5 §2.3) — the ONLY surface other modules (today:
@@ -17,7 +18,14 @@ export class CrmPublicService {
     private readonly deals: DealsService,
     private readonly leads: LeadsService,
     private readonly savedViews: SavedViewsService,
+    private readonly activities: ActivitiesService,
   ) {}
+
+  // ─── Round J: the Calendar shows the caller's own CRM calls & meetings ─────
+
+  listMyScheduledActivities(tenantId: string, userId: string, from: Date, to: Date) {
+    return this.activities.listMyScheduled(tenantId, userId, from, to);
+  }
 
   listPeople(tenantId: string, query: { q?: string; page?: number; limit?: number }) {
     return this.directory.listPeople(tenantId, query);

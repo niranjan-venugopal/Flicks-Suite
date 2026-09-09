@@ -16,6 +16,10 @@ export const EVENTS = {
   TIMESHEET_REVIEWED: 'timesheet_reviewed',
   EMPLOYEE_INVITED: 'employee_invited',
   IMPERSONATION_STARTED: 'impersonation_started',
+  // Round J — the workspace calendar.
+  CALENDAR_EVENT_CREATED: 'calendar_event_created',
+  CALENDAR_VIEW_CHANGED: 'calendar_view_changed',
+  CALENDAR_RSVP: 'calendar_rsvp',
 } as const
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS]

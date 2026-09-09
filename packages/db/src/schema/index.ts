@@ -13,6 +13,9 @@ export * from './attendance';
 // ─── Leave ────────────────────────────────────────────────────────────────────
 export * from './leave';
 
+// ─── Calendar (Round J: events, meetings, attendees) ─────────────────────────
+export * from './calendar';
+
 // ─── Timesheet ────────────────────────────────────────────────────────────────
 export * from './timesheet';
 
@@ -40,6 +43,7 @@ import * as authSchema from './auth';
 import * as employeesSchema from './employees';
 import * as attendanceSchema from './attendance';
 import * as leaveSchema from './leave';
+import * as calendarSchema from './calendar';
 import * as timesheetSchema from './timesheet';
 import * as famSchema from './fam';
 import * as notificationsSchema from './notifications';
@@ -54,6 +58,7 @@ export const schema = {
   ...employeesSchema,
   ...attendanceSchema,
   ...leaveSchema,
+  ...calendarSchema,
   ...timesheetSchema,
   ...famSchema,
   ...notificationsSchema,

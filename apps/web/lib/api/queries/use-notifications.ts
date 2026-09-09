@@ -143,6 +143,9 @@ export type NotificationEvent =
   | 'pm_cycle_digest'
   | 'pm_project_nudge'
   | 'pm_github'
+  | 'calendar_invited'
+  | 'calendar_updated'
+  | 'calendar_cancelled'
 
 export interface PreferenceRow {
   event: NotificationEvent

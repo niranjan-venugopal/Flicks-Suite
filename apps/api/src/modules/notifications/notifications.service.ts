@@ -31,6 +31,10 @@ export const NOTIFICATION_EVENTS = [
   'pm_cycle_digest',
   'pm_project_nudge',
   'pm_github',
+  // Calendar (Round J) — invites, changes and cancellations of meetings/events.
+  'calendar_invited',
+  'calendar_updated',
+  'calendar_cancelled',
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 export type NotificationChannel = 'in_app' | 'email';
@@ -62,6 +66,11 @@ const PREFERENCE_DEFAULTS: Record<
   pm_cycle_digest: { in_app: true, email: true },
   pm_project_nudge: { in_app: true, email: false },
   pm_github: { in_app: true, email: false },
+  // Calendar (Round J): an invite and a cancellation are worth an email; a
+  // reschedule/RSVP is ambient (bell only) unless the user opts in.
+  calendar_invited: { in_app: true, email: true },
+  calendar_updated: { in_app: true, email: false },
+  calendar_cancelled: { in_app: true, email: true },
 };
 
 // Map the free-form in-app `type` string (e.g. 'timesheet.approve',
@@ -90,6 +99,10 @@ function eventForInAppType(type: string): NotificationEvent | null {
   if (type.startsWith('pm.github.')) return 'pm_github';
   if (type.startsWith('pm.digest')) return 'pm_comment';
   if (type.startsWith('pm.')) return 'pm_comment';
+  // Calendar (Round J) — specific-first, then a safe calendar.* fallback.
+  if (type === 'calendar.event.invited') return 'calendar_invited';
+  if (type === 'calendar.event.cancelled') return 'calendar_cancelled';
+  if (type.startsWith('calendar.')) return 'calendar_updated';
   return null;
 }
 
@@ -176,7 +189,11 @@ type EmailTemplate =
   | 'pm-inbox-urgent'
   | 'pm-inbox-digest'
   // PM guest seats (round 7)
-  | 'pm-guest-invite';
+  | 'pm-guest-invite'
+  // Calendar (Round J)
+  | 'calendar-invite'
+  | 'calendar-updated'
+  | 'calendar-cancelled';
 
 @Injectable()
 export class NotificationsService {
@@ -248,6 +265,8 @@ export class NotificationsService {
       // Extra SMTP headers — used for marketing sends' List-Unsubscribe
       // (§3.1). Build via ConsentService.marketingEmailHeaders(userId).
       headers?: Record<string, string>;
+      // Round J — small text attachments (the calendar invite's .ics).
+      attachments?: Array<{ filename: string; content: string; contentType?: string }>;
     },
   ): Promise<boolean> {
     // Honour the recipient's per-event email preference when this send is
@@ -281,6 +300,7 @@ export class NotificationsService {
         subject,
         html,
         ...(opts?.headers ? { headers: opts.headers } : {}),
+        ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
       });
       if (error) {
         this.logger.error(
@@ -649,6 +669,79 @@ export class NotificationsService {
               <p>Hi ${String(employeeName)}, unfortunately your leave request has been rejected.</p>
               <p>Dates: ${String(startDate)} to ${String(endDate)} (${String(leaveType)})</p>
               ${comment ? `<p>Comment: ${String(comment)}</p>` : ''}
+            </div>
+          `,
+        };
+      }
+
+      // ─── Calendar (Round J) ──────────────────────────────────────────────
+      // Every value is user-controlled (title, location, names, description)
+      // → esc(). `linkUrl` is a relative app path; `meetingUrl` is an https
+      // link the organizer pasted (validated by the API) and rendered as a
+      // Join button only when present. Times arrive pre-formatted in the
+      // recipient's timezone.
+      case 'calendar-invite':
+      case 'calendar-updated':
+      case 'calendar-cancelled': {
+        const { organizerName, title, when, location, meetingUrl, meetingProvider, description, linkUrl } =
+          props as {
+            organizerName: string;
+            title: string;
+            when: string;
+            location?: string | null;
+            meetingUrl?: string | null;
+            meetingProvider?: string | null;
+            description?: string | null;
+            linkUrl: string;
+          };
+        const base = this.configService.get<string>('APP_URL', 'http://localhost:3000');
+        const providerLabel =
+          meetingProvider === 'teams' ? 'Microsoft Teams'
+            : meetingProvider === 'google_meet' ? 'Google Meet'
+              : meetingProvider === 'other' ? 'Online meeting'
+                : null;
+        const headline =
+          template === 'calendar-invite' ? 'You’re invited'
+            : template === 'calendar-updated' ? 'Meeting updated'
+              : 'Meeting cancelled';
+        const colour = template === 'calendar-cancelled' ? '#ef4444' : template === 'calendar-updated' ? '#f59e0b' : '#1a1a2e';
+        const lead =
+          template === 'calendar-invite'
+            ? `${this.esc(organizerName)} invited you to <strong>${this.esc(title)}</strong>.`
+            : template === 'calendar-updated'
+              ? `${this.esc(organizerName)} changed <strong>${this.esc(title)}</strong>. Here are the latest details.`
+              : `${this.esc(organizerName)} cancelled <strong>${this.esc(title)}</strong>.`;
+        const subjectPrefix =
+          template === 'calendar-invite' ? 'Invitation' : template === 'calendar-updated' ? 'Updated' : 'Cancelled';
+        const rows = [
+          `<tr><td style="padding: 8px; color: #666;">When:</td><td style="padding: 8px;">${this.esc(when)}</td></tr>`,
+          location ? `<tr><td style="padding: 8px; color: #666;">Where:</td><td style="padding: 8px;">${this.esc(location)}</td></tr>` : '',
+          providerLabel ? `<tr><td style="padding: 8px; color: #666;">Meeting:</td><td style="padding: 8px;">${this.esc(providerLabel)}${meetingUrl ? '' : ' · link to follow'}</td></tr>` : '',
+          description ? `<tr><td style="padding: 8px; color: #666;">Details:</td><td style="padding: 8px; white-space: pre-wrap;">${this.esc(description)}</td></tr>` : '',
+        ].join('');
+        const buttons =
+          template === 'calendar-cancelled'
+            ? ''
+            : `<p style="margin: 24px 0 8px;">
+                ${meetingUrl ? `<a href="${this.esc(meetingUrl)}" style="display: inline-block; background: #22c55e; color: white; padding: 12px 22px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-right: 10px;">Join meeting</a>` : ''}
+                <a href="${this.esc(base)}${this.esc(linkUrl)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 22px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open in ${appName}</a>
+              </p>`;
+        // Subjects are plain text (mail clients never decode HTML entities
+        // there) — strip line breaks instead so a title can't inject headers.
+        const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+        return {
+          subject: `${subjectPrefix}: ${plain(title)} — ${plain(when)}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: ${colour};">${headline}</h2>
+              <p>${lead}</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">${rows}</table>
+              ${buttons}
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">${
+                template === 'calendar-cancelled'
+                  ? `This meeting no longer appears on your ${appName} calendar.`
+                  : `Accept or decline from your ${appName} calendar. The attached invite adds it to Outlook or Google Calendar.`
+              }</p>
             </div>
           `,
         };

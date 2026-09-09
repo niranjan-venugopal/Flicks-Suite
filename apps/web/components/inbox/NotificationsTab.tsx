@@ -27,6 +27,7 @@ const COACH_KEY = 'pm-inbox-coach-seen'
 type Kind =
   | 'mention' | 'comment' | 'assign' | 'cycle' | 'digest' | 'done' | 'github'
   | 'leave' | 'regularization' | 'timesheet' | 'onboarding' | 'crm' | 'billing'
+  | 'calendar'
   | 'other'
 
 function kindOf(type: string): Kind {
@@ -44,6 +45,7 @@ function kindOf(type: string): Kind {
   if (type.startsWith('employee.details_')) return 'onboarding'
   if (type.startsWith('crm.')) return 'crm'
   if (type.startsWith('invoice.') || type.startsWith('payment.')) return 'billing'
+  if (type.startsWith('calendar.')) return 'calendar'
   return 'other'
 }
 
@@ -61,6 +63,7 @@ const KIND_IC: Record<Kind, typeof Icon.bell> = {
   onboarding: Icon.userPlus,
   crm: Icon.funnel,
   billing: Icon.wallet,
+  calendar: Icon.cal,
   other: Icon.bell,
 }
 

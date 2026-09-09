@@ -138,7 +138,7 @@ export function MonthYearPanel({ cursor, onPick }: { cursor: Date; onPick: (d: D
   )
 }
 
-function CalendarPanel({
+export function CalendarPanel({
   mode, selStart, selEnd, min, max, onPick, initialCursor,
 }: {
   mode: 'single' | 'range'

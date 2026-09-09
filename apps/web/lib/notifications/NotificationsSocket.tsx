@@ -63,6 +63,14 @@ export function NotificationsSocket() {
       void qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
     })
 
+    // Round J — a calendar event was created / changed / cancelled / answered
+    // somewhere in the workspace. The push carries an id only; every client
+    // refetches its OWN scoped feed, so an organizer sees the RSVP land and
+    // an attendee sees the reschedule without a reload.
+    socket.on('calendar_changed', () => {
+      void qc.invalidateQueries({ queryKey: ['calendar'] })
+    })
+
     return () => {
       socket.disconnect()
       socketRef.current = null

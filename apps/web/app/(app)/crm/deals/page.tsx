@@ -14,6 +14,7 @@ import { TagChip, OwnerAv, EmptyState, SavedViewTabs, FilterBar, BulkBar, Keymap
 import { Sk } from '@/components/states'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
 import { ClosedDealsTable } from '@/components/crm/ClosedDealsTable'
+import { useIsMobile } from '@/lib/hooks/use-is-mobile'
 import {
   useBoard,
   usePipelines,
@@ -40,17 +41,6 @@ import {
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'SGD', 'AED']
 
-function useIsMobile() {
-  const [mobile, setMobile] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 760px)')
-    const apply = () => setMobile(mq.matches)
-    apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [])
-  return mobile
-}
 
 export default function DealsBoardPage() {
   const router = useRouter()

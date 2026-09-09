@@ -458,8 +458,22 @@ export const DOMAIN_EVENTS = [
   'pm.github.installed', 'pm.github.repo_mapped', 'pm.github.link_attached',
   'pm.github.automation_fired',
   'pm.import.completed',
+  // Calendar (Round J) — user-authored events/meetings + RSVP. Payloads are
+  // ids/enums/counts only.
+  'calendar.event.created', 'calendar.event.updated', 'calendar.event.cancelled',
+  'calendar.event.rsvp',
 ] as const;
 export type DomainEventName = (typeof DOMAIN_EVENTS)[number];
+
+// ─── Round J: calendar ───────────────────────────────────────────────────────
+
+/** Meeting providers a calendar event can carry (`none` = in person / no link). */
+export const MEETING_PROVIDERS = ['none', 'teams', 'google_meet', 'other'] as const;
+export type MeetingProvider = (typeof MEETING_PROVIDERS)[number];
+
+/** Attendee RSVP states. */
+export const ATTENDEE_RESPONSES = ['pending', 'accepted', 'declined', 'tentative'] as const;
+export type AttendeeResponse = (typeof ATTENDEE_RESPONSES)[number];
 
 /**
  * Slugs that can never become tenant subdomains (PRD v5 §1) — they collide
