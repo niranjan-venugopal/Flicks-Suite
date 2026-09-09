@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
-import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { TimelineBoard, ZoomToggle, type TimelineLane } from '@/components/pm/timeline'
 import { InitiativeCreateModal } from '@/components/pm/projects'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -98,28 +98,33 @@ const Roadmap = observer(function Roadmap({ engine }: { engine: PmSyncEngine }) 
       )}
 
       {/* Attach projects to a lane */}
-      {assignFor && (
-        <div onClick={() => setAssignFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(1,1,13,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: 380, maxHeight: 420, overflowY: 'auto' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 10 }}>Add projects to this initiative</div>
-            {store.projectList().map((p) => {
-              const inLane = (store.initiativeProjects.get(assignFor) ?? []).includes(p.id)
-              return (
-                <button key={p.id}
-                  onClick={() => {
-                    const cur = store.initiativeProjects.get(assignFor) ?? []
-                    engine.setInitiativeProjects(assignFor, inLane ? cur.filter((x) => x !== p.id) : [...cur, p.id])
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 10px', borderRadius: 8, background: inLane ? 'rgba(62,123,250,.08)' : 'transparent', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 700, textAlign: 'left' }}>
-                  <span>{p.icon ?? '🎯'}</span>
-                  <span style={{ flex: 1 }}>{p.name}</span>
-                  {inLane && <Icon.check size={13} style={{ color: 'var(--blue)' }} />}
-                </button>
-              )
-            })}
+      <Modal open={!!assignFor} onClose={() => setAssignFor(null)} title="Add projects to this initiative" width={380} bodyPadding="12px 14px">
+        {assignFor && store.projectList().length === 0 && (
+          // Never a dead end (house rule 8): a workspace with no projects yet
+          // used to get an empty titled box here.
+          <div style={{ padding: '14px 10px 10px', textAlign: 'center' }}>
+            <div className="t-mute" style={{ fontSize: 12.5, lineHeight: 1.6, marginBottom: 12 }}>
+              No projects yet — create one under Projects first, then add it to this lane.
+            </div>
+            <Btn kind="secondary" size="sm" onClick={() => { setAssignFor(null); router.push('/pm/projects') }}>Go to Projects</Btn>
           </div>
-        </div>
-      )}
+        )}
+        {assignFor && store.projectList().map((p) => {
+          const inLane = (store.initiativeProjects.get(assignFor) ?? []).includes(p.id)
+          return (
+            <button key={p.id}
+              onClick={() => {
+                const cur = store.initiativeProjects.get(assignFor) ?? []
+                engine.setInitiativeProjects(assignFor, inLane ? cur.filter((x) => x !== p.id) : [...cur, p.id])
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 10px', borderRadius: 8, background: inLane ? 'rgba(62,123,250,.08)' : 'transparent', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 700, textAlign: 'left' }}>
+              <span>{p.icon ?? '🎯'}</span>
+              <span style={{ flex: 1 }}>{p.name}</span>
+              {inLane && <Icon.check size={13} style={{ color: 'var(--blue)' }} />}
+            </button>
+          )
+        })}
+      </Modal>
 
       <InitiativeCreateModal
         open={openNew}

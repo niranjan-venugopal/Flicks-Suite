@@ -83,6 +83,8 @@ interface MeResponse extends ApiUser {
   // Whether this browser is a consented trusted device (drives the
   // post-login "stay signed in for 180 days?" prompt).
   deviceTrusted?: boolean
+  // users.last_login_at — the profile's Security card shows it (round K).
+  lastLoginAt?: string | null
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
   // PRD v6 — effective runtime flags for the current tenant (e.g.
@@ -318,6 +320,18 @@ export function useLogout() {
       resetAnalytics()
       window.location.assign('/login')
     },
+  })
+}
+
+/**
+ * "Sign out other devices" (round K) — revokes every other live session;
+ * this device keeps its cookies. Nothing to invalidate: the current session
+ * is untouched by design.
+ */
+export function useLogoutOthers() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ revokedDevices: number }>('/api/v1/auth/logout-others', {}),
   })
 }
 

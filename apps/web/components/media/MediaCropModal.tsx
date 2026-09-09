@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import Cropper from 'react-easy-crop'
 import type { Area } from 'react-easy-crop'
-import { Btn, Icon } from '@/components/proto'
+import { Btn, Icon, Overlay } from '@/components/proto'
 
 /**
  * D5 — shared avatar/logo crop modal (PRD v4 §4.1). react-easy-crop with a
@@ -132,21 +132,12 @@ export function MediaCropModal({
     }
   }
 
+  const title = kind === 'logo' ? 'Update company logo' : 'Update photo'
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 960,
-        background: 'rgba(1,1,13,.7)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-      }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
+    // Only a scrim click dismisses (the scrim is its own element now, so a
+    // plain onClose is the old `target === currentTarget` check).
+    <Overlay open onClose={onClose} zIndex={960} blur={4} dim={0.7} padding={20} label={title}>
       <div
         style={{
           width: '100%',
@@ -162,7 +153,7 @@ export function MediaCropModal({
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}>
-              {kind === 'logo' ? 'Update company logo' : 'Update photo'}
+              {title}
             </div>
             <div className="t-mute" style={{ fontSize: 11 }}>
               JPG, PNG or WebP · max 8 MB · min 128 px{kind === 'logo' ? ' · transparency kept' : ''}
@@ -310,6 +301,6 @@ export function MediaCropModal({
           )}
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

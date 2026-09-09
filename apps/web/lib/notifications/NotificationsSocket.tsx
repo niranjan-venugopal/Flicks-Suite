@@ -50,6 +50,9 @@ export function NotificationsSocket() {
       // exact. Invalidating the whole 'notifications' tree also refreshes the
       // /notifications list page if it's mounted.
       void qc.invalidateQueries({ queryKey: ['notifications'] })
+      // Round K: most pushes are approval traffic (leave / regularization /
+      // onboarding) — refresh the Inbox → Approvals queue + badge with them.
+      void qc.invalidateQueries({ queryKey: ['dashboard', 'admin', 'overview'] })
     })
 
     // Tenant-wide HRMS data push (onboarding submitted/approved/rejected):

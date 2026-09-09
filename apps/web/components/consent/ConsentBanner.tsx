@@ -78,6 +78,8 @@ export function ConsentBanner() {
 
   return (
     <>
+      {/* Non-blocking strip: stays UNDER the overlay band so an open dialog's
+          scrim dims it instead of the strip covering the dialog's footer. */}
       <div style={{ position: 'fixed', left: 12, right: 12, bottom: 12, zIndex: 900 }}>
         <div
           style={{
@@ -144,7 +146,8 @@ export function ConsentBanner() {
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 950,
+            zIndex: 1360, // gates band 1300–1399 — see globals.css layering scale
+            pointerEvents: 'auto', // re-arm under a Radix body pointer-events lock
             background: 'rgba(1,1,13,.6)',
             backdropFilter: 'blur(3px)',
             display: 'flex',

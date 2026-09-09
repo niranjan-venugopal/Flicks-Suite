@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react'
 import { Btn } from './Btn'
 import { Icon } from './Icon'
+import { Overlay } from './Overlay'
 
 interface ModalProps {
   open: boolean
@@ -20,24 +21,12 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, sub, children, footer, width = 560, hideHeader, bodyPadding }: ModalProps) {
-  if (!open) return null
-
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,.6)',
-        backdropFilter: 'blur(8px)',
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
+    <Overlay open={open} onClose={onClose} zIndex={1000} label={typeof title === 'string' ? title : undefined}>
       <div
+        // Load-bearing even though the scrim is now a sibling: React portals
+        // bubble through the REACT tree, so a click inside the card would
+        // still reach clickable ancestors of <Modal> (pm/issues click-catchers).
         onClick={(e) => e.stopPropagation()}
         // modal-card: opaque face — a glass card nested inside this overlay's
         // blur composites unreliably and disappears on near-black pages
@@ -56,6 +45,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
       >
         {!hideHeader && (
         <div
+          className="modal-head"
           style={{
             padding: '22px 24px',
             borderBottom: '1px solid var(--bord)',
@@ -63,6 +53,7 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
             justifyContent: 'space-between',
             alignItems: 'flex-start',
             gap: 24,
+            flexShrink: 0,
           }}
         >
           {/* flex:1 + minWidth:0 so a long unbreakable title truncates inside
@@ -83,21 +74,35 @@ export function Modal({ open, onClose, title, sub, children, footer, width = 560
           </div>
         </div>
         )}
-        <div style={{ padding: bodyPadding ?? '22px 24px', overflow: 'auto', flex: 1 }}>{children}</div>
+        {/* Safari (founder round K): `flex: 1` = basis 0, and WebKit sizes an
+            auto-height column-flex card from its children's BASE sizes — the
+            body computed to 0px and the footer collapsed to its border. Basis
+            auto keeps it content-sized; min-height 0 still lets it shrink and
+            scroll under the 90vh cap. Mirrored in globals.css .modal-body. */}
+        <div
+          className="modal-body"
+          data-modal-body
+          style={{ padding: bodyPadding ?? '22px 24px', overflow: 'auto', flex: '1 1 auto', minHeight: 0 }}
+        >
+          {children}
+        </div>
         {footer && (
           <div
+            className="modal-foot"
+            data-modal-foot
             style={{
               padding: '16px 24px',
               borderTop: '1px solid var(--bord)',
               display: 'flex',
               gap: 10,
               justifyContent: 'flex-end',
+              flexShrink: 0,
             }}
           >
             {footer}
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   )
 }

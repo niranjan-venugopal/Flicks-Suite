@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
@@ -20,9 +20,23 @@ import { useToast } from '@/components/ui/use-toast'
 // Approvals tab of the common Inbox (approver roles only): the leave +
 // regularization review queue — filter pills, master–detail list, comment
 // box, approve/reject. Extracted unchanged from the old /inbox page.
+// Round K: `focusId` (from /inbox?tab=approvals&request=<id>) pre-selects
+// and highlights that row once the queue loads — the Round I idiom from
+// Team → Leave. The source stays the overview, now up to 50 rows per kind.
 // ─────────────────────────────────────────────────────────
 
 type FilterKey = 'all' | 'leave' | 'regularization' | 'onboarding'
+
+/** Presence batch cap — the ids travel in a GET query string. */
+const PRESENCE_MAX_IDS = 40
+/** How long the deep-linked row keeps its ring. */
+const HIGHLIGHT_MS = 2500
+
+/** Browser-local clock time — the same zone the requester typed it in. */
+function fmtTime(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
 
 interface InboxItem {
   kind: 'leave' | 'regularization' | 'onboarding'
@@ -113,13 +127,23 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
   return items
 }
 
-export function ApprovalsTab() {
+export function ApprovalsTab({
+  focusId,
+  onFocusConsumed,
+}: {
+  /** Request id from the deep link; selected + highlighted once loaded. */
+  focusId?: string | null
+  /** Called when the focused row is gone, or once it has been decided — the page scrubs the URL. */
+  onFocusConsumed?: () => void
+}) {
   const [filter, setFilter] = useState<FilterKey>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [exiting, setExiting] = useState<string | null>(null)
+  const [highlight, setHighlight] = useState<string | null>(null)
+  const consumed = useRef<string | null>(null)
   const qc = useQueryClient()
-  const overview = useAdminOverview()
+  const overview = useAdminOverview(true, { pendingLimit: 50 })
   const { toast } = useToast()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
@@ -127,12 +151,20 @@ export function ApprovalsTab() {
   const rejectOnb = useRejectOnboarding()
 
   const items = useMemo(() => buildItems(overview.data), [overview.data])
-  // D9 — seed the presence batch once so inbox rows show the status dot.
-  usePresence(items.map((i) => i.userId).filter((id): id is string => !!id))
   const filtered = useMemo(
     () => (filter === 'all' ? items : items.filter((i) => i.kind === filter)),
     [items, filter],
   )
+  // D9 — seed the presence batch once so inbox rows show the status dot.
+  // Capped to the first rendered ids: the batch is a GET query string.
+  const presenceIds = useMemo(
+    () =>
+      Array.from(
+        new Set(filtered.map((i) => i.userId).filter((id): id is string => !!id)),
+      ).slice(0, PRESENCE_MAX_IDS),
+    [filtered],
+  )
+  usePresence(presenceIds)
 
   const counts = {
     all: items.length,
@@ -144,6 +176,54 @@ export function ApprovalsTab() {
   const selected = filtered.find((i) => i.id === selectedId) ?? filtered[0] ?? null
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
+
+  // A deep link is judged only against data fetched AFTER it arrived: the
+  // cached overview (staleTime 30 s, HTTP max-age 15 s) predates the very
+  // request the notification is about, and a stale miss would toast "not
+  // waiting on you" for a request that IS waiting.
+  const focusArrivedAt = useRef(0)
+  useEffect(() => {
+    if (!focusId) return
+    focusArrivedAt.current = Date.now()
+    void overview.refetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId])
+
+  // ── Deep link: select the requested row once the queue has loaded ──────
+  useEffect(() => {
+    if (!focusId) {
+      // URL scrubbed — the same id can be focused again by a later click.
+      consumed.current = null
+      return
+    }
+    if (!overview.data) return
+    if (consumed.current === focusId) return
+    if (overview.isFetching || overview.dataUpdatedAt < focusArrivedAt.current) return
+    consumed.current = focusId
+    const row = items.find((i) => i.id === focusId)
+    if (!row) {
+      // Already decided, not in this reviewer's scope, or a stale link.
+      toast({
+        title: 'That request isn’t waiting on you',
+        description: 'It may already be reviewed, or it belongs to another manager’s team.',
+      })
+      onFocusConsumed?.()
+      return
+    }
+    setFilter('all')
+    setSelectedId(row.id)
+    setHighlight(row.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, overview.data, overview.isFetching, overview.dataUpdatedAt, items])
+
+  useEffect(() => {
+    if (!highlight) return
+    document
+      .querySelector<HTMLElement>(`[data-request-id="${highlight}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const t = setTimeout(() => setHighlight(null), HIGHLIGHT_MS)
+    return () => clearTimeout(t)
+  }, [highlight])
 
   const handleAction = async (action: 'approve' | 'reject') => {
     if (!selected) return
@@ -165,6 +245,9 @@ export function ApprovalsTab() {
       setComment('')
       setSelectedId(null)
       setExiting(null)
+      setHighlight(null)
+      // The deep-linked request is decided — drop `?request=` from the URL.
+      if (focusId && selected.id === focusId) onFocusConsumed?.()
       refresh()
       // Decisions notify the requester, so this is feedback rather than a
       // rollback handle — the toast states plainly what the other side saw.
@@ -235,6 +318,22 @@ export function ApprovalsTab() {
         >
           <Loader2 className="w-4 h-4 animate-spin" /> Loading inbox…
         </div>
+      ) : overview.isError ? (
+        <div
+          className="card"
+          style={{
+            padding: 48,
+            textAlign: 'center',
+            color: 'var(--text-mute)',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <div style={{ marginBottom: 12 }}>Couldn’t load your approvals.</div>
+          <Btn kind="secondary" size="sm" onClick={() => void overview.refetch()}>
+            Retry
+          </Btn>
+        </div>
       ) : filtered.length === 0 ? (
         <div
           className="card"
@@ -267,6 +366,9 @@ export function ApprovalsTab() {
                 <button
                   key={a.id}
                   type="button"
+                  data-request-id={a.id}
+                  data-kind={a.kind}
+                  aria-selected={isActive}
                   onClick={() => setSelectedId(a.id)}
                   className={exiting === a.id ? 'pm-exit-right pm-row' : 'pm-row'}
                   style={{
@@ -277,6 +379,8 @@ export function ApprovalsTab() {
                     cursor: 'pointer',
                     position: 'relative',
                     background: isActive ? 'var(--surf-2)' : 'transparent',
+                    boxShadow: highlight === a.id ? 'inset 0 0 0 1px var(--blue)' : undefined,
+                    transition: 'box-shadow 200ms',
                     width: '100%',
                     textAlign: 'left',
                     border: 'none',
@@ -469,6 +573,8 @@ function ApprovalDetail({
 
         {item.kind === 'regularization' && (() => {
           const r = item.raw as AdminOverview['pending']['regularizations'][number]
+          const firstName = item.who.trim().split(/\s+/)[0] || 'this employee'
+          const hasProposed = !!(r.proposedInTime || r.proposedOutTime)
           return (
             <>
               <div
@@ -497,8 +603,29 @@ function ApprovalDetail({
                   <strong style={{ color: '#fff' }}>{r.attendanceDate}</strong>
                 </div>
               </div>
-              <Field label="Type" value={r.requestType.replaceAll('_', ' ')} />
-              <Field label="Date" value={r.attendanceDate} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <Field label="Type" value={r.requestType.replaceAll('_', ' ')} />
+                <Field label="Date" value={r.attendanceDate} />
+              </div>
+              {/* Approving writes these into the attendance record. */}
+              {hasProposed && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Field label="Proposed in" value={<span style={{ fontFamily: 'var(--font-mono)' }}>{fmtTime(r.proposedInTime)}</span>} />
+                  <Field label="Proposed out" value={<span style={{ fontFamily: 'var(--font-mono)' }}>{fmtTime(r.proposedOutTime)}</span>} />
+                </div>
+              )}
+              <Link
+                href={`/employees/${r.employeeId}?tab=attendance`}
+                data-testid="view-attendance-link"
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 700,
+                  color: 'var(--blue)',
+                  textDecoration: 'none',
+                }}
+              >
+                View {firstName}&apos;s attendance →
+              </Link>
             </>
           )
         })()}

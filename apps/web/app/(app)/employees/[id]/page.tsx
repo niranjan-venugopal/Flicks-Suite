@@ -1,8 +1,8 @@
 'use client'
 
-import { use, useState } from 'react'
+import { Suspense, use, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -41,6 +41,11 @@ const TABS = [
   'access',
 ] as const
 type Tab = (typeof TABS)[number]
+
+/** `?tab=` from the URL, or null when absent / not a real tab. */
+function parseTab(raw: string | null): Tab | null {
+  return raw && (TABS as readonly string[]).includes(raw) ? (raw as Tab) : null
+}
 
 function statusTone(s: EmployeeDetail['status']): PillTone {
   switch (s) {
@@ -84,9 +89,39 @@ export default function EmployeeDetailPage({
 }: {
   params: Promise<{ id: string }>
 }) {
+  // useSearchParams() needs a Suspense boundary for Next's static export step.
+  return (
+    <Suspense
+      fallback={
+        <div className="card p-12 flex items-center justify-center">
+          <Loader2 className="w-6 h-6 animate-spin text-brand-muted" />
+        </div>
+      }
+    >
+      <EmployeeDetailInner params={params} />
+    </Suspense>
+  )
+}
+
+function EmployeeDetailInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { data: e, isLoading, error } = useEmployee(id)
-  const [tab, setTab] = useState<Tab>('overview')
+  // Round K: `?tab=attendance` (from the Inbox's "View …'s attendance" link)
+  // opens that tab directly; picking a tab writes it back so the URL stays
+  // shareable. Anything that isn't a real tab falls back to Overview.
+  const paramTab = parseTab(searchParams.get('tab'))
+  const [tab, setTabState] = useState<Tab>(paramTab ?? 'overview')
+  useEffect(() => {
+    if (paramTab) setTabState(paramTab)
+  }, [paramTab])
+  const setTab = (t: Tab) => {
+    setTabState(t)
+    router.replace(t === 'overview' ? `/employees/${id}` : `/employees/${id}?tab=${t}`, {
+      scroll: false,
+    })
+  }
 
   return (
     <div className="relative min-h-full">
@@ -172,7 +207,11 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
       setConfirmRemove(false)
     }
   }
-  const removeBody = !pv
+  // Round K (A5): a data-dependent dialog body must never sit empty — the
+  // failed preview gets its own line instead of "Checking…" forever.
+  const removeBody = preview.isError
+    ? "Could not check this employee's history right now."
+    : !pv
     ? 'Checking what removing this employee would touch…'
     : pv.mode === 'delete'
       ? `${name} has no attendance, leave or timesheet history yet, so their record is deleted for good and their sign-in access is revoked. This cannot be undone.`
@@ -901,12 +940,20 @@ function OverviewTab({ e }: { e: EmployeeDetail }) {
       {/* RIGHT column ───────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         <Card title="This month">
-          <Grid cols={2}>
-            <Stat label="Days present" value={e.thisMonth.daysPresent.toString()} />
-            <Stat label="Late arrivals" value={e.thisMonth.lateArrivals.toString()} />
-            <Stat label="Hours logged" value={`${e.thisMonth.hoursWorked}h`} />
-            <Stat label="Leave taken" value={e.thisMonth.leaveTaken.toString()} />
-          </Grid>
+          {e.thisMonth ? (
+            <Grid cols={2}>
+              <Stat label="Days present" value={e.thisMonth.daysPresent.toString()} />
+              <Stat label="Late arrivals" value={e.thisMonth.lateArrivals.toString()} />
+              <Stat label="Hours logged" value={`${e.thisMonth.hoursWorked}h`} />
+              <Stat label="Leave taken" value={e.thisMonth.leaveTaken.toString()} />
+            </Grid>
+          ) : (
+            // Round K: the API redacts attendance + leave numbers for anyone
+            // but the person, their reporting manager and owner / admin.
+            <div className="t-mute" style={{ fontSize: 12 }}>
+              Only {e.firstName}&apos;s manager and HR can see attendance.
+            </div>
+          )}
         </Card>
 
         <Card title="Leave balance">

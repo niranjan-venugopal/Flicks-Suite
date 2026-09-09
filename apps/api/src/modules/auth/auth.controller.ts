@@ -316,6 +316,26 @@ export class AuthController {
     this.authService.clearAuthCookies(res);
   }
 
+  @Post('logout-others')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiCookieAuth('access_token')
+  @ApiOperation({
+    summary: 'Sign out other devices',
+    description:
+      'Revokes every other live session of the current user. This device — matched by its device id and refresh cookie — stays signed in and its cookies are untouched.',
+  })
+  @ApiResponse({ status: 200, description: '{ revokedDevices } — distinct devices signed out' })
+  @ApiResponse({ status: 400, description: 'The current device could not be identified' })
+  async logoutOthers(@CurrentUser() user: JwtPayload, @Req() req: Request) {
+    const deviceId =
+      user.deviceId ||
+      (req.cookies?.['fs_device_id'] as string | undefined) ||
+      (req.headers['x-device-id'] as string | undefined);
+    const refreshToken = req.cookies?.['refresh_token'] as string | undefined;
+    return this.authService.logoutOthers(user.sub, deviceId, refreshToken);
+  }
+
   @Get('me')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get current user', description: 'Returns current user info and memberships.' })

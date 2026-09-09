@@ -47,7 +47,9 @@ export function ReacceptanceGate() {
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 990,
+        // Blocking gates live at 1300–1399: above every overlay in the
+        // 900–1299 band (round K portals them all to <body>), below --z-float.
+        zIndex: 1390,
         // Radix modals set pointer-events: none on <body>; this gate is not a
         // Radix layer, so it must re-arm its own subtree or every click dies.
         pointerEvents: 'auto',

@@ -31,9 +31,14 @@ function InboxContent() {
   const tab: Tab = sp.get('tab') === 'approvals' && isApprover ? 'approvals' : 'notifications'
   const setTab = (t: Tab) =>
     router.replace(t === 'notifications' ? pathname : `${pathname}?tab=${t}`, { scroll: false })
+  // Round K: regularization notices deep-link to /inbox?tab=approvals&request=<id>;
+  // the Approvals tab selects that row, then asks us to scrub the param.
+  const focusId = sp.get('request')
 
   const unread = useUnreadNotifications()
-  const overview = useAdminOverview(isApprover)
+  // pendingLimit 50 — the same query the Approvals tab reads, so the badge and
+  // the list agree and a 6th pending request is reachable (dashboard keeps 5).
+  const overview = useAdminOverview(isApprover, { pendingLimit: 50 })
   const unreadCount = unread.data?.total ?? 0
   const pendingCount = isApprover ? overview.data?.stats?.pendingApprovals ?? 0 : 0
 
@@ -95,7 +100,14 @@ function InboxContent() {
           {isApprover && <TabBtn t="approvals" label="Approvals" count={pendingCount} />}
         </div>
 
-        {tab === 'approvals' ? <ApprovalsTab /> : <NotificationsTab />}
+        {tab === 'approvals' ? (
+          <ApprovalsTab
+            focusId={focusId}
+            onFocusConsumed={() => router.replace('/inbox?tab=approvals', { scroll: false })}
+          />
+        ) : (
+          <NotificationsTab />
+        )}
       </div>
     </div>
   )

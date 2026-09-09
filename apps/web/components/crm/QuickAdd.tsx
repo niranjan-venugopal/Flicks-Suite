@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Btn, Icon, Pill } from '@/components/proto'
+import { Btn, Icon, Overlay, Pill } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { APIError } from '@/lib/api/client'
@@ -177,7 +177,8 @@ function QuickAddModal({ initialTab, onClose }: { initialTab: QuickAddKind; onCl
   const sectionDone: Record<QuickAddKind, boolean> = { deal: !!title.trim(), person: personFilled, company: companyFilled }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '10vh 24px 24px' }}>
+    <Overlay open onClose={onClose} zIndex={1100} align="start" padding="10vh 24px 24px" blur={6} dim={0.55} label="New deal">
+      {/* overflow: visible — the link-search dropdowns are in-tree, not portaled. */}
       <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 560, borderRadius: 16, padding: 0, overflow: 'visible' }}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 13.5, fontWeight: 800, flex: 1 }}>New deal</span>
@@ -270,7 +271,7 @@ function QuickAddModal({ initialTab, onClose }: { initialTab: QuickAddKind; onCl
           </Btn>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 

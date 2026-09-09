@@ -420,7 +420,8 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   />
                   {pickerFor === i && itemQ.trim().length >= 2 && itemResults.length > 0 && (
                     <div
-                      className="glass"
+                      // modal-card, not glass: no backdrop-filter inside a dialog card.
+                      className="modal-card"
                       style={{
                         position: 'absolute',
                         zIndex: 20,

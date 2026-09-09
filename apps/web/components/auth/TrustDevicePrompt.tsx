@@ -11,6 +11,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { useCurrentUser, useTrustDevice } from '@/lib/api/queries/use-auth'
 import { useMyConsents } from '@/lib/api/queries/use-consent'
+import { useBilling } from '@/lib/api/queries/use-billing'
 
 const DISMISS_KEY = 'fs-trust-device-dismissed'
 
@@ -46,6 +47,13 @@ export function TrustDevicePrompt() {
   const role = (
     me?.currentMembership?.role ?? me?.memberships?.[0]?.role ?? ''
   ).toLowerCase()
+  // Same rule for the billing wall (round K): it paints above this prompt,
+  // and this prompt no longer closes on an outside click, so opening while
+  // the workspace is locked would leave the wall visible but inert.
+  const billingGated = !!me && role !== 'guest' && role !== 'fam' && role !== 'super_admin'
+  const billing = useBilling({ enabled: billingGated })
+  const billingKnown = !billingGated || !!billing.data?.data
+  const billingLocked = billingGated && billing.data?.data?.locked === true
   const show =
     !!me &&
     me.deviceTrusted === false &&
@@ -54,7 +62,9 @@ export function TrustDevicePrompt() {
     role !== 'fam' &&
     role !== 'super_admin' &&
     !!consentState &&
-    !consentState.requires_reacceptance
+    !consentState.requires_reacceptance &&
+    billingKnown &&
+    !billingLocked
 
   if (!show) return null
 
@@ -86,7 +96,12 @@ export function TrustDevicePrompt() {
 
   return (
     <Dialog open onOpenChange={(o) => !o && dismiss()}>
-      <DialogContent className="max-w-sm">
+      {/* Round K: a proto overlay (inbox tour, any Modal) can open ABOVE this
+          prompt — overlays portal to <body> at z 900+ while Radix sits at
+          z-50 — and the first click on that overlay's face would register
+          here as an outside click and silently discard the prompt. This is
+          a decision dialog: only "Not now", "Yes" or Escape may close it. */}
+      <DialogContent className="max-w-sm" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>

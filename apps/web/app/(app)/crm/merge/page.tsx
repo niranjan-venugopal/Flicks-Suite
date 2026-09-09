@@ -272,7 +272,13 @@ function PurgeActivitiesCard() {
         onClose={() => setConfirmingPurge(false)}
         title="Clear old activities"
         danger
-        body={count ? `Clear ${count.toLocaleString()} activit${count === 1 ? 'y' : 'ies'} older than ${days} days? This cannot be undone from the app.` : null}
+        body={
+          preview.isError
+            ? <span style={{ color: 'var(--coral)' }}>Could not count the matching activities — close this and run Preview again.</span>
+            : count === undefined
+              ? 'Counting activities…'
+              : `Clear ${count.toLocaleString()} activit${count === 1 ? 'y' : 'ies'} older than ${days} days? This cannot be undone from the app.`
+        }
         confirmLabel="Clear activities"
         loading={purge.isPending}
         loadingLabel="Clearing…"

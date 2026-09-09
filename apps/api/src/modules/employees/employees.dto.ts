@@ -15,7 +15,9 @@ import {
   Matches,
   MaxLength,
   ValidateNested,
+  ValidateIf,
   IsObject,
+  IsNotEmptyObject,
   IsIn,
   IsDateString,
 } from 'class-validator';
@@ -267,26 +269,114 @@ export class RejectOnboardingDto {
   reason?: string;
 }
 
+// ─── Self-service profile edit (founder round K) ─────────────────────────────
+// Contact details only — name / work email / designation / role stay
+// HR-managed on UpdateEmployeeDto. '' on a scalar clears it. The nested
+// objects carry @Type + @IsObject (house rule 5) or the global pipe rewrites
+// them to [].
+
+// Permissive phone: optional +, a leading digit, then 6–29 digits/separators.
+// The global pipe's implicit conversion turns a JSON number into a string
+// before @IsString runs, so the length floor is what still rejects `12345`.
+const PHONE_RE = /^\+?[0-9][0-9 ().-]{6,29}$/;
+const PHONE_MESSAGE = 'Enter a phone number with at least 7 digits';
+
+export class SelfAddressDto {
+  @ApiPropertyOptional({ example: '12 MG Road' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  line1?: string;
+
+  @ApiPropertyOptional({ example: 'Indiranagar' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  line2?: string;
+
+  @ApiPropertyOptional({ example: 'Bengaluru' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'Karnataka', description: 'Stored as current_address.state' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  stateCode?: string;
+
+  @ApiPropertyOptional({ example: '560038', description: 'Stored as current_address.postal_code' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  postalCode?: string;
+}
+
+export class SelfEmergencyContactDto {
+  @ApiProperty({ example: 'Anita Sharma' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name: string;
+
+  @ApiProperty({ example: 'Spouse' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  relationship: string;
+
+  @ApiProperty({ example: '+91 98765 43210' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(30)
+  @Matches(PHONE_RE, { message: PHONE_MESSAGE })
+  phone: string;
+
+  @ApiPropertyOptional({ example: 'anita@example.com' })
+  @ValidateIf((o: SelfEmergencyContactDto) => !!o.email)
+  @IsString()
+  @IsEmail()
+  @MaxLength(254)
+  email?: string;
+}
+
 export class SelfUpdateEmployeeDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '+91 98765 43210', description: "'' clears" })
+  @ValidateIf((o: SelfUpdateEmployeeDto) => !!o.personalPhone)
   @IsString()
-  @IsOptional()
-  phone?: string;
+  @MaxLength(30)
+  @Matches(PHONE_RE, { message: PHONE_MESSAGE })
+  personalPhone?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'me@example.com', description: "'' clears" })
+  @ValidateIf((o: SelfUpdateEmployeeDto) => !!o.personalEmail)
   @IsString()
-  @IsOptional()
-  address?: string;
+  @IsEmail()
+  @MaxLength(254)
+  personalEmail?: string;
 
-  @ApiPropertyOptional()
-  @IsString()
+  @ApiPropertyOptional({
+    type: () => SelfAddressDto,
+    description: 'Merged over the saved address (country kept). Omit or null = unchanged.',
+  })
   @IsOptional()
-  emergencyContactName?: string;
+  @IsObject()
+  @IsNotEmptyObject()
+  @ValidateNested()
+  @Type(() => SelfAddressDto)
+  currentAddress?: SelfAddressDto | null;
 
-  @ApiPropertyOptional()
-  @IsString()
+  @ApiPropertyOptional({
+    type: () => SelfEmergencyContactDto,
+    nullable: true,
+    description: 'Upserts the primary emergency contact. null removes it; omit = unchanged.',
+  })
   @IsOptional()
-  emergencyContactPhone?: string;
+  @IsObject()
+  @ValidateNested()
+  @Type(() => SelfEmergencyContactDto)
+  emergencyContact?: SelfEmergencyContactDto | null;
 }
 
 export class OnboardingStepDto {

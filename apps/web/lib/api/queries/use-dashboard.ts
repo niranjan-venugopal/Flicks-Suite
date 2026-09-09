@@ -66,6 +66,9 @@ export interface AdminOverview {
       employeeCode: string | null
       attendanceDate: string
       requestType: string
+      /** Round K — ISO instants the reviewer is about to write into the day. */
+      proposedInTime: string | null
+      proposedOutTime: string | null
       reason: string
       requestedAt: string
       avatarUrl: string | null
@@ -90,10 +93,24 @@ export interface ActivityItem {
   createdAt: string
 }
 
-export function useAdminOverview(enabled = true) {
+/**
+ * `pendingLimit` — how many pending leaves / regularizations the API LISTS
+ * (counts are unaffected; the API clamps to 1..50, default 5). The dashboard
+ * card keeps the default; the Inbox asks for 50 so every request it can act
+ * on is reachable. Part of the query key so the two never share a cache row.
+ */
+export function useAdminOverview(enabled = true, opts?: { pendingLimit?: number }) {
+  const pendingLimit = opts?.pendingLimit
   return useQuery({
-    queryKey: ['dashboard', 'admin', 'overview'],
-    queryFn: () => api.get<AdminOverview>('/api/v1/dashboard/admin/overview'),
+    queryKey: ['dashboard', 'admin', 'overview', pendingLimit ?? null],
+    // The route answers with `Cache-Control: private, max-age=15`. The Inbox
+    // variant deep-links to requests that were filed seconds ago, so its
+    // fetches carry a cache-buster and always reach the API (a request
+    // header would force a CORS preflight on every read).
+    queryFn: () =>
+      api.get<AdminOverview>(
+        `/api/v1/dashboard/admin/overview${pendingLimit ? `?pendingLimit=${pendingLimit}&_=${Date.now()}` : ''}`,
+      ),
     staleTime: 30_000,
     // Round H: callers pass their role gate — guests (project-scoped seats)
     // are refused this route by the API's GuestScopeGuard, so don't ask.

@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react'
 import { Btn, Pill, SectionHead } from '@/components/proto'
 import { InvoPage, InvoTable, InvoRow, invoTh, invoTd, INVO } from '@/components/invoicing/invo'
 import { PaymentModal } from '@/components/invoicing/PaymentModal'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { usePayments, useInvoices, type InvoiceRow } from '@/lib/api/queries/use-invoicing'
 import type { PillTone } from '@/components/proto/Pill'
 
@@ -88,42 +89,40 @@ export default function PaymentsPage() {
         ))}
       </InvoTable>
 
-      {/* Invoice picker → existing PaymentModal */}
-      {pickerOpen && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={() => setPickerOpen(false)}
-        >
-          <div className="card" style={{ width: 460, padding: 22 }} onClick={(e) => e.stopPropagation()}>
-            <div className="t-h3" style={{ marginBottom: 4 }}>Record a payment</div>
-            <div className="t-mute" style={{ fontSize: 12, marginBottom: 14 }}>Pick the invoice the money came in against.</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-              {openInvoices.length === 0 && <div className="t-mute text-sm">No open invoices.</div>}
-              {openInvoices.map((i) => (
-                <button
-                  key={i.id}
-                  type="button"
-                  className="card"
-                  style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}
-                  onClick={() => {
-                    setPaying(i)
-                    setPickerOpen(false)
-                  }}
-                >
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{i.invoice_number}</span>
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{i.customer_name}</span>
-                  <span className="t-num" style={{ fontSize: 12.5, fontWeight: 800 }}>
-                    {fmt(i.amount_outstanding ?? i.total_amount, i.currency)} due
-                  </span>
-                </button>
-              ))}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
-              <Btn kind="ghost" onClick={() => setPickerOpen(false)}>Cancel</Btn>
-            </div>
+      {/* Invoice picker → existing PaymentModal. Radix like PaymentModal so the
+          page never mixes overlay families (round K). */}
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Record a payment</DialogTitle>
+            <DialogDescription>Pick the invoice the money came in against.</DialogDescription>
+          </DialogHeader>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto' }}>
+            {openInvoices.length === 0 && <div className="t-mute text-sm">No open invoices.</div>}
+            {openInvoices.map((i) => (
+              <button
+                key={i.id}
+                type="button"
+                className="card"
+                style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', textAlign: 'left' }}
+                onClick={() => {
+                  setPaying(i)
+                  setPickerOpen(false)
+                }}
+              >
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{i.invoice_number}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{i.customer_name}</span>
+                <span className="t-num" style={{ fontSize: 12.5, fontWeight: 800 }}>
+                  {fmt(i.amount_outstanding ?? i.total_amount, i.currency)} due
+                </span>
+              </button>
+            ))}
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Btn kind="ghost" onClick={() => setPickerOpen(false)}>Cancel</Btn>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PaymentModal open={!!paying} onOpenChange={(v) => !v && setPaying(null)} invoice={paying} />
     </InvoPage>

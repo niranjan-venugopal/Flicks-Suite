@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, type CSSProperties, type ReactNode } from 'react'
-import { Btn, Icon, Avatar } from '@/components/proto'
+import { Btn, Icon, Avatar, Overlay } from '@/components/proto'
 
 // ─────────────────────────────────────────────────────────
 // CRM v5 shared kit — faithful TS port of the approved
@@ -204,7 +204,6 @@ function Kbd({ children }: { children: ReactNode }) {
   return <kbd style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, padding: '0 6px', borderRadius: 6, background: 'var(--surf-2)', border: '1px solid var(--bord-2)', fontSize: 11, fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#fff' }}>{children}</kbd>
 }
 export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
-  if (!open) return null
   const rows: Array<[ReactNode, string]> = [
     [<Kbd key="n">N</Kbd>, 'New deal (quick add)'],
     [<Kbd key="s">/</Kbd>, 'Search everything (people, companies, deals)'],
@@ -214,7 +213,7 @@ export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () =>
     [<Kbd key="q">?</Kbd>, 'This keymap'],
   ]
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <Overlay open={open} onClose={onClose} zIndex={1200} blur={6} dim={0.55} label="Keyboard shortcuts">
       <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 430, borderRadius: 16, padding: '20px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 14 }}>
           <Icon.keyboard size={16} style={{ color: 'var(--blue)' }} />
@@ -230,6 +229,6 @@ export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () =>
           ))}
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

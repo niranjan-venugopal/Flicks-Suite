@@ -62,11 +62,21 @@ export class DashboardService {
        * `org` keeps every existing caller unchanged.
        */
       scope?: 'org' | 'team';
+      /**
+       * Round K — how many pending leaves / regularizations to LIST (the
+       * counts are unaffected). Default 5 for the dashboard card; the Inbox
+       * asks for 50 so a 6th request is reachable. Clamped to 1..50; scope
+       * and the own-request exclusion apply exactly as before.
+       */
+      pendingLimit?: number;
     },
   ): Promise<AdminOverviewDto> {
     const today = todayISO();
     const thirtyDaysAgo = isoDaysAgo(30);
     const scope = opts.scope ?? 'org';
+    const pendingLimit = Number.isFinite(opts.pendingLimit)
+      ? Math.min(50, Math.max(1, Math.floor(opts.pendingLimit as number)))
+      : 5;
 
     /**
      * Approvals a caller may act on: never their own. An owner/admin clears
@@ -200,7 +210,7 @@ export class DashboardService {
             ),
           ),
 
-        // Top 5 pending leaves with employee + type names
+        // Top `pendingLimit` pending leaves with employee + type names
         tx
           .select({
             id: leaveRequests.id,
@@ -233,9 +243,9 @@ export class DashboardService {
             ),
           )
           .orderBy(desc(leaveRequests.applied_at))
-          .limit(5),
+          .limit(pendingLimit),
 
-        // Top 5 pending regularizations
+        // Top `pendingLimit` pending regularizations
         tx
           .select({
             id: attendanceRegularizations.id,
@@ -246,6 +256,10 @@ export class DashboardService {
             employeeCode: employees.employee_code,
             attendanceDate: attendanceRegularizations.attendance_date,
             requestType: attendanceRegularizations.request_type,
+            // Round K: the Inbox detail shows the proposed times the
+            // reviewer is about to write into the attendance record.
+            proposedInTime: attendanceRegularizations.proposed_in_time,
+            proposedOutTime: attendanceRegularizations.proposed_out_time,
             reason: attendanceRegularizations.reason,
             requestedAt: attendanceRegularizations.created_at,
             avatarUrl: users.avatar_url,
@@ -266,7 +280,7 @@ export class DashboardService {
             ),
           )
           .orderBy(desc(attendanceRegularizations.created_at))
-          .limit(5),
+          .limit(pendingLimit),
 
         // 30-day attendance compliance: count('present' OR 'late' OR 'work_from_home')
         // / count(non-weekend, non-holiday rows). Returned as one row of two ints.
@@ -515,6 +529,8 @@ export class DashboardService {
             employeeCode: r.employeeCode,
             attendanceDate: r.attendanceDate,
             requestType: r.requestType,
+            proposedInTime: r.proposedInTime?.toISOString() ?? null,
+            proposedOutTime: r.proposedOutTime?.toISOString() ?? null,
             reason: r.reason,
             requestedAt:
               r.requestedAt instanceof Date

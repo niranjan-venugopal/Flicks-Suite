@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Btn, Icon } from '@/components/proto'
+import { Btn, Icon, Overlay } from '@/components/proto'
 import { Kbd } from '@/components/pm/glyphs'
 import {
   useInbox,
@@ -282,10 +282,7 @@ export function NotificationsTab() {
 
       {/* First-run coach (AC-COACH) */}
       {coach && (
-        <div
-          onClick={() => closeCoach(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
-        >
+        <Overlay open onClose={() => closeCoach(false)} zIndex={1150} blur={6} label="Inbox tour">
           <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 430, borderRadius: 15, padding: '22px 24px', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 5, marginBottom: 16 }}>
               {[0, 1, 2].map((s) => (
@@ -321,7 +318,7 @@ export function NotificationsTab() {
               )}
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

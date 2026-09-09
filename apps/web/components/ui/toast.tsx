@@ -14,6 +14,8 @@ const ToastViewport = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitives.Viewport
     ref={ref}
+    // Dialogs use this to ignore a toast click as an "outside" click.
+    data-toast-viewport=""
     className={cn(
       // Catalog: toasts are BOTTOM-CENTER, one at a time, above everything
       // except the palette/keymap layers. The viewport itself must not eat

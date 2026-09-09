@@ -164,7 +164,12 @@ export function BillingWall() {
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 850,
+        // Blocking gates live at 1300–1399: above every overlay in the
+        // 900–1299 band (round K portals them all to <body>), below --z-float.
+        zIndex: 1350,
+        // Radix modals set pointer-events: none on <body>; this wall is not a
+        // Radix layer, so it must re-arm its own subtree or every click dies.
+        pointerEvents: 'auto',
         background: 'rgba(1,1,13,.78)',
         backdropFilter: 'blur(6px)',
         display: 'flex',

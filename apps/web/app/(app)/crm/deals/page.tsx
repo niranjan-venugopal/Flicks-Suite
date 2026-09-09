@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { Btn, Icon, Pill } from '@/components/proto'
+import { Btn, Icon, Modal, Overlay, Pill } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
@@ -629,20 +629,24 @@ function SaveViewModal({ onClose, onSave }: { onClose: () => void; onSave: (name
   const [name, setName] = useState('')
   const [shared, setShared] = useState(false)
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 380, borderRadius: 16, padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>Save view</div>
-        <div className="label">Name</div>
-        <input autoFocus className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Enterprise · Q3" style={{ width: '100%' }} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12, fontWeight: 700, color: 'var(--text-2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} /> Share with the team
-        </label>
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+    <Modal
+      open
+      onClose={onClose}
+      title="Save view"
+      width={380}
+      footer={
+        <>
           <Btn kind="ghost" size="sm" onClick={onClose}>Cancel</Btn>
           <Btn kind="primary" size="sm" icon={<Icon.check size={13} />} disabled={!name.trim()} onClick={() => onSave(name.trim(), shared)}>Save</Btn>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <div className="label">Name</div>
+      <input autoFocus className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Enterprise · Q3" style={{ width: '100%' }} />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12, fontWeight: 700, color: 'var(--text-2)', cursor: 'pointer' }}>
+        <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} /> Share with the team
+      </label>
+    </Modal>
   )
 }
 
@@ -698,12 +702,12 @@ function MobileSwimlane({ columns, base, onOpen, onQuickAdd, quickAddCol, pipeli
         <Btn kind="primary" style={{ flex: 1, justifyContent: 'center', height: 44 }} icon={<Icon.plus size={15} />} onClick={onQuickAdd}>Deal</Btn>
       </div>
       {quickAddCol && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end' }} onClick={onCloseQuickAdd}>
+        <Overlay open onClose={onCloseQuickAdd} align="end" padding={0} blur={0} label="New deal">
           <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', background: 'rgba(18,18,30,.99)', borderTop: '1px solid var(--bord-2)', borderRadius: '18px 18px 0 0', padding: '18px 16px 22px' }}>
             <div style={{ width: 36, height: 4, borderRadius: 99, background: 'var(--bord-2)', margin: '0 auto 14px' }} />
             <InlineQuickAdd stageId={quickAddCol} pipelineId={pipelineId} base={base} onClose={onCloseQuickAdd} />
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

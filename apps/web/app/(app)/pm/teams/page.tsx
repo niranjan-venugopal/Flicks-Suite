@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
+import { Btn, Icon, Modal, Pill, avBg, initials } from '@/components/proto'
 import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
@@ -141,30 +141,32 @@ export default function PmTeamsPage() {
         </div>
       </div>
 
-      {createOpen && (
-        <div onClick={() => setCreateOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>New team</div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 14 }}>Owner / Admin / Manager · ready to use with zero setup</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-              <input className="input" placeholder="Team name" autoFocus value={name}
-                onChange={(e) => { setName(e.target.value); if (!key) setKey(e.target.value.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()) }}
-                style={{ flex: 1, height: 34, fontSize: 12.5 }} />
-              <input className="input" placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value.toUpperCase().slice(0, 6))} style={{ width: 80, height: 34, fontSize: 12.5, fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }} />
-            </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, marginBottom: 8, cursor: 'pointer' }}>
-              <input type="checkbox" checked={cycles} onChange={(e) => setCycles(e.target.checked)} /> Enable cycles
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, marginBottom: 14, cursor: 'pointer' }}>
-              <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} /> Private team
-            </label>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Btn kind="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Btn>
-              <Btn kind="primary" size="sm" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>Create team</Btn>
-            </div>
-          </div>
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New team"
+        sub="Owner / Admin / Manager · ready to use with zero setup"
+        width={420}
+        footer={
+          <>
+            <Btn kind="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Btn>
+            <Btn kind="primary" size="sm" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>Create team</Btn>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          <input className="input" placeholder="Team name" autoFocus value={name}
+            onChange={(e) => { setName(e.target.value); if (!key) setKey(e.target.value.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()) }}
+            style={{ flex: 1, height: 34, fontSize: 12.5 }} />
+          <input className="input" placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value.toUpperCase().slice(0, 6))} style={{ width: 80, height: 34, fontSize: 12.5, fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }} />
         </div>
-      )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, marginBottom: 8, cursor: 'pointer' }}>
+          <input type="checkbox" checked={cycles} onChange={(e) => setCycles(e.target.checked)} /> Enable cycles
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+          <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} /> Private team
+        </label>
+      </Modal>
     </div>
   )
 }

@@ -14,7 +14,7 @@ import { REDIS_CLIENT } from '../../core/redis/redis.module';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, and, gt, isNull, lt, asc, desc, sql } from 'drizzle-orm';
+import { eq, ne, and, gt, isNull, lt, asc, desc, sql, type SQL } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { Request, Response } from 'express';
 import {
@@ -779,6 +779,25 @@ export class AuthService {
 
     const token = existing[0];
 
+    // Round K: only a token that was ROTATED (rotated_to set) and is
+    // presented again is a replay — two parties hold the chain — and that
+    // signs the whole user out below. A token revoked by logout or "Sign out
+    // other devices" simply stops working: cascading there let a stale tab
+    // on the signed-out device sign the CURRENT device out too.
+    if (token.revoked_at && !token.rotated_to) {
+      // Still worth a line in the audit trail: a stolen token replayed after
+      // the victim signed out looks exactly like this.
+      await this.writeAuthEvent({
+        userId: token.user_id,
+        eventType: 'token_revoked',
+        ip,
+        userAgent,
+        deviceId: deviceId ?? token.device_id ?? undefined,
+        metadata: { reason: 'revoked_token_presented' },
+      });
+      throw new UnauthorizedException('Session has ended — sign in again');
+    }
+
     // Check if already revoked (token reuse attack)
     if (token.revoked_at) {
       // Revoke all tokens for this user (security breach)
@@ -856,11 +875,9 @@ export class AuthService {
       membershipInfo = membershipResult[0];
     }
 
-    // Revoke old token
-    await this.db
-      .update(refreshTokens)
-      .set({ revoked_at: new Date() })
-      .where(eq(refreshTokens.id, token.id));
+    // The old token is revoked AFTER the new pair exists, in one conditional
+    // write (see below) — so two concurrent presentations of the same token
+    // can never both succeed.
 
     // Rotation must not silently downgrade a trusted (180-day) session to
     // the 7-day window — carry the old token's trusted flag forward, but
@@ -889,6 +906,43 @@ export class AuthService {
         token.impersonator_user_id ?? undefined,
         { trusted: stillTrusted },
       );
+
+    // Retire the old token and link the chain in ONE conditional write. If
+    // another presentation of the same token won the race (0 rows), the pair
+    // just minted is discarded and the reuse cascade fires — no window in
+    // which two live chains exist and no replay that goes unnoticed.
+    const [next] = await this.db
+      .select({ id: refreshTokens.id })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.token_hash, sha256(newRefreshToken)))
+      .limit(1);
+    const retired = await this.db
+      .update(refreshTokens)
+      .set({ revoked_at: new Date(), rotated_to: next?.id ?? null })
+      .where(and(eq(refreshTokens.id, token.id), isNull(refreshTokens.revoked_at)))
+      .returning({ id: refreshTokens.id });
+    if (retired.length === 0) {
+      if (next) {
+        await this.db.delete(refreshTokens).where(eq(refreshTokens.id, next.id));
+      }
+      this.logger.warn(
+        `Concurrent refresh of one token for user ${token.user_id}. Revoking all tokens.`,
+      );
+      await this.db
+        .update(refreshTokens)
+        .set({ revoked_at: new Date() })
+        .where(eq(refreshTokens.user_id, token.user_id));
+      await this.writeAuthEvent({
+        userId: token.user_id,
+        eventType: 'token_revoked',
+        ip,
+        userAgent,
+        metadata: { reason: 'token_reuse_detected', concurrent: true },
+      });
+      throw new UnauthorizedException(
+        'Security alert: Token reuse detected. All sessions have been invalidated.',
+      );
+    }
 
     await this.writeAuthEvent({
       userId: token.user_id,
@@ -930,6 +984,59 @@ export class AuthService {
       eventType: 'logout',
       metadata: { all_sessions: true },
     });
+  }
+
+  /**
+   * "Sign out other devices" (founder round K): revokes every live refresh
+   * token of the user EXCEPT the current session's. The current session is
+   * recognised by its device id and/or its refresh-token hash — a row
+   * survives when it matches either. With neither identifier in hand this
+   * refuses (400) rather than degrading into logoutAll. Returns how many
+   * distinct devices lost a session (rows without a device id count as one).
+   */
+  async logoutOthers(
+    userId: string,
+    currentDeviceId?: string,
+    currentRefreshToken?: string,
+  ): Promise<{ revokedDevices: number }> {
+    const deviceId = currentDeviceId?.trim() || undefined;
+    const tokenHash = currentRefreshToken ? sha256(currentRefreshToken) : undefined;
+    if (!deviceId && !tokenHash) {
+      throw new BadRequestException(
+        'Could not identify this device — sign in again and retry',
+      );
+    }
+
+    const notCurrent: SQL[] = [];
+    if (deviceId) {
+      notCurrent.push(sql`${refreshTokens.device_id} IS DISTINCT FROM ${deviceId}`);
+    }
+    if (tokenHash) notCurrent.push(ne(refreshTokens.token_hash, tokenHash));
+
+    const now = new Date();
+    const revoked = await this.db
+      .update(refreshTokens)
+      .set({ revoked_at: now })
+      .where(
+        and(
+          eq(refreshTokens.user_id, userId),
+          isNull(refreshTokens.revoked_at),
+          gt(refreshTokens.expires_at, now),
+          ...notCurrent,
+        ),
+      )
+      .returning({ deviceId: refreshTokens.device_id });
+
+    const revokedDevices = new Set(revoked.map((r) => r.deviceId ?? '')).size;
+
+    await this.writeAuthEvent({
+      userId,
+      eventType: 'logout',
+      deviceId,
+      metadata: { other_devices: true, revokedDevices },
+    });
+
+    return { revokedDevices };
   }
 
   async selectTenant(userId: string, tenantId: string, deviceId?: string) {
@@ -1310,6 +1417,9 @@ export class AuthService {
       status: user[0].status,
       locale: user[0].locale,
       timezone: user[0].timezone,
+      // Profile → Security "Last sign-in" (round K) — stamped on OTP /
+      // magic-link verification, so this is the real last login.
+      lastLoginAt: user[0].last_login_at,
       requiresReacceptance,
       deviceTrusted,
       currentMembership: currentMembership

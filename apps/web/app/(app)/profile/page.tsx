@@ -20,20 +20,69 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { fmtAddress, fmtPhone } from '@/components/employees/detail-kit'
+import { EditProfileDialog, primaryEmergencyContact } from '@/components/profile/EditProfileDialog'
 import {
+  useCurrentUser,
+  useLogoutOthers,
   useExportMyData,
   useDeletionRequest,
   useRequestDeletion,
   useCancelDeletion,
 } from '@/lib/api/queries/use-auth'
+import { useMyEmployeeRecord } from '@/lib/api/queries/use-employees'
 import {
   useMyChangeRequests,
   useReviewMyChangeRequest,
   type MyChangeRequest,
 } from '@/lib/api/queries/use-employee-onboarding'
 
+const NO_SEAT_HINT = 'No employee record is linked to this seat — ask HR'
+
 export default function ProfilePage() {
   const { currentUser, currentTenant } = useAuthStore()
+  const { toast } = useToast()
+  const me = useMyEmployeeRecord()
+  const session = useCurrentUser()
+  const logoutOthers = useLogoutOthers()
+
+  // Two dialog families on this page (Radix for the edit form, proto
+  // ConfirmDialog for sign-out) — opening one always closes the other.
+  const [editOpen, setEditOpen] = useState(false)
+  const [signOutOpen, setSignOutOpen] = useState(false)
+  const openEdit = () => {
+    setSignOutOpen(false)
+    setEditOpen(true)
+  }
+  const openSignOut = () => {
+    setEditOpen(false)
+    setSignOutOpen(true)
+  }
+
+  const noSeat = !currentUser?.employeeId
+  const record = me.data
+  const contact = primaryEmergencyContact(record)
+  const lastLoginAt = session.data?.lastLoginAt
+
+  const handleSignOutOthers = async () => {
+    try {
+      const { revokedDevices } = await logoutOthers.mutateAsync()
+      setSignOutOpen(false)
+      toast({
+        title:
+          revokedDevices > 0
+            ? `Signed out ${revokedDevices} other device${revokedDevices === 1 ? '' : 's'}`
+            : 'No other devices were signed in',
+      })
+    } catch (err) {
+      toast({
+        title: 'Could not sign out other devices',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -42,8 +91,33 @@ export default function ProfilePage() {
           title="My profile"
           sub="Your account, employment, and security settings"
           right={
-            <Btn kind="secondary" size="sm" icon={<Icon.edit size={13} />}>
-              Edit profile
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon.edit size={13} />}
+              data-testid="profile-edit"
+              // The proto Btn has no disabled look, so a disabled button reads
+              // as "does nothing" — the very complaint this fixes. It stays
+              // clickable and says why when it can't open the form.
+              disabled={!noSeat && me.isLoading}
+              title={noSeat ? NO_SEAT_HINT : undefined}
+              onClick={() => {
+                if (noSeat) {
+                  toast({
+                    title: 'No employee record is linked to this seat',
+                    description: 'Ask your HR admin to link one — then you can edit your contact details here.',
+                  })
+                  return
+                }
+                if (!record) {
+                  void me.refetch()
+                  toast({ title: 'Could not load your details', description: 'Trying again…' })
+                  return
+                }
+                openEdit()
+              }}
+            >
+              {!noSeat && me.isLoading ? 'Loading…' : 'Edit profile'}
             </Btn>
           }
         />
@@ -92,6 +166,50 @@ export default function ProfilePage() {
               <Field label="Workspace" value={currentTenant?.name ?? '—'} />
               <Field label="Designation" value={currentUser?.designation ?? '—'} />
               <Field label="Role" value={roleLabel(currentUser?.role)} />
+              {/* Self-managed contact details (round K) — edited via the header button */}
+              {noSeat ? (
+                <div className="t-mute" style={{ fontSize: 12 }} data-testid="profile-no-seat">
+                  {NO_SEAT_HINT}
+                </div>
+              ) : me.isError ? (
+                <div
+                  className="t-mute"
+                  style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 10 }}
+                  data-testid="profile-record-error"
+                >
+                  Could not load your contact details.
+                  <Btn kind="ghost" size="sm" onClick={() => void me.refetch()}>
+                    Retry
+                  </Btn>
+                </div>
+              ) : null}
+              <Field
+                label="Personal phone"
+                value={me.isLoading ? 'Loading…' : fmtPhone(record?.personalPhone)}
+                testId="profile-personal-phone"
+              />
+              <Field
+                label="Personal email"
+                value={me.isLoading ? 'Loading…' : (record?.personalEmail ?? '—')}
+                mono
+                testId="profile-personal-email"
+              />
+              <Field
+                label="Current address"
+                value={me.isLoading ? 'Loading…' : fmtAddress(record?.currentAddress ?? null)}
+                testId="profile-address"
+              />
+              <Field
+                label="Emergency contact"
+                value={
+                  me.isLoading
+                    ? 'Loading…'
+                    : contact
+                      ? [contact.name, contact.relationship, contact.phone].filter(Boolean).join(' · ')
+                      : '—'
+                }
+                testId="profile-emergency"
+              />
             </div>
           </div>
 
@@ -119,8 +237,18 @@ export default function ProfilePage() {
                 </div>
                 <Pill tone="green" dot>Active</Pill>
               </div>
-              <Field label="Last sign-in" value={new Date().toLocaleString('en-IN')} />
-              <Btn kind="secondary" size="sm" icon={<Icon.refresh size={13} />}>
+              <Field
+                label="Last sign-in"
+                value={lastLoginAt ? new Date(lastLoginAt).toLocaleString('en-IN') : '—'}
+                testId="profile-last-signin"
+              />
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.refresh size={13} />}
+                data-testid="profile-signout-others"
+                onClick={openSignOut}
+              >
                 Sign out other devices
               </Btn>
             </div>
@@ -130,6 +258,19 @@ export default function ProfilePage() {
         {/* Data & privacy (DPDP) */}
         <DataPrivacyCard />
       </div>
+
+      {record && <EditProfileDialog open={editOpen} onClose={() => setEditOpen(false)} record={record} />}
+
+      <ConfirmDialog
+        open={signOutOpen}
+        onClose={() => setSignOutOpen(false)}
+        title="Sign out other devices?"
+        body="Every other browser and phone signed in to your account will be signed out. This device stays signed in."
+        confirmLabel="Sign out others"
+        loading={logoutOthers.isPending}
+        loadingLabel="Signing out…"
+        onConfirm={handleSignOutOthers}
+      />
     </div>
   )
 }
@@ -392,13 +533,24 @@ function Row({
   )
 }
 
-function Field({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Field({
+  label,
+  value,
+  mono = false,
+  testId,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  testId?: string
+}) {
   return (
     <div>
       <div className="t-caption" style={{ marginBottom: 5 }}>
         {label}
       </div>
       <div
+        data-testid={testId}
         style={{
           fontSize: 13,
           fontWeight: 600,

@@ -208,7 +208,7 @@ export interface EmployeeDetail {
     lateArrivals: number
     hoursWorked: number
     leaveTaken: number
-  }
+  } | null // null when the API redacted it for this viewer (round K)
   emergencyContacts: EmergencyContact[]
   leaveBalances: EmployeeLeaveBalance[]
   // Shift effective today; null = the tenant default shift applies.
@@ -238,6 +238,45 @@ export function useMyEmployeeRecord() {
     queryFn: () => api.get<EmployeeDetail>('/api/v1/employees/me'),
     staleTime: 60_000,
     retry: false,
+  })
+}
+
+// ─── Self-service profile edit (round K) ─────────────────────────────────────
+// Mirrors the API's SelfUpdateEmployeeDto: contact details only. Send just
+// the sections the user touched; '' clears a scalar; emergencyContact: null
+// removes the primary contact.
+
+export interface SelfUpdateEmployeePayload {
+  personalPhone?: string
+  personalEmail?: string
+  currentAddress?: {
+    line1?: string
+    line2?: string
+    city?: string
+    stateCode?: string
+    postalCode?: string
+  }
+  emergencyContact?: {
+    name: string
+    relationship: string
+    phone: string
+    email?: string
+  } | null
+}
+
+export function useSelfUpdateEmployee() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payload: SelfUpdateEmployeePayload) =>
+      api.put<EmployeeDetail>('/api/v1/employees/me', payload),
+    onSuccess: (record) => {
+      // The API returns the full record — paint it straight away, then let
+      // the other employee views and /me (designation chip) catch up.
+      queryClient.setQueryData(['employees', 'me'], record)
+      queryClient.invalidateQueries({ queryKey: ['employees'] })
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
   })
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Building2, Users, Kanban, CornerDownLeft } from 'lucide-react'
+import { Overlay } from '@/components/proto'
 import { useGlobalSearch } from '@/lib/api/queries/use-crm'
 
 /**
@@ -63,16 +64,8 @@ export function CrmSearchPalette() {
     return null
   }, [r])
 
-  if (!open) return null
-
   return (
-    <div
-      onClick={() => setOpen(false)}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 200, display: 'flex', justifyContent: 'center',
-        alignItems: 'flex-start', paddingTop: '12vh', background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(4px)',
-      }}
-    >
+    <Overlay open={open} onClose={() => setOpen(false)} zIndex={1250} align="start" padding="12vh 0 0" blur={4} label="Search">
       <div
         onClick={(e) => e.stopPropagation()}
         className="card modal-card"
@@ -113,7 +106,7 @@ export function CrmSearchPalette() {
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   )
 }
 

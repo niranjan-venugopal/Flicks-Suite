@@ -79,6 +79,81 @@ const SAFE_EMPLOYEE_FIELDS = {
   updated_at: employees.updated_at,
 } as const;
 
+// ─── Peer redaction for GET /employees/:id (founder round K) ─────────────────
+// The 360° record carries the personal block (home address, personal
+// contact, DOB, statutory + bank details). A colleague may open any profile
+// for the org chart / directory, but only the person themselves, their
+// direct reporting manager, and owner / admin / finance / fam get that
+// block — the same predicate as GET /attendance/employee/:id (round 15).
+// Applied in the controller only; GET /employees/me and every internal
+// caller keep the full record.
+
+export interface EmployeeViewer {
+  /** The viewer's own employee row in this tenant (membership bridge), if any. */
+  employeeId: string | null;
+  /** Lowercase API membership role from the JWT. */
+  role: string | undefined;
+}
+
+const PERSONAL_BLOCK_FIELDS = [
+  'personalEmail',
+  'personalPhone',
+  'currentAddress',
+  'permanentAddress',
+  'dateOfBirth',
+  'maritalStatus',
+  'bloodGroup',
+  'aadhaarLast4',
+  'hasPan',
+  'hasPassport',
+  'bankName',
+  'bankBranch',
+  'bankIfsc',
+  'bankAccountType',
+  'bankAccountHolder',
+  'hasBankAccount',
+  'pfUan',
+  'esicNumber',
+  'pfApplicable',
+  'esiApplicable',
+  // Not "contact details", but the same rule applies (founder: no leakage):
+  // GET /attendance/employee/:id refuses a peer these numbers, so the 360
+  // overview must not hand them out either.
+  'gender',
+  'nationality',
+  'thisMonth',
+  'customFields',
+] as const;
+
+export function canViewPersonalBlock(
+  record: { id: string; reportingManagerId: string | null },
+  viewer: EmployeeViewer,
+): boolean {
+  const elevated = ['owner', 'admin', 'finance', 'fam', 'super_admin'].includes(
+    viewer.role ?? '',
+  );
+  const isSelf = viewer.employeeId !== null && viewer.employeeId === record.id;
+  const managesTarget =
+    viewer.role === 'manager' &&
+    viewer.employeeId !== null &&
+    record.reportingManagerId === viewer.employeeId;
+  return elevated || isSelf || managesTarget;
+}
+
+/** Pure: returns the record untouched for an allowed viewer, else a copy with the personal block nulled, no emergency contacts and no leave balances. */
+export function redactForViewer<
+  T extends { id: string; reportingManagerId: string | null; emergencyContacts: unknown[] },
+>(record: T, viewer: EmployeeViewer): T {
+  if (canViewPersonalBlock(record, viewer)) return record;
+  const redacted: Record<string, unknown> = {
+    ...record,
+    emergencyContacts: [],
+    leaveBalances: [],
+  };
+  for (const field of PERSONAL_BLOCK_FIELDS) redacted[field] = null;
+  return redacted as T;
+}
+
 @Injectable()
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
@@ -668,7 +743,8 @@ export class EmployeesService {
 
       // ─── Sibling collections ──────────────────────────────────────────────
       const [emergencyList, leaveBalanceRows, monthStats, shiftRows] = await Promise.all([
-        // Emergency contacts (primary first)
+        // Emergency contacts (primary first, oldest first within a tie — the
+        // same row the self-service / onboarding upserts write to).
         db
           .select({
             id: emergencyContacts.id,
@@ -685,7 +761,7 @@ export class EmployeesService {
               eq(emergencyContacts.employee_id, employeeId),
             ),
           )
-          .orderBy(desc(emergencyContacts.is_primary)),
+          .orderBy(desc(emergencyContacts.is_primary), asc(emergencyContacts.created_at)),
 
         // Leave balances for the current year (with type metadata).
         // Falls back to leave_types.default_quota_days when no balance row
@@ -1313,40 +1389,185 @@ export class EmployeesService {
     return { employeeId, status: employee.status, rejectedBy: adminId };
   }
 
+  /**
+   * Self-service profile edit (founder round K) — contact details only.
+   * One tenant transaction resolves the caller's employee row from their
+   * ACTIVE membership, writes personal phone / email, merges the current
+   * address and upserts (or, with `emergencyContact: null`, removes) the
+   * primary emergency contact. Nothing HR-managed is reachable from here:
+   * name, work email, designation and role live on UpdateEmployeeDto behind
+   * @Roles('admin').
+   *
+   * Deliberately does NOT mirror users.phone: users is a platform table
+   * (no tenant_id), so a write there changed the person's number in every
+   * workspace they belong to. employees.personal_phone is the single owner.
+   */
   async selfUpdateEmployee(
     userId: string,
     dto: SelfUpdateEmployeeDto,
     tenantId: string,
   ) {
-    const employeeId = await this.databaseService.withTenant(
+    // '' (or whitespace) clears; everything else is stored trimmed.
+    const clean = (v: string | null | undefined): string | null => {
+      const t = (v ?? '').trim();
+      return t ? t : null;
+    };
+
+    const { employeeId, fields } = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
-        const membership = await db
+        const [membership] = await db
           .select({ employeeId: memberships.employee_id })
           .from(memberships)
           .where(
             and(
               eq(memberships.user_id, userId),
               eq(memberships.tenant_id, tenantId),
+              eq(memberships.status, 'active'),
             ),
           )
           .limit(1);
 
-        if (!membership[0]?.employeeId) {
-          throw new NotFoundException('Employee record not found');
+        const [employee] = membership?.employeeId
+          ? await db
+              .select({
+                id: employees.id,
+                currentAddress: employees.current_address,
+              })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.id, membership.employeeId),
+                  eq(employees.tenant_id, tenantId),
+                  isNull(employees.deleted_at),
+                ),
+              )
+              .limit(1)
+          : [];
+
+        if (!employee) {
+          throw new NotFoundException(
+            'No employee record is linked to your seat — ask HR',
+          );
         }
 
-        // Update user's phone in users table
-        if (dto.phone) {
+        // Audit records WHICH sections changed, never the values.
+        const fields: string[] = [];
+        const set: Partial<typeof employees.$inferInsert> = {};
+
+        if (dto.personalPhone !== undefined) {
+          set.personal_phone = clean(dto.personalPhone);
+          fields.push('personalPhone');
+        }
+        if (dto.personalEmail !== undefined) {
+          set.personal_email = clean(dto.personalEmail)?.toLowerCase() ?? null;
+          fields.push('personalEmail');
+        }
+        // current_address is a JSONB blob keyed like submitOnboardingStep
+        // writes it: merge over what's there, keep country + untouched keys.
+        if (dto.currentAddress) {
+          const a = dto.currentAddress;
+          const prev =
+            (employee.currentAddress as Record<string, unknown> | null) ?? {};
+          const pick = (next: string | undefined, current: unknown) =>
+            next === undefined ? (current ?? null) : clean(next);
+          const merged = {
+            ...prev,
+            line1: pick(a.line1, prev.line1),
+            line2: pick(a.line2, prev.line2),
+            city: pick(a.city, prev.city),
+            state: pick(a.stateCode, prev.state),
+            postal_code: pick(a.postalCode, prev.postal_code),
+            country: prev.country ?? 'IN',
+          };
+          // Blanking every line must read back as "no address" (—), not as
+          // a country-only blob that renders as a bare "IN".
+          const blank = (['line1', 'line2', 'city', 'state', 'postal_code'] as const).every(
+            (k) => merged[k] == null,
+          );
+          set.current_address = blank ? null : merged;
+          fields.push('currentAddress');
+        }
+
+        if (Object.keys(set).length > 0) {
           await db
-            .update(users)
-            .set({ phone: dto.phone, updated_at: new Date() })
-            .where(eq(users.id, userId));
+            .update(employees)
+            .set({ ...set, updated_at: new Date() })
+            .where(
+              and(
+                eq(employees.id, employee.id),
+                eq(employees.tenant_id, tenantId),
+              ),
+            );
         }
 
-        return membership[0].employeeId;
+        // ─── Emergency contact: the (oldest) primary row is the one we own ──
+        if (dto.emergencyContact !== undefined) {
+          const ownRow = and(
+            eq(emergencyContacts.tenant_id, tenantId),
+            eq(emergencyContacts.employee_id, employee.id),
+          );
+          const [primary] = await db
+            .select({ id: emergencyContacts.id })
+            .from(emergencyContacts)
+            .where(and(ownRow, eq(emergencyContacts.is_primary, true)))
+            .orderBy(asc(emergencyContacts.created_at))
+            .limit(1);
+
+          if (dto.emergencyContact === null) {
+            if (primary) {
+              await db
+                .delete(emergencyContacts)
+                .where(and(ownRow, eq(emergencyContacts.id, primary.id)));
+            }
+          } else {
+            const c = dto.emergencyContact;
+            const name = clean(c.name);
+            const relationship = clean(c.relationship);
+            const phone = clean(c.phone);
+            if (!name || !relationship || !phone) {
+              throw new BadRequestException(
+                'Emergency contact needs a name, relationship and phone',
+              );
+            }
+            const values = {
+              name,
+              relationship,
+              phone,
+              email: clean(c.email)?.toLowerCase() ?? null,
+            };
+            if (primary) {
+              await db
+                .update(emergencyContacts)
+                .set(values)
+                .where(and(ownRow, eq(emergencyContacts.id, primary.id)));
+            } else {
+              await db.insert(emergencyContacts).values({
+                tenant_id: tenantId,
+                employee_id: employee.id,
+                ...values,
+                is_primary: true,
+              });
+            }
+          }
+          fields.push('emergencyContact');
+        }
+
+        return { employeeId: employee.id, fields };
       },
+      userId,
     );
+
+    if (fields.length > 0) {
+      await this.auditService.log({
+        tenantId,
+        actorUserId: userId,
+        action: 'employee.self_updated',
+        resourceType: 'employee',
+        resourceId: employeeId,
+        metadata: { fields },
+      });
+    }
 
     return this.getEmployee(employeeId, tenantId);
   }
@@ -1520,6 +1741,8 @@ export class EmployeesService {
               eq(emergencyContacts.is_primary, true),
             ),
           )
+          // Oldest primary wins — deterministic when legacy data left two.
+          .orderBy(asc(emergencyContacts.created_at))
           .limit(1);
 
         if (existing) {
@@ -2108,7 +2331,8 @@ export class EmployeesService {
     };
   }
 
-  private async getEmployeeIdForUserOrNull(userId: string, tenantId: string) {
+  /** The caller's own employee row in this tenant (membership bridge), or null. */
+  async getEmployeeIdForUserOrNull(userId: string, tenantId: string) {
     const [m] = await this.databaseService.withTenant(tenantId, (db) =>
       db
         .select({ employeeId: memberships.employee_id })

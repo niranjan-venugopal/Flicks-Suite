@@ -62,17 +62,28 @@
   --glass-blur: blur(22px) saturate(1.4);
 
   /* ─── Layering scale ───────────────────────────────────────────────────
-     Overlays and floating panels live in two different <body> portals, so
-     the ONLY thing that decides what paints on top is the number. Keep new
+     Overlays and floating panels are all portaled to <body> — proto Modal
+     and every hand-rolled scrim go through proto/Overlay (round K), Radix
+     dialogs/popovers through their own portal — so the ONLY thing that
+     decides what paints on top is the number. Page shells that wrap content
+     in `position: relative; zIndex: 1` (InvoPage and friends) no longer
+     matter: nothing overlay-shaped renders inside them any more. Keep new
      surfaces inside these bands:
 
-       0 –  99   in-flow page content
+       0 –  99   in-flow page content (Radix dialogs sit here at z-50 on
+                 purpose: they portal to <body> so the number only has to
+                 beat in-flow content, and they must stay under the gates)
      100 – 499   page chrome that sticks (topbar, banners, bulk bars)
      500 – 899   ambient floats (feedback launcher, NPS card)
-     900 – 1299  overlays: full-screen scrims + modals (proto Modal 1000,
-                 QuickAdd 1100, CRM kit 1200, ad-hoc PM/inbox confirms 1150)
+     900 – 1299  overlays: full-screen scrims + modals (MediaCrop 960, proto
+                 Modal 1000, QuickAdd 1100, inbox coach 1150, keymaps 1200,
+                 command palettes 1250)
+    1300 – 1399  BLOCKING gates — billing wall 1350, consent manage 1360,
+                 re-acceptance 1390. Above every overlay so a palette or
+                 dialog can never be used through a gate. (The non-blocking
+                 consent strip stays at 900, under the overlays.)
      --z-float   date pickers, dropdowns, native-ish selects — MUST sit above
-                 every overlay, since they open from inside modals
+                 every overlay AND the gates, since they open from inside both
      --z-toast   confirmations, always the topmost thing on screen
 
      Anything that opens *inside* a modal belongs at --z-float or higher; a
@@ -270,6 +281,26 @@ option:disabled { color: var(--text-faint); }
   backdrop-filter: none;
   box-shadow: var(--e3);
 }
+
+/* proto/Overlay: the root is pointer-events:none so its gutters fall through
+   to the scrim; every direct child (the face) gets clicks back. This also
+   re-arms the face while a Radix dialog has set pointer-events:none on <body>
+   (same trick as ReacceptanceGate). */
+.overlay-root > * { pointer-events: auto; }
+/* The scrim is the real click target — re-arm it too, so an overlay opened
+   while a Radix dialog holds body pointer-events:none still closes on a
+   backdrop click. */
+.overlay-scrim { pointer-events: auto; }
+
+/* Safari / WebKit (founder round K — the Delete-invoice dialog): WebKit sizes
+   an auto-height column-flex container from its children's flex BASE sizes,
+   so a body with `flex: 1` (basis 0) computed to 0px and the footer collapsed
+   to its border. Basis auto keeps the body content-sized; min-height 0 still
+   lets it shrink and scroll under the card's 90vh cap; head and foot never
+   shrink. Mirrors the inline styles in proto/Modal. */
+.modal-card > .modal-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.modal-card > .modal-head,
+.modal-card > .modal-foot { flex-shrink: 0; }
 
 /* ─── Avatar ─── */
 .avatar {

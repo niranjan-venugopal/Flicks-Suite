@@ -28,7 +28,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onPointerDownOutside, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     {/*
@@ -45,6 +45,14 @@ const DialogContent = React.forwardRef<
         'fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
       )}
+      // Round K: the toaster (z 2000) lives outside the dialog tree, so a
+      // click on an error toast used to count as an outside click and close
+      // a half-filled form. Toast clicks never dismiss.
+      onPointerDownOutside={(e) => {
+        const target = e.target as Element | null
+        if (target?.closest?.('[data-toast-viewport]')) e.preventDefault()
+        onPointerDownOutside?.(e)
+      }}
       {...props}
     >
       {/*

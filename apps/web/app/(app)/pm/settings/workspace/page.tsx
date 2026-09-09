@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Toggle } from '@/components/proto'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { api } from '@/lib/api/client'
 import { FEATURES } from '@/lib/feature-flags'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -60,6 +61,7 @@ export default function PmWorkspacePage() {
   const { toast } = useToast()
   const [newLabel, setNewLabel] = useState('')
   const [resetOpen, setResetOpen] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
   const teamsQ = useQuery({
     queryKey: ['pm', 'teams', 'workspace'],
@@ -217,21 +219,31 @@ export default function PmWorkspacePage() {
         </div>
       </div>
 
-      {resetOpen && (
-        <div onClick={() => setResetOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 400, borderRadius: 15, padding: '22px 24px' }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Reset local data?</div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 10 }}>Re-bootstrap takes ~2s on this workspace</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.6, marginBottom: 16 }}>
-              Pending offline mutations are replayed first when possible. The server remains the source of truth — nothing on it is touched.
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Btn kind="ghost" size="sm" onClick={() => setResetOpen(false)}>Cancel</Btn>
-              <Btn kind="primary" size="sm" onClick={async () => { setResetOpen(false); await engine?.reset() }}>Reset &amp; re-sync</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        title="Reset local data?"
+        body={
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 8 }}>Re-bootstrap takes ~2s on this workspace</div>
+            Pending offline mutations are replayed first when possible. The server remains the source of truth — nothing on it is touched.
+          </>
+        }
+        confirmLabel="Reset & re-sync"
+        loading={resetting}
+        loadingLabel="Re-syncing…"
+        onConfirm={async () => {
+          setResetting(true)
+          try {
+            await engine?.reset()
+            setResetOpen(false)
+          } catch (e) {
+            toast({ title: 'Could not reset local data', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
+          } finally {
+            setResetting(false)
+          }
+        }}
+      />
     </div>
   )
 }

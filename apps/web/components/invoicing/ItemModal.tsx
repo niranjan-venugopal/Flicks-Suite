@@ -146,7 +146,8 @@ export function ItemModal({
             />
             {hsnQuery.length >= 2 && (hsnResults?.data?.length ?? 0) > 0 && (
               <div
-                className="glass"
+                // modal-card, not glass: no backdrop-filter inside a dialog card.
+                className="modal-card"
                 style={{
                   position: 'absolute',
                   zIndex: 20,

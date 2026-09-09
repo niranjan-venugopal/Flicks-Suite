@@ -436,24 +436,29 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
         onConfirm={() => deleteTeam.mutate()}
       />
 
-      {/* Make-private confirm (§4.4 — audited) */}
-      {privateConfirm && (
-        <div onClick={() => setPrivateConfirm(false)} style={{ position: 'fixed', inset: 0, zIndex: 1150, background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div onClick={(e) => e.stopPropagation()} className="card-glass modal-card" style={{ width: '100%', maxWidth: 420, borderRadius: 15, padding: '22px 24px' }}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Make {team.name} private?</div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 12 }}>Visibility change — audit-logged</div>
-            <ul style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.7, paddingLeft: 18, marginBottom: 16 }}>
+      {/* Make-private confirm (§4.4 — audited). Stays open until the PATCH
+          lands so a failure (toast via `fail`) leaves the user with a retry. */}
+      <ConfirmDialog
+        open={privateConfirm}
+        onClose={() => setPrivateConfirm(false)}
+        title={`Make ${team.name} private?`}
+        body={
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 10 }}>Visibility change — audit-logged</div>
+            <ul style={{ paddingLeft: 18, lineHeight: 1.7 }}>
               <li>Issues, cycles and views disappear for non-members immediately.</li>
               <li>Sync engines drop the team's rows on the next delta (tombstones).</li>
               <li>Owner/Admin can still self-add — that self-add is audit-logged and visible in the team feed.</li>
             </ul>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Btn kind="ghost" size="sm" onClick={() => setPrivateConfirm(false)}>Cancel</Btn>
-              <Btn kind="primary" size="sm" onClick={() => { patch.mutate({ is_private: true }); setPrivateConfirm(false) }}>Make private</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+          </>
+        }
+        confirmLabel="Make private"
+        // `patch` is shared with the name/timezone/colour/cycle writes — scope
+        // the lock to THIS write so an in-flight rename can't freeze the dialog.
+        loading={patch.isPending && patch.variables?.is_private === true}
+        loadingLabel="Updating…"
+        onConfirm={() => patch.mutate({ is_private: true }, { onSuccess: () => setPrivateConfirm(false) })}
+      />
     </div>
   )
 }

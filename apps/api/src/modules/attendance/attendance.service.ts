@@ -5,8 +5,10 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
+  Optional,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { eq, and, gte, lte, isNull, notInArray, or, sql, desc, asc, inArray } from 'drizzle-orm';
 import {
   attendanceRecords,
@@ -168,9 +170,21 @@ export class AttendanceService {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    // Optional so the specs that build `new AttendanceService(db, dbAdmin,
+    // audit, notifications)` keep compiling; only the email deep links need it.
+    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
+
+  /** Public web origin for links in emails (no trailing slash). */
+  private appUrl(): string {
+    const raw =
+      this.configService?.get<string>('APP_URL') ??
+      process.env.APP_URL ??
+      'http://localhost:3000';
+    return raw.replace(/\/$/, '');
+  }
 
   /**
    * Resolves the employee_id for a logged-in user inside the active tenant.
@@ -1453,10 +1467,30 @@ export class AttendanceService {
     // Owners have no reporting manager, so without the fan-out an owner's
     // regularization notified nobody while still sitting in everyone else's
     // queue — a dead end (house rule 8).
+    // Round K: an employee row bridged only through memberships.employee_id
+    // (employees.user_id NULL) must still be excluded from its own reviewer
+    // set — the same resolution the self-approval guard uses.
+    let applicantUserId = employee.userId;
+    if (!applicantUserId) {
+      const [bridge] = await this.databaseService.withTenant(tenantId, (tx) =>
+        tx
+          .select({ userId: memberships.user_id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.employee_id, employeeId),
+              eq(memberships.status, 'active'),
+            ),
+          )
+          .limit(1),
+      );
+      applicantUserId = bridge?.userId ?? null;
+    }
     const reviewers = await this.resolveRegularizationReviewers(
       tenantId,
       employee.managerId,
-      employee.userId,
+      applicantUserId,
     );
     if (reviewers.length === 0) return;
 
@@ -1473,6 +1507,12 @@ export class AttendanceService {
     );
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
+    // Round K (founder): the link used to be '/team/attendance', which
+    // redirected the manager to their OWN daily log. Now it opens Inbox →
+    // Approvals with this request pre-selected (the web scrubs the param
+    // once the row is focused or found to be gone).
+    const reviewPath = `/inbox?tab=approvals&request=${encodeURIComponent(regId)}`;
+    const reviewUrl = `${this.appUrl()}${reviewPath}`;
 
     for (const reviewer of reviewers) {
       // Real-time in-app ping to the approver (Topbar bell). Best-effort.
@@ -1482,7 +1522,7 @@ export class AttendanceService {
             reviewer.userId,
             'regularization.requested',
             `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}.`,
-            '/team/attendance',
+            reviewPath,
             tenantId,
           )
           .catch((err) =>
@@ -1501,6 +1541,7 @@ export class AttendanceService {
           attendanceDate: reg?.attendanceDate ?? '',
           requestType: reg?.requestType,
           reason: reg?.reason ?? undefined,
+          reviewUrl,
         },
       );
       this.logger.log(
@@ -1534,14 +1575,35 @@ export class AttendanceService {
           )
           .limit(1),
       );
-      if (manager && manager.userId !== applicantUserId) {
-        return [
-          {
-            email: manager.email,
-            userId: manager.userId,
-            name: `${manager.firstName} ${manager.lastName}`.trim(),
-          },
-        ];
+      if (manager) {
+        // Round K: a manager row bridged only through memberships.employee_id
+        // still needs a user id — for the exclusion below and for the bell.
+        let managerUserId = manager.userId;
+        if (!managerUserId) {
+          const [bridge] = await this.databaseService.withTenant(tenantId, (tx) =>
+            tx
+              .select({ userId: memberships.user_id })
+              .from(memberships)
+              .where(
+                and(
+                  eq(memberships.tenant_id, tenantId),
+                  eq(memberships.employee_id, managerId),
+                  eq(memberships.status, 'active'),
+                ),
+              )
+              .limit(1),
+          );
+          managerUserId = bridge?.userId ?? null;
+        }
+        if (managerUserId !== applicantUserId) {
+          return [
+            {
+              email: manager.email,
+              userId: managerUserId,
+              name: `${manager.firstName} ${manager.lastName}`.trim(),
+            },
+          ];
+        }
       }
     }
 
@@ -1707,7 +1769,26 @@ export class AttendanceService {
             ),
           )
           .limit(1);
-        if (applicant?.userId && applicant.userId === reviewerUserId) {
+        // Round K: the employee↔user link lives in two places (employees.user_id
+        // and the active membership's employee_id). A row with user_id NULL
+        // used to skip this guard entirely, so the bridge is checked too — the
+        // guard trips if EITHER points at the reviewer.
+        const [selfBridge] = await tx
+          .select({ id: memberships.id })
+          .from(memberships)
+          .where(
+            and(
+              eq(memberships.tenant_id, tenantId),
+              eq(memberships.employee_id, reg.employee_id),
+              eq(memberships.user_id, reviewerUserId),
+              eq(memberships.status, 'active'),
+            ),
+          )
+          .limit(1);
+        if (
+          (applicant?.userId && applicant.userId === reviewerUserId) ||
+          selfBridge
+        ) {
           throw new ForbiddenException(
             'You cannot approve your own regularization request — another approver must review it.',
           );
@@ -1801,6 +1882,11 @@ export class AttendanceService {
       },
     );
 
+    // Round K: both decision notices open the requester's OWN log on that
+    // month with the day highlighted (attendance_date is YYYY-MM-DD).
+    const attendancePath = `/attendance?date=${result.updated.attendance_date}`;
+    const attendanceUrl = `${this.appUrl()}${attendancePath}`;
+
     if (result.requester?.email) {
       const tpl =
         dto.action === 'approve'
@@ -1812,6 +1898,7 @@ export class AttendanceService {
             `${result.requester.firstName ?? ''} ${result.requester.lastName ?? ''}`.trim(),
           attendanceDate: result.updated.attendance_date,
           comment: dto.comment,
+          attendanceUrl,
         })
         .catch((err) =>
           this.logger.warn(`Regularization-review notification failed: ${err}`),
@@ -1827,7 +1914,7 @@ export class AttendanceService {
         result.requester.userId,
         approved ? 'regularization.approved' : 'regularization.rejected',
         `Your regularization for ${result.updated.attendance_date} was ${approved ? 'approved' : 'declined'}.`,
-        '/attendance',
+        attendancePath,
         tenantId,
       );
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Icon } from '@/components/proto'
+import { Icon, Overlay } from '@/components/proto'
 import { Kbd, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -160,7 +160,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '14vh' }}>
+    <Overlay open onClose={onClose} zIndex={1250} align="start" padding="14vh 0 0" blur={4} label="Command palette">
       <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '92vw', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,.6)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--bord)' }}>
           <Icon.search size={15} style={{ color: 'var(--text-mute)' }} />
@@ -216,7 +216,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -243,7 +243,7 @@ export function PmKeymapOverlay({ onClose }: { onClose: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Overlay open onClose={onClose} zIndex={1200} padding={0} blur={4} label="Keyboard shortcuts">
       <div onClick={(e) => e.stopPropagation()} style={{ width: 640, maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 14, padding: 20, boxShadow: '0 24px 60px rgba(0,0,0,.6)' }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
           <span style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>Keyboard shortcuts</span>
@@ -264,6 +264,6 @@ export function PmKeymapOverlay({ onClose }: { onClose: () => void }) {
         </div>
         <div className="t-caption" style={{ marginTop: 14 }}>No primary flow requires a mouse — the full-app rule.</div>
       </div>
-    </div>
+    </Overlay>
   )
 }

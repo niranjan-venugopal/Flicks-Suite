@@ -11,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
   ParseIntPipe,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
@@ -21,7 +22,11 @@ import {
   ApiQuery,
   ApiParam,
 } from '@nestjs/swagger';
-import { EmployeesService } from './employees.service';
+import {
+  EmployeesService,
+  redactForViewer,
+  canViewPersonalBlock,
+} from './employees.service';
 import { MediaService } from '../media/media.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -147,8 +152,13 @@ export class EmployeesController {
   }
 
   @Put('me')
-  @ApiOperation({ summary: 'Self-update limited fields' })
-  @ApiResponse({ status: 200, description: 'Updated' })
+  @ApiOperation({
+    summary: 'Edit my contact details',
+    description:
+      'Self-service: personal phone, personal email, current address and the primary emergency contact (null removes it). Name, work email, designation and role stay HR-managed. Returns the full record like GET /employees/me.',
+  })
+  @ApiResponse({ status: 200, description: 'Updated employee record' })
+  @ApiResponse({ status: 404, description: 'No employee record is linked to this seat' })
   async selfUpdate(
     @Body() dto: SelfUpdateEmployeeDto,
     @CurrentUser() user: JwtPayload,
@@ -292,14 +302,22 @@ export class EmployeesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get employee by ID' })
+  @ApiOperation({
+    summary: 'Get employee by ID',
+    description:
+      'Any member can open a profile. The personal block (personal contact, address, DOB, statutory, bank, emergency contacts) is returned only to the employee themselves, their reporting manager, and owner/admin/finance — everyone else gets it nulled (round K).',
+  })
   @ApiResponse({ status: 200, description: 'Employee record' })
   @ApiResponse({ status: 404, description: 'Not found' })
   async getEmployee(
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.employeesService.getEmployee(id, user.tenantId);
+    const [record, viewerEmployeeId] = await Promise.all([
+      this.employeesService.getEmployee(id, user.tenantId),
+      this.employeesService.getEmployeeIdForUserOrNull(user.sub, user.tenantId),
+    ]);
+    return redactForViewer(record, { employeeId: viewerEmployeeId, role: user.role });
   }
 
   @Put(':id')
@@ -426,6 +444,17 @@ export class EmployeesController {
     @Param('docId') docId: string,
     @CurrentUser() user: JwtPayload,
   ) {
+    // Round K: identity documents follow the personal-block rule — the
+    // person, their reporting manager, or owner / admin / finance / FAM.
+    const [record, viewerEmployeeId] = await Promise.all([
+      this.employeesService.getEmployee(id, user.tenantId),
+      this.employeesService.getEmployeeIdForUserOrNull(user.sub, user.tenantId),
+    ]);
+    if (!canViewPersonalBlock(record, { employeeId: viewerEmployeeId, role: user.role })) {
+      throw new ForbiddenException(
+        "Only the person, their manager or HR can open their documents",
+      );
+    }
     return this.employeesService.getDocumentSignedUrl(id, docId, user.tenantId);
   }
 }

@@ -944,26 +944,39 @@ export class NotificationsService {
       }
 
       case 'attendance-regularization-requested': {
-        const { managerName, employeeName, attendanceDate, requestType, reason } =
+        // Round K: every interpolated string is user-controlled (names, the
+        // free-text reason) → escaped, like leave-requested. The button only
+        // OPENS the request in Inbox → Approvals (`reviewUrl`, deep-linked to
+        // the row); nothing changes until the reviewer confirms in the app.
+        const { managerName, employeeName, attendanceDate, requestType, reason, reviewUrl } =
           props as {
             managerName: string;
             employeeName: string;
             attendanceDate: string;
             requestType?: string;
             reason?: string;
+            reviewUrl?: string;
           };
+        const appUrl = this.configService
+          .get<string>('APP_URL', 'http://localhost:3000')
+          .replace(/\/$/, '');
+        const href = reviewUrl ?? `${appUrl}/inbox?tab=approvals`;
         return {
           subject: `Attendance regularization — ${String(employeeName)} (${String(attendanceDate)})`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-              <h2 style="color: #1a1a2e;">Hi ${String(managerName)},</h2>
-              <p><strong>${String(employeeName)}</strong> has requested an attendance regularization.</p>
+              <h2 style="color: #1a1a2e;">Hi ${this.esc(managerName)},</h2>
+              <p><strong>${this.esc(employeeName)}</strong> has requested an attendance regularization.</p>
               <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
-                <tr><td style="padding: 8px; color: #666;">Date:</td><td style="padding: 8px;">${String(attendanceDate)}</td></tr>
-                ${requestType ? `<tr><td style="padding: 8px; color: #666;">Type:</td><td style="padding: 8px;">${String(requestType)}</td></tr>` : ''}
-                ${reason ? `<tr><td style="padding: 8px; color: #666;">Reason:</td><td style="padding: 8px;">${String(reason)}</td></tr>` : ''}
+                <tr><td style="padding: 8px; color: #666;">Date:</td><td style="padding: 8px;">${this.esc(attendanceDate)}</td></tr>
+                ${requestType ? `<tr><td style="padding: 8px; color: #666;">Type:</td><td style="padding: 8px;">${this.esc(requestType)}</td></tr>` : ''}
+                ${reason ? `<tr><td style="padding: 8px; color: #666;">Reason:</td><td style="padding: 8px;">${this.esc(reason)}</td></tr>` : ''}
               </table>
-              <a href="${this.configService.get<string>('APP_URL', 'http://localhost:3000')}/inbox" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">Review request</a>
+              <p style="margin: 24px 0 8px;">
+                <a href="${this.esc(href)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review request</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin: 0 0 20px;">Nothing changes until you confirm in the app.</p>
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open Inbox → Approvals.</p>
             </div>
           `,
         };
@@ -972,18 +985,26 @@ export class NotificationsService {
       case 'attendance-regularization-approved':
       case 'attendance-regularization-rejected': {
         const approved = template === 'attendance-regularization-approved';
-        const { employeeName, attendanceDate, comment } = props as {
+        // Round K: name / date / the reviewer's comment are user-controlled →
+        // escaped; `attendanceUrl` opens the requester's own log on that day.
+        const { employeeName, attendanceDate, comment, attendanceUrl } = props as {
           employeeName: string;
           attendanceDate: string;
           comment?: string;
+          attendanceUrl?: string;
         };
         return {
           subject: `Attendance regularization ${approved ? 'approved' : 'rejected'} — ${String(attendanceDate)}`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: ${approved ? '#22c55e' : '#ef4444'};">Regularization ${approved ? 'Approved' : 'Rejected'}</h2>
-              <p>Hi ${String(employeeName)}, your attendance regularization for <strong>${String(attendanceDate)}</strong> has been ${approved ? 'approved' : 'rejected'}.</p>
-              ${comment ? `<p>Comment: ${String(comment)}</p>` : ''}
+              <p>Hi ${this.esc(employeeName)}, your attendance regularization for <strong>${this.esc(attendanceDate)}</strong> has been ${approved ? 'approved' : 'rejected'}.</p>
+              ${comment ? `<p>Comment: ${this.esc(comment)}</p>` : ''}
+              ${
+                attendanceUrl
+                  ? `<p style="margin: 24px 0 0;"><a href="${this.esc(attendanceUrl)}" style="color: #3E7BFA; font-weight: 600;">Open attendance</a></p>`
+                  : ''
+              }
             </div>
           `,
         };

@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import {
   Dialog,
@@ -77,17 +79,58 @@ function fmtDay(iso: string): string {
 function todayEyebrow(): string {
   return `Today · ${new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}`
 }
-
-/** Live worked minutes including the in-flight session (stops when on break or clocked out). */
+/** Strict YYYY-MM-DD that is also a real calendar date. */
+function isISODate(s: string | null): s is string {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const d = new Date(`${s}T00:00:00`)
+  return !Number.isNaN(d.getTime()) && toISODate(d) === s
+}
+/** Month cursor for a deep-linked day, clamped so it never runs past this month. */
+function cursorFor(iso: string | null): Date {
+  const now = new Date()
+  if (!iso) return now
+  const d = new Date(`${iso}T00:00:00`)
+  const beyondNow =
+    d.getFullYear() > now.getFullYear() ||
+    (d.getFullYear() === now.getFullYear() && d.getMonth() > now.getMonth())
+  return beyondNow ? now : new Date(d.getFullYear(), d.getMonth(), 1)
+}
+/** How long the deep-linked Daily-log row keeps its ring. */
+const HIGHLIGHT_MS = 2500
 
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 export default function AttendancePage() {
+  // useSearchParams() needs a Suspense boundary for Next's static export step.
+  return (
+    <Suspense
+      fallback={
+        <div style={{ padding: '28px 32px 64px', maxWidth: 1280, margin: '0 auto' }}>
+          <SkeletonRows rows={6} height={44} />
+        </div>
+      }
+    >
+      <AttendanceInner />
+    </Suspense>
+  )
+}
+
+function AttendanceInner() {
+  // Round K deep links: `?date=YYYY-MM-DD` (from a regularization decision
+  // notice) opens that month with the day's row highlighted; `?view=team`
+  // lands on the team toggle for roles that have it.
+  const searchParams = useSearchParams()
+  const qc = useQueryClient()
+  const dateParam = searchParams.get('date')
+  const focusDate = isISODate(dateParam) ? dateParam : null
+  const viewParam = searchParams.get('view')
+
   const [regOpen, setRegOpen] = useState(false)
   // Set when a Daily-log row's Regularize button opened the dialog — the
   // clicked day pre-fills the date picker.
   const [regDate, setRegDate] = useState<string | null>(null)
-  const [cursor, setCursor] = useState(new Date())
+  const [cursor, setCursor] = useState(() => cursorFor(focusDate))
+  const [highlightDate, setHighlightDate] = useState<string | null>(null)
   // Round 14 (founder): the team view is a TOGGLE on this page, not a
   // separate sidebar tab. Managers see direct reports; owner/admin/finance
   // see the whole workspace (the API scopes by role).
@@ -102,6 +145,35 @@ export default function AttendancePage() {
   const monthEnd = toISODate(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0))
   const toDate = monthEnd < todayISO() ? monthEnd : todayISO()
   const range = useMyAttendanceRange({ fromDate, toDate, limit: 31 })
+
+  // A later `?date=` on the same mounted page (second notification click)
+  // re-targets the month; the initial one is already in the cursor state.
+  // The decision that sent us here changed this month's rows, so the cached
+  // (pre-decision) month is refetched and the ring waits for fresh data.
+  const focusArrivedAt = useRef(0)
+  useEffect(() => {
+    if (!focusDate) return
+    focusArrivedAt.current = Date.now()
+    setCursor(cursorFor(focusDate))
+    setHighlightDate(focusDate)
+    void qc.invalidateQueries({ queryKey: ['attendance', 'me', 'range'] })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusDate])
+
+  // Ring + scroll once that month's rows are in; the ring fades after 2.5 s.
+  useEffect(() => {
+    if (!highlightDate || range.isFetching || range.dataUpdatedAt < focusArrivedAt.current) return
+    document
+      .querySelector<HTMLElement>(`[data-date="${highlightDate}"]`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const t = setTimeout(() => setHighlightDate(null), HIGHLIGHT_MS)
+    return () => clearTimeout(t)
+  }, [highlightDate, range.isFetching, range.dataUpdatedAt])
+
+  // The role arrives with the persisted auth store, so this waits for it.
+  useEffect(() => {
+    if (viewParam === 'team' && canSeeTeam) setView('team')
+  }, [viewParam, canSeeTeam])
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -223,6 +295,7 @@ export default function AttendancePage() {
           ) : (
             <DailyLogTable
               rows={range.data.data}
+              highlightDate={highlightDate}
               onRegularize={(date) => {
                 setRegDate(date)
                 setRegOpen(true)
@@ -446,9 +519,12 @@ function statusPill(s: AttendanceRecord['attendanceStatus']) {
 
 function DailyLogTable({
   rows,
+  highlightDate,
   onRegularize,
 }: {
   rows: AttendanceRecord[]
+  /** Deep-linked day (YYYY-MM-DD) — that row gets a ring while set. */
+  highlightDate?: string | null
   onRegularize: (date: string) => void
 }) {
   return (
@@ -467,7 +543,16 @@ function DailyLogTable({
       </thead>
       <tbody>
         {rows.map((r) => (
-          <tr key={r.id}>
+          <tr
+            key={r.id}
+            data-date={r.attendanceDate}
+            style={
+              highlightDate === r.attendanceDate
+                ? // Tint as well as the ring: WebKit is patchy about box-shadow on <tr>.
+                  { boxShadow: 'inset 0 0 0 1px var(--blue)', background: 'rgba(62,123,250,.08)' }
+                : undefined
+            }
+          >
             <td style={{ fontWeight: 800 }}>{fmtDate(r.attendanceDate)}</td>
             <td style={{ color: 'var(--text-mute)' }}>{fmtDay(r.attendanceDate)}</td>
             <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtClock(r.firstPunchInAt)}</td>

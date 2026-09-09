@@ -97,6 +97,9 @@ export interface AdminOverviewDto {
       employeeCode: string | null;
       attendanceDate: string;
       requestType: string;
+      /** Round K — ISO instants so the Inbox detail can show the proposed in/out. */
+      proposedInTime: string | null;
+      proposedOutTime: string | null;
       reason: string;
       requestedAt: string;
       avatarUrl: string | null;
