@@ -307,7 +307,33 @@ structural (§3) and the founder is asked to confirm in §8.
    request selected; *View Ranjith's attendance →* opens his history.
 4. Nothing to run in Supabase this round — **no migration**.
 
-## 9. Follow-ups (not blocking)
+## 9. Post-deploy follow-up (2026-09-11) — the sidebar mark
+
+**Reported:** *"The specflicks Logo in the sidebar is not showing, its showing an
+error"* (Safari's broken-image glyph in the brand block; the workspace logo
+beside it was fine).
+
+**Diagnosis.** The mark was a plain `<img src="/spec-pfp.png">` — a static file
+in the web app's `public` folder. The file is intact (valid 256×256 PNG, every
+chunk verified) and the founder's own Safari screenshot from the evening before
+the Round K deploy shows it rendering, so nothing in the repository changed
+it; opening the file's address directly in the same Safari showed the image,
+so the site serves it and the failure lived in that browser session (a cached
+failed response or a content filter). The build box cannot reach
+`app.flickssuite.com` (egress policy), so the direct-URL check came from the
+founder.
+
+**Fix (`components/proto/Logo.tsx`).** `LogoMark` no longer loads anything:
+it draws the tile inline — the same diagonal navy gradient sampled from the
+artwork and the bolt outline **traced from the PNG's pixels** into one SVG path
+(three sub-paths, ~0.9 KB), centred and scaled exactly as the picture was.
+Same props (`size`, `style`), same rounded corners, so the Sidebar, the auth
+layout, the legal layout and the re-acceptance gate pick it up unchanged. A
+side-by-side render at 32 / 36 / 64 / 128 px is indistinguishable from the PNG.
+`public/spec-pfp.png` and `app/icon.png` (the tab icon) stay as they are;
+`og.png` still serves the social preview.
+
+## 10. Follow-ups (not blocking)
 
 - `Overlay` has no Escape-to-close or body scroll-lock (no proto overlay had
   them before; adding them is a behaviour change for 45+ sites — a small
