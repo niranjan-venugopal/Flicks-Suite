@@ -14,6 +14,7 @@ import {
   Max,
   IsInt,
   ValidateIf,
+  IsTimeZone,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -739,6 +740,9 @@ export class UpdateOrganizationDto {
   @IsString()
   @IsOptional()
   @MaxLength(60)
+  // Round L: tenants.timezone feeds SQL `AT TIME ZONE` and the day resolver —
+  // an unknown zone must never reach the row.
+  @IsTimeZone()
   timezone?: string;
 
   @ApiPropertyOptional({ example: 4, description: '1=Jan .. 12=Dec' })

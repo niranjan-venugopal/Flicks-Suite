@@ -20,8 +20,17 @@ import {
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
+import { tenantTodayISOTx } from '../../core/common/workday';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ApprovalRoutingService,
+  RESET_ESCALATION,
+  approvalDeepLink,
+  authorRoutingView,
+  routeStateColumns,
+  shapeEscalation,
+} from '../approvals/public';
 import type {
   BulkSaveEntriesDto,
   SubmitTimesheetDto,
@@ -30,8 +39,8 @@ import type {
   TeamTimesheetQueryDto,
 } from './timesheet.dto';
 
-/** Round I: roles whose team view is the whole workspace (see leave). */
-const ORG_WIDE_REVIEW_ROLES: ReadonlyArray<string> = ['owner', 'admin', 'fam', 'super_admin'];
+// Round L: the org-wide role list, the queue predicate and the may-act guard
+// live in modules/approvals (ORG_WIDE_REVIEW_ROLES is exported from there).
 
 /**
  * Returns the 7-day week containing the given date as { start, end } in
@@ -70,6 +79,8 @@ export class TimesheetService {
     private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    // Round L: routing (who reviews, who may act) + escalation state.
+    private readonly routing: ApprovalRoutingService,
   ) {}
 
   // ─── Internal helpers ──────────────────────────────────────────────────
@@ -125,6 +136,9 @@ export class TimesheetService {
       rejectionComment: p.rejection_comment,
       latestReworkComment: rework?.comment ?? null,
       latestReworkAt: rework?.createdAt?.toISOString() ?? null,
+      // Round L — employee-facing: the level only ("With your manager" /
+      // "With HR"), never the reason or a reviewer's name.
+      ...authorRoutingView(p.escalation_level),
     };
   }
 
@@ -399,11 +413,30 @@ export class TimesheetService {
         throw new NotFoundException('Timesheet period not found');
       }
 
-      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
-      const isAuthor = period.employee_id === employeeId;
-      const isApprover = period.approver_id === employeeId;
-      if (!isAuthor && !isApprover) {
-        throw new ForbiddenException('Not allowed to view this timesheet');
+      // Round L: the author, or anyone the routing model lets act on it (the
+      // live manager, the skip-level manager once escalated, owner/admin) —
+      // no longer only the stamped approver_id.
+      const reviewer = await this.routing.resolveReviewerTx(db, tenantId, userId);
+      const isAuthor = !!reviewer.employeeId && period.employee_id === reviewer.employeeId;
+      if (!isAuthor) {
+        try {
+          await this.routing.assertMayActTx(
+            db,
+            tenantId,
+            reviewer,
+            {
+              applicantEmployeeId: period.employee_id,
+              level: period.escalation_level,
+              escalatedTo: period.escalated_to_employee_id,
+            },
+            'timesheet',
+          );
+        } catch (e) {
+          if (e instanceof ForbiddenException) {
+            throw new ForbiddenException('Not allowed to view this timesheet');
+          }
+          throw e;
+        }
       }
 
       const entries = await db
@@ -545,13 +578,12 @@ export class TimesheetService {
     tenantId: string,
     dto: SubmitTimesheetDto,
   ) {
-    const { period, approverId, submittedAt } =
+    const { period, approverId, submittedAt, state, route } =
       await this.databaseService.withTenant(tenantId, async (db) => {
-        const { employeeId, reportingManagerId } = await this.resolveCaller(
-          db,
-          userId,
-          tenantId,
-        );
+        const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+        // Round L: "today" in the tenant's timezone (A's day resolver) decides
+        // whether the manager is on leave right now.
+        const today = await tenantTodayISOTx(db, tenantId);
 
         const [period] = await db
           .select()
@@ -577,14 +609,23 @@ export class TimesheetService {
           throw new BadRequestException('Add at least one entry before submitting');
         }
 
-        const approverId = period.approver_id ?? reportingManagerId;
-        if (!approverId) {
-          throw new BadRequestException(
-            'No approver configured. Ask HR to set your reporting manager first.',
-          );
-        }
-
+        // Round L: no more "No approver configured" dead end — a period
+        // without a reporting manager routes straight to Owner + HR Admins
+        // (level 2, `no_manager`); a manager on approved full-day leave today
+        // is skipped at submit time. `approver_id` stays a display/legacy
+        // stamp: the routing columns decide who sees and may act.
         const submittedAt = new Date();
+        const { state, route } = await this.routing.initialStateTx(
+          db,
+          tenantId,
+          employeeId,
+          today,
+          submittedAt,
+        );
+        // Recomputed from the live route on EVERY submit (a rework by HR must
+        // not leave HR as the approver of a level-0 period).
+        const approverId = route.l0?.employeeId ?? null;
+
         await db
           .update(timesheetPeriods)
           .set({
@@ -592,6 +633,7 @@ export class TimesheetService {
             submitted_at: submittedAt,
             approver_id: approverId,
             updated_at: submittedAt,
+            ...routeStateColumns(state),
           })
           .where(eq(timesheetPeriods.id, period.id));
 
@@ -606,61 +648,62 @@ export class TimesheetService {
             ),
           );
 
-        return { period, approverId, submittedAt };
+        return { period, approverId, submittedAt, state, route };
       });
 
-    // Resolve approver email + name + user_id for notifications.
-    const [approver] = await this.dbAdmin
-      .select({
-        userId: employees.user_id,
-        email: users.email,
-        fullName: users.full_name,
-      })
-      .from(employees)
-      .leftJoin(users, eq(employees.user_id, users.id))
-      .where(eq(employees.id, approverId))
-      .limit(1);
-
-    // And the submitter's display name so the manager notification reads
+    // The submitter's display name so the reviewer notification reads
     // "Alice Sharma submitted her timesheet" not just "Someone submitted…".
     const [submitter] = await this.dbAdmin
-      .select({ fullName: users.full_name })
+      .select({ fullName: users.full_name, first: employees.first_name, last: employees.last_name })
       .from(employees)
       .leftJoin(users, eq(employees.user_id, users.id))
-      .where(eq(employees.id, period.employee_id))
+      .where(and(eq(employees.id, period.employee_id), eq(employees.tenant_id, tenantId)))
       .limit(1);
-    const submitterName = submitter?.fullName ?? 'An employee';
+    const submitterName =
+      submitter?.fullName || `${submitter?.first ?? ''} ${submitter?.last ?? ''}`.trim() || 'An employee';
 
-    if (approver?.email) {
+    // Round L: whoever the period landed with — the manager (L0), the
+    // manager's manager (L1, manager on leave) or Owner + HR Admins (L2, no
+    // manager). Best-effort, after commit. The message says WHY it is with
+    // them when it skipped a level.
+    const recipients = this.routing.recipientsFor(route, state.level);
+    const why =
+      state.level === 2 && state.reason === 'no_manager'
+        ? ' — no reporting manager is set, so it is with you as HR.'
+        : state.level >= 1 && state.reason === 'reviewer_on_leave'
+          ? ' — their manager is on leave today, so it is with you.'
+          : '.';
+    const reviewPath = approvalDeepLink('timesheet', period.id);
+    for (const r of recipients) {
+      if (r.userId) {
+        // Detached (round C): createInAppNotification never throws at source.
+        void this.notificationsService.createInAppNotification(
+          r.userId,
+          'timesheet.submitted',
+          `${submitterName || 'An employee'} submitted a timesheet for ${period.period_start}${why}`,
+          reviewPath,
+          tenantId,
+          { groupKey: `timesheet:${period.id}` },
+        );
+      }
+      if (!r.email) continue;
       try {
         await this.notificationsService.sendEmail(
           'timesheet-submitted',
-          approver.email,
+          r.email,
           {
-            approverName: approver.fullName ?? 'there',
+            approverName: r.name || 'there',
             periodStart: period.period_start,
             periodEnd: period.period_end,
             totalHours: period.total_hours,
           },
+          r.userId ? { userId: r.userId, event: 'timesheet_submitted' } : undefined,
         );
       } catch (e) {
         this.logger.warn(
-          `Could not send timesheet-submitted email to ${approver.email}: ${(e as Error).message}`,
+          `Could not send timesheet-submitted email to ${r.email}: ${(e as Error).message}`,
         );
       }
-    }
-
-    // In-app notification for the approver — surfaces in the Topbar bell
-    // even when the email lands in spam or is disabled. Detached (round C):
-    // createInAppNotification never throws at source.
-    if (approver?.userId) {
-      void this.notificationsService.createInAppNotification(
-        approver.userId,
-        'timesheet.submitted',
-        `${submitterName} submitted a timesheet for ${period.period_start}.`,
-        '/team/timesheets',
-        tenantId,
-      );
     }
 
     await this.auditService.log({
@@ -669,62 +712,98 @@ export class TimesheetService {
       action: 'timesheet.submitted',
       resourceType: 'timesheet_period',
       resourceId: period.id,
-      metadata: { totalHours: period.total_hours, approverId },
+      metadata: {
+        totalHours: period.total_hours,
+        approverId,
+        escalationLevel: state.level,
+        escalationReason: state.reason,
+      },
     });
 
     return {
       id: period.id,
       status: 'submitted' as const,
       submittedAt: submittedAt.toISOString(),
+      // Employee-facing: the level only — never the reason or a name.
+      ...authorRoutingView(state.level),
     };
   }
 
   // ─── 6. List pending (manager view) ────────────────────────────────────
 
+  /**
+   * Round L: the ROUTED queue — what the Inbox badge counts. Direct reports'
+   * submitted periods, periods escalated to me (level >= 1), and for
+   * owner/admin the level-2 ones; never the caller's own. `approver_id` is
+   * no longer the key (it is a display/legacy stamp).
+   */
   async listPending(
     userId: string,
     tenantId: string,
     query: TimesheetListQueryDto,
+    roleHint?: string,
   ) {
     return this.databaseService.withTenant(tenantId, async (db) => {
-      const { employeeId } = await this.resolveCaller(db, userId, tenantId);
+      const reviewer = await this.routing.resolveReviewerTx(db, tenantId, userId, roleHint);
       const page = query.page ?? 1;
       const limit = Math.min(query.limit ?? 20, 100);
       const offset = (page - 1) * limit;
+      const escalatedTo = alias(employees, 'ts_escalated_to');
 
-      const conditions = [
+      const where = and(
         eq(timesheetPeriods.tenant_id, tenantId),
-        eq(timesheetPeriods.approver_id, employeeId),
         eq(timesheetPeriods.status, 'submitted' as const),
-      ];
+        this.routing.queuePredicate(reviewer, timesheetPeriods, timesheetPeriods.employee_id),
+        isNull(employees.deleted_at),
+      );
 
       const [rows, totalRow] = await Promise.all([
         db
           .select({
             id: timesheetPeriods.id,
             employeeId: timesheetPeriods.employee_id,
+            employeeUserId: employees.user_id,
             employeeCode: employees.employee_code,
             employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
             periodStart: timesheetPeriods.period_start,
             periodEnd: timesheetPeriods.period_end,
+            status: timesheetPeriods.status,
             totalHours: timesheetPeriods.total_hours,
             totalBillableHours: timesheetPeriods.total_billable_hours,
             submittedAt: timesheetPeriods.submitted_at,
+            approverId: timesheetPeriods.approver_id,
+            escalationLevel: timesheetPeriods.escalation_level,
+            escalationReason: timesheetPeriods.escalation_reason,
+            escalatedAt: timesheetPeriods.escalated_at,
+            escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE COALESCE(${escalatedTo.first_name}, '') || ' ' || COALESCE(${escalatedTo.last_name}, '') END`,
           })
           .from(timesheetPeriods)
           .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
-          .where(and(...conditions))
+          .leftJoin(
+            escalatedTo,
+            and(
+              eq(escalatedTo.id, timesheetPeriods.escalated_to_employee_id),
+              eq(escalatedTo.tenant_id, tenantId),
+            ),
+          )
+          .where(where)
           .orderBy(desc(timesheetPeriods.submitted_at))
           .limit(limit)
           .offset(offset),
         db
           .select({ n: sql<number>`COUNT(*)::int` })
           .from(timesheetPeriods)
-          .where(and(...conditions)),
+          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .where(where),
       ]);
 
       return {
-        data: rows,
+        data: rows.map(({ escalationLevel, escalationReason, escalatedAt, escalatedToName, ...r }) => ({
+          ...r,
+          escalation: shapeEscalation({ escalationLevel, escalationReason, escalatedAt }, escalatedToName),
+          // Everything in the routed queue is, by definition, with the caller.
+          routedToMe: true as const,
+        })),
         pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
       };
     });
@@ -752,24 +831,26 @@ export class TimesheetService {
     const status = query.status ?? 'all';
 
     return this.databaseService.withTenant(tenantId, async (db) => {
-      const [m] = await db
-        .select({ employeeId: memberships.employee_id, role: memberships.role })
-        .from(memberships)
-        .where(
-          and(
-            eq(memberships.user_id, userId),
-            eq(memberships.tenant_id, tenantId),
-            eq(memberships.status, 'active'),
-          ),
-        )
-        .limit(1);
-      const orgWide = ORG_WIDE_REVIEW_ROLES.includes(roleHint ?? m?.role ?? '');
+      // Round L: the org chart still decides the SCOPE (owner/admin: the
+      // workspace — the "open directly" surface; managers: direct reports),
+      // while `routedToMe` says whether the row is in the caller's queue.
+      const reviewer = await this.routing.resolveReviewerTx(db, tenantId, userId, roleHint);
+      const orgWide = reviewer.orgWide;
+      // A manager's page shows their direct reports PLUS anything escalated
+      // to them (the manager's manager follows the bell's deep link here).
       const scope = orgWide
         ? sql`true`
-        : m?.employeeId
-          ? sql`${employees.reporting_manager_id} = ${m.employeeId}`
+        : reviewer.employeeId
+          ? sql`(${employees.reporting_manager_id} = ${reviewer.employeeId} OR (${timesheetPeriods.escalation_level} >= 1 AND ${timesheetPeriods.escalated_to_employee_id} = ${reviewer.employeeId}))`
           : sql`false`;
       const approver = alias(employees, 'ts_approver');
+      const manager = alias(employees, 'ts_manager');
+      const escalatedTo = alias(employees, 'ts_escalated_to');
+      const routedToMe = this.routing.queuePredicate(
+        reviewer,
+        timesheetPeriods,
+        timesheetPeriods.employee_id,
+      );
       const where = and(
         eq(timesheetPeriods.tenant_id, tenantId),
         status === 'all' ? undefined : eq(timesheetPeriods.status, status),
@@ -799,12 +880,34 @@ export class TimesheetService {
             rejectedAt: timesheetPeriods.rejected_at,
             rejectionComment: timesheetPeriods.rejection_comment,
             updatedAt: timesheetPeriods.updated_at,
+            // Round L — routing columns for the chips.
+            routedToMe: sql<boolean>`(${routedToMe})`,
+            managerName: sql<string | null>`CASE WHEN ${manager.id} IS NULL THEN NULL ELSE COALESCE(${manager.first_name}, '') || ' ' || COALESCE(${manager.last_name}, '') END`,
+            escalationLevel: timesheetPeriods.escalation_level,
+            escalationReason: timesheetPeriods.escalation_reason,
+            escalatedAt: timesheetPeriods.escalated_at,
+            escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE COALESCE(${escalatedTo.first_name}, '') || ' ' || COALESCE(${escalatedTo.last_name}, '') END`,
           })
           .from(timesheetPeriods)
           .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
           .leftJoin(
             approver,
             and(eq(approver.id, timesheetPeriods.approver_id), eq(approver.tenant_id, tenantId)),
+          )
+          .leftJoin(
+            manager,
+            and(
+              eq(manager.id, employees.reporting_manager_id),
+              eq(manager.tenant_id, tenantId),
+              isNull(manager.deleted_at),
+            ),
+          )
+          .leftJoin(
+            escalatedTo,
+            and(
+              eq(escalatedTo.id, timesheetPeriods.escalated_to_employee_id),
+              eq(escalatedTo.tenant_id, tenantId),
+            ),
           )
           .where(where)
           .orderBy(desc(timesheetPeriods.period_start), asc(employees.first_name), desc(timesheetPeriods.id))
@@ -819,7 +922,11 @@ export class TimesheetService {
 
       const total = Number(countRow?.n ?? 0);
       return {
-        data: rows,
+        data: rows.map(({ escalationLevel, escalationReason, escalatedAt, escalatedToName, ...r }) => ({
+          ...r,
+          routedToMe: r.routedToMe === true,
+          escalation: shapeEscalation({ escalationLevel, escalationReason, escalatedAt }, escalatedToName),
+        })),
         pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
         scope: orgWide ? ('org' as const) : ('team' as const),
       };
@@ -833,15 +940,16 @@ export class TimesheetService {
     reviewerUserId: string,
     tenantId: string,
     dto: ReviewTimesheetDto,
+    roleHint?: string,
   ) {
-    const { period, newStatus, now } = await this.databaseService.withTenant(
+    const { period, newStatus, now, onBehalfRoute, deciderName } = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
-        const { employeeId } = await this.resolveCaller(
-          db,
-          reviewerUserId,
-          tenantId,
-        );
+        // Round L: the routing guard replaces "approver_id = me". The live
+        // reporting manager always may act; the skip-level manager once the
+        // period was escalated to them; owner/admin always (opened directly
+        // from Team → Timesheets); never the applicant (user_id + bridge).
+        const reviewer = await this.routing.resolveReviewerTx(db, tenantId, reviewerUserId, roleHint);
 
         const [period] = await db
           .select()
@@ -855,26 +963,25 @@ export class TimesheetService {
           .limit(1);
 
         if (!period) throw new NotFoundException('Timesheet period not found');
-        if (period.approver_id !== employeeId) {
-          // Round I self-heal: periods created before the employee had a
-          // reporting manager carry approver_id NULL and could never be
-          // reviewed by anyone. If the caller IS that employee's reporting
-          // manager today, stamp them and proceed. Anyone else stays 403.
-          const [emp] = await db
-            .select({ reportingManagerId: employees.reporting_manager_id })
-            .from(employees)
-            .where(and(eq(employees.id, period.employee_id), eq(employees.tenant_id, tenantId)))
-            .limit(1);
-          if (period.approver_id === null && emp?.reportingManagerId === employeeId) {
-            await db
-              .update(timesheetPeriods)
-              .set({ approver_id: employeeId, updated_at: new Date() })
-              .where(and(eq(timesheetPeriods.id, period.id), eq(timesheetPeriods.tenant_id, tenantId)));
-            period.approver_id = employeeId;
-          } else {
-            throw new ForbiddenException('You are not the approver for this timesheet');
-          }
-        }
+        const how = await this.routing.assertMayActTx(
+          db,
+          tenantId,
+          reviewer,
+          {
+            applicantEmployeeId: period.employee_id,
+            level: period.escalation_level,
+            escalatedTo: period.escalated_to_employee_id,
+          },
+          'timesheet',
+        );
+        // Decided over the routed manager's head (owner/admin directly, or
+        // the skip-level manager)? They are told after commit.
+        const onBehalfRoute =
+          how === 'manager' ? null : await this.routing.resolveRouteTx(db, tenantId, period.employee_id);
+        const [decider] = onBehalfRoute
+          ? await db.select({ name: users.full_name }).from(users).where(eq(users.id, reviewerUserId)).limit(1)
+          : [undefined];
+        const deciderName = decider?.name ?? '';
         if (period.status !== 'submitted') {
           throw new BadRequestException(
             `Timesheet is ${period.status}; only submitted timesheets can be reviewed`,
@@ -891,7 +998,12 @@ export class TimesheetService {
 
         const now = new Date();
         let newStatus: 'approved' | 'rejected' | 'draft';
-        const update: Record<string, unknown> = { updated_at: now };
+        // Whoever decides is stamped as the approver (display/legacy column);
+        // a seat without an employee row keeps whatever was there.
+        const update: Record<string, unknown> = {
+          updated_at: now,
+          approver_id: reviewer.employeeId ?? period.approver_id,
+        };
 
         if (dto.action === 'approve') {
           newStatus = 'approved';
@@ -903,16 +1015,19 @@ export class TimesheetService {
           update.rejected_at = now;
           update.rejection_comment = dto.comment;
         } else {
-          // rework — re-open the period for editing
+          // rework — re-open the period for editing; the escalation clock
+          // restarts from scratch on the next submit, and the approver is
+          // recomputed from the route then (not left as whoever sent it back).
           newStatus = 'draft';
           update.status = 'draft';
           update.submitted_at = null;
+          Object.assign(update, RESET_ESCALATION, { approver_id: null });
         }
 
         await db
           .update(timesheetPeriods)
           .set(update)
-          .where(eq(timesheetPeriods.id, period.id));
+          .where(and(eq(timesheetPeriods.id, period.id), eq(timesheetPeriods.tenant_id, tenantId)));
 
         if (dto.action === 'rework') {
           await db.insert(timesheetReworkRequests).values({
@@ -923,7 +1038,7 @@ export class TimesheetService {
           });
         }
 
-        return { period, newStatus, now };
+        return { period, newStatus, now, onBehalfRoute, deciderName };
       },
     );
 
@@ -940,6 +1055,22 @@ export class TimesheetService {
       resourceId: period.id,
       metadata: { comment: dto.comment },
     });
+
+    // Round L: the routed manager (and the skip-level manager, once it had
+    // reached them) learn that someone decided on their behalf. Best-effort.
+    if (onBehalfRoute) {
+      const [emp] = await this.dbAdmin
+        .select({ first: employees.first_name, last: employees.last_name })
+        .from(employees)
+        .where(and(eq(employees.id, period.employee_id), eq(employees.tenant_id, tenantId)))
+        .limit(1);
+      void this.routing.notifyDecidedOnBehalf(tenantId, 'timesheet', period.id, onBehalfRoute, period.escalation_level, {
+        deciderUserId: reviewerUserId,
+        deciderName,
+        employeeName: `${emp?.first ?? ''} ${emp?.last ?? ''}`.trim(),
+        action: dto.action,
+      });
+    }
 
     // Push an in-app notification to the timesheet's owner so they see
     // the manager's decision next time they open the app.

@@ -19,6 +19,7 @@ import {
   useReviewLeave,
   type TeamLeaveRequest,
 } from '@/lib/api/queries/use-leave'
+import { EscalationPill } from '@/components/approvals/EscalationPill'
 import { useToast } from '@/components/ui/use-toast'
 
 // ─────────────────────────────────────────────────────────
@@ -29,6 +30,10 @@ import { useToast } from '@/components/ui/use-toast'
 // decision (comments allowed), and an emailed deep link
 // /team/leave?request=<id>&action=approve|reject that pre-selects the
 // decision — it never acts by itself.
+// Round L: owner/HR admin keep the workspace-wide list (the "open directly"
+// surface); each pending row carries the routing chip — muted "With
+// <manager> · escalates in Nh" while it sits with the manager, coral/yellow
+// once escalated — driven by `routedToMe` / `escalation` from GET /leave/team.
 // ─────────────────────────────────────────────────────────
 
 type Tab = 'pending' | 'upcoming' | 'history'
@@ -270,7 +275,19 @@ function TeamLeaveInner() {
                     <td style={{ ...td, fontSize: 11, color: 'var(--text-mute)' }}>
                       {tab === 'pending' ? fmtStamp(r.appliedAt) : fmtStamp(r.approvedAt ?? r.rejectedAt ?? r.cancelledAt)}
                     </td>
-                    <td style={{ padding: '12px 14px' }}>{statusPill(r.status)}</td>
+                    <td style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        {statusPill(r.status)}
+                        {r.status === 'pending' && (
+                          <EscalationPill
+                            escalation={r.escalation ?? null}
+                            routedToMe={r.routedToMe ?? true}
+                            managerName={r.managerName ?? null}
+                            anchorAt={r.appliedAt}
+                          />
+                        )}
+                      </div>
+                    </td>
                     <td style={{ ...td, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={(tab === 'pending' ? r.reason : r.approverComment) ?? undefined}>
                       {tab === 'pending' ? (r.reason ?? '—') : (
                         <span>
@@ -338,6 +355,11 @@ function ReviewLeaveDialog({ request, action, comment, setComment, isPending, on
         </Btn>
       </>}
     >
+      {request.routedToMe === false && (
+        <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 10 }} data-testid="review-leave-on-behalf">
+          This request is with {request.managerName?.trim() || 'the reporting manager'} — deciding it here records you as the approver, and they&apos;ll be told.
+        </p>
+      )}
       {request.reason && (
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', padding: '10px 12px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)', marginBottom: 14 }}>
           <span style={{ color: 'var(--text-mute)' }}>Reason · </span>{request.reason}

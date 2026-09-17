@@ -4,9 +4,11 @@ import { AttendanceService } from './attendance.service';
 import { PresenceModule } from '../presence/presence.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 
 @Module({
-  imports: [AuditModule, NotificationsModule, PresenceModule],
+  // ApprovalsModule (Round L): regularization routing + escalation state.
+  imports: [AuditModule, NotificationsModule, PresenceModule, ApprovalsModule],
   controllers: [AttendanceController],
   providers: [AttendanceService],
   exports: [AttendanceService],

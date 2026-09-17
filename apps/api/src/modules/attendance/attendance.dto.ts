@@ -62,10 +62,24 @@ export const REGULARIZATION_TYPES = [
 ] as const;
 export type RegularizationType = (typeof REGULARIZATION_TYPES)[number];
 
+/**
+ * Round L: an instant WITH a zone designator — `2026-05-08T09:00:00Z` or
+ * `…+05:30`. Offset-less strings (`2026-05-08T09:00:00`, `2026-05-08`) are
+ * refused: `new Date()` would read them in the server's zone, not the
+ * shift's. (`IsISO8601` admits them.)
+ */
+export const ISO_INSTANT_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+
 export class RegularizationRequestDto {
+  // Round L: a calendar day, nothing else — the service compares it against
+  // "today" in the shift's timezone and every instant below must fall on it.
   @ApiProperty({ example: '2026-05-08' })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, {
+    message: 'attendanceDate must be YYYY-MM-DD',
+  })
   attendanceDate: string;
 
   @ApiProperty({ enum: REGULARIZATION_TYPES })
@@ -73,13 +87,19 @@ export class RegularizationRequestDto {
   requestType: RegularizationType;
 
   @ApiPropertyOptional({ example: '2026-05-08T09:00:00Z' })
-  @IsString()
   @IsOptional()
+  @IsString()
+  @Matches(ISO_INSTANT_RE, {
+    message: 'proposedInTime must be an ISO-8601 instant with a zone (e.g. 2026-05-08T09:00:00Z)',
+  })
   proposedInTime?: string;
 
   @ApiPropertyOptional({ example: '2026-05-08T18:00:00Z' })
-  @IsString()
   @IsOptional()
+  @IsString()
+  @Matches(ISO_INSTANT_RE, {
+    message: 'proposedOutTime must be an ISO-8601 instant with a zone (e.g. 2026-05-08T18:00:00Z)',
+  })
   proposedOutTime?: string;
 
   @ApiProperty({ example: 'Forgot to punch in due to client meeting' })

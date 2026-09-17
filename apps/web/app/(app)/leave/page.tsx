@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import {
   Btn,
@@ -32,6 +33,12 @@ import { useToast } from '@/components/ui/use-toast'
 import type { IconKey } from '@/components/proto'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+/** Local calendar day as YYYY-MM-DD (toISOString() is UTC — after 17:30 IST it names tomorrow). */
+function todayLocalISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const TYPE_ACCENT: Record<string, { color: string; icon: IconKey }> = {
   CL: { color: '#3E7BFA', icon: 'cal' },
@@ -99,12 +106,22 @@ export default function LeavePage() {
   const holidays = useHolidays()
   const cancel = useCancelLeave()
   const { toast } = useToast()
-  const withdraw = async (id: string) => {
+  const qc = useQueryClient()
+  // Round L: an APPROVED leave can be cancelled too (the API always could) —
+  // it is the way out of "on approved leave today, cancel the leave first"
+  // on the clock card. The attendance queries are refreshed so the card and
+  // the team board stop saying "On leave" straight away.
+  const withdraw = async (id: string, status: LeaveRequest['status']) => {
+    const approved = status === 'approved'
     try {
       await cancel.mutateAsync({ id })
-      toast({ title: 'Request withdrawn' })
+      void qc.invalidateQueries({ queryKey: ['attendance'] })
+      toast({
+        title: approved ? 'Leave cancelled' : 'Request withdrawn',
+        description: approved ? 'You are expected to clock in on those days again.' : undefined,
+      })
     } catch (e) {
-      toast({ title: 'Could not withdraw', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
+      toast({ title: approved ? 'Could not cancel' : 'Could not withdraw', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
     }
   }
 
@@ -216,7 +233,14 @@ function BalanceCard({ balance: b }: { balance: LeaveBalance }) {
 
 // ─── History table ─────────────────────────────────────────────────────────
 
-function HistoryTable({ rows, onWithdraw }: { rows: LeaveRequest[]; onWithdraw: (id: string) => void }) {
+function HistoryTable({
+  rows,
+  onWithdraw,
+}: {
+  rows: LeaveRequest[]
+  onWithdraw: (id: string, status: LeaveRequest['status']) => void
+}) {
+  const today = todayLocalISO()
   return (
     <table className="tbl" style={{ width: '100%' }}>
       <thead>
@@ -235,19 +259,31 @@ function HistoryTable({ rows, onWithdraw }: { rows: LeaveRequest[]; onWithdraw: 
             <td>{typePill(extractCode(r.leaveTypeName))}</td>
             <td>{fmtRange(r.startDate, r.endDate)}</td>
             <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 800 }}>{r.totalDays}</td>
-            <td>{statusPill(r.status)}</td>
+            <td>
+              {statusPill(r.status)}
+              {/* Round L: who it is with — the level only, never the reason. */}
+              {r.status === 'pending' && r.withLabel && (
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', marginTop: 3 }} data-testid={`leave-with-${r.withLabel}`}>
+                  With {r.withLabel === 'hr' ? 'HR' : 'your manager'}
+                </div>
+              )}
+            </td>
             <td style={{ color: 'var(--text-2)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.reason ?? '—'}
             </td>
             <td style={{ textAlign: 'right' }}>
-              {r.status === 'pending' && (
+              {/* Pending: withdraw. Approved and not yet over: cancel (frees
+                  the day on the clock card and the team board). */}
+              {(r.status === 'pending' || (r.status === 'approved' && r.endDate >= today)) && (
                 <button
                   type="button"
                   className="pm-row-acts"
-                  onClick={() => onWithdraw(r.id)}
+                  data-testid={`leave-cancel-${r.id}`}
+                  data-action={r.status === 'pending' ? 'withdraw' : 'cancel'}
+                  onClick={() => onWithdraw(r.id, r.status)}
                   style={{ background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}
                 >
-                  Withdraw
+                  {r.status === 'pending' ? 'Withdraw' : 'Cancel leave'}
                 </button>
               )}
             </td>
@@ -390,8 +426,14 @@ function ApplyLeaveDialog({
     }
     const payload: ApplyLeavePayload = { leaveTypeId, startDate, endDate, isHalfDay, reason }
     try {
-      await apply.mutateAsync(payload)
-      toast({ title: 'Leave submitted', description: 'Your manager will see it in their approvals inbox.' })
+      const created = await apply.mutateAsync(payload)
+      toast({
+        title: 'Leave submitted',
+        description:
+          created?.withLabel === 'hr'
+            ? 'No reporting manager is set, so HR will review it.'
+            : 'Your manager will see it in their approvals inbox.',
+      })
       reset()
       onOpenChange(false)
     } catch (e) {
@@ -505,7 +547,7 @@ function ApplyLeaveDialog({
             onClick={handleSubmit}
             disabled={apply.isPending || !leaveTypeId || totalDays <= 0}
           >
-            {apply.isPending ? 'Submitting…' : 'Submit to manager'}
+            {apply.isPending ? 'Submitting…' : 'Submit request'}
           </Btn>
         </div>
       </DialogContent>

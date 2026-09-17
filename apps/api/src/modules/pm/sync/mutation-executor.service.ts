@@ -242,9 +242,12 @@ export class PmMutationExecutor {
         // item.id is the client-minted COMMENT id; issue in fields.
         await this.issues.createComment(tenantId, userId, f['issue_id'], {
           id: item.id,
-          body: f['body'],
+          body: f['body'] ?? '',
           parent_comment_id: f['parent_comment_id'] ?? null,
           mentioned_user_ids: f['mentioned_user_ids'] ?? [],
+          // Round L item 6 — draft uploads bound to the new comment
+          // (issue.create / issue.update spread their fields through).
+          attachment_ids: f['attachment_ids'] ?? [],
         });
         return {};
       }

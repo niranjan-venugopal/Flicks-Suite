@@ -11,6 +11,7 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { Response as ExpressResponse } from 'express';
 import { Throttle } from '@nestjs/throttler';
@@ -35,6 +36,8 @@ import {
 } from './fam.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
+import { FamGuard } from '../../core/auth/guards/fam.guard';
+import { ApprovalEscalationJob } from '../approvals/public';
 import type { JwtPayload } from '@flicks/shared/types';
 
 @ApiTags('FAM')
@@ -44,7 +47,26 @@ export class FamController {
   constructor(
     private readonly famService: FamService,
     private readonly authService: AuthService,
+    private readonly approvalEscalation: ApprovalEscalationJob,
   ) {}
+
+  // ─── Jobs (Round L) ────────────────────────────────────────────────────────
+
+  @Post('jobs/approval-escalation/run')
+  @Roles('fam')
+  @UseGuards(FamGuard)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Run the approval-escalation sweep now (platform admin only)',
+    description:
+      'Round L — the same 15-minute sweep the scheduler runs (`runSweep(new Date())`), for live verification. Idempotent: an item already moved is skipped.',
+  })
+  @ApiResponse({ status: 200, description: 'Sweep counters' })
+  async runApprovalEscalation(@CurrentUser() user: JwtPayload) {
+    const result = await this.approvalEscalation.runSweep(new Date());
+    return { ...result, triggeredBy: user.sub };
+  }
 
   // ─── Overview ──────────────────────────────────────────────────────────────
 

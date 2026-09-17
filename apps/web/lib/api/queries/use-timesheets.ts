@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 import { track, EVENTS } from '@/lib/analytics/posthog'
+import type { ApprovalEscalation } from './use-dashboard'
 
 // ─── API shapes ────────────────────────────────────────────────────────────
 
@@ -21,6 +22,25 @@ export interface TimesheetPeriod {
   rejectionComment?: string | null
   latestReworkAt?: string | null
   latestReworkComment?: string | null
+  /**
+   * Round L — null while the period is still with the reporting manager.
+   * Employee-facing rows (me/current, me, entries) carry the level only;
+   * reviewer rows (pending) carry reason / at / toName too.
+   */
+  escalation?: (Pick<ApprovalEscalation, 'level'> & Partial<ApprovalEscalation>) | null
+  /** Round L — employee-facing: who the week is with ('hr' = no reporting manager). */
+  withLabel?: 'manager' | 'hr'
+  /** Round L — GET /timesheet/pending rows are always routed to the caller. */
+  routedToMe?: boolean
+}
+
+/** Round L — POST /timesheet/submit. */
+export interface SubmitTimesheetResponse {
+  id: string
+  status: 'submitted'
+  submittedAt: string
+  escalation: { level: 0 | 1 | 2 } | null
+  withLabel: 'manager' | 'hr'
 }
 
 export interface TimesheetEntryRow {
@@ -120,6 +140,12 @@ export interface TeamTimesheetPeriod {
   rejectedAt: string | null
   rejectionComment: string | null
   updatedAt: string
+  // Round L — Team → Timesheets stays workspace-wide for owner/admin (the
+  // "open directly" surface); `routedToMe` says whether the row is in THEIR
+  // queue, `managerName` feeds the "With <manager>" chip.
+  routedToMe: boolean
+  managerName: string | null
+  escalation: ApprovalEscalation | null
 }
 export interface TeamTimesheetParams {
   status?: 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked' | 'all'
@@ -165,7 +191,7 @@ export function useSubmitTimesheet() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (timesheetPeriodId: string) =>
-      api.post<void>('/api/v1/timesheet/submit', { timesheetPeriodId }),
+      api.post<SubmitTimesheetResponse>('/api/v1/timesheet/submit', { timesheetPeriodId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['timesheet'] })
       track(EVENTS.TIMESHEET_SUBMITTED)

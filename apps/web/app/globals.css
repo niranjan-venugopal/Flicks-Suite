@@ -473,3 +473,63 @@ option:disabled { color: var(--text-faint); }
   .settings-grid { grid-template-columns: minmax(0, 1fr); }
   .settings-nav { flex-direction: row !important; flex-wrap: wrap; }
 }
+
+/* ─── Round L — PM rich editor / markdown view (TipTap) + attachments ─────── */
+.pm-rich { font-size: 12.5px; line-height: 1.65; color: var(--text); }
+.pm-rich .ProseMirror { outline: none; min-height: inherit; white-space: pre-wrap; word-break: break-word; }
+.pm-rich--edit { border: 1px solid var(--bord); border-radius: 10px; background: var(--surf-1); padding: 10px 12px; transition: border-color .12s, background .12s; }
+.pm-rich--edit:focus-within { border-color: rgba(62, 123, 250, .6); background: rgba(255, 255, 255, .05); }
+.pm-rich--compact { padding: 7px 10px; }
+.pm-rich--loading { opacity: .6; }
+.pm-rich p { margin: 0 0 6px; }
+.pm-rich p:last-child { margin-bottom: 0; }
+.pm-rich h1 { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; margin: 10px 0 6px; }
+.pm-rich h2 { font-size: 15px; font-weight: 800; letter-spacing: -0.015em; margin: 10px 0 5px; }
+.pm-rich h3 { font-size: 13.5px; font-weight: 800; margin: 8px 0 4px; }
+.pm-rich h1:first-child, .pm-rich h2:first-child, .pm-rich h3:first-child { margin-top: 0; }
+.pm-rich ul, .pm-rich ol { padding-left: 20px; margin: 0 0 8px; }
+.pm-rich ul { list-style: disc; }
+.pm-rich ol { list-style: decimal; }
+.pm-rich li > p { margin: 0; }
+.pm-rich li + li { margin-top: 2px; }
+.pm-rich blockquote { border-left: 2px solid var(--bord-3); margin: 6px 0 8px; padding: 2px 10px; color: var(--text-2); }
+.pm-rich code { font-family: var(--font-mono); font-size: 11.5px; background: var(--surf-2); border: 1px solid var(--bord); border-radius: 5px; padding: 1px 5px; }
+.pm-rich pre { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55; background: rgba(0, 0, 0, .35); border: 1px solid var(--bord); border-radius: 8px; padding: 10px 12px; margin: 6px 0 8px; overflow-x: auto; white-space: pre; }
+.pm-rich pre code { background: none; border: none; padding: 0; font-size: inherit; }
+.pm-rich a { color: var(--blue-2); text-decoration: underline; text-underline-offset: 2px; }
+.pm-rich hr { border: none; border-top: 1px solid var(--bord-2); margin: 10px 0; }
+.pm-rich strong { font-weight: 800; }
+.pm-rich s { opacity: .7; }
+.pm-rich img.pm-rich-img { display: block; max-width: 100%; max-height: 520px; width: auto; height: auto; border-radius: 8px; border: 1px solid var(--bord); margin: 8px 0; background: var(--surf-1); }
+.pm-rich--view img.pm-rich-img:not([data-missing='true']) { cursor: zoom-in; }
+.pm-rich img.pm-rich-img.ProseMirror-selectednode { outline: 2px solid var(--blue); outline-offset: 2px; }
+.pm-rich img.pm-rich-img[data-missing='true'] { opacity: .75; }
+.pm-rich .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--text-faint); float: left; height: 0; pointer-events: none; }
+/* in-flight inline image (RichEditor swaps it for the <img> on success) */
+.pm-rich .pm-rich-img-placeholder { display: flex; align-items: center; justify-content: center; height: 120px; margin: 8px 0; border-radius: 8px; border: 1px dashed var(--bord-2); background: linear-gradient(90deg, rgba(255, 255, 255, .04) 25%, rgba(255, 255, 255, .10) 50%, rgba(255, 255, 255, .04) 75%); background-size: 200% 100%; animation: pm-shimmer 1.2s linear infinite; color: var(--text-mute); font-size: 11.5px; font-weight: 700; user-select: none; }
+@keyframes pm-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.pm-attach-chip--uploading { opacity: .7; border-style: dashed; }
+.pm-rich .ProseMirror-gapcursor:after { border-top: 1px solid var(--text-2); }
+.pm-rich-status { position: absolute; right: 10px; bottom: 6px; font-size: 10.5px; font-weight: 700; color: var(--text-mute); background: rgba(18, 18, 30, .92); border: 1px solid var(--bord-2); border-radius: 6px; padding: 2px 7px; pointer-events: none; }
+.pm-rich-error { color: var(--coral); }
+.pm-rich-hint { font-size: 10.5px; font-weight: 600; color: var(--text-faint); letter-spacing: -0.01em; }
+
+.pm-drop-overlay { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px dashed rgba(62, 123, 250, .7); border-radius: 12px; background: rgba(62, 123, 250, .08); color: var(--blue-2); font-size: 12px; font-weight: 800; pointer-events: none; }
+
+.pm-attach-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.pm-attach-chip { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 8px; border-radius: 9px; background: var(--surf-1); border: 1px solid var(--bord); color: var(--text-2); max-width: 300px; min-width: 0; transition: border-color .12s, background .12s; }
+.pm-attach-chip:hover { border-color: var(--bord-2); background: var(--surf-2); }
+.pm-attach-chip--image { height: auto; padding: 4px 6px 4px 4px; }
+.pm-attach-open { display: inline-flex; color: var(--text-mute); flex-shrink: 0; }
+.pm-attach-thumb { display: block; width: 64px; height: 44px; border-radius: 6px; overflow: hidden; background: var(--surf-2); flex-shrink: 0; }
+.pm-attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pm-attach-thumb-empty { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
+.pm-attach-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.pm-attach-name { font-size: 11.5px; font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.pm-attach-name:hover { text-decoration: underline; }
+.pm-attach-size { font-size: 10px; font-weight: 700; color: var(--text-faint); font-family: var(--font-mono); }
+.pm-attach-act { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--text-faint); flex-shrink: 0; cursor: pointer; }
+.pm-attach-act:hover { background: var(--surf-3); color: var(--text); }
+.pm-attach-x:hover { color: var(--coral); }
+.pm-attach-progress { position: absolute; left: 6px; right: 6px; bottom: 1px; height: 2px; background: var(--surf-3); border-radius: 2px; overflow: hidden; }
+.pm-attach-progress > span { display: block; height: 100%; background: var(--blue); transition: width .15s; }

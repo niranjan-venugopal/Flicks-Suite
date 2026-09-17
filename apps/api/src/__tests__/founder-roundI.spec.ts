@@ -43,13 +43,14 @@ import {
 } from '@flicks/db/schema';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../core/database/database.service';
 import { EmployeesService } from '../modules/employees/employees.service';
 import { DashboardService } from '../modules/dashboard/dashboard.service';
 import { LeaveService } from '../modules/leave/leave.service';
 import { AttendanceService } from '../modules/attendance/attendance.service';
 import { TimesheetService } from '../modules/timesheet/timesheet.service';
+import { ApprovalRoutingService } from '../modules/approvals/approval-routing.service';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { DealsService } from '../modules/crm/deals.service';
 import { PipelinesService } from '../modules/crm/pipelines.service';
@@ -104,7 +105,14 @@ const leaveService = new LeaveService(
   new ConfigService({ NODE_ENV: 'test', APP_URL }),
 );
 const attendanceService = new AttendanceService(dbSvc, dbAdmin as never, audit, notifications);
-const timesheetService = new TimesheetService(dbAdmin as never, dbSvc, audit, notifications);
+// Round L: timesheets route through ApprovalRoutingService (same stubbed notifications).
+const timesheetService = new TimesheetService(
+  dbAdmin as never,
+  dbSvc,
+  audit,
+  notifications,
+  new ApprovalRoutingService(notifications, new ConfigService({ NODE_ENV: 'test', APP_URL })),
+);
 const realNotifications = new NotificationsService(db as never, dbAdmin as never, new ConfigService({ NODE_ENV: 'test', APP_URL }), emitter);
 
 const fx = new FxService(dbAdmin as never, { get: () => undefined } as never);
@@ -571,14 +579,21 @@ describe('Round I — manager scope: dashboard tile == Direct reports page', () 
     expect(ov.stats.pendingApprovals).toBe(1);
   });
 
-  it('owner overview (scope=org, the default) stays workspace-wide', async () => {
+  it('owner overview (scope=org, the default) stays workspace-wide for people numbers; the approvals bucket is routed (Round L)', async () => {
     const ov = await dashboardService.getAdminOverview(T1, {
       callerUserId: O.userId, includeOnboarding: false, includeApprovals: true,
     });
     expect(ov.scope).toBe('org');
     // O, M, M2, R1-R3, X1-X3 are active; R4 separated, R5 removed.
     expect(ov.stats.totalEmployees).toBe(9);
-    expect(ov.pending.leaves.map((l) => l.id).sort()).toEqual([r1Leave, x1Leave].sort());
+    // Round L (founder item 2): both requests sit with their reporting
+    // managers (level 0) and are not the owner's until escalated — the
+    // workspace-wide Team → Leave list still shows them, `routedToMe: false`.
+    expect(ov.pending.leaves.map((l) => l.id)).not.toContain(r1Leave);
+    expect(ov.pending.leaves.map((l) => l.id)).not.toContain(x1Leave);
+    const team = await leaveService.listTeam(O.userId, T1, { status: 'pending', limit: 100 }, 'owner');
+    expect(team.data.find((r) => r.id === r1Leave)!.routedToMe).toBe(false);
+    expect(team.data.find((r) => r.id === x1Leave)!.routedToMe).toBe(false);
   });
 
   it('a manager seat with no employee row has an EMPTY team — never the whole workspace', async () => {
@@ -632,10 +647,21 @@ describe('Round I — leave queue + review are scoped to direct reports', () => 
     const unhinted = await leaveService.listPending(M.userId, T1, {});
     expect(unhinted.data.map((r) => r.id).sort()).toEqual(hintedIds.sort());
 
+    // Round L (founder item 2): the owner's QUEUE is routed — requests that
+    // sit with a reporting manager (level 0) are not theirs until escalated
+    // (24 h / manager on leave / no manager). They stay reachable on the
+    // workspace-wide Team → Leave list, flagged `routedToMe: false`.
     const owner = await leaveService.listPending(O.userId, T1, {}, 'owner');
     const ownerIds = owner.data.map((r) => r.id);
-    expect(ownerIds).toContain(x2Leave);
-    expect(ownerIds).toContain(r2Leave);
+    expect(ownerIds).not.toContain(x2Leave);
+    expect(ownerIds).not.toContain(r2Leave);
+    const ownerTeam = await leaveService.listTeam(O.userId, T1, { status: 'pending', limit: 100 }, 'owner');
+    expect(ownerTeam.scope).toBe('org');
+    const x2Row = ownerTeam.data.find((r) => r.id === x2Leave)!;
+    expect(x2Row.routedToMe).toBe(false);
+    expect(x2Row.managerName).toBe('MgrTwo Tester');
+    expect(x2Row.escalation).toBeNull();
+    expect(ownerTeam.data.find((r) => r.id === r2Leave)!.routedToMe).toBe(false);
 
     // A manager seat with no employee row → empty queue, never everything.
     const none = await leaveService.listPending(N.userId, T1, {}, 'manager');
@@ -694,11 +720,21 @@ describe('Round I — regularization queue + review follow the same scope', () =
     x1Reg = await seedRegularization(T1, X1, isoPlus(-3));
   });
 
-  it('manager lists only their reports\' regularizations; owner lists all', async () => {
+  it('manager lists only their reports\' regularizations; the owner\'s queue holds neither until escalated (Round L)', async () => {
     const mine = await attendanceService.listPendingRegularizations(M.userId, T1, {}, 'manager');
     expect(mine.data.map((r) => r.id)).toEqual([r1Reg]);
+    // Round L: both sit with a reporting manager (level 0) — the owner's
+    // routed queue only carries level-2 / no-manager items.
     const all = await attendanceService.listPendingRegularizations(O.userId, T1, {}, 'owner');
-    expect(all.data.map((r) => r.id).sort()).toEqual([r1Reg, x1Reg].sort());
+    expect(all.data.map((r) => r.id)).not.toContain(r1Reg);
+    expect(all.data.map((r) => r.id)).not.toContain(x1Reg);
+    // …but the owner may still open either directly (the Inbox deep-link fallback).
+    const direct = await attendanceService.getRegularizationForReviewer(x1Reg, O.userId, T1, 'owner');
+    expect(direct.id).toBe(x1Reg);
+    expect(direct.escalation).toBeNull();
+    await expect(
+      attendanceService.getRegularizationForReviewer(x1Reg, M.userId, T1, 'manager'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('manager cannot review a non-report\'s regularization; can review their own report\'s', async () => {
@@ -723,7 +759,7 @@ describe('Round I — team timesheets + approver self-heal', () => {
     x1Unstamped = await seedPeriod(T1, X1, '2026-08-03', '2026-08-09', 'submitted', null);
   });
 
-  it('listTeam: every status for my reports only; listPending unchanged (approver_id = me)', async () => {
+  it('listTeam: every status for my reports only; listPending is the routed queue (direct reports, Round L)', async () => {
     const team = await timesheetService.listTeam(M.userId, T1, { status: 'all' }, 'manager');
     expect(team.scope).toBe('team');
     expect(team.data.map((r) => r.id).sort()).toEqual([r1Unstamped, r2Stamped, r3Draft].sort());
@@ -736,8 +772,10 @@ describe('Round I — team timesheets + approver self-heal', () => {
     const submitted = await timesheetService.listTeam(M.userId, T1, { status: 'submitted' }, 'manager');
     expect(submitted.data.map((r) => r.id).sort()).toEqual([r1Unstamped, r2Stamped].sort());
 
+    // Round L: the queue is the org chart, not the approver_id stamp — the
+    // unstamped period of a direct report is the manager's to review too.
     const pending = await timesheetService.listPending(M.userId, T1, {});
-    expect(pending.data.map((r) => r.id)).toEqual([r2Stamped]);
+    expect(pending.data.map((r) => r.id).sort()).toEqual([r1Unstamped, r2Stamped].sort());
 
     const owner = await timesheetService.listTeam(O.userId, T1, { status: 'submitted' }, 'owner');
     expect(owner.scope).toBe('org');

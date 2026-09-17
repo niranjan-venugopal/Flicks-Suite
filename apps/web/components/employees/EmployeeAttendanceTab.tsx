@@ -57,7 +57,7 @@ function statusPill(r: EmployeeAttendanceRecord) {
     case 'late':    return <Pill tone="yellow" dot>Late</Pill>
     case 'absent':  return <Pill tone="coral" dot>Absent</Pill>
     case 'on_leave': return <Pill tone="purple" dot>Leave</Pill>
-    case 'holiday': return <Pill tone="coral">Holiday</Pill>
+    case 'holiday': return <Pill>Holiday</Pill>
     case 'weekend': return <Pill>Weekend</Pill>
     case 'work_from_home': return <Pill tone="blue" dot>WFH</Pill>
     case 'half_day': return <Pill tone="yellow">Half day</Pill>

@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -34,6 +35,7 @@ import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
+import { PM_RELATION_TYPES } from '@flicks/shared/pm';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
@@ -76,6 +78,8 @@ class CreateIssueDto {
   @IsOptional() @IsUUID() milestone_id?: string;
   // At-create labels (round B composer) — workspace labels or this team's
   @IsOptional() @IsArray() @IsUUID('all', { each: true }) label_ids?: string[];
+  // Round L item 6 — draft uploads (own, live) bound to the new issue
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) attachment_ids?: string[];
 }
 
 class UpdateIssueDto {
@@ -83,6 +87,25 @@ class UpdateIssueDto {
   @IsOptional() @IsString() description?: string | null;
   @IsOptional() estimate?: number | string | null;
   @IsOptional() @IsString() due_date?: string | null;
+  // Round L — re-parent (null clears); existence/visibility/cycle checked in-tenant
+  @IsOptional() @IsUUID() parent_issue_id?: string | null;
+  // Round L item 6 — inline images pasted while editing the description
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) attachment_ids?: string[];
+}
+
+// Round L item 6 — body may be empty when files are attached (the service
+// refuses empty-with-nothing).
+class CreateCommentDto {
+  @IsOptional() @IsString() @MaxLength(20_000) body?: string;
+  @IsOptional() @IsUUID() parent_comment_id?: string | null;
+  @IsOptional() @IsArray() @IsUUID('all', { each: true }) mentioned_user_ids?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) attachment_ids?: string[];
+}
+
+// Round L — relations. One stored direction; "blocked by X" is X→me 'blocks'.
+class RelateIssueDto {
+  @IsUUID() related_issue_id!: string;
+  @IsIn([...PM_RELATION_TYPES]) type!: (typeof PM_RELATION_TYPES)[number];
 }
 
 class MoveStateDto {
@@ -326,24 +349,44 @@ export class PmController {
     return this.issues.detail(user.tenantId, user.sub, id);
   }
 
-  @Post('issues/:id/comments')
-  @RequireGrant('pm', 'edit')
-  createComment(
+  // Round L — "Load earlier comments": detail ships the newest 50; older
+  // pages come from here, cursor = the oldest created_at already shown.
+  @Get('issues/:id/comments')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Comments before the keyset cursor ?before=<ISO ms>&before_id=<uuid>, oldest→newest, max 100 (default 50)' })
+  listComments(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
-    @Body() dto: { body: string; parent_comment_id?: string | null; mentioned_user_ids?: string[] },
+    @Query('before') before?: string,
+    @Query('before_id') beforeId?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.issues.createComment(user.tenantId, user.sub, id, dto);
+    return this.issues.listComments(user.tenantId, user.sub, id, {
+      before,
+      before_id: beforeId,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  @Post('issues/:id/comments')
+  @RequireGrant('pm', 'edit')
+  createComment(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: CreateCommentDto) {
+    return this.issues.createComment(user.tenantId, user.sub, id, { ...dto, body: dto.body ?? '' });
   }
 
   @Post('issues/:id/relate')
   @RequireGrant('pm', 'edit')
-  relate(
-    @CurrentUser() user: JwtPayload,
-    @Param('id') id: string,
-    @Body() dto: { related_issue_id: string; type: 'blocks' | 'duplicate_of' | 'relates_to' },
-  ) {
+  relate(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: RelateIssueDto) {
     return this.issues.relate(user.tenantId, user.sub, id, dto);
+  }
+
+  // Round L — the REST twin of the `issue.unrelate` sync op (there was no
+  // kill-switch door for removing a relation at all).
+  @Post('issues/:id/unrelate')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Remove one stored relation (issue_id → related_issue_id, type)' })
+  unrelate(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: RelateIssueDto) {
+    return this.issues.unrelate(user.tenantId, user.sub, id, dto.related_issue_id, dto.type);
   }
 
   @Get('search')

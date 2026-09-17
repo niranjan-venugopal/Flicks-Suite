@@ -36,6 +36,44 @@ const NON_BILLABLE_ROLES = ['auditor', 'guest', 'fam', 'super_admin'];
 const COUPON_ATTEMPTS_PER_DAY = 10;
 
 /**
+ * "12 Oct 2026" in IST — the one date format the billing bell rows and the
+ * coupon email share (Round L). Null → an em dash rather than "Invalid Date".
+ */
+export function formatDateIST(d: Date | string | null | undefined): string {
+  if (!d) return '—';
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const IST_DAY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/**
+ * Whole IST CALENDAR days from `now` to `d` (0 = ends today, negative = past)
+ * — not an instant difference. GET /billing exposes it as `days_left` and the
+ * trial-reminder job bands on it, so the web banner and the bell row always
+ * quote the same "N days" (Round L).
+ */
+export function daysLeftIST(d: Date | string, now: Date = new Date()): number {
+  const midnightUTC = (x: Date) => {
+    const [y, m, day] = IST_DAY.format(x).split('-').map(Number);
+    return Date.UTC(y!, m! - 1, day!);
+  };
+  return Math.round((midnightUTC(new Date(d)) - midnightUTC(now)) / DAY_MS);
+}
+
+/**
  * Platform billing core (PRD v4 §8B, Sprint 21). One plan (PLATFORM_PLAN,
  * ₹499/seat/mo), 7-day trial, Razorpay-hosted subscribe (authorization_url),
  * FAM coupons (months of free trial), cancel-at-period-end + resume.
@@ -158,6 +196,12 @@ export class BillingService {
         seats,
         monthly_total_rupees: seats * PLATFORM_PLAN.priceRupees,
         trial_ends_at: sub?.trial_ends_at ?? null,
+        // Round L: IST calendar days, the same number the trial bell rows
+        // quote — the banner reads this instead of doing its own maths.
+        days_left:
+          (sub?.status ?? 'trialing') === 'trialing' && sub?.trial_ends_at
+            ? Math.max(0, daysLeftIST(sub.trial_ends_at))
+            : null,
         grace_ends_at: sub?.grace_ends_at ?? null,
         current_period_start: sub?.current_period_start ?? null,
         current_period_end: sub?.current_period_end ?? null,
@@ -412,6 +456,15 @@ export class BillingService {
       targetTenantId: tenantId,
       metadata: { code: claimed.code, campaign: claimed.campaign, months: claimed.months },
     });
+    // Round L (item 4): the activation notice is a one-off bell row + email
+    // to Owner/HR Admins — sent AFTER the transaction committed (house rule
+    // 7), never to employees, and never able to fail the redeem.
+    await this.notifyCouponRedeemed(
+      tenantId,
+      claimed.code,
+      claimed.months,
+      subAfter?.trial_ends_at ?? null,
+    );
     void this.analytics.track({
       event: 'coupon_redeemed',
       tenantId,
@@ -697,10 +750,15 @@ export class BillingService {
     });
   }
 
-  /** Owner+Admin emails for billing notices. */
-  async ownerEmails(tenantId: string): Promise<Array<{ email: string; name: string | null }>> {
+  /**
+   * Owner+Admin seats for billing notices (email + in-app). Active
+   * memberships only — a deactivated admin gets neither the mail nor the bell.
+   */
+  async ownerEmails(
+    tenantId: string,
+  ): Promise<Array<{ userId: string; email: string; name: string | null }>> {
     return this.dbAdmin
-      .select({ email: users.email, name: users.full_name })
+      .select({ userId: memberships.user_id, email: users.email, name: users.full_name })
       .from(memberships)
       .innerJoin(users, eq(users.id, memberships.user_id))
       .where(
@@ -710,6 +768,58 @@ export class BillingService {
           sql`${memberships.role} IN ('owner','admin')`,
         ),
       );
+  }
+
+  /**
+   * Round L (item 4): "Coupon CODE applied — N free months" to every active
+   * Owner/HR Admin seat, as a bell row (one per person, collapsed on the
+   * tenant so a re-fire never stacks) and the `coupon-redeemed` email. The
+   * template escapes tenantName/code itself — raw values go in. Best-effort:
+   * any failure is logged and the redeem has already succeeded.
+   */
+  private async notifyCouponRedeemed(
+    tenantId: string,
+    code: string,
+    months: number,
+    trialEndsAt: Date | null,
+  ): Promise<void> {
+    try {
+      const [tenant] = await this.dbAdmin
+        .select({ name: tenants.name })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+      const recipients = await this.ownerEmails(tenantId);
+      // No subscriptions row (should not happen after a redeem) → no date,
+      // and the sentence is dropped rather than reading "ends on —".
+      const when = trialEndsAt ? formatDateIST(trialEndsAt) : null;
+      const message =
+        `Coupon ${code} applied — ${months} free month${months === 1 ? '' : 's'}.` +
+        (when ? ` Your trial now ends on ${when}.` : '');
+      const billingUrl = `${process.env.APP_URL ?? 'http://localhost:3000'}/settings/billing`;
+      for (const r of recipients) {
+        await this.notifications.createInAppNotification(
+          r.userId,
+          'billing.coupon_redeemed',
+          message,
+          '/settings/billing',
+          tenantId,
+          { groupKey: `billing.coupon:${tenantId}` },
+        );
+        await this.notifications.sendEmail('coupon-redeemed', r.email, {
+          tenantName: tenant?.name ?? 'your workspace',
+          recipientName: r.name?.trim() || 'there',
+          code,
+          months,
+          trialEndsAt: when,
+          billingUrl,
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `coupon-redeemed notice for ${tenantId} failed (continuing): ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   private async notifyOwners(

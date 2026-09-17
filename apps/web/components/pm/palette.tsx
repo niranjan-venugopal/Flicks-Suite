@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { Icon, Overlay } from '@/components/proto'
 import { Kbd, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { markG, recentG, useHotkeys } from '@/lib/pm/hotkeys'
+import { currentPmPath, issueHref } from '@/lib/pm/nav'
+import { cancelIssuePrefetch, prefetchIssueDetail } from '@/lib/pm/prefetch'
 
 // ─────────────────────────────────────────────────────────
 // P1 — ⌘K command palette + `?` keymap overlay + G-then navigation.
@@ -104,6 +107,7 @@ export function PmGlobalKeys() {
 
 function PmPalette({ onClose }: { onClose: () => void }) {
   const router = useRouter()
+  const qc = useQueryClient()
   const { engine } = usePm()
   const [q, setQ] = useState('')
   const [serverHits, setServerHits] = useState<SearchIssue[]>([])
@@ -154,7 +158,8 @@ function PmPalette({ onClose }: { onClose: () => void }) {
     if (i < commands.length) commands[i]!.run(router)
     else {
       const issue = issues[i - commands.length]
-      if (issue) router.push(`/pm/issues/${issue.id}`)
+      // Round L — the page the palette was opened on is the origin Back returns to.
+      if (issue) router.push(issueHref(issue.id, currentPmPath()))
     }
     onClose()
   }
@@ -196,7 +201,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
             <>
               <div className="t-caption" style={{ padding: '8px 10px 3px' }}>Issues</div>
               {issues.map((s, i) => (
-                <PaletteRow key={s.id} active={idx === commands.length + i} onClick={() => pick(commands.length + i)}>
+                <PaletteRow key={s.id} active={idx === commands.length + i} onClick={() => pick(commands.length + i)} onHover={() => prefetchIssueDetail(qc, s.id)} onLeave={() => cancelIssuePrefetch(s.id)}>
                   <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 56 }}>
                     {s.team_key}-{s.number}
                   </span>
@@ -220,9 +225,9 @@ function PmPalette({ onClose }: { onClose: () => void }) {
   )
 }
 
-function PaletteRow({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function PaletteRow({ active, onClick, onHover, onLeave, children }: { active: boolean; onClick: () => void; onHover?: () => void; onLeave?: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} onMouseEnter={onHover} onMouseLeave={onLeave}
       style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: active ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 12.5, fontWeight: 700, textAlign: 'left' }}>
       {children}
     </button>

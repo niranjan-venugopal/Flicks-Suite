@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
@@ -13,6 +13,8 @@ import { SkeletonRows } from '@/components/states'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { recentG, useHotkeys } from '@/lib/pm/hotkeys'
+import { currentPmPath, issueHref } from '@/lib/pm/nav'
+import { cancelIssuePrefetch, issuePrefetchProps, prefetchIssueDetail } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
 
@@ -39,26 +41,58 @@ interface SavedViewRow {
   filters: Partial<Filters> & { group_by?: string }
 }
 
+function Spinner() {
+  return (
+    <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
+      <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
+    </div>
+  )
+}
+
 export default function PmIssuesPage() {
+  // Round L (8) — the list honours ?team=<id> (Back from a team-B issue must
+  // land on team B's list) and ?view=board (Back restores the board), so
+  // the origin an issue page carries is the exact view the person left.
+  // useSearchParams() needs a Suspense boundary in the app router.
+  return (
+    <Suspense fallback={<Spinner />}>
+      <PmIssuesInner />
+    </Suspense>
+  )
+}
+
+function PmIssuesInner() {
   const { mode, engine } = usePm()
-  if (mode === 'loading') {
-    return (
-      <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
-        <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
-      </div>
-    )
-  }
-  if (mode === 'rest' || !engine) return <RestIssues />
-  return <SyncIssueList engine={engine} />
+  const sp = useSearchParams()
+  const teamParam = sp.get('team')
+  const viewParam: 'list' | 'board' = sp.get('view') === 'board' ? 'board' : 'list'
+  if (mode === 'loading') return <Spinner />
+  if (mode === 'rest' || !engine) return <RestIssues teamId={teamParam} />
+  return <SyncIssueList engine={engine} teamId={teamParam} initialView={viewParam} />
 }
 
 // ─── SYNC MODE ───────────────────────────────────────────────────────────────
 
-const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSyncEngine }) {
+const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialView }: {
+  engine: PmSyncEngine
+  /** ?team= — the list to show (falls back to the first visible team). */
+  teamId: string | null
+  /** ?view= — list or board; kept in the URL so it survives Back. */
+  initialView: 'list' | 'board'
+}) {
   const store = engine.store
   const qc = useQueryClient()
   const router = useRouter()
-  const [viewMode, setViewMode] = useState<'list' | 'board'>('list')
+  const [viewMode, setViewModeState] = useState<'list' | 'board'>(initialView)
+  useEffect(() => { setViewModeState(initialView) }, [initialView]) // browser back/forward
+  const setViewMode = (m: 'list' | 'board') => {
+    setViewModeState(m)
+    const params = new URLSearchParams()
+    if (teamId) params.set('team', teamId)
+    if (m === 'board') params.set('view', 'board')
+    const qs = params.toString()
+    router.replace(`/pm/issues${qs ? `?${qs}` : ''}`, { scroll: false })
+  }
   const [groupBy, setGroupBy] = useState<'state' | 'priority' | 'assignee'>('state')
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
   const [activeViewId, setActiveViewId] = useState<string | null>(null)
@@ -72,7 +106,8 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
   // Round C: per-row delete behind one hoisted confirm.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  const team = store.teamList()[0]
+  const requested = teamId ? store.teams.get(teamId) : undefined
+  const team = requested && !requested.deleted_at ? requested : store.teamList()[0]
   const states = team ? store.statesForTeam(team.id) : []
   const allIssues = team ? store.issuesForTeam(team.id) : []
   const me = engineUserId(engine)
@@ -164,7 +199,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
     arrowup: () => setFocusIdx((i) => Math.max(0, i - 1)),
     x: () => { if (focused) toggleSel(focused.id, focusIdx) },
     'shift+x': () => { if (focused) toggleSel(focused.id, focusIdx, true) },
-    enter: () => { if (focused) router.push(`/pm/issues/${focused.id}`) },
+    enter: () => { if (focused) router.push(issueHref(focused.id, currentPmPath())) },
     escape: () => { setMenu(null); setBulkMenu(null); setComposerOpen(false); setSel(new Set()); setFocusIdx(-1) },
     'mod+z': (e) => { e.preventDefault(); engine.undo() },
     'mod+shift+z': (e) => { e.preventDefault(); engine.redo() },
@@ -302,7 +337,15 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
       />
 
       {viewMode === 'board' ? (
-        <PmBoard engine={engine} teamId={team.id} issues={issues} states={states} onOpen={(id) => router.push(`/pm/issues/${id}`)} />
+        <PmBoard
+          engine={engine}
+          teamId={team.id}
+          issues={issues}
+          states={states}
+          onOpen={(id) => router.push(issueHref(id, currentPmPath()))}
+          onPrefetch={(id) => prefetchIssueDetail(qc, id)}
+          onPrefetchCancel={cancelIssuePrefetch}
+        />
       ) : (
         <>
           {groups.map((g) => (
@@ -323,7 +366,8 @@ const SyncIssueList = observer(function SyncIssueList({ engine }: { engine: PmSy
                     last={i === g.rows.length - 1}
                     focused={focused?.id === issue.id}
                     selected={sel.has(issue.id)}
-                    onOpen={() => router.push(`/pm/issues/${issue.id}`)}
+                    onOpen={() => router.push(issueHref(issue.id, currentPmPath()))}
+                    prefetch={issuePrefetchProps(qc, issue.id)}
                     onFocus={() => setFocusIdx(flat.findIndex((f) => f.id === issue.id))}
                     onToggleSel={(range) => toggleSel(issue.id, flat.findIndex((f) => f.id === issue.id), range)}
                     menu={menu?.issueId === issue.id ? menu.kind : null}
@@ -465,7 +509,7 @@ function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; s
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
-const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onOpen, onToggleSel, menu, openMenu, closeMenu, states, onDelete }: {
+const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, last, focused, selected, onFocus, onOpen, prefetch, onToggleSel, menu, openMenu, closeMenu, states, onDelete }: {
   issue: PmIssueRow
   state: PmStateRow
   teamKey: string
@@ -475,6 +519,8 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
   selected: boolean
   onFocus: () => void
   onOpen: () => void
+  /** Round L — warm the detail query on hover (cancelled on leave) so the click paints complete. */
+  prefetch?: ReturnType<typeof issuePrefetchProps>
   onToggleSel: (range: boolean) => void
   menu: 'state' | 'assignee' | null
   openMenu: (kind: 'state' | 'assignee') => void
@@ -492,6 +538,9 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       // to be required, which read as "clicking does nothing"). Shift-click
       // still range-selects, the checkbox still toggles, keyboard focus stays.
       onClick={(e) => { if (e.shiftKey) onToggleSel(true); else { onFocus(); onOpen() } }}
+      onMouseEnter={prefetch?.onMouseEnter}
+      onMouseLeave={prefetch?.onMouseLeave}
+      data-issue-row={issue.id}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px',
         cursor: 'pointer', position: 'relative',
@@ -597,14 +646,14 @@ function RowMenu({ children, onClose }: { children: React.ReactNode; onClose: ()
 
 // ─── REST MODE (kill-switch fallback) ────────────────────────────────────────
 
-function RestIssues() {
+function RestIssues({ teamId }: { teamId: string | null }) {
   const qc = useQueryClient()
   const router = useRouter()
   const teams = useQuery({
     queryKey: ['pm', 'teams'],
     queryFn: () => api.get<{ data: { teams: Array<{ id: string; key: string; name: string }>; states: PmStateRow[] } }>('/api/v1/pm/teams'),
   })
-  const team = teams.data?.data.teams[0]
+  const team = (teamId ? teams.data?.data.teams.find((t) => t.id === teamId) : undefined) ?? teams.data?.data.teams[0]
   const states = teams.data?.data.states.filter((s) => s.team_id === team?.id) ?? []
   const issues = useQuery({
     queryKey: ['pm', 'issues', team?.id ?? ''],
@@ -653,10 +702,10 @@ function RestIssues() {
             return (
               // Round C: the row opens the detail page — REST tenants had no
               // path into it at all (rows were plain, unclickable divs).
-              <div key={i.id} onClick={() => router.push(`/pm/issues/${i.id}`)}
+              <div key={i.id} data-issue-row={i.id} onClick={() => router.push(issueHref(i.id, currentPmPath()))}
                 style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, padding: '0 12px', borderBottom: idx < arr.length - 1 ? '1px solid var(--bord)' : 'none', cursor: 'pointer', transition: 'background .12s ease-out' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)'; prefetchIssueDetail(qc, i.id) }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; cancelIssuePrefetch(i.id) }}>
                 {st && <StateGlyph cat={st.category} size={13} />}
                 <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58 }}>{team?.key}-{i.number}</span>
                 <PriorityGlyph p={i.priority} size={13} />

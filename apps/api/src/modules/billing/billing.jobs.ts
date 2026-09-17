@@ -8,7 +8,7 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { AuditService } from '../audit/audit.service';
 import { AnalyticsService } from '../../core/analytics/analytics.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { BillingService } from './billing.service';
+import { BillingService, daysLeftIST, formatDateIST } from './billing.service';
 import { RazorpayPlatformService } from './razorpay-platform.service';
 
 const SPECFLICKS_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -41,7 +41,23 @@ export class BillingJobs {
     private readonly rzp: RazorpayPlatformService,
   ) {}
 
-  /** T-3 / T-1 trial reminders, 09:00 IST (§8B.4 — 7-day trial → no T-7). */
+  /**
+   * Trial reminders, 09:00 IST (§8B.4). Bands on IST CALENDAR days — the
+   * same `days_left` GET /billing hands the web banner, so both quote one
+   * number:
+   *   • T-3 / T-1 for every trial (as before);
+   *   • T-10 (Round L item 4) ONLY for an EXTENDED trial — a coupon
+   *     (`applied_coupon_id`) or a FAM extension past the default runway
+   *     (`trial_ends_at - created_at > 10 days`). A stock 7-day trial would
+   *     otherwise get "ends in 7 days" the morning after signup.
+   * Each band emails Owner/HR Admins AND drops one `billing.trial_ending`
+   * inbox row per seat, collapsed on the tenant (group_key) so later bands
+   * bump ONE bell row. Two markers per band: `billing.trial_bell` (written
+   * BEFORE the rows — the collapse only bumps an unread row, so a retry would
+   * otherwise duplicate a read one) and `billing.trial_reminder` (written
+   * only after every email got through, so an outage retries the mail alone).
+   * Employees never hear about it.
+   */
   @Cron('0 9 * * *', { name: 'trial-reminders', timeZone: IST })
   async trialReminders(): Promise<void> {
     const rows = await this.dbAdmin
@@ -49,6 +65,7 @@ export class BillingJobs {
         tenant_id: subscriptions.tenant_id,
         trial_ends_at: subscriptions.trial_ends_at,
         tenant_name: tenants.name,
+        extended: sql<boolean>`(${subscriptions.applied_coupon_id} IS NOT NULL OR ${subscriptions.trial_ends_at} - ${subscriptions.created_at} > interval '10 days')`,
       })
       .from(subscriptions)
       .innerJoin(tenants, eq(tenants.id, subscriptions.tenant_id))
@@ -56,22 +73,60 @@ export class BillingJobs {
         and(
           eq(subscriptions.status, 'trialing'),
           isNotNull(subscriptions.trial_ends_at),
-          sql`${subscriptions.trial_ends_at} BETWEEN now() AND now() + interval '4 days'`,
+          // 11-day horizon: one day past the outermost band so a skipped tick
+          // (or a coupon that lands a trial exactly on T-10) is never missed.
+          sql`${subscriptions.trial_ends_at} BETWEEN now() AND now() + interval '11 days'`,
           sql`${subscriptions.tenant_id} <> ${SPECFLICKS_TENANT_ID}::uuid`,
         ),
       );
     let sent = 0;
     for (const row of rows) {
       try {
-        const daysLeft =
-          (new Date(row.trial_ends_at!).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+        const days = daysLeftIST(row.trial_ends_at!);
         // Bands, not equality: a run skipped on the exact T-3 day still sends
         // the reminder the next day instead of dropping it.
-        const band = daysLeft <= 1 ? 'T-1' : daysLeft <= 3 ? 'T-3' : null;
+        const band =
+          days <= 1
+            ? 'T-1'
+            : days <= 3
+              ? 'T-3'
+              : days <= 10 && row.extended === true
+                ? 'T-10'
+                : null;
         if (!band) continue;
         const marker = `${row.tenant_id}:${band}:${new Date(row.trial_ends_at!).toISOString().slice(0, 10)}`;
-        if (await this.markerExists('billing.trial_reminder', marker)) continue;
+        const [emailDone, bellDone] = await Promise.all([
+          this.markerExists('billing.trial_reminder', marker),
+          this.markerExists('billing.trial_bell', marker),
+        ]);
+        if (emailDone && bellDone) continue;
         const owners = await this.billing.ownerEmails(row.tenant_id);
+        const when = formatDateIST(row.trial_ends_at);
+
+        if (!bellDone) {
+          await this.audit.logPlatform({
+            action: 'billing.trial_bell',
+            targetTenantId: row.tenant_id,
+            metadata: { marker, band },
+          });
+          const bellMessage =
+            days <= 0
+              ? `Free trial ends today (${when}). Subscribe to keep your workspace open.`
+              : `Free trial ends in ${days} day${days === 1 ? '' : 's'} (${when}). Subscribe to keep your workspace open.`;
+          // createInAppNotification never throws (house rule 6).
+          for (const o of owners) {
+            await this.notifications.createInAppNotification(
+              o.userId,
+              'billing.trial_ending',
+              bellMessage,
+              '/settings/billing',
+              row.tenant_id,
+              { groupKey: `billing.trial:${row.tenant_id}` },
+            );
+          }
+        }
+
+        if (emailDone) continue;
         // ALL sends must succeed before the marker is written — a partial
         // outage retries the batch next run (one duplicate for the owner who
         // did get it beats an owner who never does).
@@ -79,12 +134,7 @@ export class BillingJobs {
         for (const o of owners) {
           const ok = await this.notifications.sendEmail('trial-ending-soon', o.email, {
             tenantName: row.tenant_name,
-            trialEndsAt: new Date(row.trial_ends_at!).toLocaleDateString('en-IN', {
-              timeZone: IST,
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-            }),
+            trialEndsAt: when,
             upgradeUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/settings/billing`,
           });
           delivered = delivered && ok;

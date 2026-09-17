@@ -18,7 +18,7 @@ import type { PmIssueRow, PmStateRow } from '@/lib/pm/types'
 
 const CAT_ORDER = ['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled']
 
-export const PmBoard = observer(function PmBoard({ engine, teamId, issues, states, onOpen }: {
+export const PmBoard = observer(function PmBoard({ engine, teamId, issues, states, onOpen, onPrefetch, onPrefetchCancel }: {
   engine: PmSyncEngine
   teamId: string
   issues: PmIssueRow[]
@@ -26,6 +26,9 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
   // Round E — cards had drag handlers but nothing listening for a click, so
   // "clicking an issue in board view" went nowhere.
   onOpen: (id: string) => void
+  /** Round L — warm the detail query on hover; cancelled on leave. */
+  onPrefetch?: (id: string) => void
+  onPrefetchCancel?: (id: string) => void
 }) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [overCol, setOverCol] = useState<string | null>(null)
@@ -105,6 +108,8 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
                   onDragEnd={() => { setDragId(null); setOverCol(null); setOverCard(null) }}
                   onDragOverCard={() => setOverCard(issue.id)}
                   onOpen={() => onOpen(issue.id)}
+                  onPrefetch={onPrefetch ? () => onPrefetch(issue.id) : undefined}
+                  onPrefetchCancel={onPrefetchCancel ? () => onPrefetchCancel(issue.id) : undefined}
                 />
               ))}
               {rows.length === 0 && (
@@ -127,7 +132,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
   )
 })
 
-const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver, onDragStart, onDragEnd, onDragOverCard, onOpen }: {
+const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver, onDragStart, onDragEnd, onDragOverCard, onOpen, onPrefetch, onPrefetchCancel }: {
   issue: PmIssueRow
   engine: PmSyncEngine
   dragging: boolean
@@ -136,6 +141,8 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
   onDragEnd: () => void
   onDragOverCard: () => void
   onOpen: () => void
+  onPrefetch?: () => void
+  onPrefetchCancel?: () => void
 }) {
   const store = engine.store
   const team = store.teams.get(issue.team_id)
@@ -150,6 +157,9 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
       onDragEnd={() => { onDragEnd(); setTimeout(() => { didDrag.current = false }, 0) }}
       onDragOver={(e) => { e.preventDefault(); onDragOverCard() }}
       onClick={() => { if (!didDrag.current) onOpen() }}
+      onMouseEnter={onPrefetch}
+      onMouseLeave={onPrefetchCancel}
+      data-issue-card={issue.id}
       style={{
         borderRadius: 10, padding: '9px 11px', cursor: 'pointer',
         background: 'var(--surf-1)', border: `1px solid ${isOver ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,

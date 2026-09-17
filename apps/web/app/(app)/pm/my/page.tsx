@@ -3,10 +3,13 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
+import { useQueryClient } from '@tanstack/react-query'
 import { Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
+import { currentPmPath, issueHref } from '@/lib/pm/nav'
+import { issuePrefetchProps } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 
 // ─────────────────────────────────────────────────────────
@@ -37,6 +40,7 @@ export default function MyIssuesPage() {
 
 const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }) {
   const router = useRouter()
+  const qc = useQueryClient()
   const store = engine.store
   const me = (engine as unknown as { userId: string }).userId
   const [tab, setTab] = useState<(typeof TABS)[number]>('assigned')
@@ -64,7 +68,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
     k: () => setFocusIdx((i) => Math.max(0, i - 1)),
     arrowdown: () => setFocusIdx((i) => Math.min(rows.length - 1, i + 1)),
     arrowup: () => setFocusIdx((i) => Math.max(0, i - 1)),
-    enter: () => { if (focused) router.push(`/pm/issues/${focused.id}`) },
+    enter: () => { if (focused) router.push(issueHref(focused.id, currentPmPath())) },
     escape: () => setFocusIdx(-1),
   })
 
@@ -98,7 +102,9 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
             const team = store.teams.get(issue.team_id)
             return (
               <div key={issue.id}
-                onClick={() => router.push(`/pm/issues/${issue.id}`)}
+                data-issue-row={issue.id}
+                onClick={() => router.push(issueHref(issue.id, currentPmPath()))}
+                {...issuePrefetchProps(qc, issue.id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', cursor: 'pointer',
                   borderBottom: i < rows.length - 1 ? '1px solid var(--bord)' : 'none',

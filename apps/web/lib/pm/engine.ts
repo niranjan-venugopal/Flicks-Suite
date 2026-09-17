@@ -3,13 +3,17 @@ import { rankBetween } from '@flicks/shared/pm'
 import { api, silentRefresh } from '@/lib/api/client'
 import { PmStore } from './store'
 import { openPmDb, destroyPmDb, loadSnapshot, persistTables, persistPending, type PmDb } from './idb'
-import type { PendingMutation, PmIssueRow, PmProjectRow, PmUpdateRow } from './types'
+import type { PendingMutation, PmIssueRow, PmProjectRow, PmRelationRow, PmUpdateRow } from './types'
 import { SOCKET_TRANSPORTS } from '@/lib/realtime'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 const FLUSH_DEBOUNCE_MS = 250
 const PERSIST_DEBOUNCE_MS = 400
 const POLL_FALLBACK_MS = 30_000
+// Opening IndexedDB can hang while another tab still holds an older version
+// (a `blocked` upgrade). Past this, boot WITHOUT the cache — sync mode still
+// works from a cold bootstrap; nothing is persisted until the next load.
+const IDB_OPEN_TIMEOUT_MS = 4_000
 
 interface DeltaResponse {
   upserts: Record<string, unknown>
@@ -73,37 +77,51 @@ export class PmSyncEngine {
   // ─── lifecycle ────────────────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    this.db = await openPmDb(this.tenantId, this.userId)
+    this.db = await Promise.race([
+      openPmDb(this.tenantId, this.userId),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), IDB_OPEN_TIMEOUT_MS)),
+    ])
     let snapshot = this.db ? await loadSnapshot(this.db) : null
+    // The pending queue is carried whether or not a table snapshot exists
+    // (Round L — the v4 upgrade clears the cursor; those queued offline
+    // mutations must replay, not vanish).
+    let pending: PendingMutation[] = snapshot?.pending ?? []
     // Disposable-cache doctrine (§3.8): bootstrap always yields ≥1 team, so a
     // snapshot without teams is poisoned (e.g. persisted during a failed
     // session) — and delta can never repair it because the cursor is already
     // past the seeding events. Discard and cold-boot instead of rendering an
     // empty workspace forever.
-    if (snapshot && (snapshot.tables.pm_teams ?? []).length === 0) {
+    if (snapshot && snapshot.cursor != null && (snapshot.tables.pm_teams ?? []).length === 0) {
       this.db?.close()
       this.db = null
       await destroyPmDb(this.tenantId, this.userId)
       this.db = await openPmDb(this.tenantId, this.userId)
+      if (this.db && pending.length) void persistPending(this.db, pending)
       snapshot = null
     }
-    if (snapshot) {
+    if (snapshot && snapshot.cursor != null) {
       // WARM boot: render from the local cache instantly, then catch up.
       for (const [table, rows] of Object.entries(snapshot.tables)) {
         this.store.applyRows(table, rows)
       }
-      this.queue = snapshot.pending
+      this.queue = pending
       this.store.setPendingCount(this.queue.length)
       this.store.setCursor(snapshot.cursor)
       this.store.setHydrated(true)
       void this.pullDelta()
       void this.flushQueue()
     } else {
+      // COLD boot — the queue (if any) survives it and replays afterwards,
+      // mirroring reset().
+      this.queue = pending
+      this.store.setPendingCount(this.queue.length)
       await this.bootstrap()
       // Server-side bootstrap self-seeds the workspace; zero teams here means
       // something is genuinely wrong — surface REST fallback, not a spinner.
       if (this.store.teams.size === 0) throw new Error('BOOTSTRAP_EMPTY')
+      if (this.queue.length) void this.flushQueue()
     }
+    pending = []
     this.connectSocket()
     this.pollTimer = setInterval(() => void this.pullDelta(), POLL_FALLBACK_MS)
     if (typeof window !== 'undefined') {
@@ -311,6 +329,10 @@ export class PmSyncEngine {
     project_id?: string | null
     milestone_id?: string | null
     due_date?: string | null
+    /** Round L — create straight under a parent (was hard-coded to null). */
+    parent_issue_id?: string | null
+    /** Round L item 6 — draft uploads to bind to the new issue. */
+    attachment_ids?: string[]
   }): string {
     const id = crypto.randomUUID()
     const team = this.store.teams.get(input.team_id)
@@ -341,7 +363,7 @@ export class PmSyncEngine {
       estimate: input.estimate != null ? String(input.estimate) : null,
       assignee_user_id: input.assignee_user_id ?? null,
       creator_user_id: this.userId,
-      parent_issue_id: null,
+      parent_issue_id: input.parent_issue_id ?? null,
       project_id: input.project_id ?? null,
       milestone_id: input.milestone_id ?? null,
       cycle_id: null,
@@ -374,6 +396,8 @@ export class PmSyncEngine {
         project_id: input.project_id ?? undefined,
         milestone_id: input.milestone_id ?? undefined,
         due_date: input.due_date ?? undefined,
+        parent_issue_id: input.parent_issue_id ?? undefined,
+        attachment_ids: input.attachment_ids?.length ? input.attachment_ids : undefined,
       },
       inverse: { table: 'pm_issues', id, row: null }, // rollback = remove
       enqueuedAt: Date.now(),
@@ -418,24 +442,35 @@ export class PmSyncEngine {
 
   updateIssue(
     id: string,
-    fields: { title?: string; description?: string; due_date?: string | null; estimate?: string | null },
+    fields: {
+      title?: string
+      description?: string
+      due_date?: string | null
+      estimate?: string | null
+      /** Round L — re-parent (null clears); the server validates the chain. */
+      parent_issue_id?: string | null
+      /** Round L item 6 — inline images pasted into the description (drafts to bind); not a row field. */
+      attachment_ids?: string[]
+    },
     opts: { recordUndo?: boolean } = {},
   ): void {
-    const prev = this.store.patchIssue(id, { ...(fields as Partial<PmIssueRow>), updated_at: new Date().toISOString() })
+    // attachment_ids rides the mutation only — never into the store row.
+    const { attachment_ids, ...rowPatch } = fields
+    const prev = this.store.patchIssue(id, { ...(rowPatch as Partial<PmIssueRow>), updated_at: new Date().toISOString() })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
       op: 'issue.update',
       id,
-      fields,
+      fields: { ...rowPatch, ...(attachment_ids?.length ? { attachment_ids } : {}) },
       inverse: { table: 'pm_issues', id, row: prev as unknown as Record<string, unknown> | null },
       enqueuedAt: Date.now(),
     })
     if (opts.recordUndo !== false && prev) {
       const inverseFields: Record<string, unknown> = {}
-      for (const k of Object.keys(fields)) inverseFields[k] = (prev as unknown as Record<string, unknown>)[k]
+      for (const k of Object.keys(rowPatch)) inverseFields[k] = (prev as unknown as Record<string, unknown>)[k]
       this.pushUndo({
         undo: () => this.updateIssue(id, inverseFields as never, { recordUndo: false }),
-        redo: () => this.updateIssue(id, fields, { recordUndo: false }),
+        redo: () => this.updateIssue(id, rowPatch, { recordUndo: false }),
       })
     }
   }
@@ -558,22 +593,63 @@ export class PmSyncEngine {
     })
   }
 
+  /**
+   * Link two issues. Round L — optimistic: a temp relation row appears in
+   * the store at once (the delta that follows the ack replaces it with the
+   * server row); a rejection removes it again. Stored direction only —
+   * "blocked by X" is relateIssues(X, me, 'blocks').
+   */
   relateIssues(id: string, relatedIssueId: string, type: 'blocks' | 'duplicate_of' | 'relates_to'): void {
+    if (id === relatedIssueId) return
+    // Already linked (either the server row or a pending temp) → no-op, the
+    // server would ignore the duplicate anyway.
+    const existing = this.store
+      .relationsForIssue(id)
+      .find((r) => r.issue_id === id && r.related_issue_id === relatedIssueId && r.type === type)
+    if (existing) return
+    const tempId = crypto.randomUUID()
+    this.store.insertRelation({ id: tempId, issue_id: id, related_issue_id: relatedIssueId, type })
     // duplicate_of also moves the issue to the Duplicate state server-side —
     // optimistically mirror the state hop so the conveyor clears instantly.
+    let prevIssue: PmIssueRow | null = null
     if (type === 'duplicate_of') {
       const issue = this.store.issues.get(id)
       const dup = issue
         ? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'canceled' && s.name === 'Duplicate')
           ?? this.store.statesForTeam(issue.team_id).find((s) => s.category === 'canceled')
         : null
-      if (dup) this.store.patchIssue(id, { state_id: dup.id, canceled_at: new Date().toISOString() })
+      if (dup) prevIssue = this.store.patchIssue(id, { state_id: dup.id, canceled_at: new Date().toISOString() })
     }
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
       op: 'issue.relate',
       id,
       fields: { related_issue_id: relatedIssueId, type },
+      inverse: { table: 'pm_issue_relations', id: tempId, row: null }, // rollback = drop the temp row
+      ...(prevIssue
+        ? { inverses: [{ table: 'pm_issues', id, row: prevIssue as unknown as Record<string, unknown> }] }
+        : {}),
+      enqueuedAt: Date.now(),
+    })
+  }
+
+  /** Round L — remove ONE stored relation; the row comes back on rejection. */
+  unrelateIssues(id: string, relatedIssueId: string, type: 'blocks' | 'duplicate_of' | 'relates_to'): void {
+    const rows = this.store
+      .relationsForIssue(id)
+      .filter((r) => r.issue_id === id && r.related_issue_id === relatedIssueId && r.type === type)
+    for (const r of rows) this.store.removeRelation(r.id)
+    const snapshot: PmRelationRow | null = rows[0] ? { ...rows[0], _pending: undefined } : null
+    this.enqueue({
+      clientMutationId: crypto.randomUUID(),
+      op: 'issue.unrelate',
+      id,
+      fields: { related_issue_id: relatedIssueId, type },
+      inverse: {
+        table: 'pm_issue_relations',
+        id: snapshot?.id ?? relatedIssueId,
+        row: snapshot as unknown as Record<string, unknown> | null,
+      },
       enqueuedAt: Date.now(),
     })
   }
@@ -924,13 +1000,18 @@ export class PmSyncEngine {
           // real issue from the screen on every such rejection (founder round
           // A, "I watched data disappear"). Undo-the-create is therefore keyed
           // on the OP, the one thing that says what actually happened.
-          if (item.inverse) {
-            const wasCreate = item.op.endsWith('.create')
-            if (item.inverse.table === 'pm_projects') {
-              if (wasCreate) this.store.applyTombstones('pm_projects', [item.inverse.id])
-              else if (item.inverse.row !== null) this.store.applyRows('pm_projects', [item.inverse.row])
-            } else if (wasCreate) this.store.removeIssue(item.inverse.id)
-            else if (item.inverse.row !== null) this.store.restoreIssue(item.inverse.row as unknown as PmIssueRow)
+          const wasCreate = item.op.endsWith('.create')
+          for (const inv of [item.inverse, ...(item.inverses ?? [])]) {
+            if (!inv) continue
+            if (inv.table === 'pm_projects') {
+              if (wasCreate) this.store.applyTombstones('pm_projects', [inv.id])
+              else if (inv.row !== null) this.store.applyRows('pm_projects', [inv.row])
+            } else if (inv.table === 'pm_issue_relations') {
+              // Round L — relate: drop the temp row; unrelate: put it back.
+              if (inv.row === null) this.store.removeRelation(inv.id)
+              else this.store.applyRows('pm_issue_relations', [inv.row])
+            } else if (wasCreate) this.store.removeIssue(inv.id)
+            else if (inv.row !== null) this.store.restoreIssue(inv.row as unknown as PmIssueRow)
             // update with no pre-image: nothing was optimistically applied,
             // so there is nothing to undo — surface the rejection and stop.
           }
@@ -995,6 +1076,11 @@ export class PmSyncEngine {
       pm_issue_subscribers: [...s.issueSubscribers.entries()].flatMap(([issueId, userIds]) =>
         userIds.map((userId) => ({ key: `${issueId}:${userId}`, row: { issue_id: issueId, user_id: userId } })),
       ),
+      // Round L — temp (unacked) rows are skipped: a reload replays the queue,
+      // and the ack's delta brings the server row.
+      pm_issue_relations: [...s.relations.entries()]
+        .filter(([, row]) => !row._pending)
+        .map(([key, row]) => ({ key, row: { ...row, _pending: undefined } })),
       pm_projects: [...s.projects.entries()].map(([key, row]) => ({ key, row: { ...row, _pending: undefined } })),
       pm_project_milestones: [...s.milestones.entries()].map(([key, row]) => ({ key, row })),
       pm_project_updates: [...s.projectUpdates.entries()].map(([key, row]) => ({ key, row })),

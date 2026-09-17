@@ -37,6 +37,14 @@ import {
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { resolveShiftsTx, tenantTodayISOTx } from '../../core/common/workday';
+import {
+  ApprovalRoutingService,
+  authorRoutingView,
+  routeStateColumns,
+  shapeEscalation,
+} from '../approvals/public';
+import type { ReviewerCtx } from '../approvals/public';
 import type { Db } from '@flicks/db';
 import type {
   ApplyLeaveDto,
@@ -51,13 +59,8 @@ import type {
 } from './leave.dto';
 import { getHolidayPresets, PRESET_COUNTRIES } from './holiday-presets';
 
-/**
- * Round I (founder decision): reviewers with these workspace roles see and
- * act on EVERY employee's requests; everyone else who clears the
- * `@Roles('manager')` gate (i.e. managers) is scoped to their direct reports
- * via `employees.reporting_manager_id`.
- */
-const ORG_WIDE_REVIEW_ROLES: ReadonlyArray<string> = ['owner', 'admin', 'fam', 'super_admin'];
+// Round L: the org-wide role list (ORG_WIDE_REVIEW_ROLES), the queue predicate
+// and the may-act guard live in modules/approvals — consumed via public.ts.
 
 /**
  * Holiday types that actually block work. 'optional'/'restricted' holidays
@@ -80,42 +83,44 @@ function* eachDay(startISO: string, endISO: string): Generator<string> {
   }
 }
 
+/** Mon–Fri — the literal fallback when an employee has no shift at all. */
+const DEFAULT_WORKING_DAYS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5]);
+
 /**
- * Counts business days (Mon-Fri) between two YYYY-MM-DD dates inclusive.
- * Falls back to weekend-only exclusion when no holidays are passed.
+ * Counts business days between two YYYY-MM-DD dates inclusive: the shift's
+ * working days (Round L — was hard-coded Mon–Fri, so a Saturday-working
+ * shift lost a day per week) minus the holidays that apply to the employee.
  *
  * PRD §7.7 acceptance: "Holiday on a leave date does not double-count: leave
  * for Mon–Fri including Republic Day on Wed = 4 days, not 5."
  *
  * @param holidayDates set of YYYY-MM-DD holiday dates that fall in the range
+ * @param workingDays  0=Sun..6=Sat from the employee's shift template
  */
-function countBusinessDays(
+export function countBusinessDays(
   startISO: string,
   endISO: string,
   holidayDates: Set<string> = new Set(),
+  workingDays: ReadonlySet<number> = DEFAULT_WORKING_DAYS,
 ): number {
   let count = 0;
-  for (const d of eachDay(startISO, endISO)) {
-    const dow = new Date(`${d}T00:00:00Z`).getUTCDay(); // 0=Sun, 6=Sat
-    if (dow === 0 || dow === 6) continue;
-    if (holidayDates.has(d)) continue;
-    count++;
-  }
+  for (const _d of businessDays(startISO, endISO, holidayDates, workingDays)) count++;
   return count;
 }
 
 /**
- * Yields business days (Mon-Fri, non-holiday) between two YYYY-MM-DD dates.
- * Used to back-fill attendance_records on leave approval.
+ * Yields business days (shift working days, non-holiday) between two
+ * YYYY-MM-DD dates. Used to back-fill attendance_records on leave approval.
  */
-function* businessDays(
+export function* businessDays(
   startISO: string,
   endISO: string,
   holidayDates: Set<string>,
+  workingDays: ReadonlySet<number> = DEFAULT_WORKING_DAYS,
 ): Generator<string> {
   for (const d of eachDay(startISO, endISO)) {
-    const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
-    if (dow === 0 || dow === 6) continue;
+    const dow = new Date(`${d}T00:00:00Z`).getUTCDay(); // 0=Sun, 6=Sat
+    if (!workingDays.has(dow)) continue;
     if (holidayDates.has(d)) continue;
     yield d;
   }
@@ -125,6 +130,9 @@ function* businessDays(
 export class LeaveService {
   private readonly logger = new Logger(LeaveService.name);
 
+  /** Round L — routing (who reviews, who may act) + escalation state. */
+  private readonly routing: ApprovalRoutingService;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
@@ -132,7 +140,13 @@ export class LeaveService {
     // Optional so the many specs that build `new LeaveService(db, audit,
     // notifications)` keep compiling; only the email deep links need it.
     @Optional() private readonly configService?: ConfigService,
-  ) {}
+    // Optional for the same reason: under Nest DI the ApprovalsModule provides
+    // it; a hand-built service falls back to a routing service bound to the
+    // same notifications + config it was given.
+    @Optional() routing?: ApprovalRoutingService,
+  ) {
+    this.routing = routing ?? new ApprovalRoutingService(notificationsService, configService);
+  }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -153,28 +167,14 @@ export class LeaveService {
    * Never self-heals an employee row — a manager seat with no employee
    * record has an EMPTY team, never the whole workspace.
    */
-  private async resolveReviewer(
+  private resolveReviewer(
     tx: Db,
     userId: string,
     tenantId: string,
     roleHint?: string,
-  ): Promise<{ employeeId: string | null; orgWide: boolean }> {
-    const [m] = await tx
-      .select({ employeeId: memberships.employee_id, role: memberships.role })
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-          eq(memberships.status, 'active'),
-        ),
-      )
-      .limit(1);
-    const role = roleHint ?? m?.role ?? '';
-    return {
-      employeeId: m?.employeeId ?? null,
-      orgWide: ORG_WIDE_REVIEW_ROLES.includes(role),
-    };
+  ): Promise<ReviewerCtx> {
+    // Round L: one resolver for every approval surface (modules/approvals).
+    return this.routing.resolveReviewerTx(tx, tenantId, userId, roleHint);
   }
 
   /**
@@ -315,6 +315,21 @@ export class LeaveService {
         );
     });
     return new Set(rows.map((r) => r.date));
+  }
+
+  /**
+   * Round L: the employee's shift working days (0=Sun..6=Sat) as of
+   * `dateISO` — assignment → tenant default → Mon–Fri. Read-only; never
+   * seeds a template.
+   */
+  private async workingDaysFor(
+    tx: Db,
+    tenantId: string,
+    employeeId: string,
+    dateISO: string,
+  ): Promise<Set<number>> {
+    const shifts = await resolveShiftsTx(tx, tenantId, [employeeId], dateISO);
+    return new Set(shifts.get(employeeId)?.workingDays ?? [...DEFAULT_WORKING_DAYS]);
   }
 
   // ─── Leave Types ───────────────────────────────────────────────────────────
@@ -483,9 +498,14 @@ export class LeaveService {
       dto.endDate,
       employeeId,
     );
+    // Round L: count on the employee's shift working days, not a Mon–Fri
+    // literal — a Saturday shift takes a Saturday off as a leave day.
+    const workingDays = await this.databaseService.withTenant(tenantId, (tx) =>
+      this.workingDaysFor(tx, tenantId, employeeId, dto.startDate),
+    );
     const totalDays = dto.isHalfDay
       ? 0.5
-      : countBusinessDays(dto.startDate, dto.endDate, holidayDates);
+      : countBusinessDays(dto.startDate, dto.endDate, holidayDates, workingDays);
     if (totalDays <= 0) {
       throw new BadRequestException(
         'Leave dates do not include any business day',
@@ -538,6 +558,13 @@ export class LeaveService {
           );
         }
 
+        // Round L (item 2): where the request is born — level 0 with the
+        // reporting manager snapshotted; straight to the manager's manager
+        // when the manager is on approved full-day leave today; straight to
+        // Owner + HR Admins (`no_manager`) when there is no valid manager.
+        const today = await tenantTodayISOTx(tx, tenantId);
+        const { state } = await this.routing.initialStateTx(tx, tenantId, employeeId, today);
+
         // Insert the request.
         const [request] = await tx
           .insert(leaveRequests)
@@ -553,6 +580,7 @@ export class LeaveService {
             reason: dto.reason,
             cover_employee_id: dto.coverEmployeeId ?? null,
             status: 'pending',
+            ...routeStateColumns(state),
           })
           .returning();
 
@@ -581,7 +609,7 @@ export class LeaveService {
             },
           });
 
-        return { request: request!, type };
+        return { request: request!, type, state };
       },
     );
 
@@ -619,6 +647,9 @@ export class LeaveService {
       totalDays: result.request.total_days,
       status: result.request.status,
       reason: result.request.reason,
+      // Round L — employee-facing: the level only ("With your manager" /
+      // "With HR"), never the reason or a reviewer's name.
+      ...authorRoutingView(result.state.level),
     };
   }
 
@@ -646,16 +677,25 @@ export class LeaveService {
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
 
-    // Who gets pinged: the reporting manager when there is one, otherwise
-    // every OTHER owner/admin. Owners typically have no reporting manager, so
-    // without the fan-out an owner's leave request notified nobody while still
-    // sitting in everyone else's queue — a dead end (house rule 8).
-    const reviewers = await this.resolveLeaveReviewers(
-      tenantId,
-      employee.managerId,
-      employee.userId,
-    );
+    // Round L: who gets pinged is the routing chain — the reporting manager
+    // (level 0), the manager's manager (level 1, manager on leave today) or
+    // Owner + HR Admins (level 2, no manager). The applicant is never a
+    // recipient (employees.user_id + the membership bridge), and a level
+    // whose reviewer does not exist falls through to HR — an owner's own
+    // request never dead-ends (house rule 8).
+    const { route, level, reason } = await this.databaseService.withTenant(tenantId, async (tx) => {
+      const route = await this.routing.resolveRouteTx(tx, tenantId, employeeId);
+      const live = await this.routing.readStateTx(tx, tenantId, 'leave', requestId);
+      return { route, level: live?.level ?? 0, reason: live?.reason ?? null };
+    });
+    const reviewers = this.routing.recipientsFor(route, level);
     if (reviewers.length === 0) return;
+    const why =
+      reason === 'no_manager' || (!route.l0 && level >= 2)
+        ? ' — no reporting manager is set, so it is with you as HR.'
+        : reason === 'reviewer_on_leave'
+          ? ' — their manager is on leave today, so it is with you.'
+          : '.';
 
     // Round I: deep links straight to THIS request on the Team → Leave page.
     // `action=` only pre-selects the decision in a confirm dialog — the link
@@ -673,7 +713,7 @@ export class LeaveService {
           .createInAppNotification(
             reviewer.userId,
             'leave.requested',
-            `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'}).`,
+            `${employeeName || 'An employee'} requested ${leaveTypeName} (${dates.days} day${dates.days === 1 ? '' : 's'})${why}`,
             `/team/leave?request=${encodeURIComponent(requestId)}`,
             tenantId,
           )
@@ -710,54 +750,8 @@ export class LeaveService {
     }
   }
 
-  /**
-   * Approvers to notify for a request: the reporting manager if one is set,
-   * otherwise the workspace's owners/admins. The applicant is always excluded
-   * — they can never review their own request (see reviewLeave).
-   */
-  private async resolveLeaveReviewers(
-    tenantId: string,
-    managerId: string | null,
-    applicantUserId: string | null,
-  ): Promise<{ email: string | null; userId: string | null }[]> {
-    if (managerId) {
-      const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
-        tx
-          .select({ email: employees.work_email, userId: employees.user_id })
-          .from(employees)
-          .where(
-            and(
-              eq(employees.id, managerId),
-              eq(employees.tenant_id, tenantId),
-            ),
-          )
-          .limit(1),
-      );
-      // A manager who happens to be the applicant (self-referencing row) is
-      // no reviewer — fall through to the owner/admin fan-out.
-      if (manager && manager.userId !== applicantUserId) return [manager];
-    }
-
-    // Fan out to owners/admins, minus the applicant. Runs inside the tenant
-    // transaction (RLS on memberships) with an explicit tenant predicate as
-    // defence in depth.
-    return this.databaseService.withTenant(tenantId, (tx) =>
-      tx
-        .select({ email: users.email, userId: users.id })
-        .from(memberships)
-        .innerJoin(users, eq(users.id, memberships.user_id))
-        .where(
-          and(
-            eq(memberships.tenant_id, tenantId),
-            eq(memberships.status, 'active'),
-            inArray(memberships.role, ['owner', 'admin']),
-            applicantUserId
-              ? ne(memberships.user_id, applicantUserId)
-              : sql`true`,
-          ),
-        ),
-    );
-  }
+  // (Round L: `resolveLeaveReviewers` is gone — ApprovalRoutingService
+  // .recipientsFor(route, level) is the one source of "who reviews".)
 
   // ─── List ──────────────────────────────────────────────────────────────────
 
@@ -767,7 +761,7 @@ export class LeaveService {
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const data = await this.databaseService.withTenant(tenantId, (tx) =>
+    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
         .select({
           id: leaveRequests.id,
@@ -781,6 +775,7 @@ export class LeaveService {
           appliedAt: leaveRequests.applied_at,
           leaveTypeName: leaveTypes.name,
           leaveTypeColor: leaveTypes.color,
+          escalationLevel: leaveRequests.escalation_level,
         })
         .from(leaveRequests)
         .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
@@ -794,6 +789,9 @@ export class LeaveService {
         .limit(limit)
         .offset(offset),
     );
+    // Round L — employee-facing: the level only ("With your manager" / "With
+    // HR"), never the reason or a reviewer's name.
+    const data = rows.map(({ escalationLevel, ...r }) => ({ ...r, ...authorRoutingView(escalationLevel) }));
 
     return { data, pagination: { page, limit, total: data.length } };
   }
@@ -829,6 +827,26 @@ export class LeaveService {
 
       const wasPending = req.status === 'pending';
       const wasApproved = req.status === 'approved';
+
+      // Round L: approval wrote on_leave / half_day rows for the leave's
+      // days. Remove the ones nobody punched into, or the team board keeps
+      // saying "On leave" after the person changed their mind (the day
+      // resolver stops saying it the moment the request is cancelled).
+      if (wasApproved) {
+        await tx
+          .delete(attendanceRecords)
+          .where(
+            and(
+              eq(attendanceRecords.tenant_id, tenantId),
+              eq(attendanceRecords.employee_id, employeeId),
+              gte(attendanceRecords.attendance_date, req.start_date),
+              lte(attendanceRecords.attendance_date, req.end_date),
+              eq(attendanceRecords.source, 'system'),
+              isNull(attendanceRecords.first_punch_in_at),
+              inArray(attendanceRecords.attendance_status, ['on_leave', 'half_day']),
+            ),
+          );
+      }
 
       const [updated] = await tx
         .update(leaveRequests)
@@ -895,7 +913,8 @@ export class LeaveService {
 
     const data = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
-      return tx
+      const escalatedTo = alias(employees, 'escalated_to');
+      const rows = await tx
         .select({
           id: leaveRequests.id,
           employeeId: leaveRequests.employee_id,
@@ -909,10 +928,18 @@ export class LeaveService {
           employeeCode: employees.employee_code,
           leaveTypeName: leaveTypes.name,
           leaveTypeCode: leaveTypes.code,
+          escalationLevel: leaveRequests.escalation_level,
+          escalationReason: leaveRequests.escalation_reason,
+          escalatedAt: leaveRequests.escalated_at,
+          escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
         })
         .from(leaveRequests)
         .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
         .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
+        .leftJoin(
+          escalatedTo,
+          and(eq(escalatedTo.id, leaveRequests.escalated_to_employee_id), eq(escalatedTo.tenant_id, tenantId)),
+        )
         .where(
           and(
             eq(leaveRequests.tenant_id, tenantId),
@@ -923,15 +950,21 @@ export class LeaveService {
             // employees.service.ts). IS DISTINCT FROM keeps rows whose
             // employee has no linked user account.
             sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
-            // Round I: managers only see their direct reports' requests;
-            // removed employees (round 21) never surface.
-            this.reviewerScope(reviewer),
+            // Round L: the ROUTED queue — direct reports, requests escalated
+            // to me, and (owner/admin) requests at level 2 / with no manager.
+            // Removed employees (round 21) never surface.
+            this.routing.queuePredicate(reviewer, leaveRequests, leaveRequests.employee_id),
             isNull(employees.deleted_at),
           ),
         )
         .orderBy(desc(leaveRequests.applied_at))
         .limit(limit)
         .offset(offset);
+      return rows.map(({ escalationLevel, escalationReason, escalatedAt, escalatedToName, ...r }) => ({
+        ...r,
+        escalation: shapeEscalation({ escalationLevel, escalationReason, escalatedAt }, escalatedToName),
+        routedToMe: true as const,
+      }));
     });
 
     return { data, pagination: { page, limit, total: data.length } };
@@ -959,17 +992,32 @@ export class LeaveService {
     return this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
       const approver = alias(employees, 'approver');
+      // Round L: the org chart still decides the SCOPE (owner/admin: the
+      // workspace — the "open directly" surface; managers: direct reports);
+      // `routedToMe` says whether a row is in the caller's queue, and the
+      // manager / escalation columns feed the chips.
+      const manager = alias(employees, 'live_manager');
+      const escalatedTo = alias(employees, 'escalated_to');
+      const routedToMe = this.routing.queuePredicate(reviewer, leaveRequests, leaveRequests.employee_id);
+      // A manager's page shows their direct reports PLUS anything escalated
+      // to them (the manager's manager follows the bell's deep link here —
+      // it must never say "not waiting on you"). Owner/admin: the workspace.
+      const scopeOrRouted = reviewer.orgWide
+        ? sql`true`
+        : reviewer.employeeId
+          ? sql`(${employees.reporting_manager_id} = ${reviewer.employeeId} OR (${leaveRequests.escalation_level} >= 1 AND ${leaveRequests.escalated_to_employee_id} = ${reviewer.employeeId}))`
+          : sql`false`;
       const where = and(
         eq(leaveRequests.tenant_id, tenantId),
         status === 'all' ? undefined : eq(leaveRequests.status, status),
         query.from ? gte(leaveRequests.end_date, query.from) : undefined,
         query.to ? lte(leaveRequests.start_date, query.to) : undefined,
         sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
-        this.reviewerScope(reviewer),
+        scopeOrRouted,
         isNull(employees.deleted_at),
       );
 
-      const [data, [countRow]] = await Promise.all([
+      const [rows, [countRow]] = await Promise.all([
         tx
           .select({
             id: leaveRequests.id,
@@ -993,6 +1041,12 @@ export class LeaveService {
             approvedAt: leaveRequests.approved_at,
             rejectedAt: leaveRequests.rejected_at,
             cancelledAt: leaveRequests.cancelled_at,
+            routedToMe: sql<boolean>`(${routedToMe})`,
+            managerName: sql<string | null>`CASE WHEN ${manager.id} IS NULL THEN NULL ELSE ${manager.first_name} || ' ' || ${manager.last_name} END`,
+            escalationLevel: leaveRequests.escalation_level,
+            escalationReason: leaveRequests.escalation_reason,
+            escalatedAt: leaveRequests.escalated_at,
+            escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
           })
           .from(leaveRequests)
           .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
@@ -1000,6 +1054,18 @@ export class LeaveService {
           .leftJoin(
             approver,
             and(eq(approver.id, leaveRequests.approver_id), eq(approver.tenant_id, tenantId)),
+          )
+          .leftJoin(
+            manager,
+            and(
+              eq(manager.id, employees.reporting_manager_id),
+              eq(manager.tenant_id, tenantId),
+              isNull(manager.deleted_at),
+            ),
+          )
+          .leftJoin(
+            escalatedTo,
+            and(eq(escalatedTo.id, leaveRequests.escalated_to_employee_id), eq(escalatedTo.tenant_id, tenantId)),
           )
           .where(where)
           .orderBy(
@@ -1018,6 +1084,11 @@ export class LeaveService {
       ]);
 
       const total = countRow?.total ?? 0;
+      const data = rows.map(({ escalationLevel, escalationReason, escalatedAt, escalatedToName, ...r }) => ({
+        ...r,
+        routedToMe: r.routedToMe === true,
+        escalation: shapeEscalation({ escalationLevel, escalationReason, escalatedAt }, escalatedToName),
+      }));
       return {
         data,
         pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
@@ -1060,37 +1131,28 @@ export class LeaveService {
           );
         }
 
-        // Separation of duties: an approver may never approve their own leave.
-        // Owner/admin clear the @Roles('manager') gate on the route, so
-        // without this an owner could self-approve. Same rule as onboarding
-        // review (employees.service.ts) — another approver must act.
-        const [applicant] = await tx
-          .select({
-            userId: employees.user_id,
-            reportingManagerId: employees.reporting_manager_id,
-          })
-          .from(employees)
-          .where(
-            and(
-              eq(employees.id, req.employee_id),
-              eq(employees.tenant_id, tenantId),
-            ),
-          )
-          .limit(1);
-        if (applicant?.userId && applicant.userId === reviewerUserId) {
-          throw new ForbiddenException(
-            'You cannot approve your own leave request — another approver must review it.',
-          );
-        }
-
-        // Round I: a manager may only decide on their OWN reports' requests.
-        // Owner/admin (and platform staff) review workspace-wide.
-        const reviewerScope = await this.resolveReviewer(tx, reviewerUserId, tenantId, roleHint);
-        if (!reviewerScope.orgWide && applicant?.reportingManagerId !== reviewerEmployeeId) {
-          throw new ForbiddenException(
-            'You can only review leave requests from your direct reports.',
-          );
-        }
+        // Round L: one guard for every review path — the live reporting
+        // manager always may act; the manager's manager once the request was
+        // escalated to them; owner/admin always (opened directly from Team →
+        // Leave); never the applicant (employees.user_id AND the membership
+        // bridge — which closes the old self-approval gap for a seat linked
+        // only through memberships.employee_id).
+        const reviewerCtx = await this.resolveReviewer(tx, reviewerUserId, tenantId, roleHint);
+        const how = await this.routing.assertMayActTx(
+          tx,
+          tenantId,
+          reviewerCtx,
+          {
+            applicantEmployeeId: req.employee_id,
+            level: req.escalation_level,
+            escalatedTo: req.escalated_to_employee_id,
+          },
+          'leave',
+        );
+        // Decided over the routed manager's head (owner/admin directly, or
+        // the skip-level manager)? They are told after commit.
+        const onBehalfRoute =
+          how === 'manager' ? null : await this.routing.resolveRouteTx(tx, tenantId, req.employee_id);
 
         const newStatus =
           dto.action === 'approve' ? ('approved' as const) : ('rejected' as const);
@@ -1153,13 +1215,53 @@ export class LeaveService {
               ),
             );
           const holidayDates = new Set(holidayRows.map((h) => h.d));
+          // Round L: the shift's working days decide which dates get a row
+          // (a Saturday-working shift's Saturday leave is a leave day).
+          const workingDays = await this.workingDaysFor(
+            tx,
+            tenantId,
+            req.employee_id,
+            req.start_date,
+          );
           // Round C: ONE bulk upsert — the serial per-day loop cost a
           // round-trip per business day (a two-week leave = 10 extra RTs on
           // the approver's click).
           const days = [
-            ...businessDays(req.start_date, req.end_date, holidayDates),
+            ...businessDays(req.start_date, req.end_date, holidayDates, workingDays),
           ];
-          if (days.length) {
+          if (days.length && req.is_half_day) {
+            // Round L: a half-day request marks the day 'half_day', never
+            // 'on_leave' — the person is expected for the other half. The
+            // upsert never demotes a day already worked (present/late/WFH…).
+            await tx
+              .insert(attendanceRecords)
+              .values(
+                days.map((day) => ({
+                  tenant_id: tenantId,
+                  employee_id: req.employee_id,
+                  attendance_date: day,
+                  attendance_status: 'half_day' as const,
+                  source: 'system' as const,
+                  notes: `Half-day leave (${req.half_day_session ?? 'half'}): ${req.reason ?? ''}`.slice(0, 500),
+                })),
+              )
+              .onConflictDoUpdate({
+                target: [
+                  attendanceRecords.tenant_id,
+                  attendanceRecords.employee_id,
+                  attendanceRecords.attendance_date,
+                ],
+                set: {
+                  attendance_status: sql`CASE WHEN ${attendanceRecords.attendance_status} IN ('present','late','work_from_home','on_duty','comp_off') THEN ${attendanceRecords.attendance_status} ELSE 'half_day'::attendance_status END`,
+                  notes: sql`COALESCE(${attendanceRecords.notes}, '') || E'\nHalf-day leave approved'`,
+                  updated_at: now,
+                },
+              });
+          } else if (days.length) {
+            // Full-day leave: on_leave, except a day already WORKED (present,
+            // late, WFH, on duty, comp off — same protected list as the
+            // half-day branch) or regularised by the manager: the fact on the
+            // ground stands, the leave only fills the empty days.
             await tx
               .insert(attendanceRecords)
               .values(
@@ -1179,7 +1281,7 @@ export class LeaveService {
                   attendanceRecords.attendance_date,
                 ],
                 set: {
-                  attendance_status: 'on_leave',
+                  attendance_status: sql`CASE WHEN ${attendanceRecords.is_regularized} OR ${attendanceRecords.attendance_status} IN ('present','late','work_from_home','on_duty','comp_off') THEN ${attendanceRecords.attendance_status} ELSE 'on_leave'::attendance_status END`,
                   notes: sql`COALESCE(${attendanceRecords.notes}, '') || E'\nLeave approved'`,
                   updated_at: now,
                 },
@@ -1238,9 +1340,22 @@ export class LeaveService {
           leaveTypeName: type?.name ?? 'Leave',
           startDate: req.start_date,
           endDate: req.end_date,
+          onBehalfRoute,
+          escalationLevel: req.escalation_level,
         };
       },
     );
+
+    // Round L: the routed manager (and the skip-level manager, once it had
+    // reached them) learn that someone decided on their behalf. Best-effort.
+    if (result.onBehalfRoute) {
+      void this.routing.notifyDecidedOnBehalf(tenantId, 'leave', leaveRequestId, result.onBehalfRoute, result.escalationLevel, {
+        deciderUserId: reviewerUserId,
+        deciderName: result.reviewerName,
+        employeeName: result.requesterName,
+        action: dto.action,
+      });
+    }
 
     if (result.requesterEmail) {
       const tpl =

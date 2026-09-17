@@ -1,13 +1,16 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
+import { useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, StateGlyph, PriorityGlyph, PendingDot, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
+import { currentPmPath, issueHref } from '@/lib/pm/nav'
+import { cancelIssuePrefetch, prefetchIssueDetail } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 
 // ─────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ export default function PmTriagePage() {
 const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngine }) {
   const store = engine.store
   const router = useRouter()
+  const qc = useQueryClient()
   const teams = store.teamList().filter((t) => t.triage_enabled)
   const [teamId, setTeamId] = useState(teams[0]?.id ?? '')
   const team = store.teams.get(teamId)
@@ -50,6 +54,14 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
   const focus = rows[Math.min(idx, Math.max(0, rows.length - 1))] ?? null
   const users = [...store.users.values()]
   const teamLabels = [...store.labels.values()].filter((l) => !l.team_id || l.team_id === teamId)
+
+  // Round L — Enter opens the focused card; warm its detail as focus moves.
+  const focusId = focus?.id ?? null
+  useEffect(() => {
+    if (!focusId) return
+    prefetchIssueDetail(qc, focusId)
+    return () => cancelIssuePrefetch(focusId) // walked past before the delay elapsed
+  }, [focusId, qc])
 
   const [exiting, setExiting] = useState<'accept' | 'decline' | null>(null)
   // Catalog: the card exits right (accept) or left (decline) over 160–180ms,
@@ -71,7 +83,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
     arrowup: () => setIdx((i) => Math.max(0, i - 1)),
     j: () => setIdx((i) => Math.min(rows.length - 1, i + 1)),
     k: () => setIdx((i) => Math.max(0, i - 1)),
-    enter: () => { if (focus && !menu) router.push(`/pm/issues/${focus.id}`) },
+    enter: () => { if (focus && !menu) router.push(issueHref(focus.id, currentPmPath())) },
     'shift+enter': (e) => { e.preventDefault(); act((id) => engine.triageAccept(id)) },
     'shift+backspace': (e) => { e.preventDefault(); setMenu(menu === 'decline' ? null : 'decline') },
     a: () => { if (focus) setMenu(menu === 'assignee' ? null : 'assignee') },

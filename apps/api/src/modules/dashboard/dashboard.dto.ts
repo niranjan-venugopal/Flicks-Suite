@@ -25,6 +25,19 @@ export class ActivityQueryDto {
   before?: string;
 }
 
+/**
+ * Round L — where a pending item sits in the routing chain (0 = reporting
+ * manager · 1 = manager's manager · 2 = Owner + HR Admins) and why it moved.
+ */
+export interface ApprovalEscalationDto {
+  level: 0 | 1 | 2;
+  reason: 'sla' | 'reviewer_on_leave' | 'no_manager' | 'no_skip_manager' | null;
+  /** ISO instant it reached this level (the level-1 clock anchor). */
+  at: string | null;
+  /** The level-1 manager it was escalated to, when known. */
+  toName: string | null;
+}
+
 export interface AdminOverviewDto {
   generatedAt: string;
   /**
@@ -48,18 +61,34 @@ export interface AdminOverviewDto {
     onLeave: number;
     inactive: number;
   };
+  /**
+   * Round L — derived from the day resolver (core/common/workday.ts) on the
+   * tenant's "today". `present` INCLUDES late arrivals (`late` is the
+   * subset); `yetToClockIn` = expected ∧ no record ∧ no pending leave.
+   */
   attendanceToday: {
     present: number;
     late: number;
     onLeave: number;
     yetToClockIn: number;
     holiday: number;
+    /** Employees on their shift's non-working day (new in Round L). */
+    weekend: number;
+    /** Expected, no record, a pending leave request covers today. */
+    pendingLeave: number;
+    /** Everyone whose day is a working day (half-day leave included). */
+    expectedToday: number;
   };
 
-  // Pending Actions (top items to approve inline)
+  // Pending Actions (top items to approve inline). Round L: the leave /
+  // regularization / timesheet buckets are ROUTED — direct reports, items
+  // escalated to the caller, and (owner/HR admin) items at level 2 or with
+  // no manager at all — never the whole workspace from minute zero.
   pending: {
     leaveCount: number;
     regularizationCount: number;
+    /** Round L — submitted timesheets routed to the caller. */
+    timesheetCount: number;
     // Approvals are approver-only (manager+): the service returns empty
     // lists and zero counts for lower roles. In every bucket the caller's own
     // request is excluded — nobody approves themselves.
@@ -88,6 +117,8 @@ export interface AdminOverviewDto {
       reason: string | null;
       appliedAt: string;
       avatarUrl: string | null;
+      /** Round L — null while still with the reporting manager (level 0). */
+      escalation: ApprovalEscalationDto | null;
     }>;
     regularizations: Array<{
       id: string;
@@ -103,6 +134,22 @@ export interface AdminOverviewDto {
       reason: string;
       requestedAt: string;
       avatarUrl: string | null;
+      escalation: ApprovalEscalationDto | null;
+    }>;
+    /** Round L — the Inbox → Approvals timesheet kind (Approve / Reject / Rework). */
+    timesheets: Array<{
+      id: string;
+      employeeId: string;
+      userId: string | null;
+      employeeName: string;
+      employeeCode: string | null;
+      periodStart: string;
+      periodEnd: string;
+      totalHours: number;
+      totalBillableHours: number;
+      submittedAt: string | null;
+      avatarUrl: string | null;
+      escalation: ApprovalEscalationDto | null;
     }>;
   };
 

@@ -27,7 +27,7 @@ const COACH_KEY = 'pm-inbox-coach-seen'
 type Kind =
   | 'mention' | 'comment' | 'assign' | 'cycle' | 'digest' | 'done' | 'github'
   | 'leave' | 'regularization' | 'timesheet' | 'onboarding' | 'crm' | 'billing'
-  | 'calendar'
+  | 'calendar' | 'trial'
   | 'other'
 
 function kindOf(type: string): Kind {
@@ -46,6 +46,7 @@ function kindOf(type: string): Kind {
   if (type.startsWith('crm.')) return 'crm'
   if (type.startsWith('invoice.') || type.startsWith('payment.')) return 'billing'
   if (type.startsWith('calendar.')) return 'calendar'
+  if (type.startsWith('billing.')) return 'trial' // Round L: coupon applied / trial ending (zap, as in the bell popover)
   return 'other'
 }
 
@@ -64,6 +65,7 @@ const KIND_IC: Record<Kind, typeof Icon.bell> = {
   crm: Icon.funnel,
   billing: Icon.wallet,
   calendar: Icon.cal,
+  trial: Icon.zap,
   other: Icon.bell,
 }
 

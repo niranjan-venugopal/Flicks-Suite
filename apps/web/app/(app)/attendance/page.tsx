@@ -45,6 +45,7 @@ import {
   type RegularizationType,
   type TodayAttendance,
 } from '@/lib/api/queries/use-attendance'
+import { addDaysISO, localTimeToUTC, todayInTimezone, tzShortName } from '@/lib/time'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -314,6 +315,7 @@ function AttendanceInner() {
           if (!o) setRegDate(null)
         }}
         initialDate={regDate}
+        today={today.data}
       />
     </div>
   )
@@ -374,7 +376,15 @@ function TimelineCard({ data }: { data: TodayAttendance | undefined }) {
       </div>
       {items.length === 0 ? (
         <div style={{ color: 'var(--text-mute)', fontSize: 13, fontWeight: 600, padding: '12px 0' }}>
-          {data ? 'Not clocked in yet today.' : 'Loading…'}
+          {!data
+            ? 'Loading…'
+            : data.dayKind === 'leave'
+              ? 'On leave today — nothing to show.'
+              : data.dayKind === 'holiday'
+                ? `Holiday${data.holidayName ? ` · ${data.holidayName}` : ''} — nothing to show.`
+                : data.dayKind === 'weekend'
+                  ? 'Weekend — nothing to show.'
+                  : 'Not clocked in yet today.'}
         </div>
       ) : (
         <div style={{ position: 'relative', paddingLeft: 18 }}>
@@ -509,7 +519,7 @@ function statusPill(s: AttendanceRecord['attendanceStatus']) {
     case 'late':    return <Pill tone="yellow" dot>Late</Pill>
     case 'absent':  return <Pill tone="coral" dot>Absent</Pill>
     case 'on_leave': return <Pill tone="purple" dot>Leave</Pill>
-    case 'holiday': return <Pill tone="coral">Holiday</Pill>
+    case 'holiday': return <Pill>Holiday</Pill>
     case 'weekend': return <Pill>Weekend</Pill>
     case 'work_from_home': return <Pill tone="blue" dot>WFH</Pill>
     case 'half_day': return <Pill tone="yellow">Half day</Pill>
@@ -599,11 +609,18 @@ function RegularizationDialog({
   open,
   onOpenChange,
   initialDate,
+  today,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Pre-fills the date when opened from a Daily-log row. */
   initialDate?: string | null
+  /**
+   * Round L (founder item 3): the page's /me/today snapshot — its shift
+   * timezone decides "today" and the instants; its punches say whether the
+   * day is still open; its server `now` says whether a clock-out is ahead.
+   */
+  today?: TodayAttendance
 }) {
   const submit = useRequestRegularization()
   const { toast } = useToast()
@@ -617,12 +634,51 @@ function RegularizationDialog({
   const [proposedOutTime, setProposedOutTime] = useState('')
   const [reason, setReason] = useState('')
 
+  // Everything below is in the SHIFT's timezone — the browser's zone used to
+  // build the instants (wrong for anyone travelling) and cap the date with a
+  // UTC "today" (tomorrow's date after 17:30 IST).
+  const tz = today?.shift?.timezone ?? 'Asia/Kolkata'
+  const todayInTz = todayInTimezone(tz)
+  const isToday = !!attendanceDate && attendanceDate === todayInTz
+  const dayOpen = isToday && !!today?.firstPunchInAt && !today?.lastPunchOutAt
+  // Founder's literal rule: a request for TODAY is taken only after the day
+  // is clocked out — whether the person is mid-day or never clocked in.
+  const todayNotClockedOut = isToday && !today?.lastPunchOutAt
+  // Server clock when we have it (never behind the client's), else the client's.
+  const nowMs = Math.max(today?.now ? new Date(today.now).getTime() : 0, Date.now())
+  const inAt = attendanceDate && proposedInTime ? localTimeToUTC(attendanceDate, proposedInTime, tz) : null
+  let outAt = attendanceDate && proposedOutTime ? localTimeToUTC(attendanceDate, proposedOutTime, tz) : null
+  // An overnight shift (22:00 → 06:00) clocks out on the following day.
+  if (inAt && outAt && today?.shift?.isOvernight && outAt.getTime() <= inAt.getTime()) {
+    outAt = localTimeToUTC(addDaysISO(attendanceDate, 1), proposedOutTime, tz)
+  }
+  // A proposed instant in the future is never valid, for any date.
+  const outInFuture = !!outAt && outAt.getTime() > nowMs
+  const inInFuture = !!inAt && inAt.getTime() > nowMs
+  const outBeforeIn = !!inAt && !!outAt && outAt.getTime() <= inAt.getTime()
+  const todayBlocked = todayNotClockedOut || outInFuture || inInFuture
+  const blockedNote = dayOpen
+    ? "You haven't clocked out yet today. The system won't take a regularization for today until the day is clocked out — pick a past day, or come back after you clock out."
+    : todayNotClockedOut
+      ? 'Requests for today are taken after you clock out — pick a past day or come back after clocking out.'
+      : outInFuture || inInFuture
+        ? `The proposed ${outInFuture ? 'clock-out' : 'clock-in'} is later than now. The system won’t take a regularization for time that hasn’t happened yet — pick an earlier time${isToday ? ' or come back after you clock out' : ''}.`
+        : null
+
+  // The server's own rejection, rendered inside the dialog (not a toast that
+  // vanishes). Cleared whenever the inputs change.
+  const [serverError, setServerError] = useState<string | null>(null)
+  useEffect(() => {
+    setServerError(null)
+  }, [attendanceDate, requestType, proposedInTime, proposedOutTime])
+
   const reset = () => {
     setAttendanceDate('')
     setRequestType('missing_punch')
     setProposedInTime('')
     setProposedOutTime('')
     setReason('')
+    setServerError(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -635,23 +691,30 @@ function RegularizationDialog({
       })
       return
     }
+    if (todayBlocked || outBeforeIn) return
+    setServerError(null)
     try {
       await submit.mutateAsync({
         attendanceDate,
         requestType,
-        ...(proposedInTime ? { proposedInTime: new Date(`${attendanceDate}T${proposedInTime}`).toISOString() } : {}),
-        ...(proposedOutTime ? { proposedOutTime: new Date(`${attendanceDate}T${proposedOutTime}`).toISOString() } : {}),
+        ...(inAt ? { proposedInTime: inAt.toISOString() } : {}),
+        ...(outAt ? { proposedOutTime: outAt.toISOString() } : {}),
         reason,
       })
       toast({ title: 'Regularization submitted', description: 'Your manager has been notified.' })
       reset()
       onOpenChange(false)
     } catch (err) {
-      toast({
-        title: 'Could not submit',
-        description: err instanceof Error ? err.message : 'Try again',
-        variant: 'destructive',
-      })
+      // A ValidationPipe rejection carries an array of messages in the body.
+      const body = (err as { data?: { message?: unknown } }).data?.message
+      const msg = Array.isArray(body)
+        ? body.map(String).join(' · ')
+        : typeof body === 'string'
+          ? body
+          : err instanceof Error
+            ? err.message
+            : 'Try again'
+      setServerError(msg)
     }
   }
 
@@ -671,10 +734,35 @@ function RegularizationDialog({
               id="reg-date"
               value={attendanceDate}
               onChange={setAttendanceDate}
-              max={todayISO()}
+              max={todayInTz}
               required
             />
           </div>
+          {(serverError || blockedNote) && (
+            // One slab, two tones: the server's rejection (coral) wins over
+            // the local "not yet" note (yellow).
+            <div
+              data-testid={serverError ? 'reg-error' : 'reg-info'}
+              role={serverError ? 'alert' : 'status'}
+              style={{
+                display: 'flex',
+                gap: 8,
+                padding: '10px 12px',
+                background: serverError ? 'rgba(248,120,107,.08)' : 'rgba(254,216,0,.06)',
+                border: serverError ? '1px solid rgba(248,120,107,.35)' : '1px solid rgba(254,216,0,.25)',
+                borderRadius: 8,
+              }}
+            >
+              {serverError ? (
+                <Icon.warn size={14} style={{ color: 'var(--coral)', marginTop: 1, flexShrink: 0 }} />
+              ) : (
+                <Icon.info size={14} style={{ color: 'var(--yellow)', marginTop: 1, flexShrink: 0 }} />
+              )}
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>
+                {serverError ?? blockedNote}
+              </div>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="reg-type">Type</Label>
             <Select value={requestType} onValueChange={(v) => setRequestType(v as RegularizationType)}>
@@ -700,6 +788,20 @@ function RegularizationDialog({
               <Input id="reg-out" type="time" value={proposedOutTime} onChange={(e) => setProposedOutTime(e.target.value)} />
             </div>
           </div>
+          {(outBeforeIn || (inAt || outAt)) && (
+            <div
+              data-testid="reg-time-hint"
+              style={{ fontSize: 11.5, fontWeight: 600, color: outBeforeIn ? 'var(--coral)' : 'var(--text-mute)', marginTop: -6 }}
+            >
+              {outBeforeIn
+                ? 'Proposed clock-out must be after the proposed clock-in.'
+                : `Times are in ${tzShortName(tz)}${today?.shift?.name ? ` (${today.shift.name} shift)` : ''}${
+                    today?.shift?.isOvernight && inAt && outAt && outAt.getTime() > inAt.getTime() && proposedOutTime < proposedInTime
+                      ? ' · clock-out on the following day'
+                      : ''
+                  }.`}
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="reg-reason">
               Reason <span className="text-white/40 text-xs">(min 10 characters)</span>
@@ -718,7 +820,12 @@ function RegularizationDialog({
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => onOpenChange(false)} disabled={submit.isPending}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary btn-sm" disabled={submit.isPending}>
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              data-testid="reg-submit"
+              disabled={submit.isPending || todayBlocked || outBeforeIn}
+            >
               {submit.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" /> Submitting…

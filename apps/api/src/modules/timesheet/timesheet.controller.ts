@@ -131,13 +131,22 @@ export class TimesheetController {
 
   @Get('pending')
   @Roles('manager')
-  @ApiOperation({ summary: 'List timesheets pending my review' })
+  @ApiOperation({
+    summary: 'List timesheets pending my review',
+    description:
+      'Round L — the routed queue: direct reports, periods escalated to me, and (owner/admin) periods at level 2.',
+  })
   @ApiResponse({ status: 200, description: 'Pending timesheets' })
   async listPending(
     @Query() query: TimesheetListQueryDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.timesheetService.listPending(user.sub, user.tenantId, query);
+    return this.timesheetService.listPending(
+      user.sub,
+      user.tenantId,
+      query,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
+    );
   }
 
   @Post(':periodId/review')
@@ -155,6 +164,7 @@ export class TimesheetController {
       user.sub,
       user.tenantId,
       dto,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
     );
   }
 }

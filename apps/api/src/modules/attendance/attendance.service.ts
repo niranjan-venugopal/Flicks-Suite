@@ -21,12 +21,29 @@ import {
   memberships,
   users,
   holidays,
+  leaveRequests,
+  leaveTypes,
 } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  ApprovalRoutingService,
+  routeStateColumns,
+  shapeEscalation,
+} from '../approvals/public';
+import type { ReviewerCtx } from '../approvals/public';
+import { alias as pgAlias } from 'drizzle-orm/pg-core';
+import { addDaysISO, dateInTimezone, localTimeToUTC } from '../../core/common/time';
+import { ORG_WIDE_REVIEW_ROLES } from '../approvals/public';
+import {
+  derivedStatus,
+  pickLeaveForDate,
+  resolveExpectationTx,
+  resolveExpectationsTx,
+} from '../../core/common/workday';
 import type {
   PunchDto,
   RegularizationRequestDto,
@@ -35,70 +52,11 @@ import type {
 } from './attendance.dto';
 
 // ─── Time helpers ───────────────────────────────────────────────────────────
-
-/**
- * Returns YYYY-MM-DD as observed in `tz` for the given UTC instant.
- * Uses 'sv-SE' locale because it produces ISO-8601 'YYYY-MM-DD HH:mm:ss'.
- */
-function dateInTimezone(instant: Date, tz: string): string {
-  const parts = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(instant);
-  const y = parts.find((p) => p.type === 'year')!.value;
-  const m = parts.find((p) => p.type === 'month')!.value;
-  const d = parts.find((p) => p.type === 'day')!.value;
-  return `${y}-${m}-${d}`;
-}
-
-/**
- * Returns the day-of-week (0=Sunday..6=Saturday) for a date observed in `tz`.
- */
-function dayOfWeekInTimezone(instant: Date, tz: string): number {
-  const wd = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    weekday: 'short',
-  }).format(instant);
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
-}
-
-/**
- * Converts wall-clock time-of-day in a timezone to a UTC Date.
- * Iterates twice to converge across DST transitions.
- *
- * Example: localTimeToUTC('2026-05-08', '09:00', 'Asia/Kolkata')
- *   → Date representing 2026-05-08T03:30:00Z
- */
-function localTimeToUTC(dateISO: string, hhmm: string, tz: string): Date {
-  const [hh, mm] = hhmm.split(':').map(Number);
-  const dtf = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: tz,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  // Initial guess: pretend the local time *is* UTC.
-  let guess = new Date(`${dateISO}T${hhmm}:00Z`);
-  for (let i = 0; i < 2; i++) {
-    const parts = dtf.formatToParts(guess);
-    const observedH = parseInt(
-      parts.find((p) => p.type === 'hour')!.value,
-      10,
-    );
-    const observedM = parseInt(
-      parts.find((p) => p.type === 'minute')!.value,
-      10,
-    );
-    const targetH = hh ?? 0;
-    const targetM = mm ?? 0;
-    const diffMin = (targetH - observedH) * 60 + (targetM - observedM);
-    if (diffMin === 0) break;
-    guess = new Date(guess.getTime() + diffMin * 60_000);
-  }
-  return guess;
-}
+// Round L: dateInTimezone / dayOfWeekInTimezone / localTimeToUTC all come
+// from core/common/time.ts now. The private localTimeToUTC that lived here
+// corrected only the hour/minute delta, so evening wall times (≥ ~18:30 IST)
+// landed on the next day — wrong late thresholds and shift ends for
+// evening/overnight shifts. The web has the same port in apps/web/lib/time.ts.
 
 /**
  * Haversine distance in metres between two WGS-84 points (PRD §6.4 step 3).
@@ -165,6 +123,9 @@ function computeBreakMinutes(
 export class AttendanceService {
   private readonly logger = new Logger(AttendanceService.name);
 
+  /** Round L — routing (who reviews, who may act) + escalation state. */
+  private readonly routing: ApprovalRoutingService;
+
   constructor(
     private readonly databaseService: DatabaseService,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
@@ -173,7 +134,13 @@ export class AttendanceService {
     // Optional so the specs that build `new AttendanceService(db, dbAdmin,
     // audit, notifications)` keep compiling; only the email deep links need it.
     @Optional() private readonly configService?: ConfigService,
-  ) {}
+    // Optional for the same reason: under Nest DI the ApprovalsModule provides
+    // it; a hand-built service falls back to a routing service bound to the
+    // same notifications + config it was given.
+    @Optional() routing?: ApprovalRoutingService,
+  ) {
+    this.routing = routing ?? new ApprovalRoutingService(notificationsService, configService);
+  }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -338,7 +305,12 @@ export class AttendanceService {
         .from(employeeShifts)
         .innerJoin(
           shiftTemplates,
-          eq(employeeShifts.shift_template_id, shiftTemplates.id),
+          and(
+            eq(employeeShifts.shift_template_id, shiftTemplates.id),
+            // Round L review: an assignment pointing at another tenant's
+            // template must not resolve (FK checks bypass RLS, house rule 2).
+            eq(shiftTemplates.tenant_id, tenantId),
+          ),
         )
         .where(
           and(
@@ -489,6 +461,28 @@ export class AttendanceService {
         const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, today);
         const attendanceDate = dateInTimezone(now, shift.timezone);
 
+        // Round L (founder item 1): approved full-day leave means no clock-in
+        // — the old code happily overwrote the on_leave row with 'present'.
+        // Decided by the day resolver (the approved request), not by the row:
+        // a leave cancelled after approval leaves its on_leave row behind and
+        // must not lock the person out (house rule 8).
+        const expectation = await resolveExpectationTx(
+          tx,
+          tenantId,
+          employeeId,
+          attendanceDate,
+          now,
+        );
+        if (expectation.kind === 'leave') {
+          throw new ConflictException(
+            "You're on approved leave today — no clock-in needed. If you are working today, cancel the leave first.",
+          );
+        }
+        // Approved half-day leave: the day stays 'half_day' (the leave
+        // backfill wrote it) and there is no late maths — which half they
+        // are away is the leave's business, not the punch's.
+        const halfDayLeave = expectation.kind === 'half_day_leave';
+
         // Late check
         const shiftStartUTC = localTimeToUTC(
           attendanceDate,
@@ -498,10 +492,15 @@ export class AttendanceService {
         const lateThreshold = new Date(
           shiftStartUTC.getTime() + shift.grace_period_minutes * 60_000,
         );
-        const isLate = now > lateThreshold;
+        const isLate = !halfDayLeave && now > lateThreshold;
         const lateBy = isLate
           ? Math.floor((now.getTime() - shiftStartUTC.getTime()) / 60_000)
           : 0;
+        const punchStatus = halfDayLeave
+          ? ('half_day' as const)
+          : isLate
+            ? ('late' as const)
+            : ('present' as const);
 
         // Geofence resolution (PRD §6.4): office when inside, remote when the
         // coordinates land outside, unknown (NULL) when either side is missing.
@@ -547,7 +546,7 @@ export class AttendanceService {
                 shift_template_id: shift.id,
                 is_late: isLate,
                 late_by_minutes: lateBy,
-                attendance_status: isLate ? 'late' : 'present',
+                attendance_status: punchStatus,
                 work_mode: workMode,
                 source: 'web',
                 updated_at: new Date(),
@@ -567,7 +566,7 @@ export class AttendanceService {
               attendance_date: attendanceDate,
               shift_template_id: shift.id,
               first_punch_in_at: now,
-              attendance_status: isLate ? 'late' : 'present',
+              attendance_status: punchStatus,
               work_mode: workMode,
               is_late: isLate,
               late_by_minutes: lateBy,
@@ -973,20 +972,35 @@ export class AttendanceService {
       // before punch-in so it can offer "Mark as WFH today" instead of failing.
       const fence = await this.getEmployeeGeofence(tx, tenantId, employeeId);
 
-      return { healed, employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence };
+      // Round L: the day's expectation (holiday / weekend / leave) so the
+      // clock card can say "On approved leave today" instead of offering a
+      // Clock-in button the server would 409.
+      const expectation = await resolveExpectationTx(tx, tenantId, employeeId, attendanceDate, now);
+
+      return { healed, employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence, expectation };
     });
 
     this.logSelfHeal(tenantId, userId, out.healed);
-    const { employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence } = out;
+    const { employeeId, shift, attendanceDate, record, isOnBreak, lastPunchType, lastPunchGeo, fence, expectation } = out;
 
-    // Working day check (per shift's working_days)
-    const dow = dayOfWeekInTimezone(now, shift.timezone);
-    const isWorkingDay = (shift.working_days ?? []).includes(dow);
+    // Working day = neither a weekend (per the shift's working_days) nor a
+    // blocking holiday for this employee's location.
+    const isWorkingDay = expectation.kind !== 'weekend' && expectation.kind !== 'holiday';
 
     return {
       employeeId,
       attendanceDate,
-      attendanceStatus: record?.attendance_status ?? 'absent',
+      // No record: the day reads as what it IS (on_leave / holiday / weekend)
+      // rather than a blanket 'absent'.
+      // A leave-backfilled row nobody punched into (on_leave / half_day, no
+      // punch-in) is read from the resolver — a cancelled leave may leave one
+      // behind and it must not keep saying "on leave".
+      attendanceStatus:
+        record &&
+        !record.first_punch_in_at &&
+        (record.attendance_status === 'on_leave' || record.attendance_status === 'half_day')
+          ? (derivedStatus(expectation) ?? 'absent')
+          : (record?.attendance_status ?? derivedStatus(expectation) ?? 'absent'),
       firstPunchInAt: record?.first_punch_in_at?.toISOString() ?? null,
       lastPunchOutAt: record?.last_punch_out_at?.toISOString() ?? null,
       totalWorkedMinutes: record?.total_worked_minutes ?? 0,
@@ -1013,8 +1027,16 @@ export class AttendanceService {
         endTime: shift.end_time,
         timezone: shift.timezone,
         gracePeriodMinutes: shift.grace_period_minutes,
+        /** Round L — the regularization dialog builds a next-day clock-out for these. */
+        isOvernight: shift.is_overnight,
       },
       isWorkingDay,
+      // Round L — day semantics (see core/common/workday.ts).
+      expected: expectation.expected,
+      dayKind: expectation.kind,
+      holidayName: expectation.holidayName,
+      leave: expectation.leave,
+      pendingLeave: expectation.pendingLeave,
       now: now.toISOString(),
     };
   }
@@ -1262,6 +1284,33 @@ export class AttendanceService {
           ),
         );
 
+      // Round L: leave overlay — approved AND pending requests overlapping the
+      // month (same predicate as the day resolver / calendar).
+      const monthLeaves = await tx
+        .select({
+          id: leaveRequests.id,
+          startDate: leaveRequests.start_date,
+          endDate: leaveRequests.end_date,
+          status: leaveRequests.status,
+          isHalfDay: leaveRequests.is_half_day,
+          session: leaveRequests.half_day_session,
+          leaveTypeName: leaveTypes.name,
+        })
+        .from(leaveRequests)
+        .leftJoin(
+          leaveTypes,
+          and(eq(leaveRequests.leave_type_id, leaveTypes.id), eq(leaveTypes.tenant_id, tenantId)),
+        )
+        .where(
+          and(
+            eq(leaveRequests.tenant_id, tenantId),
+            eq(leaveRequests.employee_id, employeeId),
+            inArray(leaveRequests.status, ['approved', 'pending']),
+            lte(leaveRequests.start_date, last),
+            gte(leaveRequests.end_date, first),
+          ),
+        );
+
       const recordByDate = new Map(records.map((r) => [r.attendance_date, r]));
       const punchesByRecord = new Map<string, typeof punches>();
       for (const pch of punches) {
@@ -1279,12 +1328,24 @@ export class AttendanceService {
         const dow = new Date(`${date}T00:00:00`).getDay();
         const record = recordByDate.get(date) ?? null;
         const reg = regByDate.get(date) ?? null;
+        const isWeekend = !workingDays.has(dow);
+        const isHoliday = holidayByDate.has(date);
+        const leave = pickLeaveForDate(monthLeaves, date);
+        // Same precedence as the resolver: holiday → weekend → approved
+        // full-day leave. A day off on approved leave reads on_leave even
+        // when the approval-time backfill never wrote a row.
+        const leaveFallback =
+          !isWeekend && !isHoliday && leave?.status === 'approved' && !leave.isHalfDay
+            ? ('on_leave' as const)
+            : null;
         return {
           date,
-          attendanceStatus: record?.attendance_status ?? null,
-          isWeekend: !workingDays.has(dow),
-          isHoliday: holidayByDate.has(date),
+          attendanceStatus: record?.attendance_status ?? leaveFallback,
+          isWeekend,
+          isHoliday,
           holidayName: holidayByDate.get(date) ?? null,
+          leave,
+          pendingLeave: leave?.status === 'pending',
           firstPunchInAt: record?.first_punch_in_at ?? null,
           lastPunchOutAt: record?.last_punch_out_at ?? null,
           totalWorkedMinutes: record?.total_worked_minutes ?? 0,
@@ -1320,7 +1381,12 @@ export class AttendanceService {
       ? null
       : await this.getEmployeeIdForUser(userId, tenantId);
     const now = new Date();
-    const today = dateInTimezone(now, 'Asia/Kolkata');
+    // Round L review: leave DETAILS (type, half-day session, a pending
+    // request) belong to the people who review leave — a manager for their
+    // reports and the org-wide reviewer roles. Finance keeps the roster with
+    // "On leave" / expected, never the request behind it.
+    const canSeeLeave =
+      role === undefined || role === 'manager' || ORG_WIDE_REVIEW_ROLES.includes(role);
 
     const scope = [
       eq(employees.tenant_id, tenantId),
@@ -1333,33 +1399,93 @@ export class AttendanceService {
       scope.push(eq(employees.reporting_manager_id, managerId));
     }
 
-    return this.databaseService.withTenant(tenantId, (tx) =>
-      tx
+    // Round L (founder item 1): "today" is resolved PER EMPLOYEE from their
+    // shift timezone (was a hard-coded IST date), and a row without a record
+    // carries the day's expectation — on leave / holiday / weekend / leave
+    // pending — instead of reading as "missed punch" to the manager.
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const people = await tx
         .select({
           employeeId: employees.id,
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
-          recordId: attendanceRecords.id,
-          attendanceStatus: attendanceRecords.attendance_status,
-          workMode: attendanceRecords.work_mode,
-          firstPunchInAt: attendanceRecords.first_punch_in_at,
-          lastPunchOutAt: attendanceRecords.last_punch_out_at,
-          totalWorkedMinutes: attendanceRecords.total_worked_minutes,
-          isLate: attendanceRecords.is_late,
           locationName: locations.name,
         })
         .from(employees)
         .leftJoin(
-          attendanceRecords,
-          and(
-            eq(attendanceRecords.employee_id, employees.id),
-            eq(attendanceRecords.attendance_date, today),
-          ),
+          locations,
+          and(eq(employees.location_id, locations.id), eq(locations.tenant_id, tenantId)),
         )
-        .leftJoin(locations, eq(employees.location_id, locations.id))
         .where(and(...scope))
-        .orderBy(employees.first_name),
-    );
+        .orderBy(employees.first_name);
+      if (people.length === 0) return [];
+
+      const ids = people.map((p) => p.employeeId);
+      const expectations = await resolveExpectationsTx(tx, tenantId, ids, null, now);
+      const dates = Array.from(new Set(Array.from(expectations.values()).map((e) => e.date)));
+      const records = dates.length
+        ? await tx
+            .select({
+              id: attendanceRecords.id,
+              employeeId: attendanceRecords.employee_id,
+              attendanceDate: attendanceRecords.attendance_date,
+              attendanceStatus: attendanceRecords.attendance_status,
+              workMode: attendanceRecords.work_mode,
+              firstPunchInAt: attendanceRecords.first_punch_in_at,
+              lastPunchOutAt: attendanceRecords.last_punch_out_at,
+              totalWorkedMinutes: attendanceRecords.total_worked_minutes,
+              isLate: attendanceRecords.is_late,
+            })
+            .from(attendanceRecords)
+            .where(
+              and(
+                eq(attendanceRecords.tenant_id, tenantId),
+                inArray(attendanceRecords.employee_id, ids),
+                inArray(attendanceRecords.attendance_date, dates),
+              ),
+            )
+        : [];
+      const recordByKey = new Map(records.map((r) => [`${r.employeeId}|${r.attendanceDate}`, r]));
+
+      return people.map((p) => {
+        const exp = expectations.get(p.employeeId) ?? null;
+        const attendanceDate = exp?.date ?? dateInTimezone(now, 'Asia/Kolkata');
+        const rec = recordByKey.get(`${p.employeeId}|${attendanceDate}`) ?? null;
+        // A leave-backfilled row nobody punched into (on_leave / half_day,
+        // no punch-in) is read from the resolver: a cancelled leave may
+        // leave one behind and must not keep the person "On leave".
+        const stale =
+          !!rec &&
+          !rec.firstPunchInAt &&
+          (rec.attendanceStatus === 'on_leave' || rec.attendanceStatus === 'half_day');
+        const status = stale ? (exp ? derivedStatus(exp) : null) : (rec?.attendanceStatus ?? null);
+        const kind = exp?.kind ?? ('working' as const);
+        return {
+          employeeId: p.employeeId,
+          employeeName: p.employeeName,
+          employeeCode: p.employeeCode,
+          recordId: rec?.id ?? null,
+          attendanceStatus: status,
+          workMode: rec?.workMode ?? null,
+          firstPunchInAt: rec?.firstPunchInAt ?? null,
+          lastPunchOutAt: rec?.lastPunchOutAt ?? null,
+          totalWorkedMinutes: rec?.totalWorkedMinutes ?? null,
+          isLate: rec?.isLate ?? null,
+          locationName: p.locationName,
+          // Round L — day semantics. Leave details only for leave reviewers;
+          // a half-day leave collapses to a plain working day for the rest
+          // (they are expected either way).
+          attendanceDate,
+          expected: exp?.expected ?? true,
+          dayKind: canSeeLeave ? kind : kind === 'half_day_leave' ? ('working' as const) : kind,
+          holidayName: exp?.holidayName ?? null,
+          leave: canSeeLeave ? (exp?.leave ?? null) : null,
+          pendingLeave: canSeeLeave ? (exp?.pendingLeave ?? false) : false,
+          /** Record status, else what the day reads as without one. */
+          derivedStatus: status ?? (exp ? derivedStatus(exp) : null),
+        };
+      });
+    });
   }
 
   // ─── Regularization ───────────────────────────────────────────────────────
@@ -1370,10 +1496,112 @@ export class AttendanceService {
     dto: RegularizationRequestDto,
   ) {
     const employeeId = await this.getEmployeeIdForUser(userId, tenantId);
+    const now = new Date();
 
     const result = await this.databaseService.withTenant(
       tenantId,
       async (tx) => {
+        // Round L (founder item 3): the request used to accept anything —
+        // a future day, instants on another day, out before in, and a
+        // regularization for TODAY filed in the morning before clocking out
+        // (which the approver then wrote over the real punches). Every check
+        // runs in the shift's timezone, never the browser's.
+        const parsedDate = new Date(`${dto.attendanceDate}T00:00:00Z`);
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(dto.attendanceDate) ||
+          Number.isNaN(parsedDate.getTime()) ||
+          parsedDate.toISOString().slice(0, 10) !== dto.attendanceDate
+        ) {
+          throw new BadRequestException('attendanceDate must be a valid YYYY-MM-DD date');
+        }
+        const shift = await this.resolveShiftTemplateTx(tx, tenantId, employeeId, dto.attendanceDate);
+        const tz = shift.timezone;
+        const today = dateInTimezone(now, tz);
+        if (dto.attendanceDate > today) {
+          throw new BadRequestException(
+            'Regularization can only be requested for today or a past day.',
+          );
+        }
+
+        const inAt = dto.proposedInTime ? new Date(dto.proposedInTime) : null;
+        const outAt = dto.proposedOutTime ? new Date(dto.proposedOutTime) : null;
+        if (inAt && Number.isNaN(inAt.getTime())) {
+          throw new BadRequestException('proposedInTime must be an ISO-8601 instant');
+        }
+        if (outAt && Number.isNaN(outAt.getTime())) {
+          throw new BadRequestException('proposedOutTime must be an ISO-8601 instant');
+        }
+        // Instants must fall on the attendance date as observed in the shift
+        // timezone; an overnight shift may clock out on the following day.
+        const nextDay = addDaysISO(dto.attendanceDate, 1);
+        if (inAt && dateInTimezone(inAt, tz) !== dto.attendanceDate) {
+          throw new BadRequestException(
+            `Proposed clock-in must fall on ${dto.attendanceDate} (${tz}).`,
+          );
+        }
+        if (outAt) {
+          const outDay = dateInTimezone(outAt, tz);
+          const onDay = outDay === dto.attendanceDate;
+          const onNext = shift.is_overnight && outDay === nextDay;
+          if (!onDay && !onNext) {
+            throw new BadRequestException(
+              shift.is_overnight
+                ? `Proposed clock-out must fall on ${dto.attendanceDate} or the following day (${tz}).`
+                : `Proposed clock-out must fall on ${dto.attendanceDate} (${tz}).`,
+            );
+          }
+        }
+        if (inAt && outAt && outAt.getTime() <= inAt.getTime()) {
+          throw new BadRequestException(
+            'Proposed clock-out must be after the proposed clock-in.',
+          );
+        }
+
+        // The founder's case: "check whether the clock-out of the request
+        // is ahead of time" — a proposed instant in the future is never
+        // valid, for ANY date (an overnight shift at 02:00 on D+1 could
+        // otherwise file D with a 06:00 clock-out that hasn't happened).
+        const isToday = dto.attendanceDate === today;
+        const afterClockOut = isToday
+          ? ' — regularization for today can be requested after you clock out.'
+          : ' — you can only regularize time that has already passed.';
+        if (outAt && outAt.getTime() > now.getTime()) {
+          throw new BadRequestException(`Proposed clock-out is later than now${afterClockOut}`);
+        }
+        if (inAt && inAt.getTime() > now.getTime()) {
+          throw new BadRequestException(`Proposed clock-in is later than now${afterClockOut}`);
+        }
+
+        if (isToday) {
+          // Founder's literal rule: a request for TODAY is taken only once the
+          // day is clocked out — no record, no punch-in, or an open punch all
+          // mean "come back after you clock out". Past days are unaffected.
+          const [todayRecord] = await tx
+            .select({
+              firstPunchInAt: attendanceRecords.first_punch_in_at,
+              lastPunchOutAt: attendanceRecords.last_punch_out_at,
+            })
+            .from(attendanceRecords)
+            .where(
+              and(
+                eq(attendanceRecords.tenant_id, tenantId),
+                eq(attendanceRecords.employee_id, employeeId),
+                eq(attendanceRecords.attendance_date, today),
+              ),
+            )
+            .limit(1);
+          if (todayRecord?.firstPunchInAt && !todayRecord.lastPunchOutAt) {
+            throw new BadRequestException(
+              "You haven't clocked out yet today — regularization for today can be requested after you clock out.",
+            );
+          }
+          if (!todayRecord?.lastPunchOutAt) {
+            throw new BadRequestException(
+              'Regularization for today can be requested after you clock out.',
+            );
+          }
+        }
+
         // Reject duplicate pending requests for the same date
         const [existing] = await tx
           .select({ id: attendanceRegularizations.id })
@@ -1393,6 +1621,13 @@ export class AttendanceService {
           );
         }
 
+        // Round L (item 2): where the request is born — level 0 with the
+        // reporting manager snapshotted; straight to the manager's manager
+        // when the manager is on approved full-day leave today (`today` is
+        // the shift-timezone day resolved above); straight to Owner + HR
+        // Admins (`no_manager`) when there is no valid manager at all.
+        const { state } = await this.routing.initialStateTx(tx, tenantId, employeeId, today, now);
+
         const [created] = await tx
           .insert(attendanceRegularizations)
           .values({
@@ -1400,14 +1635,11 @@ export class AttendanceService {
             employee_id: employeeId,
             attendance_date: dto.attendanceDate,
             request_type: dto.requestType,
-            proposed_in_time: dto.proposedInTime
-              ? new Date(dto.proposedInTime)
-              : null,
-            proposed_out_time: dto.proposedOutTime
-              ? new Date(dto.proposedOutTime)
-              : null,
+            proposed_in_time: inAt,
+            proposed_out_time: outAt,
             reason: dto.reason,
             status: 'pending',
+            ...routeStateColumns(state),
           })
           .returning();
         return created!;
@@ -1463,36 +1695,25 @@ export class AttendanceService {
     );
     if (!employee) return;
 
-    // Reporting manager when there is one, otherwise every OTHER owner/admin.
-    // Owners have no reporting manager, so without the fan-out an owner's
-    // regularization notified nobody while still sitting in everyone else's
-    // queue — a dead end (house rule 8).
-    // Round K: an employee row bridged only through memberships.employee_id
-    // (employees.user_id NULL) must still be excluded from its own reviewer
-    // set — the same resolution the self-approval guard uses.
-    let applicantUserId = employee.userId;
-    if (!applicantUserId) {
-      const [bridge] = await this.databaseService.withTenant(tenantId, (tx) =>
-        tx
-          .select({ userId: memberships.user_id })
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.tenant_id, tenantId),
-              eq(memberships.employee_id, employeeId),
-              eq(memberships.status, 'active'),
-            ),
-          )
-          .limit(1),
-      );
-      applicantUserId = bridge?.userId ?? null;
-    }
-    const reviewers = await this.resolveRegularizationReviewers(
-      tenantId,
-      employee.managerId,
-      applicantUserId,
-    );
+    // Round L: who gets pinged is the routing chain — the reporting manager
+    // (level 0), the manager's manager (level 1, manager on leave today) or
+    // Owner + HR Admins (level 2, no manager). The applicant is never a
+    // recipient (employees.user_id + the membership bridge — Round K), and a
+    // level whose reviewer does not exist falls through to HR: an owner's
+    // own request never dead-ends (house rule 8).
+    const { route, level, reason } = await this.databaseService.withTenant(tenantId, async (tx) => {
+      const route = await this.routing.resolveRouteTx(tx, tenantId, employeeId);
+      const live = await this.routing.readStateTx(tx, tenantId, 'regularization', regId);
+      return { route, level: live?.level ?? 0, reason: live?.reason ?? null };
+    });
+    const reviewers = this.routing.recipientsFor(route, level);
     if (reviewers.length === 0) return;
+    const why =
+      reason === 'no_manager' || (!route.l0 && level >= 2)
+        ? ' — no reporting manager is set, so it is with you as HR.'
+        : reason === 'reviewer_on_leave'
+          ? ' — their manager is on leave today, so it is with you.'
+          : '.';
 
     const [reg] = await this.databaseService.withTenant(tenantId, (tx) =>
       tx
@@ -1521,7 +1742,7 @@ export class AttendanceService {
           .createInAppNotification(
             reviewer.userId,
             'regularization.requested',
-            `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}.`,
+            `${employeeName || 'An employee'} requested a regularization for ${reg?.attendanceDate ?? ''}${why}`,
             reviewPath,
             tenantId,
           )
@@ -1550,121 +1771,25 @@ export class AttendanceService {
     }
   }
 
-  /**
-   * Approvers to notify for a regularization: the reporting manager if one is
-   * set, otherwise the workspace's owners/admins. The applicant is always
-   * excluded — they can never review their own request.
-   */
-  private async resolveRegularizationReviewers(
-    tenantId: string,
-    managerId: string | null,
-    applicantUserId: string | null,
-  ): Promise<{ email: string | null; userId: string | null; name: string }[]> {
-    if (managerId) {
-      const [manager] = await this.databaseService.withTenant(tenantId, (tx) =>
-        tx
-          .select({
-            email: employees.work_email,
-            userId: employees.user_id,
-            firstName: employees.first_name,
-            lastName: employees.last_name,
-          })
-          .from(employees)
-          .where(
-            and(eq(employees.id, managerId), eq(employees.tenant_id, tenantId)),
-          )
-          .limit(1),
-      );
-      if (manager) {
-        // Round K: a manager row bridged only through memberships.employee_id
-        // still needs a user id — for the exclusion below and for the bell.
-        let managerUserId = manager.userId;
-        if (!managerUserId) {
-          const [bridge] = await this.databaseService.withTenant(tenantId, (tx) =>
-            tx
-              .select({ userId: memberships.user_id })
-              .from(memberships)
-              .where(
-                and(
-                  eq(memberships.tenant_id, tenantId),
-                  eq(memberships.employee_id, managerId),
-                  eq(memberships.status, 'active'),
-                ),
-              )
-              .limit(1),
-          );
-          managerUserId = bridge?.userId ?? null;
-        }
-        if (managerUserId !== applicantUserId) {
-          return [
-            {
-              email: manager.email,
-              userId: managerUserId,
-              name: `${manager.firstName} ${manager.lastName}`.trim(),
-            },
-          ];
-        }
-      }
-    }
+  // (Round L: `resolveRegularizationReviewers` and the local
+  // `resolveReviewerScope` are gone — ApprovalRoutingService is the one
+  // source of "who reviews" and "who may act".)
 
-    const rows = await this.databaseService.withTenant(tenantId, (tx) =>
-      tx
-        .select({
-          email: users.email,
-          userId: users.id,
-          fullName: users.full_name,
-        })
-        .from(memberships)
-        .innerJoin(users, eq(users.id, memberships.user_id))
-        .where(
-          and(
-            eq(memberships.tenant_id, tenantId),
-            eq(memberships.status, 'active'),
-            inArray(memberships.role, ['owner', 'admin']),
-            applicantUserId
-              ? sql`${memberships.user_id} <> ${applicantUserId}`
-              : sql`true`,
-          ),
-        ),
-    );
-    return rows.map((r) => ({
-      email: r.email,
-      userId: r.userId,
-      name: r.fullName ?? '',
-    }));
-  }
-
-  /**
-   * Round I (founder decision): owner/admin (and platform staff) review the
-   * whole workspace; a manager reviews only their direct reports. Plain
-   * membership lookup — never the self-healing employee resolver — so a
-   * manager seat without an employee row gets an EMPTY queue, not the
-   * workspace's.
-   */
-  private async resolveReviewerScope(
+  /** Round L: one resolver for every approval surface (modules/approvals). */
+  private resolveReviewerScope(
     tx: Db,
     userId: string,
     tenantId: string,
     roleHint?: string,
-  ): Promise<{ employeeId: string | null; orgWide: boolean }> {
-    const [m] = await tx
-      .select({ employeeId: memberships.employee_id, role: memberships.role })
-      .from(memberships)
-      .where(
-        and(
-          eq(memberships.user_id, userId),
-          eq(memberships.tenant_id, tenantId),
-          eq(memberships.status, 'active'),
-        ),
-      )
-      .limit(1);
-    const role = roleHint ?? m?.role ?? '';
-    return {
-      employeeId: m?.employeeId ?? null,
-      orgWide: ['owner', 'admin', 'fam', 'super_admin'].includes(role),
-    };
+  ): Promise<ReviewerCtx> {
+    return this.routing.resolveReviewerTx(tx, tenantId, userId, roleHint);
   }
 
+  /**
+   * Round L — the ROUTED queue: direct reports, requests escalated to me,
+   * and (owner/admin) requests at level 2 or with no manager at all; never
+   * the caller's own. Rows carry the escalation block for the Inbox pill.
+   */
   async listPendingRegularizations(
     userId: string,
     tenantId: string,
@@ -1677,12 +1802,8 @@ export class AttendanceService {
 
     const data = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewerScope(tx, userId, tenantId, roleHint);
-      const scope = reviewer.orgWide
-        ? sql`true`
-        : reviewer.employeeId
-          ? sql`${employees.reporting_manager_id} = ${reviewer.employeeId}`
-          : sql`false`;
-      return tx
+      const escalatedTo = pgAlias(employees, 'reg_escalated_to');
+      const rows = await tx
         .select({
           id: attendanceRegularizations.id,
           employeeId: attendanceRegularizations.employee_id,
@@ -1694,11 +1815,22 @@ export class AttendanceService {
           createdAt: attendanceRegularizations.created_at,
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
+          escalationLevel: attendanceRegularizations.escalation_level,
+          escalationReason: attendanceRegularizations.escalation_reason,
+          escalatedAt: attendanceRegularizations.escalated_at,
+          escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
         })
         .from(attendanceRegularizations)
         .leftJoin(
           employees,
           eq(attendanceRegularizations.employee_id, employees.id),
+        )
+        .leftJoin(
+          escalatedTo,
+          and(
+            eq(escalatedTo.id, attendanceRegularizations.escalated_to_employee_id),
+            eq(escalatedTo.tenant_id, tenantId),
+          ),
         )
         .where(
           and(
@@ -1709,18 +1841,115 @@ export class AttendanceService {
             // onboarding queue). IS DISTINCT FROM keeps rows whose employee
             // has no linked user account.
             sql`${employees.user_id} IS DISTINCT FROM ${userId}`,
-            // Round I: managers see their direct reports only; removed
-            // employees (round 21) never surface.
-            scope,
+            // Round L: the routed queue; removed employees (round 21) never
+            // surface.
+            this.routing.queuePredicate(
+              reviewer,
+              attendanceRegularizations,
+              attendanceRegularizations.employee_id,
+            ),
             isNull(employees.deleted_at),
           ),
         )
         .orderBy(desc(attendanceRegularizations.created_at))
         .limit(limit)
         .offset(offset);
+      return rows.map(({ escalationLevel, escalationReason, escalatedAt, escalatedToName, ...r }) => ({
+        ...r,
+        escalation: shapeEscalation({ escalationLevel, escalationReason, escalatedAt }, escalatedToName),
+        routedToMe: true as const,
+      }));
     });
 
     return { data, pagination: { page, limit, total: data.length } };
+  }
+
+  /**
+   * Round L — one pending regularization the caller MAY ACT ON, whether or
+   * not it is in their routed queue: the owner/HR-admin "open directly" path
+   * behind the Inbox deep link (`/inbox?tab=approvals&request=<id>`). Same
+   * row shape as `getAdminOverview().pending.regularizations[]`. 404 for
+   * anything else — unknown, decided, or not the caller's to review — never
+   * a 403 that would confirm the row exists.
+   */
+  async getRegularizationForReviewer(
+    regularizationId: string,
+    userId: string,
+    tenantId: string,
+    roleHint?: string,
+  ) {
+    return this.databaseService.withTenant(tenantId, async (tx) => {
+      const reviewer = await this.resolveReviewerScope(tx, userId, tenantId, roleHint);
+      const escalatedTo = pgAlias(employees, 'reg_escalated_to');
+      const [row] = await tx
+        .select({
+          id: attendanceRegularizations.id,
+          employeeId: attendanceRegularizations.employee_id,
+          userId: sql<string | null>`(SELECT m.user_id FROM memberships m WHERE m.employee_id = ${attendanceRegularizations.employee_id} AND m.tenant_id = ${attendanceRegularizations.tenant_id} AND m.status = 'active' LIMIT 1)`,
+          employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
+          employeeCode: employees.employee_code,
+          employeeDeletedAt: employees.deleted_at,
+          attendanceDate: attendanceRegularizations.attendance_date,
+          requestType: attendanceRegularizations.request_type,
+          proposedInTime: attendanceRegularizations.proposed_in_time,
+          proposedOutTime: attendanceRegularizations.proposed_out_time,
+          reason: attendanceRegularizations.reason,
+          status: attendanceRegularizations.status,
+          requestedAt: attendanceRegularizations.created_at,
+          escalationLevel: attendanceRegularizations.escalation_level,
+          escalationReason: attendanceRegularizations.escalation_reason,
+          escalatedAt: attendanceRegularizations.escalated_at,
+          escalatedTo: attendanceRegularizations.escalated_to_employee_id,
+          escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
+        })
+        .from(attendanceRegularizations)
+        .leftJoin(employees, eq(attendanceRegularizations.employee_id, employees.id))
+        .leftJoin(
+          escalatedTo,
+          and(
+            eq(escalatedTo.id, attendanceRegularizations.escalated_to_employee_id),
+            eq(escalatedTo.tenant_id, tenantId),
+          ),
+        )
+        .where(
+          and(
+            eq(attendanceRegularizations.id, regularizationId),
+            eq(attendanceRegularizations.tenant_id, tenantId),
+          ),
+        )
+        .limit(1);
+      if (!row || row.status !== 'pending' || row.employeeDeletedAt) {
+        throw new NotFoundException('Regularization not found');
+      }
+      try {
+        await this.routing.assertMayActTx(
+          tx,
+          tenantId,
+          reviewer,
+          { applicantEmployeeId: row.employeeId, level: row.escalationLevel, escalatedTo: row.escalatedTo },
+          'regularization',
+        );
+      } catch (e) {
+        if (e instanceof ForbiddenException) throw new NotFoundException('Regularization not found');
+        throw e;
+      }
+      return {
+        id: row.id,
+        employeeId: row.employeeId,
+        userId: row.userId,
+        employeeName: row.employeeName,
+        employeeCode: row.employeeCode,
+        attendanceDate: row.attendanceDate,
+        requestType: row.requestType,
+        proposedInTime: row.proposedInTime?.toISOString() ?? null,
+        proposedOutTime: row.proposedOutTime?.toISOString() ?? null,
+        reason: row.reason,
+        status: row.status,
+        requestedAt: row.requestedAt.toISOString(),
+        avatarUrl: null as string | null,
+        escalation: shapeEscalation(row, row.escalatedToName),
+      };
+    });
   }
 
   async reviewRegularization(
@@ -1753,53 +1982,34 @@ export class AttendanceService {
           throw new BadRequestException(`Cannot review a ${reg.status} request`);
         }
 
-        // Separation of duties: an approver may never approve their own
-        // regularization. Owner/admin clear the @Roles('manager') gate on the
-        // route, so without this an owner could self-approve.
-        const [applicant] = await tx
-          .select({
-            userId: employees.user_id,
-            reportingManagerId: employees.reporting_manager_id,
-          })
-          .from(employees)
-          .where(
-            and(
-              eq(employees.id, reg.employee_id),
-              eq(employees.tenant_id, tenantId),
-            ),
-          )
-          .limit(1);
-        // Round K: the employee↔user link lives in two places (employees.user_id
-        // and the active membership's employee_id). A row with user_id NULL
-        // used to skip this guard entirely, so the bridge is checked too — the
-        // guard trips if EITHER points at the reviewer.
-        const [selfBridge] = await tx
-          .select({ id: memberships.id })
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.tenant_id, tenantId),
-              eq(memberships.employee_id, reg.employee_id),
-              eq(memberships.user_id, reviewerUserId),
-              eq(memberships.status, 'active'),
-            ),
-          )
-          .limit(1);
-        if (
-          (applicant?.userId && applicant.userId === reviewerUserId) ||
-          selfBridge
-        ) {
-          throw new ForbiddenException(
-            'You cannot approve your own regularization request — another approver must review it.',
-          );
-        }
-        // Round I: a manager may only decide on their OWN reports' requests.
+        // Round L: one guard for every review path — the live reporting
+        // manager always may act; the manager's manager once the request was
+        // escalated to them; owner/admin always (opened directly); never the
+        // applicant — through employees.user_id AND the membership bridge
+        // (Round K: a row with user_id NULL used to skip the self check).
         const reviewer = await this.resolveReviewerScope(tx, reviewerUserId, tenantId, roleHint);
-        if (!reviewer.orgWide && applicant?.reportingManagerId !== reviewerEmployeeId) {
-          throw new ForbiddenException(
-            'You can only review regularization requests from your direct reports.',
-          );
-        }
+        const how = await this.routing.assertMayActTx(
+          tx,
+          tenantId,
+          reviewer,
+          {
+            applicantEmployeeId: reg.employee_id,
+            level: reg.escalation_level,
+            escalatedTo: reg.escalated_to_employee_id,
+          },
+          'regularization',
+        );
+        // Decided over the routed manager's head (owner/admin directly, or
+        // the skip-level manager)? They are told after commit.
+        const onBehalfRoute =
+          how === 'manager' ? null : await this.routing.resolveRouteTx(tx, tenantId, reg.employee_id);
+        const [decider] = onBehalfRoute
+          ? await tx
+              .select({ firstName: employees.first_name, lastName: employees.last_name })
+              .from(employees)
+              .where(and(eq(employees.id, reviewerEmployeeId), eq(employees.tenant_id, tenantId)))
+              .limit(1)
+          : [undefined];
 
         const newStatus =
           dto.action === 'approve' ? ('approved' as const) : ('rejected' as const);
@@ -1878,9 +2088,33 @@ export class AttendanceService {
           .where(eq(employees.id, reg.employee_id))
           .limit(1);
 
-        return { updated: updated!, requester };
+        return {
+          updated: updated!,
+          requester,
+          onBehalfRoute,
+          deciderName: `${decider?.firstName ?? ''} ${decider?.lastName ?? ''}`.trim(),
+          escalationLevel: reg.escalation_level,
+        };
       },
     );
+
+    // Round L: the routed manager (and the skip-level manager, once it had
+    // reached them) learn that someone decided on their behalf. Best-effort.
+    if (result.onBehalfRoute) {
+      void this.routing.notifyDecidedOnBehalf(
+        tenantId,
+        'regularization',
+        regularizationId,
+        result.onBehalfRoute,
+        result.escalationLevel,
+        {
+          deciderUserId: reviewerUserId,
+          deciderName: result.deciderName,
+          employeeName: `${result.requester?.firstName ?? ''} ${result.requester?.lastName ?? ''}`.trim(),
+          action: dto.action,
+        },
+      );
+    }
 
     // Round K: both decision notices open the requester's OWN log on that
     // month with the day highlighted (attendance_date is YYYY-MM-DD).

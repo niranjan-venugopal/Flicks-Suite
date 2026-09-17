@@ -10,6 +10,7 @@ import {
   index,
   date,
   real,
+  smallint,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
@@ -206,6 +207,21 @@ export const leaveRequests = pgTable(
     rejected_at: timestamp('rejected_at', { withTimezone: true }),
     cancelled_at: timestamp('cancelled_at', { withTimezone: true }),
     applied_at: timestamp('applied_at', { withTimezone: true }).defaultNow(),
+    // 0062 — Round L approval routing: 0 = reporting manager, 1 = manager's
+    // manager, 2 = Owner + HR Admins. `routed_manager_employee_id` is the
+    // display-only snapshot of the L0 manager at apply time; the live
+    // employees.reporting_manager_id governs "may act".
+    escalation_level: smallint('escalation_level').notNull().default(0),
+    escalated_at: timestamp('escalated_at', { withTimezone: true }),
+    escalation_reason: text('escalation_reason'), // sla | reviewer_on_leave | no_manager | no_skip_manager
+    escalated_to_employee_id: uuid('escalated_to_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
+    routed_manager_employee_id: uuid('routed_manager_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -224,6 +240,10 @@ export const leaveRequests = pgTable(
     // 0061 — the calendar's week/day range scan (mirrors the migration so
     // drizzle-kit never proposes dropping it).
     index('idx_leave_requests_tenant_range').on(t.tenant_id, t.start_date, t.end_date),
+    // 0062 — the escalation sweep's scan over OPEN requests by level + anchor.
+    index('idx_leave_requests_escalation')
+      .on(t.tenant_id, t.escalation_level, sql`(COALESCE(applied_at, created_at))`)
+      .where(sql`status = 'pending'`),
   ],
 );
 

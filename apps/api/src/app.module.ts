@@ -53,6 +53,7 @@ import { CrmModule } from './modules/crm/crm.module';
 import { FlagsModule } from './core/flags/flags.module';
 import { ModuleAccessModule } from './core/auth/module-access.module';
 import { PmModule } from './modules/pm/pm.module';
+import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
 
@@ -66,6 +67,9 @@ import { InvoicingJobs } from './jobs/invoicing.jobs';
 import { CrmJobs } from './jobs/crm.jobs';
 import { TrustJobs } from './jobs/trust.jobs';
 import { PmJobs } from './jobs/pm.jobs';
+// ApprovalEscalationJob (jobs/approval-escalation.job.ts, every 15 min) is
+// provided by ApprovalsModule below — one instance, injectable by the FAM
+// console's manual `run` trigger — rather than listed here twice.
 
 @Module({
   imports: [
@@ -185,6 +189,8 @@ import { PmJobs } from './jobs/pm.jobs';
     FlagsModule,
     ModuleAccessModule,
     PmModule,
+    // Round L — approval routing + the 24 h escalation sweep (item 2).
+    ApprovalsModule,
   ],
   controllers: [HealthController],
   providers: [

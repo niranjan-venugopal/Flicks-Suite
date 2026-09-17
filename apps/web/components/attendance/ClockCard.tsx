@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Btn, Icon, Modal, Pill, type PillTone } from '@/components/proto'
 import {
   useBreakEnd,
@@ -109,6 +110,7 @@ export function ClockCard() {
   const breakStart = useBreakStart()
   const breakEnd = useBreakEnd()
   const { toast } = useToast()
+  const router = useRouter()
 
   // Mount guard — Date.now() / new Date() during SSR produces a value that's
   // a second or two stale by the time React hydrates on the client, which
@@ -134,6 +136,26 @@ export function ClockCard() {
   const dayComplete = !!data?.firstPunchInAt && !!data?.lastPunchOutAt
   const isOnBreak = !!data?.isOnBreak
   const tz = data?.shift?.timezone ?? 'Asia/Kolkata'
+  // Round L (founder item 1): the day's expectation. On approved full-day
+  // leave there is no Clock-in (the API 409s it); half-day and pending leave
+  // keep the button and explain themselves.
+  const onLeave = data?.dayKind === 'leave'
+  const halfDayLeave = data?.dayKind === 'half_day_leave'
+  const pendingLeave = !!data?.pendingLeave && !onLeave
+  const leaveType = data?.leave?.leaveTypeName ?? 'Leave'
+  const leaveSession =
+    data?.leave?.session === 'first_half'
+      ? 'first half'
+      : data?.leave?.session === 'second_half'
+        ? 'second half'
+        : 'half day'
+  // Approved full-day leave is rendered IN the button row (with the way out
+  // — Cancel leave); these two are hints under the shift line.
+  const leaveNote = halfDayLeave
+    ? `Half-day leave today (${leaveType} · ${leaveSession}) — clock in for the other half.`
+    : pendingLeave
+      ? `Leave pending approval for today (${leaveType}) — you're still expected to clock in until it's approved.`
+      : null
   const nowStr = mounted
     ? new Date().toLocaleTimeString('en-IN', {
         timeZone: tz,
@@ -182,6 +204,13 @@ export function ClockCard() {
       toast({
         title: 'Day already complete',
         description: "You've already clocked out for today. See you tomorrow!",
+      })
+      return
+    }
+    if (onLeave && !isClockedIn) {
+      toast({
+        title: 'On approved leave today',
+        description: 'No clock-in needed. If you are working today, cancel the leave first.',
       })
       return
     }
@@ -253,14 +282,18 @@ export function ClockCard() {
       ? 'yellow'
       : isClockedIn
         ? 'green'
-        : 'yellow'
+        : onLeave
+          ? 'purple'
+          : 'yellow'
   const statusLabel = dayComplete
     ? 'Day complete'
     : isOnBreak
       ? 'On break'
       : isClockedIn
         ? 'Clocked in'
-        : 'Not clocked in'
+        : onLeave
+          ? 'On leave'
+          : 'Not clocked in'
 
   const shiftLabel = data?.shift
     ? `Working hours · ${data.shift.startTime}–${data.shift.endTime} ${data.shift.timezone.split('/')[1] ?? ''}`
@@ -374,6 +407,35 @@ export function ClockCard() {
               </span>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--green)' }}>Clock out</span>
             </button>
+          ) : onLeave && !dayComplete ? (
+            // Approved full-day leave: no Clock-in at all (the API would
+            // 409) — one line that says why AND carries the way out, so
+            // "cancel the leave first" is never a dead end (house rule 8).
+            <div
+              data-testid="clock-on-leave"
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', gap: 10,
+                minHeight: 52, padding: '8px 10px 8px 14px', borderRadius: 10,
+                background: 'rgba(155,123,250,.08)', border: '1px solid rgba(155,123,250,.35)',
+              }}
+            >
+              <Icon.cal size={15} style={{ color: 'var(--purple)', flexShrink: 0 }} />
+              <span
+                data-testid="clock-leave-note"
+                data-kind="leave"
+                style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: 'var(--text-2)' }}
+              >
+                On approved leave today ({leaveType}) — no clock-in needed.
+              </span>
+              <Btn
+                kind="ghost"
+                size="sm"
+                data-testid="clock-cancel-leave"
+                onClick={() => router.push('/leave')}
+              >
+                Cancel leave
+              </Btn>
+            </div>
           ) : (
             <Btn
               kind={dayComplete ? 'secondary' : 'primary'}
@@ -422,8 +484,33 @@ export function ClockCard() {
             <Icon.clock size={14} style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }} />
             <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>
               Shift: {data.shift.name} · Grace period {data.shift.gracePeriodMinutes} min ·{' '}
-              {data.isWorkingDay ? 'Working day' : 'Non-working day'}
+              {data.isWorkingDay
+                ? 'Working day'
+                : data.dayKind === 'holiday'
+                  ? `Holiday${data.holidayName ? ` · ${data.holidayName}` : ''}`
+                  : 'Non-working day'}
             </div>
+          </div>
+        )}
+
+        {/* Round L — leave hint: half-day, or a pending request (approved
+            full-day leave lives in the button row above). */}
+        {leaveNote && (
+          <div
+            data-testid="clock-leave-note"
+            data-kind={halfDayLeave ? 'half_day_leave' : 'pending'}
+            style={{
+              display: 'flex',
+              gap: 8,
+              marginTop: 8,
+              padding: '10px 12px',
+              background: 'rgba(254,216,0,.06)',
+              border: '1px solid rgba(254,216,0,.25)',
+              borderRadius: 8,
+            }}
+          >
+            <Icon.cal size={14} style={{ color: 'var(--yellow)', marginTop: 1, flexShrink: 0 }} />
+            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>{leaveNote}</div>
           </div>
         )}
 

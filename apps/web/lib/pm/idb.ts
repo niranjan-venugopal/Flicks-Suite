@@ -8,9 +8,14 @@ import type { PendingMutation } from './types'
  * re-bootstraps (worst case is a refresh, never corruption).
  */
 
-// v2: projects layer stores (Sprint 36) · v3: cycles (Sprint 37). The
-// upgrade callback creates any missing store, so upgrades happen in place.
-const VERSION = 3
+// v2: projects layer stores (Sprint 36) · v3: cycles (Sprint 37) · v4:
+// issue relations (Round L). The upgrade callback creates any missing store,
+// so upgrades happen in place. A pre-v4 snapshot never held relations, and
+// no delta will ever replay the ones that already exist — so the v4 upgrade
+// also drops the cursor, which makes the next start a cold bootstrap
+// (disposable-cache doctrine: the worst case is one re-download).
+const VERSION = 4
+const RELATIONS_SINCE = 4
 const TABLE_STORES = [
   'pm_teams',
   'pm_team_memberships',
@@ -20,6 +25,7 @@ const TABLE_STORES = [
   'pm_issues',
   'pm_issue_labels',
   'pm_issue_subscribers',
+  'pm_issue_relations',
   'pm_projects',
   'pm_project_teams',
   'pm_project_members',
@@ -38,9 +44,12 @@ export function dbName(tenantId: string, userId: string): string {
 
 export async function openPmDb(tenantId: string, userId: string): Promise<PmDb | null> {
   if (typeof indexedDB === 'undefined') return null
+  // `blocking` fires only after this open has resolved, so the handle is
+  // always set by the time it needs closing.
+  let handle: PmDb | null = null
   try {
-    return await openDB(dbName(tenantId, userId), VERSION, {
-      upgrade(db) {
+    handle = await openDB(dbName(tenantId, userId), VERSION, {
+      upgrade(db, oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta')
         if (!db.objectStoreNames.contains('pending')) {
           db.createObjectStore('pending', { keyPath: 'clientMutationId' })
@@ -48,11 +57,25 @@ export async function openPmDb(tenantId: string, userId: string): Promise<PmDb |
         for (const s of TABLE_STORES) {
           if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)
         }
+        // Existing (pre-relations) snapshot: forget the cursor so start()
+        // cold-boots instead of rendering an empty Relations card forever.
+        // The pending queue is untouched — unflushed work survives.
+        if (oldVersion > 0 && oldVersion < RELATIONS_SINCE) {
+          void tx.objectStore('meta').delete('cursor')
+        }
       },
       blocked() {
         /* another tab holds an old version — proceed; reads still work */
       },
+      // A NEWER version is opening in another tab: release our handle so the
+      // upgrade can proceed instead of parking that tab on its spinner. This
+      // engine keeps working against its in-memory store (persists become
+      // no-ops on the closed handle) until the page reloads.
+      blocking() {
+        handle?.close()
+      },
     })
+    return handle
   } catch {
     // Corrupt/blocked DB → disposable-cache doctrine: destroy and signal cold boot.
     await destroyPmDb(tenantId, userId).catch(() => undefined)
@@ -70,14 +93,24 @@ export async function destroyPmDb(tenantId: string, userId: string): Promise<voi
   })
 }
 
+/**
+ * The persisted snapshot. `cursor` is null when there is no usable table
+ * snapshot (first run, or the v4 upgrade cleared it) — the PENDING QUEUE is
+ * still returned in that case: unflushed offline work is the one thing the
+ * server cannot give back, so a missing cursor must never discard it.
+ */
 export async function loadSnapshot(db: PmDb): Promise<{
-  cursor: number
+  cursor: number | null
   tables: Record<string, Record<string, unknown>[]>
   pending: PendingMutation[]
 } | null> {
   try {
     const cursor = ((await db.get('meta', 'cursor')) as number | undefined) ?? null
-    if (cursor == null) return null
+    const sortPending = (raw: unknown[]) =>
+      (raw as PendingMutation[]).sort((a, b) => a.enqueuedAt - b.enqueuedAt)
+    if (cursor == null) {
+      return { cursor: null, tables: {}, pending: sortPending(await db.getAll('pending')) }
+    }
     // Round E — these reads were awaited one-by-one: 17 serialized IndexedDB
     // round trips before the first paint of every warm boot. Issued together
     // they overlap, cutting the hydration wait severalfold on big workspaces.
@@ -89,10 +122,7 @@ export async function loadSnapshot(db: PmDb): Promise<{
     TABLE_STORES.forEach((s, i) => {
       tables[s] = tableArrays[i] as Record<string, unknown>[]
     })
-    const pending = (pendingRaw as PendingMutation[]).sort(
-      (a, b) => a.enqueuedAt - b.enqueuedAt,
-    )
-    return { cursor, tables, pending }
+    return { cursor, tables, pending: sortPending(pendingRaw) }
   } catch {
     return null
   }

@@ -69,9 +69,17 @@ export function TodaysSnapshotCard({
         >
           {isLoading || !overview ? (
             <SkeletonLine />
-          ) : overview.attendanceToday.holiday > 0 ? (
+          ) : /* Round L: "no attendance expected" only when NOBODY is expected —
+               a location-scoped holiday used to blank the whole line. */
+          overview.attendanceToday.expectedToday === 0 &&
+            overview.attendanceToday.holiday > 0 ? (
             <span className="text-sm text-brand-yellow font-gilroy">
               Holiday today — no attendance expected
+            </span>
+          ) : overview.attendanceToday.expectedToday === 0 &&
+            overview.attendanceToday.weekend > 0 ? (
+            <span className="text-sm text-white/50 font-gilroy">
+              Weekend — no attendance expected
             </span>
           ) : (
             <span className="text-sm font-gilroy text-white/70 tabular-nums">
@@ -104,6 +112,24 @@ export function TodaysSnapshotCard({
                     {overview.attendanceToday.onLeave}
                   </span>{' '}
                   on leave
+                </>
+              )}
+              {(overview.attendanceToday.pendingLeave ?? 0) > 0 && (
+                <>
+                  {' · '}
+                  <span className="text-brand-yellow">
+                    {overview.attendanceToday.pendingLeave}
+                  </span>{' '}
+                  leave pending
+                </>
+              )}
+              {(overview.attendanceToday.holiday ?? 0) > 0 && (
+                <>
+                  {' · '}
+                  <span className="text-white">
+                    {overview.attendanceToday.holiday}
+                  </span>{' '}
+                  on holiday
                 </>
               )}
             </span>

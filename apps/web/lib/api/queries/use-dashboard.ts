@@ -3,6 +3,36 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api } from '../client'
 
+// ─── Round L (B) — approval routing / escalation ─────────────────────────────
+// Shared by the pending leave / regularization / timesheet rows here and by
+// the Team → Leave / Team → Timesheets hooks. `null` = still with the
+// reporting manager (level 0).
+export type EscalationReason = 'sla' | 'reviewer_on_leave' | 'no_manager' | 'no_skip_manager'
+export interface ApprovalEscalation {
+  /** 0 = reporting manager · 1 = manager's manager · 2 = Owner + HR Admins */
+  level: 0 | 1 | 2
+  reason: EscalationReason | null
+  /** ISO instant the item reached this level (the level-1 clock anchor). */
+  at: string | null
+  /** The level-1 manager it was escalated to, when known. */
+  toName: string | null
+}
+/** `o.pending.timesheets[]` — the Inbox → Approvals timesheet kind. */
+export interface PendingTimesheetRow {
+  id: string
+  employeeId: string
+  userId: string | null
+  employeeName: string
+  employeeCode: string | null
+  periodStart: string
+  periodEnd: string
+  totalHours: number
+  totalBillableHours: number
+  submittedAt: string | null
+  avatarUrl: string | null
+  escalation: ApprovalEscalation | null
+}
+
 export interface AdminOverview {
   generatedAt: string
   /**
@@ -22,12 +52,23 @@ export interface AdminOverview {
     onLeave: number
     inactive: number
   }
+  /**
+   * Round L — from the day resolver on the tenant's "today". `present`
+   * INCLUDES late arrivals (`late` is the subset); `yetToClockIn` =
+   * expected ∧ no record ∧ no pending leave.
+   */
   attendanceToday: {
     present: number
     late: number
     onLeave: number
     yetToClockIn: number
     holiday: number
+    /** On their shift's non-working day. */
+    weekend: number
+    /** Expected, no record, a pending leave request covers today. */
+    pendingLeave: number
+    /** Everyone whose day is a working day (half-day leave included). */
+    expectedToday: number
   }
   pending: {
     leaveCount: number
@@ -57,6 +98,8 @@ export interface AdminOverview {
       reason: string | null
       appliedAt: string
       avatarUrl: string | null
+      /** Round L (B) — absent until the dashboard integration lands. */
+      escalation?: ApprovalEscalation | null
     }>
     regularizations: Array<{
       id: string
@@ -72,7 +115,13 @@ export interface AdminOverview {
       reason: string
       requestedAt: string
       avatarUrl: string | null
+      /** Round L (B) — absent until the dashboard integration lands. */
+      escalation?: ApprovalEscalation | null
     }>
+    // Round L (B) — timesheets join the queue (status 'submitted', routed to
+    // the caller). Optional until the dashboard integration lands.
+    timesheetCount?: number
+    timesheets?: PendingTimesheetRow[]
   }
   trends: {
     attendanceCompliancePct: number | null

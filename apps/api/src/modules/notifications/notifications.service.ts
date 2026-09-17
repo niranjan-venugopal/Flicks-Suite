@@ -77,13 +77,38 @@ const PREFERENCE_DEFAULTS: Record<
 // 'leave.approved') to a preference event. Unmapped types are always
 // delivered (critical/security — e.g. impersonation).
 function eventForInAppType(type: string): NotificationEvent | null {
+  // Round L: the approver-side timesheet rows (submit, escalation, "decided
+  // on your behalf") follow the approver's `timesheet_submitted` preference —
+  // the `timesheet.` prefix below is the REQUESTER's review preference and
+  // must not gate the reviewer's bell.
+  if (
+    type === 'timesheet.submitted' ||
+    type === 'timesheet.escalated' ||
+    type === 'timesheet.reviewed_on_behalf'
+  ) {
+    return 'timesheet_submitted';
+  }
   if (type.startsWith('timesheet.')) return 'timesheet_reviewed';
   // The "*.requested" types go to the approver on submit; everything else on
   // the prefix is a review outcome to the requester. Kept specific-first so the
   // dedicated "requested" preferences actually gate the approver's bell.
-  if (type === 'leave.requested') return 'leave_requested';
+  // Round L: an escalation is the same "please review" ping, one level up;
+  // "decided on your behalf" is the approver-side epilogue of the same item.
+  if (
+    type === 'leave.requested' ||
+    type === 'leave.escalated' ||
+    type === 'leave.reviewed_on_behalf'
+  ) {
+    return 'leave_requested';
+  }
   if (type.startsWith('leave.')) return 'leave_reviewed';
-  if (type === 'regularization.requested') return 'regularization_requested';
+  if (
+    type === 'regularization.requested' ||
+    type === 'regularization.escalated' ||
+    type === 'regularization.reviewed_on_behalf'
+  ) {
+    return 'regularization_requested';
+  }
   if (type.startsWith('regularization.')) return 'regularization_reviewed';
   if (type === 'onboarding.submitted') return 'onboarding_submitted';
   if (type.startsWith('onboarding.')) return 'onboarding_reviewed';
@@ -163,6 +188,8 @@ type EmailTemplate =
   | 'timesheet-approved'
   | 'timesheet-rejected'
   | 'timesheet-rework'
+  // Approvals (Round L) — an item moved up the routing chain
+  | 'approval-escalated'
   // Invoicing (v3)
   | 'invoice-sent'
   | 'payment-received'
@@ -174,6 +201,7 @@ type EmailTemplate =
   | 'auditor-invite'
   // Billing
   | 'trial-ending-soon'
+  | 'coupon-redeemed'
   | 'trial-ended'
   | 'subscription-activated'
   | 'subscription-payment-success'
@@ -631,6 +659,44 @@ export class NotificationsService {
         };
       }
 
+      case 'approval-escalated': {
+        // Round L (item 2): a leave request / regularization / timesheet moved
+        // up the routing chain (24 h without action, reviewer on leave, or no
+        // manager). Every value is user-controlled (names, the summary line
+        // built from leave-type names) → escaped. The button only OPENS the
+        // item; nothing changes until the reviewer confirms in the app.
+        const { reviewerName, employeeName, kindLabel, summary, reasonText, levelLabel, reviewUrl } =
+          props as {
+            reviewerName: string;
+            employeeName: string;
+            kindLabel: string;
+            summary: string;
+            reasonText: string;
+            levelLabel?: string;
+            reviewUrl: string;
+          };
+        const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+        return {
+          subject: `Escalated: ${plain(employeeName)}'s ${plain(kindLabel)} needs your review`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #f59e0b;">Escalated to you</h2>
+              <p>Hi ${this.esc(reviewerName)},</p>
+              <p><strong>${this.esc(employeeName)}</strong>'s ${this.esc(kindLabel)} was escalated to you${levelLabel ? ` ${this.esc(levelLabel)}` : ''} — ${this.esc(reasonText)}.</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+                <tr><td style="padding: 8px; color: #666;">Request:</td><td style="padding: 8px;">${this.esc(summary)}</td></tr>
+                <tr><td style="padding: 8px; color: #666;">Why:</td><td style="padding: 8px;">${this.esc(reasonText)}</td></tr>
+              </table>
+              <p style="margin: 24px 0 8px;">
+                <a href="${this.esc(reviewUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review now</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin: 0 0 20px;">Nothing changes until you confirm in the app. The reporting manager can still act too.</p>
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open Inbox → Approvals.</p>
+            </div>
+          `,
+        };
+      }
+
       case 'leave-approved': {
         const { employeeName, leaveType, startDate, endDate, approverName } =
           props as {
@@ -742,6 +808,47 @@ export class NotificationsService {
                   ? `This meeting no longer appears on your ${appName} calendar.`
                   : `Accept or decline from your ${appName} calendar. The attached invite adds it to Outlook or Google Calendar.`
               }</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'coupon-redeemed': {
+        // Round L (item 4): sent to owner + HR admins once a coupon is applied.
+        // Greets the PERSON (recipientName, fallback "there") and names the
+        // workspace in the body. Tenant name, recipient name and code are
+        // user-controlled → escaped; the link is the app's own billing page.
+        // trialEndsAt may be null/empty when the date is unknown — the
+        // sentence is dropped rather than reading "ends on —".
+        const { tenantName, recipientName, code, months, trialEndsAt, billingUrl } = props as {
+          tenantName: string;
+          recipientName?: string | null;
+          code: string;
+          months: number;
+          trialEndsAt?: string | null;
+          billingUrl: string;
+        };
+        const n = Number(months) || 0;
+        const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+        const who = plain(recipientName) || 'there';
+        const when = plain(trialEndsAt);
+        const hasDate = when !== '' && when !== '—';
+        return {
+          subject: `Coupon ${plain(code).toUpperCase()} applied — ${n} free month${n === 1 ? '' : 's'}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #22c55e;">Coupon applied</h2>
+              <p>Hi ${this.esc(who)},</p>
+              <p>Coupon <strong>${this.esc(String(code ?? '').toUpperCase())}</strong> is now active on the
+              <strong>${this.esc(tenantName)}</strong> workspace on ${appName} —
+              <strong>${this.esc(n)} free month${n === 1 ? '' : 's'}</strong>.</p>
+              ${
+                hasDate
+                  ? `<p>Your trial now ends on <strong>${this.esc(when)}</strong>. Nothing is charged until then.</p>`
+                  : `<p>Nothing is charged while the trial runs.</p>`
+              }
+              <a href="${this.esc(billingUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none;">View billing</a>
+              <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Sent to the workspace's Owner and HR Admins.</p>
             </div>
           `,
         };

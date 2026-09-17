@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
 import {
@@ -18,6 +18,7 @@ import {
   emailEventForInAppType,
 } from '../modules/notifications/notifications.service';
 import { PmCyclesService } from '../modules/pm/cycles.service';
+import { PmFilesService } from '../modules/pm/files.service';
 
 const EVENT_RETENTION_DAYS = 90; // §3.7 — dispatched outbox rows
 const MUTATION_RETENTION_DAYS = 30; // §3.2 — idempotency ledger
@@ -50,7 +51,26 @@ export class PmJobs {
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly notifications: NotificationsService,
     private readonly cycles: PmCyclesService,
+    // Round L — optional so specs that build PmJobs with the three original
+    // collaborators keep constructing; the prune tick no-ops without it.
+    @Optional() private readonly files?: PmFilesService,
   ) {}
+
+  /**
+   * Round L item 6 — attachment drafts (uploaded while composing, never
+   * bound to an issue/comment) are orphans after 24 h: rows hard-deleted,
+   * objects removed best-effort. Bound files are never touched.
+   */
+  @Cron('45 3 * * *', { name: 'pm-draft-files-prune', timeZone: 'UTC' })
+  async pruneDraftFiles(): Promise<void> {
+    if (!runsWorkloads() || !this.files) return;
+    try {
+      const n = await this.files.pruneOrphanDrafts(new Date());
+      if (n) this.logger.log(`pm-draft-files-prune: ${n} orphan draft files removed`);
+    } catch (err) {
+      this.logger.error(`pm-draft-files-prune failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   /** §7.1 — hourly, tz-aware via stored team-midnight boundaries. */
   @Cron('7 * * * *', { name: 'pm-cycle-sweep', timeZone: 'UTC' })

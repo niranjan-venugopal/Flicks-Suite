@@ -8,6 +8,8 @@ import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
+import { currentPmPath, issueHref } from '@/lib/pm/nav'
+import { issuePrefetchProps } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 
 // ─────────────────────────────────────────────────────────
@@ -298,7 +300,9 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
         {cycleIssues.map((i) => {
           const st = store.states.get(i.state_id)
           return (
-            <div key={i.id} onClick={() => router.push(`/pm/issues/${i.id}`)}
+            <div key={i.id} data-issue-row={i.id}
+              onClick={() => router.push(issueHref(i.id, currentPmPath()))}
+              {...issuePrefetchProps(qc, i.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', borderBottom: '1px solid var(--bord)', cursor: 'pointer' }}>
               {st && <StateGlyph cat={st.category} size={13} />}
               <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58, flexShrink: 0 }}>

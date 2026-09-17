@@ -24,8 +24,22 @@ import type { PmSyncTable } from '@flicks/shared/pm';
 import { DB_SERVICE_ROLE } from '../../../core/database/database.module';
 import { DatabaseService } from '../../../core/database/database.service';
 import { MediaService } from '../../media/media.service';
-import { PmVisibilityService } from './visibility.service';
+import { PmVisibilityService, type PmScope } from './visibility.service';
 import { PmTeamsService } from '../teams.service';
+
+interface RelationRow {
+  id: string;
+  issue_id: string;
+  related_issue_id: string;
+  type: string;
+}
+
+const RELATION_PROJECTION = {
+  id: pmIssueRelations.id,
+  issue_id: pmIssueRelations.issue_id,
+  related_issue_id: pmIssueRelations.related_issue_id,
+  type: pmIssueRelations.type,
+};
 
 /**
  * FSE server core (PRD v6 §3.3/§3.4).
@@ -105,6 +119,38 @@ export class PmSyncService {
         logo_url: logo_key ? await this.media.servedUrl(logo_key, null, 64) : null,
       })),
     );
+  }
+
+  /**
+   * Round L — relations ship in BOTH directions (an issue's page needs the
+   * rows where it is the `related_issue_id` too), so a row can reach the
+   * client whose OTHER end it may not see. Keep only rows whose both ends
+   * are visible: `known` are issue ids already proven visible by the caller;
+   * anything else is fetched once and run through the central rule.
+   */
+  private async visibleRelationsTx(
+    tx: Db,
+    tenantId: string,
+    scope: PmScope,
+    rows: RelationRow[],
+    known: ReadonlySet<string>,
+  ): Promise<RelationRow[]> {
+    if (!rows.length) return [];
+    const unknown = new Set<string>();
+    for (const r of rows) {
+      if (!known.has(r.issue_id)) unknown.add(r.issue_id);
+      if (!known.has(r.related_issue_id)) unknown.add(r.related_issue_id);
+    }
+    const extra = new Set<string>();
+    if (unknown.size) {
+      const others = await tx
+        .select({ id: pmIssues.id, team_id: pmIssues.team_id, project_id: pmIssues.project_id })
+        .from(pmIssues)
+        .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, [...unknown]), isNull(pmIssues.deleted_at)));
+      for (const o of others) if (this.visibility.issueVisible(scope, o)) extra.add(o.id);
+    }
+    const ok = (id: string) => known.has(id) || extra.has(id);
+    return rows.filter((r) => ok(r.issue_id) && ok(r.related_issue_id));
   }
 
   /**
@@ -267,24 +313,38 @@ export class PmSyncService {
                 .select({ issue_id: pmIssueSubscribers.issue_id, user_id: pmIssueSubscribers.user_id })
                 .from(pmIssueSubscribers)
                 .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), inArray(pmIssueSubscribers.issue_id, issueIds))),
+              // Round L — both directions: the client renders "blocked by"
+              // from rows where this issue is the related_issue_id.
               tx
-                .select({
-                  id: pmIssueRelations.id, issue_id: pmIssueRelations.issue_id,
-                  related_issue_id: pmIssueRelations.related_issue_id, type: pmIssueRelations.type,
-                })
+                .select(RELATION_PROJECTION)
                 .from(pmIssueRelations)
-                .where(and(eq(pmIssueRelations.tenant_id, tenantId), inArray(pmIssueRelations.issue_id, issueIds))),
+                .where(
+                  and(
+                    eq(pmIssueRelations.tenant_id, tenantId),
+                    or(inArray(pmIssueRelations.issue_id, issueIds), inArray(pmIssueRelations.related_issue_id, issueIds)),
+                  ),
+                ),
             ]);
             return { rows, issueLabels, subscribers, relations };
           }),
         );
+        // Relations are collected across buckets (a cross-team link is
+        // reached from BOTH teams' buckets), deduped by id, and filtered so
+        // the other end is something this user can see.
+        const shippedIssueIds = new Set<string>();
+        const relationById = new Map<string, RelationRow>();
         for (const b of bucketPayloads) {
           if (!b) continue;
           push('pm_issues', b.rows);
           push('pm_issue_labels', b.issueLabels);
           push('pm_issue_subscribers', b.subscribers);
-          push('pm_issue_relations', b.relations);
+          for (const r of b.rows) shippedIssueIds.add(r.id);
+          for (const r of b.relations) relationById.set(r.id, r);
         }
+        push(
+          'pm_issue_relations',
+          await this.visibleRelationsTx(tx, tenantId, scope, [...relationById.values()], shippedIssueIds),
+        );
 
         // Projects layer (§6): projects/milestones/initiatives are instant
         // models; project-update BODIES ride along (small text, latest 10/project).
@@ -623,13 +683,24 @@ export class PmSyncService {
                     .from(pmIssueSubscribers)
                     .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), inArray(pmIssueSubscribers.issue_id, visibleIssueIds)));
                 } else if (table === 'pm_issue_relations') {
-                  upserts.pm_issue_relations = await tx
-                    .select({
-                      id: pmIssueRelations.id, issue_id: pmIssueRelations.issue_id,
-                      related_issue_id: pmIssueRelations.related_issue_id, type: pmIssueRelations.type,
-                    })
+                  // Round L — both directions for the scoped issues; the
+                  // client drops every row touching a scoped issue and
+                  // re-adds these, so the set converges either way.
+                  const rows = await tx
+                    .select(RELATION_PROJECTION)
                     .from(pmIssueRelations)
-                    .where(and(eq(pmIssueRelations.tenant_id, tenantId), inArray(pmIssueRelations.issue_id, visibleIssueIds)));
+                    .where(
+                      and(
+                        eq(pmIssueRelations.tenant_id, tenantId),
+                        or(
+                          inArray(pmIssueRelations.issue_id, visibleIssueIds),
+                          inArray(pmIssueRelations.related_issue_id, visibleIssueIds),
+                        ),
+                      ),
+                    );
+                  upserts.pm_issue_relations = await this.visibleRelationsTx(
+                    tx, tenantId, scope, rows, new Set(visibleIssueIds),
+                  );
                 }
                 // Attach the scope ids so the client knows which issues' sets
                 // these collections replace (empty set ⇒ clear).

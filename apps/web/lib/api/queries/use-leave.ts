@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 import { track, EVENTS } from '@/lib/analytics/posthog'
+import type { ApprovalEscalation } from './use-dashboard'
 
 // ─── Wire types — match the API responses exactly ─────────────────────────────
 
@@ -47,6 +48,10 @@ export interface LeaveRequest {
   appliedAt: string
   leaveTypeName: string | null
   leaveTypeColor: string | null
+  // Round L — employee-facing routing: the level only, never a reason or a
+  // name. 'hr' when there is no reporting manager (or after two escalations).
+  escalation?: { level: 0 | 1 | 2 } | null
+  withLabel?: 'manager' | 'hr'
 }
 
 export interface PendingLeaveRequest {
@@ -62,6 +67,9 @@ export interface PendingLeaveRequest {
   employeeCode: string
   leaveTypeName: string | null
   leaveTypeCode: string | null
+  /** Round L — set once GET /leave/pending is routed (Phase 2). */
+  escalation?: ApprovalEscalation | null
+  routedToMe?: boolean
 }
 
 export interface ApplyLeavePayload {
@@ -145,6 +153,12 @@ export interface TeamLeaveRequest {
   approvedAt: string | null
   rejectedAt: string | null
   cancelledAt: string | null
+  // Round L — routing chips (Team → Leave stays workspace-wide for
+  // owner/admin; `routedToMe` says whether the row is in THEIR queue). All
+  // optional until the leave service integration lands (Phase 2).
+  routedToMe?: boolean
+  managerName?: string | null
+  escalation?: ApprovalEscalation | null
 }
 export interface TeamLeaveParams {
   status?: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'all'

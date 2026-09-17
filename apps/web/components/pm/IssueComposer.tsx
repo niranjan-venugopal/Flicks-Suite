@@ -7,7 +7,12 @@ import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
 import { PillOption, PropertyPill } from '@/components/pm/PropertyPill'
+import { RichEditor } from '@/components/pm/editor'
+import { AttachButton, AttachmentList, DropZone } from '@/components/pm/attachments'
+import { toast } from '@/components/ui/use-toast'
 import { api } from '@/lib/api/client'
+import { uploadPmFiles, useAttachmentsEnabled } from '@/lib/api/queries/use-pm-files'
+import type { FileUrlMap, PmFile, PmFileKind } from '@/lib/pm/files'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmLabelRow, PmStateRow } from '@/lib/pm/types'
 
@@ -22,6 +27,12 @@ import type { PmLabelRow, PmStateRow } from '@/lib/pm/types'
 // title + description + state + priority + assignee + estimate + labels +
 // project + milestone + due date, works in BOTH modes (engine or REST
 // kill-switch), honors the team's default template, and keeps "Create more".
+//
+// Round L item 6 — the description is the Linear-style RichEditor (paste or
+// drop an image → inline), with Attach / drop-zone chips. Every upload is a
+// DRAFT keyed by a per-open draftId and travels with the create as
+// `attachment_ids` (the API binds them to the new issue). With the
+// pm_attachments flag off it is the plain textarea it always was.
 // ─────────────────────────────────────────────────────────
 
 interface TeamOption {
@@ -71,6 +82,7 @@ export function IssueComposer({
 }: IssueComposerProps) {
   const qc = useQueryClient()
   const titleRef = useRef<HTMLInputElement>(null)
+  const { rich, attachments } = useAttachmentsEnabled()
 
   // ── data sources, mode-agnostic (engine store or REST) ──
   const teamsQ = useQuery({
@@ -112,6 +124,19 @@ export function IssueComposer({
   const [labelIds, setLabelIds] = useState<string[]>([])
   const [createMore, setCreateMore] = useState(false)
 
+  // ── attachments (Round L item 6): drafts under a per-open id ──
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID())
+  const [pendingFiles, setPendingFiles] = useState<PmFile[]>([])
+  const [localUrls, setLocalUrls] = useState<FileUrlMap>({})
+  const inlineIdsRef = useRef<string[]>([])
+  const [progress, setProgress] = useState<number | null>(null)
+  const resetFiles = () => {
+    setDraftId(crypto.randomUUID())
+    setPendingFiles([])
+    setLocalUrls({})
+    inlineIdsRef.current = []
+  }
+
   // Re-arm presets when the composer OPENS (the parent's context may have
   // changed — a different board column, another project). Round E: only on
   // the closed→open transition — this effect used to re-fire on every preset
@@ -126,8 +151,10 @@ export function IssueComposer({
       setState(stateId ?? '')
       setProject(projectId ?? '')
       setMilestone(milestoneId ?? '')
+      resetFiles()
     }
     prevOpen.current = open
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, teamId, stateId, projectId, milestoneId])
 
   const effectiveTeam = team || teams[0]?.id || ''
@@ -178,10 +205,34 @@ export function IssueComposer({
   const toggleLabel = (id: string) =>
     setLabelIds((prev) => (prev.includes(id) ? prev.filter((l) => l !== id) : [...prev, id]))
 
+  // ── uploads: drafts under draftId, bound by the create ──
+  const upload = (files: File[], kind: PmFileKind, onProgress?: (pct: number) => void) =>
+    uploadPmFiles({ objectType: 'draft', objectId: draftId, kind, files, onProgress })
+  const attach = async (files: File[]) => {
+    setProgress(0)
+    try {
+      const out = await upload(files, 'attachment', setProgress)
+      setPendingFiles((prev) => [...prev, ...out])
+    } catch (err) {
+      toast({ title: 'Upload failed', description: err instanceof Error ? err.message : 'Try again', variant: 'destructive' })
+    } finally {
+      setProgress(null)
+    }
+  }
+  const uploadInline = async (file: File) => {
+    const [f] = await upload([file], 'inline')
+    if (!f) return null
+    inlineIdsRef.current.push(f.id)
+    if (f.url) setLocalUrls((m) => ({ ...m, [f.id.toLowerCase()]: f.url! }))
+    return { id: f.id, url: f.url }
+  }
+  const dropPending = (f: PmFile) => setPendingFiles((prev) => prev.filter((p) => p.id !== f.id))
+
   const [saving, setSaving] = useState(false)
   const submit = async () => {
     const t = title.trim()
     if (!t || !effectiveTeam || saving) return
+    const attachmentIds = [...new Set([...pendingFiles.map((f) => f.id), ...inlineIdsRef.current])]
     const body = {
       team_id: effectiveTeam,
       title: t,
@@ -202,6 +253,7 @@ export function IssueComposer({
         project_id: project || null,
         milestone_id: (project && milestone) || null,
         due_date: due || null,
+        attachment_ids: attachmentIds,
       })
       // Labels ride a chained set_labels — the create op has no label field
       // in the sync protocol, and the executor replays both idempotently.
@@ -212,19 +264,22 @@ export function IssueComposer({
         await api.post('/api/v1/pm/issues', {
           ...body,
           ...(labelIds.length ? { label_ids: labelIds } : {}),
+          ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
         })
         void qc.invalidateQueries({ queryKey: ['pm'] })
         onCreated?.()
-      } catch {
+      } catch (err) {
         setSaving(false)
+        toast({ title: 'Couldn’t create the issue', description: err instanceof Error ? err.message : 'Try again', variant: 'destructive' })
         return // keep the form intact so nothing typed is lost
       }
       setSaving(false)
     }
     // "Create more" keeps the property picks (Linear behavior) and clears
-    // only what identifies the issue.
+    // only what identifies the issue — and starts a fresh draft namespace.
     setTitle('')
     setDescription('')
+    resetFiles()
     if (!createMore) onClose()
     else titleRef.current?.focus()
   }
@@ -238,6 +293,7 @@ export function IssueComposer({
   const selProject = projects.find((p) => p.id === project) ?? null
   const projectLabel = selProject?.name ?? (project ? projectName ?? 'Project…' : 'Project')
   const selMilestone = milestones.find((m) => m.id === milestone) ?? null
+  const descPlaceholder = tmpl?.description_md ? 'Add description… (the team template fills in if left empty)' : 'Add description…'
 
   return (
     <Modal
@@ -259,234 +315,257 @@ export function IssueComposer({
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>⌘↵ create</span>
           <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn kind="primary" disabled={!title.trim() || saving} onClick={() => void submit()}>
+          <Btn kind="primary" disabled={!title.trim() || saving} onClick={() => void submit()} data-testid="composer-create">
             {saving ? 'Creating…' : 'Create issue'}
           </Btn>
         </div>
       }
     >
-      <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
-          if (e.key === 'Escape') onClose()
-        }}
-      >
-        {/* Breadcrumb: team › New issue, with the close X. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
-          {teams.length > 1 ? (
-            <PropertyPill
-              title="Team"
-              active
-              label={teamName}
-              width={220}
-              menu={(close) => (
-                <>
-                  {teams.map((t) => (
-                    <PillOption
-                      key={t.id}
-                      label={t.name}
-                      selected={t.id === effectiveTeam}
-                      onPick={() => { setTeam(t.id); setState(''); setLabelIds([]); close() }}
-                    />
-                  ))}
-                </>
-              )}
-            />
-          ) : (
-            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>{teamName}</span>
-          )}
-          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>›</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)' }}>New issue</span>
-          <span style={{ flex: 1 }} />
-          <div style={{ margin: '-4px -8px 0 0' }}>
-            <Btn kind="ghost" size="sm" icon={<Icon.x size={15} />} onClick={onClose} />
+      <DropZone onFiles={attach} disabled={!attachments} label="Drop files to attach to the new issue">
+        <div
+          data-testid="issue-composer"
+          style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+          onKeyDown={(e) => {
+            // The rich editor submits its own Mod+Enter (RichEditor.onSubmit);
+            // handling it here too would create the issue twice.
+            const inEditor = !!(e.target as HTMLElement).closest?.('.pm-rich')
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !inEditor) void submit()
+            if (e.key === 'Escape') onClose()
+          }}
+        >
+          {/* Breadcrumb: team › New issue, with the close X. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
+            {teams.length > 1 ? (
+              <PropertyPill
+                title="Team"
+                active
+                label={teamName}
+                width={220}
+                menu={(close) => (
+                  <>
+                    {teams.map((t) => (
+                      <PillOption
+                        key={t.id}
+                        label={t.name}
+                        selected={t.id === effectiveTeam}
+                        onPick={() => { setTeam(t.id); setState(''); setLabelIds([]); close() }}
+                      />
+                    ))}
+                  </>
+                )}
+              />
+            ) : (
+              <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-2)' }}>{teamName}</span>
+            )}
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>›</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)' }}>New issue</span>
+            <span style={{ flex: 1 }} />
+            <div style={{ margin: '-4px -8px 0 0' }}>
+              <Btn kind="ghost" size="sm" icon={<Icon.x size={15} />} onClick={onClose} />
+            </div>
           </div>
-        </div>
 
-        <input
-          ref={titleRef}
-          autoFocus
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Issue title"
-          style={{
-            width: '100%', background: 'transparent', border: 'none', outline: 'none',
-            fontSize: 17, fontWeight: 700, color: '#fff', padding: '2px 0', letterSpacing: '-0.01em',
-          }}
-        />
-        <textarea
-          value={description}
-          onChange={(e) => {
-            setDescription(e.target.value)
-            e.target.style.height = 'auto'
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 260)}px`
-          }}
-          placeholder={tmpl?.description_md ? 'Add description… (the team template fills in if left empty)' : 'Add description…'}
-          rows={3}
-          style={{
-            width: '100%', background: 'transparent', border: 'none', outline: 'none', resize: 'none',
-            fontSize: 12.5, lineHeight: 1.6, color: 'var(--text)', padding: 0, minHeight: 58,
-          }}
-        />
-
-        {/* Property pills — everything Linear offers at create. */}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
-          <PropertyPill
-            title="State"
-            active={!!selState}
-            icon={<StateGlyph cat={selState?.category ?? 'backlog'} size={12} />}
-            label={selState?.name ?? 'State'}
-            width={200}
-            menu={(close) => (
-              <>
-                <PillOption label="Default state" selected={!state} onPick={() => { setState(''); close() }} />
-                {states.map((s) => (
-                  <PillOption
-                    key={s.id}
-                    icon={<StateGlyph cat={s.category} size={12} />}
-                    label={s.name}
-                    selected={s.id === state}
-                    onPick={() => { setState(s.id); close() }}
-                  />
-                ))}
-              </>
-            )}
-          />
-          <PropertyPill
-            title="Priority"
-            active={priority !== null && priority !== 0}
-            icon={<PriorityGlyph p={priority ?? 0} size={12} />}
-            label={priority !== null ? PM_PRIORITY_LABEL[priority] : 'Priority'}
-            width={180}
-            menu={(close) => (
-              <>
-                {[0, 1, 2, 3, 4].map((p) => (
-                  <PillOption
-                    key={p}
-                    icon={<PriorityGlyph p={p} size={12} />}
-                    label={PM_PRIORITY_LABEL[p]}
-                    selected={priority === p}
-                    onPick={() => { setPriority(p); close() }}
-                  />
-                ))}
-              </>
-            )}
-          />
-          <PropertyPill
-            title="Assignee"
-            active={!!selUser}
-            icon={
-              selUser ? (
-                <PmAv name={selUser.name} src={selUser.avatar_url} size={15} />
-              ) : (
-                <span style={{ width: 13, height: 13, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
-              )
-            }
-            label={selUser?.name ?? 'Assignee'}
-            width={230}
-            menu={(close) => (
-              <>
-                <PillOption label="Unassigned" selected={!assignee} onPick={() => { setAssignee(''); close() }} />
-                {users.map((u) => (
-                  <PillOption
-                    key={u.id}
-                    icon={<PmAv name={u.name} src={u.avatar_url} size={15} />}
-                    label={u.name}
-                    selected={u.id === assignee}
-                    onPick={() => { setAssignee(u.id); close() }}
-                  />
-                ))}
-              </>
-            )}
-          />
-          <PropertyPill
-            title="Project"
-            active={!!project}
-            icon={<span style={{ fontSize: 11 }}>{selProject?.icon ?? '🎯'}</span>}
-            label={projectLabel}
-            width={240}
-            menu={(close) => (
-              <>
-                <PillOption label="No project" selected={!project} onPick={() => { setProject(''); setMilestone(''); close() }} />
-                {projects.map((p) => (
-                  <PillOption
-                    key={p.id}
-                    icon={<span style={{ fontSize: 11 }}>{p.icon ?? '🎯'}</span>}
-                    label={p.name}
-                    selected={p.id === project}
-                    onPick={() => { setProject(p.id); setMilestone(''); close() }}
-                  />
-                ))}
-              </>
-            )}
-          />
-          {!!project && (
-            <PropertyPill
-              title="Milestone"
-              active={!!selMilestone}
-              icon={<DiamondGlyph size={11} />}
-              label={selMilestone?.name ?? 'Milestone'}
-              width={220}
-              menu={(close) => (
-                <>
-                  <PillOption label="No milestone" selected={!milestone} onPick={() => { setMilestone(''); close() }} />
-                  {milestones.map((m) => (
-                    <PillOption
-                      key={m.id}
-                      icon={<DiamondGlyph size={11} />}
-                      label={m.name}
-                      selected={m.id === milestone}
-                      onPick={() => { setMilestone(m.id); close() }}
-                    />
-                  ))}
-                </>
-              )}
-            />
-          )}
           <input
-            value={estimate}
-            onChange={(e) => setEstimate(e.target.value)}
-            placeholder="Est."
-            inputMode="numeric"
-            title="Estimate points"
+            ref={titleRef}
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Issue title"
+            data-testid="composer-title"
             style={{
-              width: 52, height: 26, borderRadius: 7, background: estimate ? 'var(--surf-2)' : 'var(--surf-1)',
-              border: '1px solid var(--bord)', color: estimate ? '#fff' : 'var(--text-2)',
-              fontSize: 11, fontWeight: 700, textAlign: 'center', outline: 'none',
+              width: '100%', background: 'transparent', border: 'none', outline: 'none',
+              fontSize: 17, fontWeight: 700, color: '#fff', padding: '2px 0', letterSpacing: '-0.01em',
             }}
           />
-          <DateField value={due} onChange={setDue} style={{ height: 26, width: 120, fontSize: 11, borderRadius: 7 }} />
-          {labels.length > 0 && (
+          {rich ? (
+            <RichEditor
+              value={description}
+              onChange={setDescription}
+              onSubmit={() => void submit()}
+              placeholder={descPlaceholder}
+              fileUrls={localUrls}
+              onUploadImage={attachments ? uploadInline : undefined}
+              minHeight={58}
+            />
+          ) : (
+            <textarea
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value)
+                e.target.style.height = 'auto'
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 260)}px`
+              }}
+              placeholder={descPlaceholder}
+              rows={3}
+              style={{
+                width: '100%', background: 'transparent', border: 'none', outline: 'none', resize: 'none',
+                fontSize: 12.5, lineHeight: 1.6, color: 'var(--text)', padding: 0, minHeight: 58,
+              }}
+            />
+          )}
+          {pendingFiles.length > 0 && (
+            <AttachmentList files={pendingFiles} onRemove={dropPending} style={{ marginTop: 2 }} />
+          )}
+
+          {/* Property pills — everything Linear offers at create. */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
             <PropertyPill
-              title="Labels"
-              active={labelIds.length > 0}
-              icon={
-                <span style={{ display: 'inline-flex', gap: 2 }}>
-                  {(labelIds.length ? labels.filter((l) => labelIds.includes(l.id)).slice(0, 3) : [{ id: '_', color: 'var(--text-faint)' }]).map((l) => (
-                    <span key={l.id} style={{ width: 6, height: 6, borderRadius: '50%', background: l.color }} />
-                  ))}
-                </span>
-              }
-              label={labelIds.length ? `${labelIds.length} label${labelIds.length > 1 ? 's' : ''}` : 'Labels'}
-              width={220}
-              menu={() => (
+              title="State"
+              active={!!selState}
+              icon={<StateGlyph cat={selState?.category ?? 'backlog'} size={12} />}
+              label={selState?.name ?? 'State'}
+              width={200}
+              menu={(close) => (
                 <>
-                  {labels.map((l) => (
+                  <PillOption label="Default state" selected={!state} onPick={() => { setState(''); close() }} />
+                  {states.map((s) => (
                     <PillOption
-                      key={l.id}
-                      icon={<span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color }} />}
-                      label={l.name}
-                      selected={labelIds.includes(l.id)}
-                      onPick={() => toggleLabel(l.id)}
+                      key={s.id}
+                      icon={<StateGlyph cat={s.category} size={12} />}
+                      label={s.name}
+                      selected={s.id === state}
+                      onPick={() => { setState(s.id); close() }}
                     />
                   ))}
                 </>
               )}
             />
-          )}
+            <PropertyPill
+              title="Priority"
+              active={priority !== null && priority !== 0}
+              icon={<PriorityGlyph p={priority ?? 0} size={12} />}
+              label={priority !== null ? PM_PRIORITY_LABEL[priority] : 'Priority'}
+              width={180}
+              menu={(close) => (
+                <>
+                  {[0, 1, 2, 3, 4].map((p) => (
+                    <PillOption
+                      key={p}
+                      icon={<PriorityGlyph p={p} size={12} />}
+                      label={PM_PRIORITY_LABEL[p]}
+                      selected={priority === p}
+                      onPick={() => { setPriority(p); close() }}
+                    />
+                  ))}
+                </>
+              )}
+            />
+            <PropertyPill
+              title="Assignee"
+              active={!!selUser}
+              icon={
+                selUser ? (
+                  <PmAv name={selUser.name} src={selUser.avatar_url} size={15} />
+                ) : (
+                  <span style={{ width: 13, height: 13, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
+                )
+              }
+              label={selUser?.name ?? 'Assignee'}
+              width={230}
+              menu={(close) => (
+                <>
+                  <PillOption label="Unassigned" selected={!assignee} onPick={() => { setAssignee(''); close() }} />
+                  {users.map((u) => (
+                    <PillOption
+                      key={u.id}
+                      icon={<PmAv name={u.name} src={u.avatar_url} size={15} />}
+                      label={u.name}
+                      selected={u.id === assignee}
+                      onPick={() => { setAssignee(u.id); close() }}
+                    />
+                  ))}
+                </>
+              )}
+            />
+            <PropertyPill
+              title="Project"
+              active={!!project}
+              icon={<span style={{ fontSize: 11 }}>{selProject?.icon ?? '🎯'}</span>}
+              label={projectLabel}
+              width={240}
+              menu={(close) => (
+                <>
+                  <PillOption label="No project" selected={!project} onPick={() => { setProject(''); setMilestone(''); close() }} />
+                  {projects.map((p) => (
+                    <PillOption
+                      key={p.id}
+                      icon={<span style={{ fontSize: 11 }}>{p.icon ?? '🎯'}</span>}
+                      label={p.name}
+                      selected={p.id === project}
+                      onPick={() => { setProject(p.id); setMilestone(''); close() }}
+                    />
+                  ))}
+                </>
+              )}
+            />
+            {!!project && (
+              <PropertyPill
+                title="Milestone"
+                active={!!selMilestone}
+                icon={<DiamondGlyph size={11} />}
+                label={selMilestone?.name ?? 'Milestone'}
+                width={220}
+                menu={(close) => (
+                  <>
+                    <PillOption label="No milestone" selected={!milestone} onPick={() => { setMilestone(''); close() }} />
+                    {milestones.map((m) => (
+                      <PillOption
+                        key={m.id}
+                        icon={<DiamondGlyph size={11} />}
+                        label={m.name}
+                        selected={m.id === milestone}
+                        onPick={() => { setMilestone(m.id); close() }}
+                      />
+                    ))}
+                  </>
+                )}
+              />
+            )}
+            <input
+              value={estimate}
+              onChange={(e) => setEstimate(e.target.value)}
+              placeholder="Est."
+              inputMode="numeric"
+              title="Estimate points"
+              style={{
+                width: 52, height: 26, borderRadius: 7, background: estimate ? 'var(--surf-2)' : 'var(--surf-1)',
+                border: '1px solid var(--bord)', color: estimate ? '#fff' : 'var(--text-2)',
+                fontSize: 11, fontWeight: 700, textAlign: 'center', outline: 'none',
+              }}
+            />
+            <DateField value={due} onChange={setDue} style={{ height: 26, width: 120, fontSize: 11, borderRadius: 7 }} />
+            {labels.length > 0 && (
+              <PropertyPill
+                title="Labels"
+                active={labelIds.length > 0}
+                icon={
+                  <span style={{ display: 'inline-flex', gap: 2 }}>
+                    {(labelIds.length ? labels.filter((l) => labelIds.includes(l.id)).slice(0, 3) : [{ id: '_', color: 'var(--text-faint)' }]).map((l) => (
+                      <span key={l.id} style={{ width: 6, height: 6, borderRadius: '50%', background: l.color }} />
+                    ))}
+                  </span>
+                }
+                label={labelIds.length ? `${labelIds.length} label${labelIds.length > 1 ? 's' : ''}` : 'Labels'}
+                width={220}
+                menu={() => (
+                  <>
+                    {labels.map((l) => (
+                      <PillOption
+                        key={l.id}
+                        icon={<span style={{ width: 7, height: 7, borderRadius: '50%', background: l.color }} />}
+                        label={l.name}
+                        selected={labelIds.includes(l.id)}
+                        onPick={() => toggleLabel(l.id)}
+                      />
+                    ))}
+                  </>
+                )}
+              />
+            )}
+            {attachments && <AttachButton onFiles={attach} progress={progress} />}
+          </div>
         </div>
-      </div>
+      </DropZone>
     </Modal>
   )
 }

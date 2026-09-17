@@ -23,6 +23,34 @@ export type PunchType = 'in' | 'out' | 'break_start' | 'break_end'
 /** Where the day was worked — orthogonal to AttendanceStatus. */
 export type WorkMode = 'office' | 'remote' | 'field'
 
+// ─── Round L — day semantics (API: core/common/workday.ts) ───────────────────
+
+/**
+ * What a day IS for an employee, before any punch: holiday → weekend →
+ * approved full-day leave (`leave`) → approved half-day (`half_day_leave`,
+ * still expected for the other half) → plain working day.
+ */
+export type DayKind = 'working' | 'weekend' | 'holiday' | 'leave' | 'half_day_leave'
+
+/** The leave request that decides the day — approved beats pending. */
+export interface DayLeave {
+  id: string
+  status: 'approved' | 'pending'
+  isHalfDay: boolean
+  session: 'first_half' | 'second_half' | null
+  leaveTypeName: string | null
+}
+
+export interface DayExpectation {
+  /** Is a clock-in expected? false on holidays, weekends and full-day leave. */
+  expected: boolean
+  dayKind: DayKind
+  holidayName: string | null
+  leave: DayLeave | null
+  /** A pending request covers the day — labelled, but still expected. */
+  pendingLeave: boolean
+}
+
 export interface AttendanceRecord {
   id: string
   attendanceDate: string
@@ -36,9 +64,10 @@ export interface AttendanceRecord {
   isRegularized: boolean
 }
 
-export interface TodayAttendance {
+export interface TodayAttendance extends DayExpectation {
   employeeId: string
   attendanceDate: string
+  /** Record status; without a record the day reads as on_leave / holiday / weekend / absent. */
   attendanceStatus: AttendanceStatus
   firstPunchInAt: string | null
   lastPunchOutAt: string | null
@@ -71,7 +100,10 @@ export interface TodayAttendance {
     endTime: string
     timezone: string
     gracePeriodMinutes: number
+    /** Round L — an overnight shift clocks out on the following calendar day. */
+    isOvernight: boolean
   }
+  /** Neither a weekend (per the shift) nor a blocking holiday. */
   isWorkingDay: boolean
   /** Server's now() — use for timer reconciliation rather than client clock. */
   now: string
@@ -113,7 +145,7 @@ export interface PunchOutResponse {
   earlyByMinutes: number
 }
 
-export interface TeamMemberToday {
+export interface TeamMemberToday extends DayExpectation {
   employeeId: string
   employeeName: string
   employeeCode: string
@@ -125,6 +157,13 @@ export interface TeamMemberToday {
   totalWorkedMinutes: number | null
   isLate: boolean | null
   locationName: string | null
+  /** "Today" for THIS employee (their shift's timezone) — YYYY-MM-DD. */
+  attendanceDate: string
+  /**
+   * Record status, else what the day reads as without one (on_leave /
+   * holiday / weekend), else null = expected and not clocked in yet.
+   */
+  derivedStatus: AttendanceStatus | null
 }
 
 export type RegularizationType =
@@ -398,10 +437,14 @@ export function useReviewRegularization() {
 
 export interface AttendanceMonthDay {
   date: string
+  /** Record status; approved full-day leave without a row reads on_leave. */
   attendanceStatus: AttendanceStatus | null
   isWeekend: boolean
   isHoliday: boolean
   holidayName: string | null
+  /** Round L — the leave request covering the day (approved beats pending). */
+  leave: DayLeave | null
+  pendingLeave: boolean
   firstPunchInAt: string | null
   lastPunchOutAt: string | null
   totalWorkedMinutes: number

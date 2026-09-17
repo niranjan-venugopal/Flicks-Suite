@@ -58,22 +58,40 @@ export default function MyTeamPage() {
   // ─── KPIs ──────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
     const directReports = members.length
-    const onLeave = members.filter((m) => m.status === 'on_leave').length
 
     let presentToday = 0
-    if (today) {
-      presentToday = today.filter((t) =>
-        ['present', 'late', 'work_from_home', 'on_duty'].includes(
-          t.attendanceStatus ?? '',
-        ),
-      ).length
+    let yetToClockIn = 0
+    let leavePending = 0
+    // Round L (founder item 1): "On leave" is today's ATTENDANCE — an
+    // on_leave record or approved leave the API derived for the day — not
+    // just the HR employee_status. The two are unioned per employee so an
+    // employee_status 'on_leave' still counts when today's rows are absent.
+    const onLeaveIds = new Set(members.filter((m) => m.status === 'on_leave').map((m) => m.id))
+    for (const t of today ?? []) {
+      const s = t.attendanceStatus
+      if (['present', 'late', 'work_from_home', 'on_duty', 'comp_off'].includes(s ?? '') || (s === 'half_day' && t.firstPunchInAt)) {
+        presentToday++
+      } else if (s === 'on_leave' || (!s && t.derivedStatus === 'on_leave')) {
+        onLeaveIds.add(t.employeeId)
+      } else if (
+        // Expected, no usable record — a leave-backfilled half_day row that
+        // nobody punched into says nothing about the person being in.
+        ((!s && !t.derivedStatus) || (s === 'half_day' && !t.firstPunchInAt)) &&
+        t.expected !== false
+      ) {
+        // A pending request keeps them expected but is called out
+        // separately; the rest are yet to clock in.
+        if (t.pendingLeave) leavePending++
+        else yetToClockIn++
+      }
     }
+    const onLeave = onLeaveIds.size
 
     // Round I: /leave/pending returns a { data, pagination } envelope — the
     // old Array.isArray check made this KPI a permanent 0.
     const pending = pendingLeave?.data?.length ?? 0
 
-    return { directReports, presentToday, onLeave, pending }
+    return { directReports, presentToday, onLeave, pending, yetToClockIn, leavePending }
   }, [members, today, pendingLeave])
 
   return (
@@ -110,18 +128,36 @@ export default function MyTeamPage() {
             icon={<Icon.people size={14} />}
             accent="blue"
           />
-          <Kpi
-            label="Present today"
-            value={kpis.presentToday.toString()}
-            icon={<Icon.check size={14} />}
-            accent="green"
-          />
-          <Kpi
-            label="On leave"
-            value={kpis.onLeave.toString()}
-            icon={<Icon.cal size={14} />}
-            accent="purple"
-          />
+          {/* display:contents — the wrappers exist only for the live script;
+              the Kpi cards stay the grid items. */}
+          <div
+            data-testid="team-kpi-present"
+            data-value={kpis.presentToday}
+            data-yet-to-clock-in={kpis.yetToClockIn}
+            data-leave-pending={kpis.leavePending}
+            style={{ display: 'contents' }}
+          >
+            <Kpi
+              label="Present today"
+              value={kpis.presentToday.toString()}
+              delta={
+                today
+                  ? `${kpis.yetToClockIn} yet to clock in${kpis.leavePending > 0 ? ` · ${kpis.leavePending} leave pending` : ''}`
+                  : undefined
+              }
+              icon={<Icon.check size={14} />}
+              accent="green"
+            />
+          </div>
+          <div data-testid="team-kpi-leave" data-value={kpis.onLeave} style={{ display: 'contents' }}>
+            <Kpi
+              label="On leave"
+              value={kpis.onLeave.toString()}
+              delta={today ? 'Today · approved leave' : undefined}
+              icon={<Icon.cal size={14} />}
+              accent="purple"
+            />
+          </div>
           <Kpi
             label="Pending approvals"
             value={kpis.pending.toString()}

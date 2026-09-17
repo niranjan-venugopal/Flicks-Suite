@@ -218,6 +218,28 @@ export class AttendanceController {
     );
   }
 
+  // Declared after `regularizations/pending` so the static segment wins.
+  @Get('regularizations/:id')
+  @Roles('manager')
+  @ApiOperation({
+    summary: 'One pending regularization the caller may act on',
+    description:
+      'Round L — backs "open directly" for owner/HR admin: the row even while it is still with the manager (not in the routed queue). 404 when it does not exist, is decided, or the caller may not act on it.',
+  })
+  @ApiResponse({ status: 200, description: 'Regularization row (Inbox shape)' })
+  @ApiResponse({ status: 404, description: 'Not found / not yours to review' })
+  async getRegularization(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.attendanceService.getRegularizationForReviewer(
+      id,
+      user.sub,
+      user.tenantId,
+      user.isPlatformAdmin === true ? 'owner' : user.role,
+    );
+  }
+
   @Post('regularizations/:id/review')
   @Roles('manager')
   @HttpCode(HttpStatus.OK)

@@ -1,37 +1,86 @@
 'use client'
 
-import { use, useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
-import { Sk, SkeletonRows } from '@/components/states'
+import { IssuePicker, type PickedIssue } from '@/components/pm/IssuePicker'
+import { RelationsCard, type DetailRelation } from '@/components/pm/RelationsCard'
+import { CommentComposer, CommentThread, IssueDescription } from '@/components/pm/issue'
+import { SkeletonRows } from '@/components/states'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
+import { backLabel, defaultOrigin, issueHref, safeFrom } from '@/lib/pm/nav'
+import { issueDetailQueryKey, issuePrefetchProps } from '@/lib/pm/prefetch'
+import type { PmFile } from '@/lib/api/queries/use-pm-files'
 import type { PmIssueRow } from '@/lib/pm/types'
 import { FEATURES } from '@/lib/feature-flags'
 
 // ─────────────────────────────────────────────────────────
 // P7 Issue detail — two-pane: doc (title + description + activity/comments)
-// + properties rail (state/priority/assignee/estimate/due), sub-issues,
+// + properties rail (state/priority/assignee/estimate/due/parent), sub-issues,
 // relations, sync-pending badge. Description/comments/history are LAZY
 // (fetched here, cached by react-query) — never shipped in bootstrap.
+//
+// Round L — (7) the header + rail render from the engine row as soon as the
+// provider has handed the engine over (a cold deep link still waits for the
+// bootstrap — the provider exposes the engine only after start() resolves);
+// the fetch gates only the lazy parts; comments arrive newest-50 with a
+// "Load earlier" page. (8) Back / Esc / post-delete return to the list the
+// person came from (?from=, validated), forwarded across sub-issue and
+// relation hops. (5) the Relations card + Parent row. (6) the rich
+// description, attachments and the comment composer/thread (agent E's
+// components; plain textarea/input when the pm_attachments flag is off).
 // ─────────────────────────────────────────────────────────
+
+interface CommentRow {
+  id: string
+  body: string
+  author_user_id: string | null
+  parent_comment_id: string | null
+  created_at: string
+  edited_at?: string | null
+}
+
+interface HistoryRef {
+  id: string
+  key: string
+  title: string
+}
+
+interface HistoryRow {
+  id: string
+  field: string
+  /** For relation/parent rows the API has already resolved the other issue to KEY-N or `hidden`. */
+  from_value: string | null
+  to_value: string | null
+  from_ref: HistoryRef | null
+  to_ref: HistoryRef | null
+  actor_user_id: string | null
+  created_at: string
+}
 
 interface DetailResponse {
   data: {
     issue: PmIssueRow & { description: string | null }
-    comments: Array<{ id: string; body: string; author_user_id: string | null; parent_comment_id: string | null; created_at: string }>
-    history: Array<{ id: string; field: string; from_value: string | null; to_value: string | null; actor_user_id: string | null; created_at: string }>
-    sub_issues: Array<{ id: string; number: number; title: string; state_id: string; priority: number; completed_at: string | null }>
-    relations: Array<{ id: string; issue_id: string; related_issue_id: string; type: string }>
+    /** The issue's own team key (REST mode has no store to look it up in). */
+    team_key: string
+    comments: CommentRow[]
+    comments_total: number
+    has_earlier: boolean
+    history: HistoryRow[]
+    sub_issues: Array<{ id: string; number: number; title: string; state_id: string; priority: number; completed_at: string | null; canceled_at: string | null; team_id: string; team_key: string }>
+    relations: DetailRelation[]
     subscriber_ids: string[]
     git_links: Array<{ id: string; kind: 'branch' | 'pr' | 'commit'; ref: string; label: string; state: 'open' | 'merged' | 'closed'; url: string | null }>
+    parent_issue: { id: string; number: number; title: string; team_id: string; team_key: string } | null
+    files: PmFile[]
   }
 }
 
@@ -47,62 +96,131 @@ function branchNameFor(format: string, user: string, teamKey: string, number: nu
 
 const PERSONAL_AUTO_KEY = 'pm-gh-personal-auto' // '0' = off; default on
 
+/** A KEY-N the reader may see, or "a hidden issue" (the API sends `hidden`). */
+function refNode(key: string | null | undefined): React.ReactNode {
+  if (!key || key === 'hidden') return <span style={{ fontStyle: 'italic' }}>a hidden issue</span>
+  return <b style={{ color: 'var(--text-2)' }}>{key}</b>
+}
+
+/** One activity line — verb-first, plain English (Round L). */
+function historyLine(h: HistoryRow): React.ReactNode {
+  if (h.field === 'relation') {
+    const raw = h.to_value ?? h.from_value ?? ''
+    const sep = raw.indexOf(':')
+    const type = sep >= 0 ? raw.slice(0, sep) : raw
+    const key = sep >= 0 ? raw.slice(sep + 1) : ''
+    const target = refNode(key)
+    if (!h.to_value) return <>removed the link to {target}</>
+    switch (type) {
+      case 'blocks': return <>marked as blocking {target}</>
+      case 'blocked_by': return <>marked as blocked by {target}</>
+      case 'duplicate_of': return <>marked as a duplicate of {target}</>
+      case 'duplicated_by': return <>marked {target} as a duplicate</>
+      default: return <>linked to {target}</>
+    }
+  }
+  if (h.field === 'parent') {
+    return h.to_value
+      ? <>set the parent to {refNode(h.to_value)}</>
+      : <>removed the parent {refNode(h.from_value)}</>
+  }
+  return <>set {h.field}: {h.from_value ?? '—'} → <b style={{ color: 'var(--text-2)' }}>{h.to_value ?? '—'}</b></>
+}
+
+function Spinner() {
+  return (
+    <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
+      <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
+    </div>
+  )
+}
+
+/** A proto Modal / the relation adder is open — Escape belongs to it, not to "back". */
+function overlayOpen(): boolean {
+  if (typeof document === 'undefined') return false
+  return !!document.querySelector('[role="dialog"], [data-overlay-root], [data-testid="relation-adder"]')
+}
+
 export default function IssueDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  return <IssueDetail id={id} />
+  // useSearchParams() (the ?from= origin) needs a Suspense boundary in the
+  // app router. Keyed by id so a hop to another issue starts clean (draft
+  // description, loaded-earlier comments, menus).
+  return (
+    <Suspense fallback={<Spinner />}>
+      <IssueDetail key={id} id={id} />
+    </Suspense>
+  )
 }
 
 const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
-  const { mode, engine } = usePm()
+  const { engine } = usePm()
   const router = useRouter()
   const qc = useQueryClient()
+  const searchParams = useSearchParams()
+  // Round L (8) — where Back goes. Validated: internal /pm list paths only;
+  // anything else (https://evil, /settings, an issue page) falls back.
+  const from = safeFrom(searchParams.get('from'))
 
   const detail = useQuery({
-    queryKey: ['pm', 'issue-detail', id],
+    queryKey: issueDetailQueryKey(id),
     queryFn: () => api.get<DetailResponse>(`/api/v1/pm/issues/${id}/detail`),
   })
   const d = detail.data?.data
 
-  // Live row from the engine graph when syncing (instant property updates).
-  const liveRow = mode === 'sync' && engine ? engine.store.issues.get(id) : null
+  // The engine row is the instant source whenever the provider has handed
+  // the engine over; REST mode waits on the fetch for the row itself.
+  const liveRow = engine ? engine.store.issues.get(id) : null
   const issue = liveRow ?? d?.issue ?? null
   const store = engine?.store
+  const teamKey = (issue ? store?.teams.get(issue.team_id)?.key : undefined) ?? d?.team_key ?? ''
 
-  const [editingDesc, setEditingDesc] = useState(false)
-  const [desc, setDesc] = useState('')
-  const [comment, setComment] = useState('')
-  // @-mentions (round 7): tokens picked from the dropdown; on submit only the
-  // ones still present in the text are sent as mentioned_user_ids.
-  const [mentioned, setMentioned] = useState<Array<{ id: string; name: string }>>([])
-  const [mentionIdx, setMentionIdx] = useState(0)
-  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | 'milestone' | null>(null)
+  // Back: an in-app origin means we got here by a push, so the browser's own
+  // history has the list one step back — use it, and the browser Back button
+  // agrees. No origin (a deep link) → the issue's own team list. Post-delete
+  // always pushes (the current entry is gone).
+  const originOf = () => from ?? defaultOrigin(issue?.team_id)
+  const goBack = () => {
+    if (from && typeof window !== 'undefined' && window.history.length > 1) router.back()
+    else router.push(originOf())
+  }
+  // Hops (sub-issue, relation, parent) REPLACE the entry so Back — ours or
+  // the browser's — returns to the original list, never the previous issue
+  // (founder default 12).
+  const hop = (otherId: string) => router.replace(issueHref(otherId, from))
 
-  // Round C — Save must never need a refresh. Two pieces:
-  //
-  // 1. Dirty guard. This reseed effect used to accept ANY server payload,
-  //    and saveDesc scheduled a refetch on a 600ms guess-timer that raced the
-  //    engine's debounced flush — when the refetch won, the stale payload
-  //    REVERTED the just-saved text, and nothing ever corrected it. Now a
-  //    save-in-flight blocks reseeding until the server echoes what we saved.
-  // 2. The refetch is driven by the engine's flush ack (below), not a timer.
-  const lastSavedDescRef = useRef<string | null>(null)
+  const me = useAuthStore((st) => st.currentUser)
+  const canEdit = me?.role !== 'AUDITOR'
+  const [menu, setMenu] = useState<'state' | 'assignee' | 'priority' | 'project' | 'milestone' | 'parent' | null>(null)
+  // Round L — a parent picked from the server search isn't in the store;
+  // keep its label until the detail refetch carries parent_issue.
+  const [pickedParent, setPickedParent] = useState<PickedIssue | null>(null)
+
+  // ── Description: the saved text stays on screen until the server echoes
+  // it (or the ack-driven refetch lands). Round C — a stale refetch that
+  // was already in flight when Save happened must not revert the text.
+  const [pendingDesc, setPendingDesc] = useState<{ text: string; at: number } | null>(null)
+  const ackedAtRef = useRef(0)
   useEffect(() => {
-    const server = d?.issue.description
-    if (server == null || editingDesc) return
-    if (lastSavedDescRef.current !== null) {
-      if (server !== lastSavedDescRef.current) return
-      lastSavedDescRef.current = null
-    }
-    setDesc(server)
-  }, [d?.issue.description, editingDesc])
+    if (!pendingDesc) return
+    const server = d?.issue.description ?? ''
+    const echoed = server.trim() === pendingDesc.text.trim()
+    const refetchedAfterAck = ackedAtRef.current > pendingDesc.at && detail.dataUpdatedAt > ackedAtRef.current
+    if (echoed || refetchedAfterAck) setPendingDesc(null)
+  }, [d?.issue.description, detail.dataUpdatedAt, pendingDesc])
+  const descValue = pendingDesc?.text ?? d?.issue.description ?? ''
 
   // Sync mode: refetch the lazy detail (description, comments, history) when
   // OUR write for this issue is acked — correct-by-construction, not timed.
+  // Round L — a "blocked by" link is stored on the OTHER issue, so its ack
+  // carries that id; any relation ack refreshes this page's relations.
   useEffect(() => {
     if (!engine) return
     return engine.onFlushed((acked) => {
-      if (acked.some((a) => a.id === id)) {
-        void qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] })
+      const mine = acked.some((a) => a.id === id)
+      if (mine) ackedAtRef.current = Date.now()
+      if (mine || acked.some((a) => a.op === 'issue.relate' || a.op === 'issue.unrelate')) {
+        void qc.invalidateQueries({ queryKey: issueDetailQueryKey(id) })
       }
     })
   }, [engine, id, qc])
@@ -121,15 +239,19 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   })
   const restUpdate = useMutation({
     mutationFn: (fields: Record<string, unknown>) => api.patch(`/api/v1/pm/issues/${id}`, fields),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pm'] }),
+    onSuccess: () => {
+      ackedAtRef.current = Date.now()
+      return qc.invalidateQueries({ queryKey: ['pm'] })
+    },
   })
+  // Comments: the composer awaits this; a new draft namespace after each post.
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID())
   const postComment = useMutation({
-    mutationFn: (payload: { body: string; mentioned_user_ids: string[] }) =>
+    mutationFn: (payload: { body: string; attachment_ids: string[]; mentioned_user_ids: string[] }) =>
       api.post(`/api/v1/pm/issues/${id}/comments`, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['pm', 'issue-detail', id] })
-      setComment('')
-      setMentioned([])
+      setDraftId(crypto.randomUUID())
+      return qc.invalidateQueries({ queryKey: issueDetailQueryKey(id) })
     },
   })
   // Kill-switch (no engine) fallback for avatars + the @-mention picker —
@@ -157,14 +279,15 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     mutationFn: () => api.post(`/api/v1/pm/issues/${id}/delete`, {}),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['pm'] })
-      router.push('/pm/issues')
+      router.push(originOf())
     },
   })
   const doDelete = () => {
     if (engine) {
+      const origin = originOf()
       engine.deleteIssue(id)
       setConfirmDelete(false)
-      router.push('/pm/issues')
+      router.push(origin)
     } else {
       restDelete.mutate()
     }
@@ -195,7 +318,13 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     if (engine) engine.setIssueProject(id, pid, msId)
     else restProject.mutate({ project_id: pid, milestone_id: msId })
   }
-  const me = useAuthStore((st) => st.currentUser)
+  // Round L — re-parent (the server validates existence / visibility / cycles).
+  const doParent = (picked: PickedIssue | null) => {
+    setPickedParent(picked)
+    const pid = picked?.id ?? null
+    if (engine) engine.updateIssue(id, { parent_issue_id: pid })
+    else restUpdate.mutate({ parent_issue_id: pid })
+  }
   const ghStatus = useQuery({
     queryKey: ['pm', 'github', 'status'],
     queryFn: () => api.get<{ data: { installation: { branch_format: string } | null } }>('/api/v1/pm/github/status'),
@@ -203,11 +332,11 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
     retry: false,
     enabled: FEATURES.pm_github,
   })
-  const saveDesc = () => {
-    lastSavedDescRef.current = desc
-    if (engine) engine.updateIssue(id, { description: desc })
-    else restUpdate.mutate({ description: desc })
-    setEditingDesc(false)
+  const saveDesc = async (markdown: string, attachmentIds: string[]) => {
+    setPendingDesc({ text: markdown, at: Date.now() })
+    const fields = { description: markdown, ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}) }
+    if (engine) engine.updateIssue(id, fields)
+    else await restUpdate.mutateAsync(fields)
   }
 
   // ⌘⇧B — copy branch name; personal automation assigns me + moves to started
@@ -215,10 +344,9 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const copyBranchName = () => {
     const iss = issue
     if (!iss) return
-    const t = engine?.store.teams.get(iss.team_id)
     const format = ghStatus.data?.data.installation?.branch_format ?? '{user}/{team-key-lower}-{number}-{slug}'
     const firstName = (me?.name ?? 'me').split(/\s+/)[0] ?? 'me'
-    const name = branchNameFor(format, firstName, t?.key ?? 'team', iss.number, iss.title)
+    const name = branchNameFor(format, firstName, teamKey || 'team', iss.number, iss.title)
     void navigator.clipboard.writeText(name)
     const auto = typeof window !== 'undefined' && window.localStorage.getItem(PERSONAL_AUTO_KEY) !== '0'
     if (auto && engine && me) {
@@ -232,10 +360,59 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   }
 
   useHotkeys({
-    escape: () => { if (menu) setMenu(null); else router.push('/pm/issues') },
+    escape: () => {
+      if (menu) { setMenu(null); return }
+      // A dialog (delete / duplicate confirm) or the relation adder owns Esc.
+      if (confirmDelete || overlayOpen()) return
+      goBack()
+    },
     'mod+shift+b': (e) => { if (!FEATURES.pm_github) return; e.preventDefault(); copyBranchName() },
     ...Object.fromEntries([0, 1, 2, 3, 4].map((p) => [String(p), () => doPriority(p)])),
   })
+
+  // ── Comments: the detail ships the newest 50; every page seen (the detail's
+  //    window as it shifts, plus "Load earlier" pages) accumulates by id, so a
+  //    row never leaves once shown (Round L). The oldest accumulated row is
+  //    the (created_at ms, id) keyset cursor for the next earlier page.
+  const [seenComments, setSeenComments] = useState<Map<string, CommentRow>>(() => new Map())
+  useEffect(() => {
+    if (!d?.comments) return
+    setSeenComments((prev) => {
+      const next = new Map(prev)
+      for (const c of d.comments) next.set(c.id, c)
+      return next
+    })
+  }, [d?.comments])
+  const [earlierHas, setEarlierHas] = useState<boolean | null>(null)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const comments = useMemo(
+    () =>
+      [...seenComments.values()].sort((a, b) =>
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+      ),
+    [seenComments],
+  )
+  const hasEarlier = earlierHas ?? d?.has_earlier ?? false
+  const loadEarlier = async () => {
+    const oldest = comments[0]
+    if (!oldest || loadingEarlier) return
+    setLoadingEarlier(true)
+    try {
+      const r = await api.get<{ data: { comments: CommentRow[]; has_earlier: boolean } }>(
+        `/api/v1/pm/issues/${id}/comments?before=${encodeURIComponent(oldest.created_at)}&before_id=${encodeURIComponent(oldest.id)}&limit=50`,
+      )
+      setSeenComments((prev) => {
+        const next = new Map(prev)
+        for (const c of r.data.comments) next.set(c.id, c)
+        return next
+      })
+      setEarlierHas(r.data.has_earlier)
+    } catch {
+      /* the button stays; try again */
+    } finally {
+      setLoadingEarlier(false)
+    }
+  }
 
   // Round E — clicking an issue must feel instant. In sync mode the engine
   // row already carries everything the header + properties rail render, so
@@ -243,11 +420,17 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   // wait on the detail fetch — as skeletons, not a full-page spinner. REST
   // mode still needs the fetch for the row itself.
   if (!issue) {
-    return (
-      <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
-        <Icon.refresh size={20} className="animate-spin" style={{ color: 'var(--text-mute)' }} />
-      </div>
-    )
+    if (detail.isError) {
+      return (
+        <div style={{ padding: 60, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <div className="t-mute" style={{ fontSize: 12.5, textAlign: 'center' }}>Issue not found — it may be deleted or private.</div>
+          <Btn kind="secondary" size="sm" icon={<Icon.chevL size={13} />} data-testid="issue-back" onClick={goBack}>
+            {backLabel(from, { projectName: (pid) => engine?.store.projects.get(pid)?.name })}
+          </Btn>
+        </div>
+      )
+    }
+    return <Spinner />
   }
 
   const team = store?.teams.get(issue.team_id)
@@ -262,40 +445,39 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   }))
   const assignee = issue.assignee_user_id ? users.find((u) => u.id === issue.assignee_user_id) : null
   const doneChildren = (d?.sub_issues ?? []).filter((s) => s.completed_at).length
+  const issueKey = `${teamKey}-${issue.number}`
 
-  // ── @-mention dropdown state (derived from the composer text) ──
-  const mentionMatch = comment.match(/@([\w .-]*)$/)
-  const mentionQuery = mentionMatch?.[1]?.toLowerCase() ?? null
-  const mentionOptions =
-    mentionQuery !== null
-      ? users
-          .filter((u) => u.id !== me?.id && u.name.toLowerCase().includes(mentionQuery))
-          .slice(0, 6)
-      : []
-  const pickMention = (u: { id: string; name: string }) => {
-    setComment(comment.replace(/@([\w .-]*)$/, `@${u.name} `))
-    setMentioned((prev) => (prev.some((m) => m.id === u.id) ? prev : [...prev, { id: u.id, name: u.name }]))
-    setMentionIdx(0)
-  }
-  const submitComment = () => {
-    const body = comment.trim()
-    if (!body || postComment.isPending) return
-    const ids = [...new Set(mentioned.filter((m) => body.includes(`@${m.name}`)).map((m) => m.id))]
-    postComment.mutate({ body, mentioned_user_ids: ids })
-  }
+  const back = backLabel(from, {
+    projectName: (pid) =>
+      engine?.store.projects.get(pid)?.name ?? projectsQ.data?.data.projects.find((p) => p.id === pid)?.name,
+    teamKey,
+  })
+
+  // Round L — the parent chip: live store row → detail enrichment → the
+  // just-picked issue → a bare placeholder while the first fetch is out.
+  const parentInfo = (() => {
+    const pid = issue.parent_issue_id
+    if (!pid) return null
+    const live = store?.issues.get(pid)
+    if (live) return { id: pid, number: live.number, title: live.title, key: store?.teams.get(live.team_id)?.key ?? '' }
+    if (d?.parent_issue && d.parent_issue.id === pid) return { id: pid, number: d.parent_issue.number, title: d.parent_issue.title, key: d.parent_issue.team_key }
+    if (pickedParent && pickedParent.id === pid) return { id: pid, number: pickedParent.number, title: pickedParent.title, key: pickedParent.team_key }
+    return { id: pid, number: 0, title: '…', key: '' }
+  })()
+  const subIssueIds = (d?.sub_issues ?? []).map((s) => s.id)
 
   return (
     <div style={{ padding: '22px 26px 64px', maxWidth: 1120, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <Btn kind="ghost" size="sm" icon={<Icon.chevL size={13} />} onClick={() => router.push('/pm/issues')}>
-          {team?.key ?? 'Issues'}
+        <Btn kind="ghost" size="sm" icon={<Icon.chevL size={13} />} data-testid="issue-back" title={from ? `Back to ${back}` : 'Back to the issue list'} onClick={goBack}>
+          {back}
         </Btn>
         <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
-          {team?.key}-{issue.number}
+          {issueKey}
         </span>
         {(issue as PmIssueRow)._pending && <PendingDot />}
         <span style={{ flex: 1 }} />
-        <Btn kind="ghost" size="sm" onClick={() => { void navigator.clipboard.writeText(`${team?.key}-${issue.number}`) }}>
+        <Btn kind="ghost" size="sm" onClick={() => { void navigator.clipboard.writeText(issueKey) }}>
           Copy ID <Kbd style={{ marginLeft: 5 }}>⌘⇧.</Kbd>
         </Btn>
         {FEATURES.pm_github && (
@@ -312,7 +494,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
         title="Delete issue"
-        body={`“${team?.key}-${issue.number} · ${issue.title}” moves to Recently deleted — you can put it back for 30 days from Settings → Workspace; after that it is gone for good.`}
+        body={`“${issueKey} · ${issue.title}” moves to Recently deleted — you can put it back for 30 days from Settings → Workspace; after that it is gone for good.`}
         confirmLabel="Delete"
         danger
         loading={restDelete.isPending}
@@ -323,47 +505,23 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20, alignItems: 'start' }}>
         {/* ── Doc pane ── */}
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.3, marginBottom: 14 }}>
+          <h1 data-testid="issue-title" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.3, marginBottom: 14 }}>
             {issue.title}
           </h1>
 
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            {editingDesc ? (
-              <>
-                <textarea
-                  autoFocus
-                  className="input"
-                  value={desc}
-                  onChange={(e) => setDesc(e.target.value)}
-                  placeholder="Describe the task — markdown supported"
-                  style={{ width: '100%', minHeight: 140, resize: 'vertical', fontSize: 12.5, lineHeight: 1.6, padding: 10 }}
-                  onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveDesc() }}
-                />
-                <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-                  <Btn kind="ghost" size="sm" onClick={() => { setEditingDesc(false); setDesc(d?.issue.description ?? '') }}>Cancel</Btn>
-                  <Btn kind="primary" size="sm" onClick={saveDesc}>Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>⌘↵</Kbd></Btn>
-                </div>
-              </>
-            ) : detail.isLoading && !desc ? (
-              // Don't claim "Add a description…" before we know there isn't one.
-              <div style={{ minHeight: 40, display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
-                <Sk w="72%" h={10} />
-                <Sk w="46%" h={10} />
-              </div>
-            ) : (
-              <div onClick={() => setEditingDesc(true)} style={{ cursor: 'text', minHeight: 40 }}>
-                {desc ? (
-                  <div style={{ fontSize: 12.5, lineHeight: 1.65, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{desc}</div>
-                ) : (
-                  <div className="t-mute" style={{ fontSize: 12 }}>Add a description…</div>
-                )}
-              </div>
-            )}
-          </div>
+          {/* Description (Round L item 6 — rich editor + attachments, plain when the flag is off) */}
+          <IssueDescription
+            issueId={id}
+            value={descValue}
+            files={d?.files ?? []}
+            canEdit={canEdit}
+            loading={detail.isLoading}
+            onSave={saveDesc}
+          />
 
           {/* Sub-issues */}
           {(d?.sub_issues.length ?? 0) > 0 && (
-            <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
+            <div className="card" data-testid="sub-issues-card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
                 <span className="t-caption">Sub-issues</span>
                 <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>
@@ -371,34 +529,31 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                 </span>
               </div>
               {d!.sub_issues.map((s, i) => (
-                <div key={s.id} onClick={() => router.push(`/pm/issues/${s.id}`)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 9, height: 32, padding: '0 14px', cursor: 'pointer', borderBottom: i < d!.sub_issues.length - 1 ? '1px solid var(--bord)' : 'none' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{team?.key}-{s.number}</span>
+                <div
+                  key={s.id}
+                  data-sub-issue-id={s.id}
+                  onClick={() => hop(s.id)}
+                  {...issuePrefetchProps(qc, s.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, height: 32, padding: '0 14px', cursor: 'pointer', borderBottom: i < d!.sub_issues.length - 1 ? '1px solid var(--bord)' : 'none' }}
+                >
+                  <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{s.team_key}-{s.number}</span>
                   <PriorityGlyph p={s.priority} size={12} />
-                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: s.completed_at ? 'line-through' : 'none', opacity: s.completed_at ? 0.6 : 1 }}>{s.title}</span>
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: s.completed_at || s.canceled_at ? 'line-through' : 'none', opacity: s.completed_at || s.canceled_at ? 0.6 : 1 }}>{s.title}</span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Relations */}
-          {(d?.relations.length ?? 0) > 0 && (
-            <div className="card" style={{ padding: '10px 14px', marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span className="t-caption">Relations</span>
-              {d!.relations.map((r) => {
-                const otherId = r.issue_id === id ? r.related_issue_id : r.issue_id
-                const other = store?.issues.get(otherId)
-                const label = r.issue_id === id ? r.type.replace(/_/g, ' ') : r.type === 'blocks' ? 'blocked by' : r.type.replace(/_/g, ' ')
-                return (
-                  <button key={r.id} onClick={() => router.push(`/pm/issues/${otherId}`)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 7, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text-2)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer' }}>
-                    <span style={{ color: r.type === 'blocks' ? 'var(--coral)' : 'var(--text-faint)' }}>{label}</span>
-                    {team?.key}-{other?.number ?? '…'}
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          {/* Relations (Round L) — always present so a link can be added. */}
+          <RelationsCard
+            issueId={id}
+            issueKey={issueKey}
+            issueTitle={issue.title}
+            engine={engine}
+            relations={d?.relations ?? []}
+            from={from}
+            onChanged={() => void qc.invalidateQueries({ queryKey: issueDetailQueryKey(id) })}
+          />
 
           {/* Git (§12 — chips attached by the GitHub App; parked behind
               FEATURES.pm_github while the connection moves to OAuth) */}
@@ -416,93 +571,45 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
 
           {/* Comments + activity */}
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="t-caption">Activity</span>
+              {d && d.comments_total > 0 && (
+                <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>
+                  {d.comments_total} comment{d.comments_total === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
-            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 460, overflowY: 'auto' }}>
               {detail.isLoading && <SkeletonRows rows={2} height={34} />}
               {(d?.history ?? []).slice(0, 8).reverse().map((h) => (
-                <div key={h.id} style={{ display: 'flex', gap: 8, padding: '7px 14px', fontSize: 11, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)' }}>
+                <div key={h.id} data-history-field={h.field} style={{ display: 'flex', gap: 8, padding: '7px 14px', fontSize: 11, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)' }}>
                   <span style={{ fontWeight: 800, color: 'var(--text-2)' }}>{users.find((u) => u.id === h.actor_user_id)?.name ?? '—'}</span>
-                  <span>set {h.field}: {h.from_value ?? '—'} → <b style={{ color: 'var(--text-2)' }}>{h.to_value ?? '—'}</b></span>
+                  <span>{historyLine(h)}</span>
                   <span style={{ flex: 1 }} />
                   <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(h.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                 </div>
               ))}
-              {(d?.comments ?? []).map((c) => (
-                <div key={c.id} style={{ display: 'flex', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--bord)', marginLeft: c.parent_comment_id ? 26 : 0 }}>
-                  <MiniAv name={users.find((u) => u.id === c.author_user_id)?.name ?? '?'} src={users.find((u) => u.id === c.author_user_id)?.avatar_url} size={22} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                      <span style={{ fontSize: 11.5, fontWeight: 800 }}>{users.find((u) => u.id === c.author_user_id)?.name ?? '—'}</span>
-                      <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(c.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
-                    </div>
-                    <div style={{ fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginTop: 3 }}>{c.body}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 9, padding: 12, position: 'relative' }}>
-              {mentionOptions.length > 0 && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: 'calc(100% - 4px)',
-                    left: 12,
-                    width: 240,
-                    zIndex: 60,
-                    background: 'rgba(18,18,30,.98)',
-                    border: '1px solid var(--bord-2)',
-                    borderRadius: 10,
-                    padding: 4,
-                    boxShadow: '0 16px 40px rgba(0,0,0,.55)',
-                  }}
-                >
-                  {mentionOptions.map((u, i) => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      onMouseDown={(e) => { e.preventDefault(); pickMention(u) }}
-                      onMouseEnter={() => setMentionIdx(i)}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '6px 8px',
-                        borderRadius: 7,
-                        border: 'none',
-                        cursor: 'pointer',
-                        background: i === mentionIdx ? 'var(--surf-2)' : 'transparent',
-                        color: '#fff',
-                      }}
-                    >
-                      <MiniAv name={u.name} src={u.avatar_url} size={18} />
-                      <span style={{ fontSize: 12, fontWeight: 700 }}>{u.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <input
-                className="input"
-                value={comment}
-                onChange={(e) => { setComment(e.target.value); setMentionIdx(0) }}
-                onKeyDown={(e) => {
-                  if (mentionOptions.length > 0) {
-                    if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIdx((i) => (i + 1) % mentionOptions.length); return }
-                    if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIdx((i) => (i - 1 + mentionOptions.length) % mentionOptions.length); return }
-                    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); pickMention(mentionOptions[mentionIdx] ?? mentionOptions[0]!); return }
-                    if (e.key === 'Escape') { e.preventDefault(); setComment(comment.replace(/@([\w .-]*)$/, '')); return }
-                  }
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitComment()
-                }}
-                placeholder="Leave a comment… @ to mention (⌘↵ to send)"
-                style={{ flex: 1, height: 36 }}
+              <CommentThread
+                comments={comments}
+                files={d?.files ?? []}
+                users={users}
+                issueId={id}
+                hasEarlier={hasEarlier}
+                onLoadEarlier={() => void loadEarlier()}
+                loadingEarlier={loadingEarlier}
               />
-              <Btn kind="secondary" size="sm" disabled={!comment.trim() || postComment.isPending} onClick={submitComment}>
-                Comment
-              </Btn>
             </div>
+            {canEdit && (
+              <CommentComposer
+                issueId={id}
+                draftId={draftId}
+                users={users}
+                pending={postComment.isPending}
+                onSubmit={async (body, attachment_ids, mentioned_user_ids) => {
+                  await postComment.mutateAsync({ body, attachment_ids, mentioned_user_ids })
+                }}
+              />
+            )}
           </div>
         </div>
 
@@ -589,6 +696,43 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               ))}
             </RailMenu>
           )}
+          {/* Round L — parent (sub-issue of). */}
+          <RailRow label="Parent" onClick={() => setMenu(menu === 'parent' ? null : 'parent')} testId="rail-parent">
+            {parentInfo ? (
+              <>
+                <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{parentInfo.key}-{parentInfo.number || '…'}</span>
+                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{parentInfo.title}</span>
+              </>
+            ) : (
+              <span className="t-mute">None</span>
+            )}
+          </RailRow>
+          {menu === 'parent' && (
+            <RailMenu wide>
+              {parentInfo && (
+                <button
+                  onClick={() => { setMenu(null); hop(parentInfo.id) }}
+                  {...issuePrefetchProps(qc, parentInfo.id)}
+                  style={railMenuRow(false)}
+                >
+                  <Icon.arrow size={12} /> Open {parentInfo.key}-{parentInfo.number || '…'}
+                </button>
+              )}
+              {issue.parent_issue_id && (
+                <button data-testid="clear-parent" onClick={() => { doParent(null); setMenu(null) }} style={{ ...railMenuRow(false), color: 'var(--coral)' }}>
+                  <Icon.x size={12} /> No parent
+                </button>
+              )}
+              {/* Never offer itself, its current parent or its own sub-issues (a cycle the server would reject). */}
+              <IssuePicker
+                engine={engine}
+                excludeIds={[id, ...(issue.parent_issue_id ? [issue.parent_issue_id] : []), ...subIssueIds]}
+                placeholder="Set parent — search issues"
+                onPick={(p) => { doParent(p); setMenu(null) }}
+                onClose={() => setMenu(null)}
+              />
+            </RailMenu>
+          )}
           <RailRow label="Estimate">
             <input
               className="input"
@@ -632,20 +776,23 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   )
 })
 
-function RailRow({ label, children, onClick }: { label: string; children: React.ReactNode; onClick?: () => void }) {
+function RailRow({ label, children, onClick, testId }: { label: string; children: React.ReactNode; onClick?: () => void; testId?: string }) {
   return (
-    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 6px', borderRadius: 8, cursor: onClick ? 'pointer' : 'default', position: 'relative' }}
+    <div data-testid={testId} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 6px', borderRadius: 8, cursor: onClick ? 'pointer' : 'default', position: 'relative' }}
       onMouseEnter={(e) => { if (onClick) e.currentTarget.style.background = 'var(--surf-1)' }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
       <span style={{ width: 74, fontSize: 10.5, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>{label}</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700 }}>{children}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, minWidth: 0 }}>{children}</span>
     </div>
   )
 }
 
-function RailMenu({ children }: { children: React.ReactNode }) {
+function RailMenu({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div style={{ margin: '2px 0 6px 80px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: 220, overflowY: 'auto' }}>
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{ margin: wide ? '2px 0 6px 0' : '2px 0 6px 80px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: wide ? 340 : 220, overflowY: 'auto' }}
+    >
       {children}
     </div>
   )

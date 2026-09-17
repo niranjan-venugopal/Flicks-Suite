@@ -541,8 +541,10 @@ describe('Round K — Fix C: the manager is sent to the request, not to their ow
     expect(ovNaN.pending.regularizations).toHaveLength(5);
 
     // Scope + own-request exclusion untouched by the limit: the team list never
-    // shows M2's report or the bridged owner; the owner's org list shows those
-    // but never the owner's own request.
+    // shows M2's report or the bridged owner. Round L (founder item 2): the
+    // owner's Inbox is ROUTED — M's and M2's reports sit with their managers
+    // (level 0) and are not the owner's until escalated; the bridged S has no
+    // manager at all, so it is HR's from the start; never the owner's own.
     const teamIds = ov50.pending.regularizations.map((r) => r.id);
     expect(teamIds).not.toContain(pReg);
     expect(teamIds).not.toContain(sReg);
@@ -552,14 +554,14 @@ describe('Round K — Fix C: the manager is sent to the request, not to their ow
     });
     expect(ovOrg.scope).toBe('org');
     const orgIds = ovOrg.pending.regularizations.map((r) => r.id);
-    expect(orgIds).toEqual(expect.arrayContaining([...ids, pReg, sReg]));
-    expect(orgIds).not.toContain(ownerReg);
-    expect(orgIds).toHaveLength(9);
-    expect(ovOrg.pending.regularizationCount).toBe(9);
+    expect(orgIds).toEqual([sReg]);
+    for (const id of [...ids, pReg, ownerReg]) expect(orgIds).not.toContain(id);
+    expect(ovOrg.pending.regularizationCount).toBe(1);
+    expect(ovOrg.pending.regularizations[0]!.escalation).toBeNull();
     const ovOrg5 = await dashboardService.getAdminOverview(T1, {
       callerUserId: O.userId, includeOnboarding: false, includeApprovals: true,
     });
-    expect(ovOrg5.pending.regularizationCount).toBe(9);
+    expect(ovOrg5.pending.regularizationCount).toBe(1);
     expect(ovOrg5.pending.regularizations.map((r) => r.id)).toEqual(orgIds.slice(0, 5));
   });
 

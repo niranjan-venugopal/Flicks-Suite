@@ -11,6 +11,22 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /**
+ * RFC 6266/5987 attachment disposition: an ASCII fallback `filename=` plus
+ * the UTF-8 `filename*=` form. CR/LF/quotes/backslashes can never reach the
+ * header (they are folded to `_`), so a crafted file name cannot smuggle a
+ * second header or break the quoted string.
+ */
+export function attachmentDisposition(fileName: string): string {
+  const cleaned = (fileName ?? '').replace(/[\r\n"\\]/g, '_').trim().slice(0, 200) || 'download';
+  const ascii = cleaned.replace(/[^\x20-\x7e]/g, '_');
+  const encoded = encodeURIComponent(cleaned).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
  * Cloudflare R2 storage (PRD v4 §10 — single storage backend). Thin S3 client
  * over the existing R2_* config; replaces the string-concat placeholder that
  * predated it. Degrades safely when unconfigured (local/CI): isConfigured()
@@ -84,12 +100,27 @@ export class R2Service {
     );
   }
 
-  /** Presigned GET (default 24h). Keys are UUID-versioned → immutable-cacheable. */
-  async signedGetUrl(key: string, ttlSeconds = 24 * 60 * 60): Promise<string> {
+  /**
+   * Presigned GET (default 24h). Keys are UUID-versioned → immutable-cacheable.
+   * Round L — `download.fileName` bakes a `Content-Disposition: attachment`
+   * response override into the signature (PM attachments' `?dl=1`), so the
+   * browser saves the file under its original name instead of the UUID key.
+   */
+  async signedGetUrl(
+    key: string,
+    ttlSeconds = 24 * 60 * 60,
+    opts?: { download?: { fileName: string } },
+  ): Promise<string> {
     const client = this.assertConfigured();
     return getSignedUrl(
       client,
-      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ...(opts?.download
+          ? { ResponseContentDisposition: attachmentDisposition(opts.download.fileName) }
+          : {}),
+      }),
       { expiresIn: ttlSeconds },
     );
   }

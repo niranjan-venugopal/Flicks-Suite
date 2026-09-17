@@ -23,6 +23,7 @@ import { AttendanceService } from '../modules/attendance/attendance.service';
 import { LeaveService } from '../modules/leave/leave.service';
 import { SettingsService } from '../modules/settings/settings.service';
 import { TimesheetService } from '../modules/timesheet/timesheet.service';
+import { ApprovalRoutingService } from '../modules/approvals/approval-routing.service';
 import { NotificationsService } from '../modules/notifications/notifications.service';
 import { PmVisibilityService } from '../modules/pm/sync/visibility.service';
 import { PmTeamsService } from '../modules/pm/teams.service';
@@ -58,7 +59,14 @@ const settings = new SettingsService(
   { servedUrl: async () => null } as unknown as MediaService,
   {} as unknown as DomainEventsService,
 );
-const timesheet = new TimesheetService(dbAdmin as never, dbSvc, audit, notificationsStub);
+// Round L: timesheets route through ApprovalRoutingService (same stubbed notifications).
+const timesheet = new TimesheetService(
+  dbAdmin as never,
+  dbSvc,
+  audit,
+  notificationsStub,
+  new ApprovalRoutingService(notificationsStub, new ConfigService()),
+);
 const visibility = new PmVisibilityService(dbSvc);
 const pmNotifications = new NotificationsService(
   db as never,

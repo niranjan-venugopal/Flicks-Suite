@@ -17,6 +17,8 @@ export interface BillingState {
   seats: number
   monthly_total_rupees: number
   trial_ends_at: string | null
+  /** Round L: IST calendar days left on the trial (trialing only) — the banner and the T-10/T-3/T-1 bell agree on this number. */
+  days_left?: number | null
   grace_ends_at: string | null
   current_period_start: string | null
   current_period_end: string | null

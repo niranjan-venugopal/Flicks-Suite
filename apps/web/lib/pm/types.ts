@@ -83,6 +83,20 @@ export interface PmIssueRow {
   _pending?: boolean
 }
 
+/**
+ * Round L — one stored direction per link. "X blocks me" lives as
+ * { issue_id: X, related_issue_id: me, type: 'blocks' }; the store answers
+ * relationsForIssue() from BOTH columns.
+ */
+export interface PmRelationRow {
+  id: string
+  issue_id: string
+  related_issue_id: string
+  type: 'blocks' | 'duplicate_of' | 'relates_to'
+  /** client-only: true for an optimistic row the server has not acked */
+  _pending?: boolean
+}
+
 export interface PmProjectRow {
   id: string
   name: string
@@ -152,5 +166,12 @@ export interface PendingMutation {
   fields?: Record<string, unknown>
   /** inverse patch for rollback-on-reject (table → id → partial row or null=remove) */
   inverse?: { table: string; id: string; row: Record<string, unknown> | null }
+  /**
+   * Round L — extra rollbacks for ops that touch more than one row (a
+   * duplicate_of relate also moves the issue's state). Applied after
+   * `inverse`, same shape, same rules. Optional so persisted queues from
+   * older builds replay unchanged.
+   */
+  inverses?: Array<{ table: string; id: string; row: Record<string, unknown> | null }>
   enqueuedAt: number
 }

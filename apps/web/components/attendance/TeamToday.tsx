@@ -27,6 +27,10 @@ function fmtWorked(min: number | null): string {
   return `${h}h ${m.toString().padStart(2, '0')}m`
 }
 
+function holidayLabel(t: TeamMemberToday): string {
+  return t.holidayName ? `Holiday · ${t.holidayName}` : 'Holiday'
+}
+
 function statusPill(t: TeamMemberToday): { tone: PillTone; label: string } {
   // Work mode wins for present-ish days: a remote day shows WFH even though
   // its attendance_status is present/late (status carries lateness, not place).
@@ -36,7 +40,19 @@ function statusPill(t: TeamMemberToday): { tone: PillTone; label: string } {
   ) {
     return { tone: 'blue', label: 'WFH' }
   }
+  // Round L (founder item 1): no record ≠ missed punch. The API says what
+  // the day IS — on approved leave, a holiday, the shift's weekend, a pending
+  // request — before anyone is called "yet to clock in".
   if (!t.attendanceStatus) {
+    switch (t.derivedStatus) {
+      case 'on_leave': return { tone: 'purple', label: 'On leave' }
+      case 'holiday':  return { tone: '',       label: holidayLabel(t) }
+      case 'weekend':  return { tone: '',       label: 'Weekend' }
+      default: break
+    }
+    if (t.dayKind === 'half_day_leave') return { tone: 'yellow', label: 'Half-day leave' }
+    if (t.pendingLeave) return { tone: 'yellow', label: 'Leave pending' }
+    if (t.expected === false) return { tone: '', label: 'Not expected' }
     return { tone: 'yellow', label: 'Yet to clock in' }
   }
   switch (t.attendanceStatus) {
@@ -48,10 +64,22 @@ function statusPill(t: TeamMemberToday): { tone: PillTone; label: string } {
     case 'comp_off':        return { tone: 'green',  label: 'Comp off' }
     case 'absent':          return { tone: 'coral',  label: 'Absent' }
     case 'half_day':        return { tone: 'yellow', label: 'Half day' }
-    case 'holiday':         return { tone: '',       label: 'Holiday' }
+    case 'holiday':         return { tone: '',       label: holidayLabel(t) }
     case 'weekend':         return { tone: '',       label: 'Weekend' }
     default:                return { tone: '',       label: t.attendanceStatus }
   }
+}
+
+/** Secondary chip next to the status — the leave type / session. */
+function leaveHint(t: TeamMemberToday): string | null {
+  if (!t.leave) return null
+  const type = t.leave.leaveTypeName ?? 'Leave'
+  if (t.leave.isHalfDay) {
+    const session =
+      t.leave.session === 'first_half' ? 'first half' : t.leave.session === 'second_half' ? 'second half' : 'half day'
+    return `${type} · ${session}`
+  }
+  return type
 }
 
 function locationLabel(t: TeamMemberToday): string {
@@ -77,17 +105,25 @@ export function TeamToday() {
     for (const r of rows) {
       const s = r.attendanceStatus
       const remote = r.workMode === 'remote'
-      if (s === 'present' || s === 'on_duty' || s === 'comp_off' || s === 'half_day') {
+      // A half_day row from the leave backfill (no punch yet) says nothing
+      // about the person being in — they are still to clock in.
+      const halfDayNoPunch = s === 'half_day' && !r.firstPunchInAt
+      if ((s === 'present' || s === 'on_duty' || s === 'comp_off' || s === 'half_day') && !halfDayNoPunch) {
         if (remote) wfh++
         else inOffice++
       } else if (s === 'work_from_home') wfh++
-      else if (s === 'on_leave') onLeave++
+      else if (s === 'on_leave' || (!s && r.derivedStatus === 'on_leave')) onLeave++
       else if (s === 'late') {
         if (remote) wfh++
         else inOffice++
         if (r.isLate) late++
-      } else if (!s || s === 'absent') yetToClockIn++
-      // holiday / weekend days count in no tile — nobody is expected in.
+      } else if ((!s || s === 'absent' || halfDayNoPunch) && r.expected !== false) {
+        // Round L: only people EXPECTED today count — never someone on
+        // leave (handled above), on a holiday or on their weekend (both
+        // `expected:false`). A pending request keeps them expected
+        // (founder default #6); a half-day leave expects the other half.
+        yetToClockIn++
+      }
     }
     return { inOffice, wfh, onLeave, yetToClockIn, late }
   }, [rows])
@@ -201,9 +237,12 @@ export function TeamToday() {
             <tbody>
               {rows.map((r, i, arr) => {
                 const pill = statusPill(r)
+                const hint = leaveHint(r)
                 return (
                   <tr
                     key={r.employeeId}
+                    data-testid={`team-row-${r.employeeId}`}
+                    data-status={pill.label}
                     style={{
                       borderBottom:
                         i < arr.length - 1 ? '1px solid var(--bord)' : 'none',
@@ -230,11 +269,23 @@ export function TeamToday() {
                     </td>
                     <td style={{ padding: '12px 14px' }}>
                       <div className="flex flex-wrap gap-1.5">
-                        <Pill tone={pill.tone} dot={pill.tone === 'green' || pill.tone === 'yellow'}>
+                        <Pill tone={pill.tone} dot={pill.tone === 'green' || pill.tone === 'yellow' || pill.tone === 'purple'}>
                           {pill.label}
                         </Pill>
                         {r.isLate && (
                           <Pill tone="coral">Late</Pill>
+                        )}
+                        {hint && (pill.label === 'On leave' || pill.label === 'Leave pending' || pill.label === 'Half-day leave' || r.attendanceStatus === 'half_day') && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: 'var(--text-mute)',
+                              alignSelf: 'center',
+                            }}
+                          >
+                            {hint}
+                          </span>
                         )}
                       </div>
                     </td>

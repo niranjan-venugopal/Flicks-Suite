@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Optional,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import {
   pmIssues,
@@ -19,12 +26,14 @@ import {
   memberships,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
-import { rankBetween } from '@flicks/shared/pm';
+import { PM_RELATION_TYPES, rankBetween } from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { PmVisibilityService } from './sync/visibility.service';
+import { PmVisibilityService, type PmScope } from './sync/visibility.service';
+import { PmFilesService } from './files.service';
+import { COMMENT_MAX_LEN, DESCRIPTION_MAX_LEN, cleanMarkdown } from './markdown';
 
 /**
  * PM issues (PRD v6 §5) — ONE service, TWO transports. The REST controller
@@ -54,6 +63,8 @@ export interface CreateIssueInput {
   // Optional at-create labels (round B composer) — validated like setLabels:
   // workspace labels or this team's.
   label_ids?: string[];
+  /** Round L — draft uploads (own, live) to bind to the new issue. */
+  attachment_ids?: string[];
 }
 
 export interface UpdateIssueInput {
@@ -61,9 +72,58 @@ export interface UpdateIssueInput {
   description?: string | null;
   estimate?: string | number | null;
   due_date?: string | null;
+  /**
+   * Round L — re-parent (null clears). Validated in-tenant: must exist, be
+   * visible to the caller, not be the issue itself and not close a cycle.
+   */
+  parent_issue_id?: string | null;
+  /** Round L — inline images pasted while editing the description (drafts). */
+  attachment_ids?: string[];
 }
 
-const HISTORY_FIELDS: Array<keyof UpdateIssueInput> = ['title', 'estimate', 'due_date'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const HISTORY_FIELDS: Array<'title' | 'estimate' | 'due_date'> = ['title', 'estimate', 'due_date'];
+
+export type PmRelationType = (typeof PM_RELATION_TYPES)[number];
+
+/**
+ * Round L — a relation is stored ONCE (issue_id → related_issue_id, type) but
+ * read from both sides; the mirror is what the OTHER issue's history/inbox
+ * says about it.
+ *
+ * History values for `relation` / `parent` rows carry the other issue's ID
+ * (`blocks:<uuid>`, `<uuid>`), never its KEY-N: a public issue's feed must
+ * not reveal a private team's key and counter. detail() resolves the id to
+ * KEY-N through the caller's visibility (or `hidden`) at read time.
+ */
+const RELATION_MIRROR: Record<PmRelationType, string> = {
+  blocks: 'blocked_by',
+  relates_to: 'relates_to',
+  duplicate_of: 'duplicated_by',
+};
+/** Inbox copy from the RECIPIENT's side only — never names the other issue. */
+const RELATION_NOTICE: Record<string, string> = {
+  blocked_by: 'has a new blocker',
+  relates_to: 'was linked to another issue',
+  duplicated_by: 'has a new duplicate',
+};
+const HISTORY_REF_FIELDS: ReadonlySet<string> = new Set(['relation', 'parent']);
+/** Wire marker for a referenced issue the caller may not see. */
+const HIDDEN_REF = 'hidden';
+
+/** Comments per detail payload / "Load earlier" page (§3.3 lazy bundle). */
+const COMMENTS_PAGE = 50;
+/**
+ * Comment ordering key: created_at at MILLISECOND precision (what JSON
+ * carries back as the paging cursor), ties broken by id — so the keyset
+ * `(ms, id)` is exact on both the detail page and the earlier pages.
+ */
+const COMMENT_MS = sql`date_trunc('milliseconds', ${pmIssueComments.created_at})`;
+/** History rows shipped with detail — the UI shows the latest handful. */
+const HISTORY_LIMIT = 20;
+/** Parent-chain walk cap for the cycle check. */
+const PARENT_MAX_HOPS = 32;
 
 @Injectable()
 export class PmIssuesService {
@@ -73,7 +133,17 @@ export class PmIssuesService {
     private readonly domainEvents: DomainEventsService,
     private readonly notifications: NotificationsService,
     private readonly visibility: PmVisibilityService,
+    // Round L item 6 — attachments. @Optional so the service-level specs that
+    // never touch files keep constructing this with five arguments; the
+    // module always provides it, and any attachment write without it is a
+    // loud 503, never a silent skip.
+    @Optional() private readonly files?: PmFilesService,
   ) {}
+
+  private requireFiles(): PmFilesService {
+    if (!this.files) throw new ServiceUnavailableException('Attachments are not available on this server.');
+    return this.files;
+  }
 
   /**
    * Inbox fan-out (§11): best-effort, never blocks or fails the mutation.
@@ -155,6 +225,75 @@ export class PmIssuesService {
       }
     }
     return issue;
+  }
+
+  /**
+   * Round L — the rule for every DTO-supplied issue id (a relation's other
+   * end, a parent): in this tenant AND inside the caller's visibility scope
+   * (guest projects · private teams · private projects), else NotFound —
+   * never a 403 that would confirm the private row exists. `tolerateDeleted`
+   * lets an unlink still find a soft-deleted other end.
+   */
+  private async loadVisibleIssueTx(
+    tx: Db,
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts: { tolerateDeleted?: boolean; scope?: PmScope } = {},
+  ) {
+    if (!UUID_RE.test(id)) throw new NotFoundException('Issue not found');
+    const [issue] = await tx
+      .select()
+      .from(pmIssues)
+      .where(
+        and(
+          eq(pmIssues.id, id),
+          eq(pmIssues.tenant_id, tenantId),
+          ...(opts.tolerateDeleted ? [] : [isNull(pmIssues.deleted_at)]),
+        ),
+      )
+      .limit(1);
+    if (!issue) throw new NotFoundException('Issue not found');
+    const scope = opts.scope ?? (await this.visibility.scopeTx(tx, tenantId, userId));
+    if (!this.visibility.issueVisible(scope, issue)) throw new NotFoundException('Issue not found');
+    return { issue, scope };
+  }
+
+  /** Team key for an issue (history/inbox copy) — the team row is tenant-scoped. */
+  private async teamKeyTx(tx: Db, tenantId: string, teamId: string): Promise<string> {
+    const [t] = await tx
+      .select({ key: pmTeams.key })
+      .from(pmTeams)
+      .where(and(eq(pmTeams.id, teamId), eq(pmTeams.tenant_id, tenantId)))
+      .limit(1);
+    return t?.key ?? '';
+  }
+
+  /**
+   * Round L — validate a parent for create/update: in-tenant + visible to
+   * the caller (NotFound otherwise — finding E), not the issue itself, and
+   * no cycle within PARENT_MAX_HOPS. `selfId` is null on create (a brand-new
+   * issue can't be in anyone's chain yet).
+   */
+  private async resolveParentTx(tx: Db, tenantId: string, userId: string, parentId: string, selfId: string | null) {
+    if (selfId && parentId === selfId) throw new BadRequestException('An issue cannot be its own parent');
+    const { issue: parent } = await this.loadVisibleIssueTx(tx, tenantId, userId, parentId);
+    if (selfId) {
+      let cursor: string | null = parent.parent_issue_id;
+      let hops = 0;
+      while (cursor && hops < PARENT_MAX_HOPS) {
+        if (cursor === selfId) throw new BadRequestException('That parent would create a cycle of sub-issues');
+        const [up] = await tx
+          .select({ parent_issue_id: pmIssues.parent_issue_id })
+          .from(pmIssues)
+          .where(and(eq(pmIssues.id, cursor), eq(pmIssues.tenant_id, tenantId)))
+          .limit(1);
+        cursor = up?.parent_issue_id ?? null;
+        hops += 1;
+      }
+      if (cursor) throw new BadRequestException('Sub-issue nesting is too deep');
+    }
+    return parent;
   }
 
   private async writeHistory(
@@ -293,7 +432,10 @@ export class PmIssuesService {
           stateId = backlog.id;
         }
 
-        if (input.parent_issue_id) await this.loadIssue(tx, tenantId, input.parent_issue_id, userId);
+        // Round L — same in-tenant + visibility + team checks as re-parenting.
+        const parent = input.parent_issue_id
+          ? await this.resolveParentTx(tx, tenantId, userId, input.parent_issue_id, null)
+          : null;
 
         // Atomic per-team number (row-locked counter).
         const [counter] = await tx
@@ -313,11 +455,17 @@ export class PmIssuesService {
         // Sub-issues inherit assignee + priority at creation (§5.2) — not status.
         let assignee = input.assignee_user_id ?? null;
         let priority = input.priority ?? 0;
-        if (input.parent_issue_id && input.assignee_user_id === undefined && input.priority === undefined) {
-          const parent = await this.loadIssue(tx, tenantId, input.parent_issue_id, userId);
+        if (parent && input.assignee_user_id === undefined && input.priority === undefined) {
           assignee = parent.assignee_user_id;
           priority = parent.priority;
         }
+
+        // Round L item 6 — the body is cleaned ONCE, here (tags out, only
+        // https:/flicks-file:// targets, length cap); '' stores as null.
+        const description =
+          input.description == null
+            ? null
+            : cleanMarkdown(input.description, { maxLen: DESCRIPTION_MAX_LEN, label: 'Description' }) || null;
 
         const [issue] = await tx
           .insert(pmIssues)
@@ -327,13 +475,13 @@ export class PmIssuesService {
             team_id: team.id,
             number,
             title: input.title.trim(),
-            description: input.description ?? null,
+            description,
             state_id: stateId,
             priority,
             estimate: input.estimate == null ? null : String(input.estimate),
             assignee_user_id: assignee,
             creator_user_id: userId,
-            parent_issue_id: input.parent_issue_id ?? null,
+            parent_issue_id: parent?.id ?? null,
             project_id: input.project_id ?? null,
             milestone_id: input.milestone_id ?? null,
             due_date: input.due_date ?? null,
@@ -358,6 +506,14 @@ export class PmIssuesService {
             .insert(pmIssueLabels)
             .values(labelIds.map((l) => ({ tenant_id: tenantId, issue_id: issue!.id, label_id: l })))
             .onConflictDoNothing();
+        }
+
+        // Round L item 6 — drafts uploaded while composing become the
+        // issue's files (strict: own, live drafts in this tenant, else 400).
+        if (input.attachment_ids?.length) {
+          await this.requireFiles().bindDraftsTx(
+            tx, tenantId, userId, { objectType: 'issue', objectId: issue!.id }, input.attachment_ids,
+          );
         }
 
         // Auto-subscribe creator + assignee (§5.1 companions).
@@ -419,7 +575,12 @@ export class PmIssuesService {
         if (input.title !== undefined && input.title.trim() && input.title !== issue.title) {
           patch.title = input.title.trim();
         }
-        if (input.description !== undefined) patch.description = input.description;
+        if (input.description !== undefined) {
+          patch.description =
+            input.description == null
+              ? null
+              : cleanMarkdown(input.description, { maxLen: DESCRIPTION_MAX_LEN, label: 'Description' }) || null;
+        }
         if (input.estimate !== undefined) {
           patch.estimate = input.estimate == null ? null : String(input.estimate);
         }
@@ -429,8 +590,23 @@ export class PmIssuesService {
             history.push({ field: f, from: (issue as Record<string, unknown>)[f], to: input[f] });
           }
         }
+        // Round L — re-parent. History carries the parent's ID on both ends;
+        // detail() resolves it to KEY-N through the reader's visibility.
+        if (input.parent_issue_id !== undefined && (input.parent_issue_id ?? null) !== issue.parent_issue_id) {
+          const nextParent = input.parent_issue_id
+            ? await this.resolveParentTx(tx, tenantId, userId, input.parent_issue_id, id)
+            : null;
+          patch.parent_issue_id = nextParent?.id ?? null;
+          history.push({ field: 'parent', from: issue.parent_issue_id, to: nextParent?.id ?? null });
+        }
 
         const [updated] = await tx.update(pmIssues).set(patch).where(eq(pmIssues.id, id)).returning();
+        // Round L item 6 — inline images pasted during this edit session.
+        if (input.attachment_ids?.length) {
+          await this.requireFiles().bindDraftsTx(
+            tx, tenantId, userId, { objectType: 'issue', objectId: id }, input.attachment_ids,
+          );
+        }
         await this.writeHistory(tx, tenantId, id, userId, history);
         await this.domainEvents.publish(
           {
@@ -973,18 +1149,19 @@ export class PmIssuesService {
     tenantId: string,
     userId: string,
     id: string,
-    input: { related_issue_id: string; type: 'blocks' | 'duplicate_of' | 'relates_to' },
+    input: { related_issue_id: string; type: PmRelationType },
   ) {
-    if (!['blocks', 'duplicate_of', 'relates_to'].includes(input.type)) {
+    if (!PM_RELATION_TYPES.includes(input.type)) {
       throw new BadRequestException('invalid relation type');
     }
+    if (input.related_issue_id === id) throw new BadRequestException('An issue cannot relate to itself');
     return this.db.withTenant(
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
-        const related = await this.loadIssue(tx, tenantId, input.related_issue_id, userId);
-        await this.assertTeamAccess(tx, tenantId, userId, related.team_id);
+        // The DTO-supplied end: in-tenant + visible, else NotFound (finding E).
+        const { issue: related } = await this.loadVisibleIssueTx(tx, tenantId, userId, input.related_issue_id);
         const [row] = await tx
           .insert(pmIssueRelations)
           .values({
@@ -996,6 +1173,20 @@ export class PmIssuesService {
           })
           .onConflictDoNothing()
           .returning();
+
+        // Round L — the link shows up in BOTH activity feeds, as ids (the
+        // reader's detail() turns them into KEY-N or "hidden"). Only when a
+        // row was really inserted: a repeat relate is a no-op, not a second
+        // history line.
+        const mirror = RELATION_MIRROR[input.type];
+        if (row) {
+          await this.writeHistory(tx, tenantId, id, userId, [
+            { field: 'relation', from: null, to: `${input.type}:${related.id}` },
+          ]);
+          await this.writeHistory(tx, tenantId, related.id, userId, [
+            { field: 'relation', from: null, to: `${mirror}:${issue.id}` },
+          ]);
+        }
 
         // §5.1 duplicate-close: marking A duplicate_of B moves A to the team's
         // Duplicate (canceled) state and stamps canceled_at.
@@ -1033,28 +1224,65 @@ export class PmIssuesService {
           },
           tx,
         );
+        // Round L — the other issue's assignee hears about the link (best
+        // effort, never the actor; a repeat relate stays quiet). Worded from
+        // the recipient's side only: their issue's key + title, never the
+        // current issue's (which they may not be allowed to see).
+        if (row && related.assignee_user_id && related.assignee_user_id !== userId) {
+          const relatedKey = `${await this.teamKeyTx(tx, tenantId, related.team_id)}-${related.number}`;
+          this.notifyInbox(
+            tenantId,
+            related.id,
+            [related.assignee_user_id],
+            'pm.issue.related',
+            `${relatedKey} ${RELATION_NOTICE[mirror] ?? 'was linked to another issue'} — ${related.title}`,
+          );
+        }
         return { data: row ?? { issue_id: id } };
       },
       userId,
     );
   }
 
+  /**
+   * Remove ONE stored relation (issue_id → related_issue_id, type). The
+   * client passes the stored direction — "blocked by X" on this issue is
+   * `X blocks me`, so the call is unrelate(X, me, 'blocks'). Both ends are
+   * resolved through the caller's visibility first (finding C): an invisible
+   * or foreign other end is NotFound before anything is deleted, so the
+   * response can never probe. Both activity feeds record the unlink.
+   */
   async unrelate(tenantId: string, userId: string, id: string, relatedIssueId: string, type: string) {
+    if (!PM_RELATION_TYPES.includes(type as PmRelationType)) throw new BadRequestException('invalid relation type');
     return this.db.withTenant(
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id, userId);
         await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
-        await tx
+        // A soft-deleted other end is still unlinkable (the row is otherwise stuck).
+        const { issue: related } = await this.loadVisibleIssueTx(tx, tenantId, userId, relatedIssueId, {
+          tolerateDeleted: true,
+        });
+        const deleted = await tx
           .delete(pmIssueRelations)
           .where(
             and(
               eq(pmIssueRelations.tenant_id, tenantId),
               eq(pmIssueRelations.issue_id, id),
-              eq(pmIssueRelations.related_issue_id, relatedIssueId),
+              eq(pmIssueRelations.related_issue_id, related.id),
               eq(pmIssueRelations.type, type),
             ),
-          );
+          )
+          .returning({ id: pmIssueRelations.id });
+        if (deleted.length) {
+          const mirror = RELATION_MIRROR[type as PmRelationType] ?? type;
+          await this.writeHistory(tx, tenantId, id, userId, [
+            { field: 'relation', from: `${type}:${related.id}`, to: null },
+          ]);
+          await this.writeHistory(tx, tenantId, related.id, userId, [
+            { field: 'relation', from: `${mirror}:${issue.id}`, to: null },
+          ]);
+        }
         await this.domainEvents.publish(
           {
             name: 'pm.issue.related',
@@ -1069,7 +1297,7 @@ export class PmIssuesService {
           },
           tx,
         );
-        return { data: { issue_id: id } };
+        return { data: { issue_id: id, removed: deleted.length } };
       },
       userId,
     );
@@ -1112,14 +1340,249 @@ export class PmIssuesService {
     );
   }
 
-  /** Lazy-loaded detail (§3.3): description + comments + history + children + relations. */
+  /**
+   * Lazy-loaded detail (§3.3): description + comments + history + children +
+   * relations. Round L — one round trip after the visibility-scoped load:
+   * the team-access check rides in the same batch, comments are the newest
+   * COMMENTS_PAGE (ascending, with `comments_total` / `has_earlier` for the
+   * "Load earlier" page), history is capped at HISTORY_LIMIT, and each
+   * relation is enriched with the OTHER issue (`related_issue`) — filtered by
+   * the caller's visibility so a private-team/-project issue never shows up
+   * as a chip, not even as an id.
+   */
   async detail(tenantId: string, userId: string, id: string) {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id, userId);
-        await this.assertTeamAccess(tx, tenantId, userId, issue.team_id);
-        const [comments, history, children, relations, subscribers, gitLinks] = await Promise.all([
+        const [team, scope, comments, [totalRow], historyRaw, childrenRaw, relationsRaw, subscribers, gitLinks, parentRow, fileRows] =
+          await Promise.all([
+            this.assertTeamAccess(tx, tenantId, userId, issue.team_id),
+            // One scope read for every "may the reader see that other issue"
+            // decision below (relations, parent, sub-issues, history refs).
+            this.visibility.scopeTx(tx, tenantId, userId),
+            tx
+              .select({
+                id: pmIssueComments.id,
+                body: pmIssueComments.body,
+                author_user_id: pmIssueComments.author_user_id,
+                parent_comment_id: pmIssueComments.parent_comment_id,
+                edited_at: pmIssueComments.edited_at,
+                created_at: pmIssueComments.created_at,
+              })
+              .from(pmIssueComments)
+              .where(and(eq(pmIssueComments.tenant_id, tenantId), eq(pmIssueComments.issue_id, id), isNull(pmIssueComments.deleted_at)))
+              .orderBy(desc(COMMENT_MS), desc(pmIssueComments.id))
+              .limit(COMMENTS_PAGE),
+            tx
+              .select({ total: sql<number>`count(*)::int` })
+              .from(pmIssueComments)
+              .where(and(eq(pmIssueComments.tenant_id, tenantId), eq(pmIssueComments.issue_id, id), isNull(pmIssueComments.deleted_at))),
+            tx
+              .select()
+              .from(pmIssueHistory)
+              .where(and(eq(pmIssueHistory.tenant_id, tenantId), eq(pmIssueHistory.issue_id, id)))
+              .orderBy(desc(pmIssueHistory.created_at))
+              .limit(HISTORY_LIMIT),
+            tx
+              .select({
+                id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+                state_id: pmIssues.state_id, priority: pmIssues.priority,
+                assignee_user_id: pmIssues.assignee_user_id, completed_at: pmIssues.completed_at,
+                canceled_at: pmIssues.canceled_at,
+                team_id: pmIssues.team_id, project_id: pmIssues.project_id, team_key: pmTeams.key,
+              })
+              .from(pmIssues)
+              .innerJoin(pmTeams, eq(pmTeams.id, pmIssues.team_id))
+              .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.parent_issue_id, id), isNull(pmIssues.deleted_at)))
+              .orderBy(asc(pmIssues.number)),
+            tx
+              .select()
+              .from(pmIssueRelations)
+              .where(and(eq(pmIssueRelations.tenant_id, tenantId), sql`(${pmIssueRelations.issue_id} = ${id} OR ${pmIssueRelations.related_issue_id} = ${id})`))
+              .orderBy(asc(pmIssueRelations.created_at)),
+            tx
+              .select({ user_id: pmIssueSubscribers.user_id })
+              .from(pmIssueSubscribers)
+              .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), eq(pmIssueSubscribers.issue_id, id))),
+            tx
+              .select()
+              .from(pmIssueGitLinks)
+              .where(and(eq(pmIssueGitLinks.tenant_id, tenantId), eq(pmIssueGitLinks.issue_id, id)))
+              .orderBy(asc(pmIssueGitLinks.created_at)),
+            issue.parent_issue_id
+              ? tx
+                  .select({
+                    id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+                    team_id: pmIssues.team_id, project_id: pmIssues.project_id,
+                    deleted_at: pmIssues.deleted_at, team_key: pmTeams.key,
+                  })
+                  .from(pmIssues)
+                  .innerJoin(pmTeams, eq(pmTeams.id, pmIssues.team_id))
+                  .where(and(eq(pmIssues.id, issue.parent_issue_id), eq(pmIssues.tenant_id, tenantId)))
+                  .limit(1)
+                  .then((r) => r[0] ?? null)
+              : Promise.resolve(null),
+            this.files ? this.files.listForIssueTx(tx, tenantId, id) : Promise.resolve([]),
+          ]);
+        const visibleTo = (row: { team_id: string; project_id: string | null }) => this.visibility.issueVisible(scope, row);
+
+        // Finding A — the parent is a DTO-chosen row: it must be live AND
+        // inside the reader's scope, else it simply isn't shown.
+        const parent = parentRow && !parentRow.deleted_at && visibleTo(parentRow) ? parentRow : null;
+        // Finding B — a child in a private project/team never surfaces on a
+        // public parent.
+        const children = childrenRaw.filter(visibleTo).map(({ project_id: _p, ...c }) => c);
+
+        // Relations: enrich with the other end, visibility-filtered.
+        let relations: Array<
+          (typeof relationsRaw)[number] & {
+            related_issue: {
+              id: string; number: number; title: string; team_id: string; team_key: string;
+              state_id: string; completed_at: Date | null; canceled_at: Date | null;
+            };
+          }
+        > = [];
+        if (relationsRaw.length) {
+          const otherIds = [...new Set(relationsRaw.map((r) => (r.issue_id === id ? r.related_issue_id : r.issue_id)))];
+          const others = await tx
+            .select({
+              id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+              team_id: pmIssues.team_id, project_id: pmIssues.project_id,
+              state_id: pmIssues.state_id, completed_at: pmIssues.completed_at, canceled_at: pmIssues.canceled_at,
+              team_key: pmTeams.key,
+            })
+            .from(pmIssues)
+            .innerJoin(pmTeams, eq(pmTeams.id, pmIssues.team_id))
+            .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, otherIds), isNull(pmIssues.deleted_at)));
+          const visible = new Map(others.filter(visibleTo).map((o) => [o.id, o] as const));
+          relations = relationsRaw.flatMap((r) => {
+            const o = visible.get(r.issue_id === id ? r.related_issue_id : r.issue_id);
+            if (!o) return [];
+            return [{
+              ...r,
+              related_issue: {
+                id: o.id, number: o.number, title: o.title, team_id: o.team_id, team_key: o.team_key,
+                state_id: o.state_id, completed_at: o.completed_at, canceled_at: o.canceled_at,
+              },
+            }];
+          });
+        }
+
+        // Finding D — history rows for relation/parent hold the OTHER issue's
+        // id; resolve to KEY-N through the reader's scope, `hidden` otherwise.
+        const history = await this.resolveHistoryRefsTx(tx, tenantId, scope, historyRaw);
+
+        const total = Number(totalRow?.total ?? comments.length);
+        return {
+          data: {
+            issue,
+            team_key: team.key,
+            comments: comments.slice().reverse(),
+            comments_total: total,
+            has_earlier: total > comments.length,
+            history,
+            sub_issues: children,
+            relations,
+            subscriber_ids: subscribers.map((s) => s.user_id),
+            git_links: gitLinks,
+            parent_issue: parent
+              ? { id: parent.id, number: parent.number, title: parent.title, team_id: parent.team_id, team_key: parent.team_key }
+              : null,
+            files: this.files ? await this.files.signMany(fileRows) : [],
+          },
+        };
+      },
+      userId,
+    );
+  }
+
+  /**
+   * Turn `relation`/`parent` history values (`type:<uuid>` / `<uuid>`) into
+   * the wire shape: the uuid becomes KEY-N when the reader may see that
+   * issue, the literal `hidden` otherwise, plus a structured `from_ref` /
+   * `to_ref` ({ id, key, title } | null). Anything that is not a uuid (a
+   * pre-Round-L value) is treated as hidden — a key must never pass through
+   * unchecked.
+   */
+  private async resolveHistoryRefsTx(
+    tx: Db,
+    tenantId: string,
+    scope: PmScope,
+    rows: Array<typeof pmIssueHistory.$inferSelect>,
+  ) {
+    type Ref = { id: string; key: string; title: string } | null;
+    const split = (v: string | null): { prefix: string; id: string | null } | null => {
+      if (v == null) return null;
+      const sep = v.indexOf(':');
+      const prefix = sep >= 0 ? v.slice(0, sep + 1) : '';
+      const rest = sep >= 0 ? v.slice(sep + 1) : v;
+      return { prefix, id: UUID_RE.test(rest) ? rest.toLowerCase() : null };
+    };
+    const wanted = new Set<string>();
+    for (const h of rows) {
+      if (!HISTORY_REF_FIELDS.has(h.field)) continue;
+      for (const v of [h.from_value, h.to_value]) {
+        const s = split(v);
+        if (s?.id) wanted.add(s.id);
+      }
+    }
+    const refs = new Map<string, NonNullable<Ref>>();
+    if (wanted.size) {
+      const found = await tx
+        .select({
+          id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
+          team_id: pmIssues.team_id, project_id: pmIssues.project_id, team_key: pmTeams.key,
+        })
+        .from(pmIssues)
+        .innerJoin(pmTeams, eq(pmTeams.id, pmIssues.team_id))
+        .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.id, [...wanted]), isNull(pmIssues.deleted_at)));
+      for (const f of found) {
+        if (this.visibility.issueVisible(scope, f)) {
+          refs.set(f.id, { id: f.id, key: `${f.team_key}-${f.number}`, title: f.title });
+        }
+      }
+    }
+    const resolve = (v: string | null): { value: string | null; ref: Ref } => {
+      const s = split(v);
+      if (!s) return { value: null, ref: null };
+      const ref = s.id ? refs.get(s.id) ?? null : null;
+      return { value: `${s.prefix}${ref ? ref.key : HIDDEN_REF}`, ref };
+    };
+    return rows.map((h) => {
+      if (!HISTORY_REF_FIELDS.has(h.field)) return { ...h, from_ref: null as Ref, to_ref: null as Ref };
+      const from = resolve(h.from_value);
+      const to = resolve(h.to_value);
+      return { ...h, from_value: from.value, to_value: to.value, from_ref: from.ref, to_ref: to.ref };
+    });
+  }
+
+  /**
+   * Round L — "Load earlier comments": the COMMENTS_PAGE (max 100) comments
+   * strictly BEFORE the keyset cursor (created_at at millisecond precision —
+   * the precision the wire carries — then id), oldest→newest, plus whether
+   * more exist. Same ordering as detail(), so a page never skips or repeats
+   * a row that shares the cursor's millisecond.
+   */
+  async listComments(
+    tenantId: string,
+    userId: string,
+    id: string,
+    opts: { before?: string; before_id?: string; limit?: number },
+  ) {
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(opts.limit ?? COMMENTS_PAGE)) || COMMENTS_PAGE));
+    const beforeDate = opts.before ? new Date(opts.before) : null;
+    if (beforeDate && Number.isNaN(beforeDate.getTime())) throw new BadRequestException('before must be an ISO timestamp');
+    if (opts.before_id && !UUID_RE.test(opts.before_id)) throw new BadRequestException('before_id must be a uuid');
+    // Raw sql params: postgres.js wants a string for a timestamptz bind.
+    const before = beforeDate ? beforeDate.toISOString() : null;
+    const beforeId = before && opts.before_id ? opts.before_id.toLowerCase() : null;
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const issue = await this.loadIssue(tx, tenantId, id, userId);
+        const [, rows] = await Promise.all([
+          this.assertTeamAccess(tx, tenantId, userId, issue.team_id),
           tx
             .select({
               id: pmIssueComments.id,
@@ -1130,55 +1593,48 @@ export class PmIssuesService {
               created_at: pmIssueComments.created_at,
             })
             .from(pmIssueComments)
-            .where(and(eq(pmIssueComments.tenant_id, tenantId), eq(pmIssueComments.issue_id, id), isNull(pmIssueComments.deleted_at)))
-            .orderBy(asc(pmIssueComments.created_at)),
-          tx
-            .select()
-            .from(pmIssueHistory)
-            .where(and(eq(pmIssueHistory.tenant_id, tenantId), eq(pmIssueHistory.issue_id, id)))
-            .orderBy(desc(pmIssueHistory.created_at))
-            .limit(50),
-          tx
-            .select({
-              id: pmIssues.id, number: pmIssues.number, title: pmIssues.title,
-              state_id: pmIssues.state_id, priority: pmIssues.priority,
-              assignee_user_id: pmIssues.assignee_user_id, completed_at: pmIssues.completed_at,
-            })
-            .from(pmIssues)
-            .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.parent_issue_id, id), isNull(pmIssues.deleted_at)))
-            .orderBy(asc(pmIssues.number)),
-          tx
-            .select()
-            .from(pmIssueRelations)
-            .where(and(eq(pmIssueRelations.tenant_id, tenantId), sql`(${pmIssueRelations.issue_id} = ${id} OR ${pmIssueRelations.related_issue_id} = ${id})`)),
-          tx
-            .select({ user_id: pmIssueSubscribers.user_id })
-            .from(pmIssueSubscribers)
-            .where(and(eq(pmIssueSubscribers.tenant_id, tenantId), eq(pmIssueSubscribers.issue_id, id))),
-          tx
-            .select()
-            .from(pmIssueGitLinks)
-            .where(and(eq(pmIssueGitLinks.tenant_id, tenantId), eq(pmIssueGitLinks.issue_id, id)))
-            .orderBy(asc(pmIssueGitLinks.created_at)),
+            .where(
+              and(
+                eq(pmIssueComments.tenant_id, tenantId),
+                eq(pmIssueComments.issue_id, id),
+                isNull(pmIssueComments.deleted_at),
+                ...(before
+                  ? [
+                      beforeId
+                        ? sql`(${COMMENT_MS} < ${before}::timestamptz OR (${COMMENT_MS} = ${before}::timestamptz AND ${pmIssueComments.id} < ${beforeId}::uuid))`
+                        : sql`${COMMENT_MS} < ${before}::timestamptz`,
+                    ]
+                  : []),
+              ),
+            )
+            .orderBy(desc(COMMENT_MS), desc(pmIssueComments.id))
+            .limit(limit + 1),
         ]);
-        return {
-          data: {
-            issue,
-            comments,
-            history,
-            sub_issues: children,
-            relations,
-            subscriber_ids: subscribers.map((s) => s.user_id),
-            git_links: gitLinks,
-          },
-        };
+        const page = rows.slice(0, limit).reverse();
+        return { data: { comments: page, has_earlier: rows.length > limit } };
       },
       userId,
     );
   }
 
-  async createComment(tenantId: string, userId: string, issueId: string, input: { id?: string; body: string; parent_comment_id?: string | null; mentioned_user_ids?: string[] }) {
-    if (!input.body?.trim()) throw new BadRequestException('Comment body is required');
+  async createComment(
+    tenantId: string,
+    userId: string,
+    issueId: string,
+    input: {
+      id?: string;
+      body: string;
+      parent_comment_id?: string | null;
+      mentioned_user_ids?: string[];
+      /** Round L item 6 — draft uploads to bind to the new comment. */
+      attachment_ids?: string[];
+    },
+  ) {
+    // Round L item 6 — cleaned once here; an attachment-only comment ('' body
+    // with files) is allowed, an empty one with nothing attached is not.
+    const attachmentIds = [...new Set(input.attachment_ids ?? [])];
+    const body = cleanMarkdown(input.body, { maxLen: COMMENT_MAX_LEN, label: 'Comment' });
+    if (!body && !attachmentIds.length) throw new BadRequestException('Comment body is required');
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -1204,9 +1660,14 @@ export class PmIssuesService {
             issue_id: issueId,
             author_user_id: userId,
             parent_comment_id: input.parent_comment_id ?? null,
-            body: input.body,
+            body,
           })
           .returning();
+        if (attachmentIds.length) {
+          await this.requireFiles().bindDraftsTx(
+            tx, tenantId, userId, { objectType: 'comment', objectId: comment!.id }, attachmentIds,
+          );
+        }
         // Commenting subscribes the author; @mentions subscribe the mentioned
         // members (§11 auto-subscribe — validated against active memberships).
         const subscriberIds = [userId];
@@ -1265,8 +1726,33 @@ export class PmIssuesService {
     );
   }
 
+  /**
+   * Round L item 6 — inside the issue's soft-delete tx: soft-delete the
+   * files of the issue and of every comment on it (there is no separate
+   * comment-delete path — comments only go with their issue). Returns the
+   * storage keys to remove AFTER commit. Storage bookkeeping never fails
+   * the delete: an error here is logged into the returned empty list.
+   */
+  private async softDeleteFilesTx(tx: Db, tenantId: string, issueId: string): Promise<string[]> {
+    if (!this.files) return [];
+    try {
+      const comments = await tx
+        .select({ id: pmIssueComments.id })
+        .from(pmIssueComments)
+        .where(and(eq(pmIssueComments.tenant_id, tenantId), eq(pmIssueComments.issue_id, issueId)));
+      const keys = await this.files.softDeleteForObjectTx(tx, tenantId, { objectType: 'issue', objectId: issueId });
+      for (const c of comments) {
+        keys.push(...(await this.files.softDeleteForObjectTx(tx, tenantId, { objectType: 'comment', objectId: c.id })));
+      }
+      return keys;
+    } catch {
+      return [];
+    }
+  }
+
   async softDelete(tenantId: string, userId: string, id: string) {
-    return this.db.withTenant(
+    let storageKeys: string[] = [];
+    const result = await this.db.withTenant(
       tenantId,
       async (tx) => {
         const issue = await this.loadIssue(tx, tenantId, id, userId);
@@ -1276,6 +1762,9 @@ export class PmIssuesService {
           .set({ deleted_at: new Date(), updated_at: new Date() })
           .where(eq(pmIssues.id, id))
           .returning();
+        // Round L item 6 — the issue's + its comments' attachments go with it
+        // (rows in this tx; objects after commit, below).
+        storageKeys = await this.softDeleteFilesTx(tx, tenantId, id);
         await this.audit.log({
           tenantId,
           actorUserId: userId,
@@ -1296,6 +1785,10 @@ export class PmIssuesService {
       },
       userId,
     );
+    // Committed — storage removal is best-effort and never awaited in a tx
+    // (house rule 7).
+    if (storageKeys.length) this.files?.deleteObjectsAfterCommit(storageKeys);
+    return result;
   }
 
   async restore(tenantId: string, userId: string, id: string) {

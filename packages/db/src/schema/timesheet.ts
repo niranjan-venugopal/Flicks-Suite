@@ -10,8 +10,9 @@ import {
   index,
   date,
   real,
+  smallint,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
 import { employees } from './employees';
 
@@ -67,6 +68,18 @@ export const timesheetPeriods = pgTable(
     rejected_at: timestamp('rejected_at', { withTimezone: true }),
     rejection_comment: text('rejection_comment'),
     locked_at: timestamp('locked_at', { withTimezone: true }),
+    // 0062 — Round L approval routing (see leave.ts for the level semantics).
+    escalation_level: smallint('escalation_level').notNull().default(0),
+    escalated_at: timestamp('escalated_at', { withTimezone: true }),
+    escalation_reason: text('escalation_reason'), // sla | reviewer_on_leave | no_manager | no_skip_manager
+    escalated_to_employee_id: uuid('escalated_to_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
+    routed_manager_employee_id: uuid('routed_manager_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -85,6 +98,10 @@ export const timesheetPeriods = pgTable(
     index('timesheet_periods_status_idx').on(t.status),
     index('timesheet_periods_period_start_idx').on(t.period_start),
     index('timesheet_periods_approver_id_idx').on(t.approver_id),
+    // 0062 — the escalation sweep's scan over OPEN (submitted) periods.
+    index('idx_timesheet_periods_escalation')
+      .on(t.tenant_id, t.escalation_level, t.submitted_at)
+      .where(sql`status = 'submitted'`),
   ],
 );
 

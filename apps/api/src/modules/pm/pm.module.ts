@@ -26,6 +26,8 @@ import { PmPublicService } from './public';
 import { PmGuestsService } from './guests.service';
 import { PmGithubService } from './github.service';
 import { GithubWebhookController } from './github-webhook.controller';
+import { PmFilesService } from './files.service';
+import { PmFilesController, PmUploadThrottleGuard } from './files.controller';
 
 /**
  * PM — Projects module (PRD v6). Ships behind the `pm` tenant toggle +
@@ -34,7 +36,7 @@ import { GithubWebhookController } from './github-webhook.controller';
  */
 @Module({
   imports: [AuditModule, CrmModule, MembersModule, NotificationsModule, MediaModule],
-  controllers: [PmController, PmSyncController, GithubWebhookController],
+  controllers: [PmController, PmSyncController, GithubWebhookController, PmFilesController],
   providers: [
     PmGrantGuard,
     PmSyncGateway,
@@ -55,7 +57,10 @@ import { GithubWebhookController } from './github-webhook.controller';
     PmTemplatesService,
     PmPublicService,
     PmGuestsService,
+    PmFilesService,
+    PmUploadThrottleGuard,
   ],
-  exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService, PmPublicService],
+  // PmFilesService is exported for the PmJobs orphan-draft prune (round L).
+  exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService, PmPublicService, PmFilesService],
 })
 export class PmModule {}

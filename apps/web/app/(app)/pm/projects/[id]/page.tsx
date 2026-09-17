@@ -2,6 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -21,6 +22,8 @@ import { ProjectGuestsCard } from '@/components/pm/ProjectGuestsCard'
 import { ProjectMembersCard } from '@/components/pm/ProjectMembersCard'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
+import { issueHref } from '@/lib/pm/nav'
+import { issuePrefetchProps } from '@/lib/pm/prefetch'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmIssueRow, PmMilestoneRow, PmProjectRow, PmUpdateRow } from '@/lib/pm/types'
@@ -451,8 +454,14 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
             {issues.map((i) => {
               const st = engine?.store.states.get(i.state_id)
               const team = engine?.store.teams.get(i.team_id)
+              // Round L (7) — a client-side <Link>, not a plain <a href>: the
+              // anchor was a FULL document reload (JS re-parse, /me gate,
+              // engine restart) — the "2 seconds to open an issue". The route
+              // prefetches in the viewport; hovering warms the detail query.
+              // (8) — the project is the origin Back returns to.
               return (
-                <a key={i.id} href={`/pm/issues/${i.id}`}
+                <Link key={i.id} href={issueHref(i.id, `/pm/projects/${id}`)} data-issue-row={i.id}
+                  {...issuePrefetchProps(qc, i.id)}
                   style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', borderBottom: '1px solid var(--bord)', textDecoration: 'none' }}>
                   {st && <StateGlyph cat={st.category} size={13} />}
                   <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58, flexShrink: 0 }}>
@@ -460,7 +469,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
                   </span>
                   <PriorityGlyph p={i.priority} size={13} />
                   <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
-                </a>
+                </Link>
               )
             })}
           </div>

@@ -4,28 +4,42 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { useAdminOverview, type AdminOverview } from '@/lib/api/queries/use-dashboard'
+import { api } from '@/lib/api/client'
+import {
+  useAdminOverview,
+  type AdminOverview,
+  type ApprovalEscalation,
+  type PendingTimesheetRow,
+} from '@/lib/api/queries/use-dashboard'
 import { useReviewLeave } from '@/lib/api/queries/use-leave'
 import { useReviewRegularization } from '@/lib/api/queries/use-attendance'
+import { useReviewTimesheet } from '@/lib/api/queries/use-timesheets'
 import {
   useApproveOnboarding,
   useRejectOnboarding,
 } from '@/lib/api/queries/use-employees'
 import { Btn, Icon, Pill, type PillTone } from '@/components/proto'
+import { EscalationPill } from '@/components/approvals/EscalationPill'
 import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { usePresence } from '@/lib/api/queries/use-presence'
 import { useToast } from '@/components/ui/use-toast'
 
 // ─────────────────────────────────────────────────────────
 // Approvals tab of the common Inbox (approver roles only): the leave +
-// regularization review queue — filter pills, master–detail list, comment
-// box, approve/reject. Extracted unchanged from the old /inbox page.
+// regularization + timesheet review queue — filter pills, master–detail
+// list, comment box, approve/reject (+ rework for timesheets).
 // Round K: `focusId` (from /inbox?tab=approvals&request=<id>) pre-selects
 // and highlights that row once the queue loads — the Round I idiom from
 // Team → Leave. The source stays the overview, now up to 50 rows per kind.
+// Round L: only ROUTED items are listed (direct reports, escalated to me,
+// level 2 for owner/HR admin) with the escalation pill; timesheets join the
+// queue; a deep link to a regularization that is not in the queue falls
+// back to GET /attendance/regularizations/:id (the "open directly" surface
+// for owner/HR admin) before the "not waiting on you" toast.
 // ─────────────────────────────────────────────────────────
 
-type FilterKey = 'all' | 'leave' | 'regularization' | 'onboarding'
+type FilterKey = 'all' | 'leave' | 'regularization' | 'timesheet' | 'onboarding'
+type ReviewAction = 'approve' | 'reject' | 'rework'
 
 /** Presence batch cap — the ids travel in a GET query string. */
 const PRESENCE_MAX_IDS = 40
@@ -38,8 +52,12 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+type LeaveRow = AdminOverview['pending']['leaves'][number]
+type RegularizationRow = AdminOverview['pending']['regularizations'][number]
+type OnboardingRow = AdminOverview['pending']['onboarding'][number]
+
 interface InboxItem {
-  kind: 'leave' | 'regularization' | 'onboarding'
+  kind: 'leave' | 'regularization' | 'timesheet' | 'onboarding'
   id: string
   who: string
   userId: string | null
@@ -49,10 +67,9 @@ interface InboxItem {
   when: string
   reason: string | null
   tone: PillTone
-  raw:
-    | AdminOverview['pending']['leaves'][number]
-    | AdminOverview['pending']['regularizations'][number]
-    | AdminOverview['pending']['onboarding'][number]
+  /** Round L — null while the item is still with the reporting manager. */
+  escalation: ApprovalEscalation | null
+  raw: LeaveRow | RegularizationRow | PendingTimesheetRow | OnboardingRow
 }
 
 function relativeTime(iso: string | undefined | null): string {
@@ -74,6 +91,22 @@ function fmtRange(start: string, end: string): string {
   return `${s} – ${e}`
 }
 
+function regularizationItem(r: RegularizationRow): InboxItem {
+  return {
+    kind: 'regularization',
+    id: r.id,
+    who: r.employeeName,
+    userId: r.userId,
+    avatarUrl: r.avatarUrl,
+    what: `${r.requestType} · ${r.attendanceDate}`,
+    when: relativeTime(r.requestedAt),
+    reason: r.reason,
+    tone: 'coral',
+    escalation: r.escalation ?? null,
+    raw: r,
+  }
+}
+
 function buildItems(o: AdminOverview | undefined): InboxItem[] {
   if (!o) return []
   const items: InboxItem[] = []
@@ -88,21 +121,26 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       when: relativeTime(l.appliedAt),
       reason: l.reason,
       tone: 'blue',
+      escalation: l.escalation ?? null,
       raw: l,
     })
   }
-  for (const r of o.pending.regularizations) {
+  for (const r of o.pending.regularizations) items.push(regularizationItem(r))
+  // Round L: submitted timesheets routed to the caller (Approve / Reject /
+  // Rework). Absent until the dashboard integration ships the rows.
+  for (const t of o.pending.timesheets ?? []) {
     items.push({
-      kind: 'regularization',
-      id: r.id,
-      who: r.employeeName,
-      userId: r.userId,
-      avatarUrl: r.avatarUrl,
-      what: `${r.requestType} · ${r.attendanceDate}`,
-      when: relativeTime(r.requestedAt),
-      reason: r.reason,
-      tone: 'coral',
-      raw: r,
+      kind: 'timesheet',
+      id: t.id,
+      who: t.employeeName,
+      userId: t.userId,
+      avatarUrl: t.avatarUrl,
+      what: `Week ${fmtRange(t.periodStart, t.periodEnd)} · ${Number(t.totalHours).toFixed(1)}h`,
+      when: relativeTime(t.submittedAt),
+      reason: null,
+      tone: 'purple',
+      escalation: t.escalation ?? null,
+      raw: t,
     })
   }
   // Onboarding reviews (admin+ only; the API returns an empty list for
@@ -121,10 +159,18 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       when: relativeTime(ob.submittedAt),
       reason: null,
       tone: 'yellow',
+      escalation: null,
       raw: ob,
     })
   }
   return items
+}
+
+const KIND_LABEL: Record<InboxItem['kind'], string> = {
+  leave: 'Leave',
+  regularization: 'Regularize',
+  timesheet: 'Timesheet',
+  onboarding: 'Onboarding',
 }
 
 export function ApprovalsTab({
@@ -141,16 +187,24 @@ export function ApprovalsTab({
   const [comment, setComment] = useState('')
   const [exiting, setExiting] = useState<string | null>(null)
   const [highlight, setHighlight] = useState<string | null>(null)
+  // Round L: a regularization opened DIRECTLY (owner/HR admin deep link to a
+  // request that is still with the manager) — merged into the list.
+  const [directItem, setDirectItem] = useState<InboxItem | null>(null)
   const consumed = useRef<string | null>(null)
   const qc = useQueryClient()
   const overview = useAdminOverview(true, { pendingLimit: 50 })
   const { toast } = useToast()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
+  const reviewTimesheet = useReviewTimesheet()
   const approveOnb = useApproveOnboarding()
   const rejectOnb = useRejectOnboarding()
 
-  const items = useMemo(() => buildItems(overview.data), [overview.data])
+  const items = useMemo(() => {
+    const base = buildItems(overview.data)
+    if (directItem && !base.some((i) => i.id === directItem.id)) return [directItem, ...base]
+    return base
+  }, [overview.data, directItem])
   const filtered = useMemo(
     () => (filter === 'all' ? items : items.filter((i) => i.kind === filter)),
     [items, filter],
@@ -170,6 +224,7 @@ export function ApprovalsTab({
     all: items.length,
     leave: items.filter((i) => i.kind === 'leave').length,
     regularization: items.filter((i) => i.kind === 'regularization').length,
+    timesheet: items.filter((i) => i.kind === 'timesheet').length,
     onboarding: items.filter((i) => i.kind === 'onboarding').length,
   }
 
@@ -201,18 +256,39 @@ export function ApprovalsTab({
     if (overview.isFetching || overview.dataUpdatedAt < focusArrivedAt.current) return
     consumed.current = focusId
     const row = items.find((i) => i.id === focusId)
-    if (!row) {
+    if (row) {
+      setFilter('all')
+      setSelectedId(row.id)
+      setHighlight(row.id)
+      return
+    }
+    // Round L: not in the routed queue — an owner/HR admin may still open a
+    // regularization DIRECTLY (it is with the manager, not escalated yet).
+    // The route lands in Phase 2; a 404 (route missing, decided, or not
+    // ours) falls through to the toast exactly as today.
+    void (async () => {
+      try {
+        const direct = await api.get<RegularizationRow>(
+          `/api/v1/attendance/regularizations/${encodeURIComponent(focusId)}`,
+        )
+        if (direct && direct.id === focusId && direct.employeeId) {
+          const item = regularizationItem(direct)
+          setDirectItem(item)
+          setFilter('all')
+          setSelectedId(item.id)
+          setHighlight(item.id)
+          return
+        }
+      } catch {
+        /* 404 / not permitted → not waiting on us */
+      }
       // Already decided, not in this reviewer's scope, or a stale link.
       toast({
         title: 'That request isn’t waiting on you',
         description: 'It may already be reviewed, or it belongs to another manager’s team.',
       })
       onFocusConsumed?.()
-      return
-    }
-    setFilter('all')
-    setSelectedId(row.id)
-    setHighlight(row.id)
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, overview.data, overview.isFetching, overview.dataUpdatedAt, items])
 
@@ -225,17 +301,40 @@ export function ApprovalsTab({
     return () => clearTimeout(t)
   }, [highlight])
 
-  const handleAction = async (action: 'approve' | 'reject') => {
+  const handleAction = async (action: ReviewAction) => {
     if (!selected) return
     const who = selected.who
+    // Timesheets: reject and rework need a note the employee can act on
+    // (the API refuses without one) — say so before the row slides out.
+    if (selected.kind === 'timesheet' && action !== 'approve' && !comment.trim()) {
+      toast({
+        title: 'Comment required',
+        description:
+          action === 'reject'
+            ? 'Tell the employee why their timesheet was rejected.'
+            : 'Explain what changes the employee should make.',
+        variant: 'destructive',
+      })
+      return
+    }
     // Slide the row out first (160ms) so the list settles before the refetch.
     setExiting(selected.id)
     await new Promise((r) => setTimeout(r, 170))
     try {
       if (selected.kind === 'leave') {
-        await reviewLeave.mutateAsync({ id: selected.id, action, comment: comment || undefined })
+        await reviewLeave.mutateAsync({
+          id: selected.id,
+          action: action === 'approve' ? 'approve' : 'reject',
+          comment: comment || undefined,
+        })
       } else if (selected.kind === 'regularization') {
-        await reviewReg.mutateAsync({ id: selected.id, action, comment: comment || undefined })
+        await reviewReg.mutateAsync({
+          id: selected.id,
+          action: action === 'approve' ? 'approve' : 'reject',
+          comment: comment || undefined,
+        })
+      } else if (selected.kind === 'timesheet') {
+        await reviewTimesheet.mutateAsync({ periodId: selected.id, action, comment: comment.trim() || undefined })
       } else if (action === 'approve') {
         await approveOnb.mutateAsync(selected.id)
       } else {
@@ -246,6 +345,7 @@ export function ApprovalsTab({
       setSelectedId(null)
       setExiting(null)
       setHighlight(null)
+      if (directItem?.id === selected.id) setDirectItem(null)
       // The deep-linked request is decided — drop `?request=` from the URL.
       if (focusId && selected.id === focusId) onFocusConsumed?.()
       refresh()
@@ -259,28 +359,39 @@ export function ApprovalsTab({
               : `Sent back to ${who} for changes`
             : action === 'approve'
               ? `Approved — ${who} notified`
-              : `Rejected — ${who} notified`,
+              : action === 'rework'
+                ? `Sent back to ${who} for rework`
+                : `Rejected — ${who} notified`,
       })
-    } catch {
+    } catch (e) {
       setExiting(null)
-      /* pendingApprovals will retry on the next overview poll */
+      // The API's refusals are written for people ("You can only review
+      // requests from your direct reports…", "A comment is required…") —
+      // show them instead of silently putting the row back.
+      toast({
+        title: 'Could not record review',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
     }
   }
 
   return (
     <div>
       {/* Filter pills */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
         {[
           { k: 'all' as const, l: 'All', c: counts.all },
           { k: 'leave' as const, l: 'Leave', c: counts.leave },
           { k: 'regularization' as const, l: 'Regularization', c: counts.regularization },
+          { k: 'timesheet' as const, l: 'Timesheets', c: counts.timesheet },
           { k: 'onboarding' as const, l: 'Onboarding', c: counts.onboarding },
         ].map((t) => (
           <button
             key={t.k}
             onClick={() => setFilter(t.k)}
             type="button"
+            data-testid={`approvals-filter-${t.k}`}
             style={{
               padding: '8px 14px',
               borderRadius: 99,
@@ -402,15 +513,11 @@ export function ApprovalsTab({
                   )}
                   <RowPresenceAvatar name={a.who} src={a.avatarUrl} userId={a.userId} size={26} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 12.5, fontWeight: 800 }}>{a.who}</span>
-                      <Pill tone={a.tone}>
-                        {a.kind === 'leave'
-                          ? 'Leave'
-                          : a.kind === 'regularization'
-                            ? 'Regularize'
-                            : 'Onboarding'}
-                      </Pill>
+                      <Pill tone={a.tone}>{KIND_LABEL[a.kind]}</Pill>
+                      {/* Round L: everything listed here is routed to the caller. */}
+                      <EscalationPill escalation={a.escalation} routedToMe />
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 2 }}>
                       {a.what}
@@ -432,9 +539,11 @@ export function ApprovalsTab({
               onCommentChange={setComment}
               onApprove={() => handleAction('approve')}
               onReject={() => handleAction('reject')}
+              onRework={selected.kind === 'timesheet' ? () => handleAction('rework') : undefined}
               isPending={
                 reviewLeave.isPending ||
                 reviewReg.isPending ||
+                reviewTimesheet.isPending ||
                 approveOnb.isPending ||
                 rejectOnb.isPending
               }
@@ -461,6 +570,7 @@ function ApprovalDetail({
   onCommentChange,
   onApprove,
   onReject,
+  onRework,
   isPending,
 }: {
   item: InboxItem
@@ -468,8 +578,11 @@ function ApprovalDetail({
   onCommentChange: (s: string) => void
   onApprove: () => void
   onReject: () => void
+  /** Timesheets only — reopen the week as a draft with a required note. */
+  onRework?: () => void
   isPending: boolean
 }) {
+  const commentRequired = item.kind === 'timesheet'
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', height: 'fit-content' }}>
       <div
@@ -483,9 +596,10 @@ function ApprovalDetail({
       >
         <RowPresenceAvatar name={item.who} src={item.avatarUrl} userId={item.userId} size={48} />
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
             <Pill tone={item.tone}>{item.kind.toUpperCase()}</Pill>
             <Pill>{item.id.slice(0, 8)}</Pill>
+            <EscalationPill escalation={item.escalation} routedToMe />
           </div>
           <div className="t-h2" style={{ fontSize: 18 }}>
             {item.who}
@@ -501,7 +615,7 @@ function ApprovalDetail({
         {item.reason && <Field label="Reason" value={item.reason} />}
 
         {item.kind === 'leave' && (() => {
-          const l = item.raw as AdminOverview['pending']['leaves'][number]
+          const l = item.raw as LeaveRow
           return (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -532,7 +646,7 @@ function ApprovalDetail({
         })()}
 
         {item.kind === 'onboarding' && (() => {
-          const ob = item.raw as AdminOverview['pending']['onboarding'][number]
+          const ob = item.raw as OnboardingRow
           return (
             <>
               <div
@@ -572,7 +686,7 @@ function ApprovalDetail({
         })()}
 
         {item.kind === 'regularization' && (() => {
-          const r = item.raw as AdminOverview['pending']['regularizations'][number]
+          const r = item.raw as RegularizationRow
           const firstName = item.who.trim().split(/\s+/)[0] || 'this employee'
           const hasProposed = !!(r.proposedInTime || r.proposedOutTime)
           return (
@@ -630,6 +744,45 @@ function ApprovalDetail({
           )
         })()}
 
+        {item.kind === 'timesheet' && (() => {
+          const t = item.raw as PendingTimesheetRow
+          const billable = Number(t.totalBillableHours ?? 0)
+          const total = Number(t.totalHours ?? 0)
+          return (
+            <>
+              <div
+                style={{
+                  padding: '14px',
+                  background: 'rgba(167,139,250,.06)',
+                  border: '1px solid rgba(167,139,250,.25)',
+                  borderRadius: 10,
+                  display: 'flex',
+                  gap: 10,
+                }}
+              >
+                <Icon.sheet size={16} style={{ color: 'var(--purple)', marginTop: 1, flexShrink: 0 }} />
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+                  Week of <strong style={{ color: '#fff' }}>{t.periodStart}</strong> submitted for review.
+                  Approving confirms the hours; &ldquo;Rework&rdquo; reopens the week as a draft
+                  (your note tells them what to change); rejecting closes it.
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+                <Field label="Week" value={`${t.periodStart} – ${t.periodEnd}`} />
+                <Field label="Total hours" value={<span style={{ fontFamily: 'var(--font-mono)' }}>{total.toFixed(1)}h</span>} />
+                <Field label="Billable" value={<span style={{ fontFamily: 'var(--font-mono)' }}>{billable.toFixed(1)}h</span>} />
+              </div>
+              <Link
+                href={`/team/timesheets?period=${encodeURIComponent(t.id)}`}
+                data-testid="view-timesheet-link"
+                style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--blue)', textDecoration: 'none' }}
+              >
+                Open in Team → Timesheets →
+              </Link>
+            </>
+          )
+        })()}
+
         <div>
           <div className="t-caption" style={{ marginBottom: 8 }}>
             Add a comment{' '}
@@ -640,15 +793,16 @@ function ApprovalDetail({
                 letterSpacing: 0,
               }}
             >
-              (optional)
+              {commentRequired ? '(required to reject or send back for rework)' : '(optional)'}
             </span>
           </div>
           <textarea
             className="input"
             style={{ height: 80, padding: 12, resize: 'none' }}
-            placeholder="A note for the requester…"
+            placeholder={commentRequired ? 'What should the employee change, or why is it rejected?' : 'A note for the requester…'}
             value={comment}
             onChange={(e) => onCommentChange(e.target.value)}
+            data-testid="approval-comment"
           />
         </div>
       </div>
@@ -662,11 +816,16 @@ function ApprovalDetail({
           background: 'var(--surf-1)',
         }}
       >
-        <Btn kind="danger" icon={<Icon.x size={14} />} onClick={onReject} disabled={isPending}>
+        <Btn kind="danger" icon={<Icon.x size={14} />} onClick={onReject} disabled={isPending} data-testid="approval-reject">
           {item.kind === 'onboarding' ? 'Send back' : 'Reject'}
         </Btn>
+        {onRework && (
+          <Btn kind="secondary" icon={<Icon.arrowL size={14} />} onClick={onRework} disabled={isPending} data-testid="approval-rework">
+            Rework
+          </Btn>
+        )}
         <div style={{ flex: 1 }} />
-        <Btn kind="primary" icon={<Icon.check size={14} />} onClick={onApprove} disabled={isPending}>
+        <Btn kind="primary" icon={<Icon.check size={14} />} onClick={onApprove} disabled={isPending} data-testid="approval-approve">
           Approve
         </Btn>
       </div>

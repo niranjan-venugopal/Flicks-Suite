@@ -1,32 +1,60 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lt, lte, ne, sql, isNull } from 'drizzle-orm';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { and, asc, desc, eq, gte, inArray, lt, ne, sql, isNull } from 'drizzle-orm';
 import type { AnyColumn, SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   employees,
   attendanceRecords,
   attendanceRegularizations,
   leaveRequests,
   leaveTypes,
-  holidays,
+  timesheetPeriods,
   auditLog,
   users,
   designations,
   memberships,
 } from '@flicks/db/schema';
+import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
+import { resolveExpectationsTx, tenantTodayISOTx } from '../../core/common/workday';
 import { MediaService } from '../media/media.service';
+import { ApprovalRoutingService, shapeEscalation } from '../approvals/public';
+import type { ReviewerCtx, RoutedColumns } from '../approvals/public';
 import type { AdminOverviewDto, ActivityItemDto } from './dashboard.dto';
+
+/** Empty "attendance today" pivot — every bucket present, all zero. */
+function emptyAttendanceToday(): AdminOverviewDto['attendanceToday'] {
+  return {
+    present: 0,
+    late: 0,
+    onLeave: 0,
+    yetToClockIn: 0,
+    holiday: 0,
+    weekend: 0,
+    pendingLeave: 0,
+    expectedToday: 0,
+  };
+}
 
 @Injectable()
 export class DashboardService {
   private readonly logger = new Logger(DashboardService.name);
+
+  /** Round L — the routed approval queue (who sees which pending item). */
+  private readonly routing: ApprovalRoutingService;
 
   constructor(
     private readonly databaseService: DatabaseService,
     // Approval rows in the Inbox render faces; the photo lives in
     // users.avatar_key and has to be signed before it reaches the client.
     private readonly mediaService: MediaService,
-  ) {}
+    // Optional so the specs that build `new DashboardService(db, media)` keep
+    // compiling; the dashboard only READS routing (predicate + reviewer), so
+    // an unbound routing service is fully functional here.
+    @Optional() routing?: ApprovalRoutingService,
+  ) {
+    this.routing = routing ?? new ApprovalRoutingService();
+  }
 
   /** Signed-URL swap for a row set carrying `avatarKey` (§4 media pipeline). */
   private async withAvatars<
@@ -71,7 +99,6 @@ export class DashboardService {
       pendingLimit?: number;
     },
   ): Promise<AdminOverviewDto> {
-    const today = todayISO();
     const thirtyDaysAgo = isoDaysAgo(30);
     const scope = opts.scope ?? 'org';
     const pendingLimit = Number.isFinite(opts.pendingLimit)
@@ -143,18 +170,45 @@ export class DashboardService {
               )`
             : sql`false`;
 
+      // Round L: "today" for workspace-wide numbers is the tenant's day
+      // (default shift timezone → tenant timezone → IST). The old UTC date
+      // named tomorrow for every Indian tenant after 17:30 IST.
+      const today = await tenantTodayISOTx(tx, tenantId);
+
+      /**
+       * Round L (item 2): the approval buckets are ROUTED, not scoped — an
+       * owner/HR admin used to see (and act on) every request from minute
+       * zero, ahead of the manager. `routedTo(table, col)` is the one queue
+       * predicate every approval surface shares (modules/approvals): direct
+       * reports, items escalated to the caller, and for owner/admin items at
+       * level 2 or with no manager at all; never the caller's own.
+       */
+      const reviewer: ReviewerCtx | null = opts.includeApprovals
+        ? await this.routing.resolveReviewerTx(
+            tx,
+            tenantId,
+            opts.callerUserId,
+            scope === 'team' ? 'manager' : undefined,
+          )
+        : null;
+      const routedTo = (table: RoutedColumns, employeeIdCol: SQL | AnyColumn): SQL =>
+        reviewer ? this.routing.queuePredicate(reviewer, table, employeeIdCol) : sql`false`;
+      const escalatedTo = alias(employees, 'dash_escalated_to');
+      const escalatedToName = sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`;
+
       const [
         headcountRows,
-        attendanceTodayRows,
+        attendanceToday,
         pendingLeaveCountRow,
         pendingRegCountRow,
         pendingLeaveRows,
         pendingRegRows,
+        pendingTsCountRow,
+        pendingTsRows,
         complianceRow,
         leaveConsumedRow,
         joinersExitsRow,
         avgHoursRow,
-        holidayTodayRow,
         pendingOnboardingRows,
       ] = await Promise.all([
         // Headcount by employee_status
@@ -168,23 +222,15 @@ export class DashboardService {
           .where(and(eq(employees.tenant_id, tenantId), isNull(employees.deleted_at), inScope(employees.id)))
           .groupBy(employees.status),
 
-        // Attendance today by status
-        tx
-          .select({
-            status: attendanceRecords.attendance_status,
-            count: sql<number>`COUNT(*)::int`,
-          })
-          .from(attendanceRecords)
-          .where(
-            and(
-              eq(attendanceRecords.tenant_id, tenantId),
-              eq(attendanceRecords.attendance_date, today),
-              inScope(attendanceRecords.employee_id),
-            ),
-          )
-          .groupBy(attendanceRecords.attendance_status),
+        // Attendance today — Round L (founder item 1): active roster →
+        // per-employee day expectation (holiday / weekend / leave, from the
+        // shared resolver) → today's records, pivoted in code. "Yet to clock
+        // in" is now expected ∧ no record ∧ no pending leave, instead of
+        // "headcount minus rows" (which counted everyone on leave, on a
+        // holiday or on their weekend as a missed punch).
+        this.attendanceTodayPivot(tx, tenantId, today, inScope, opts.includeApprovals),
 
-        // Pending leaves count
+        // Pending leaves count (routed — Round L)
         tx
           .select({ count: sql<number>`COUNT(*)::int` })
           .from(leaveRequests)
@@ -193,11 +239,11 @@ export class DashboardService {
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
               notOwnRequest(leaveRequests.employee_id),
-              inScope(leaveRequests.employee_id),
+              routedTo(leaveRequests, leaveRequests.employee_id),
             ),
           ),
 
-        // Pending regularizations count
+        // Pending regularizations count (routed — Round L)
         tx
           .select({ count: sql<number>`COUNT(*)::int` })
           .from(attendanceRegularizations)
@@ -206,7 +252,7 @@ export class DashboardService {
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
               notOwnRequest(attendanceRegularizations.employee_id),
-              inScope(attendanceRegularizations.employee_id),
+              routedTo(attendanceRegularizations, attendanceRegularizations.employee_id),
             ),
           ),
 
@@ -229,17 +275,25 @@ export class DashboardService {
             avatarKey: users.avatar_key,
             leaveTypeName: leaveTypes.name,
             leaveTypeCode: leaveTypes.code,
+            escalationLevel: leaveRequests.escalation_level,
+            escalationReason: leaveRequests.escalation_reason,
+            escalatedAt: leaveRequests.escalated_at,
+            escalatedToName,
           })
           .from(leaveRequests)
           .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
+          .leftJoin(
+            escalatedTo,
+            and(eq(escalatedTo.id, leaveRequests.escalated_to_employee_id), eq(escalatedTo.tenant_id, tenantId)),
+          )
           .where(
             and(
               eq(leaveRequests.tenant_id, tenantId),
               eq(leaveRequests.status, 'pending'),
               notOwnRequest(leaveRequests.employee_id),
-              inScope(leaveRequests.employee_id),
+              routedTo(leaveRequests, leaveRequests.employee_id),
             ),
           )
           .orderBy(desc(leaveRequests.applied_at))
@@ -264,6 +318,10 @@ export class DashboardService {
             requestedAt: attendanceRegularizations.created_at,
             avatarUrl: users.avatar_url,
             avatarKey: users.avatar_key,
+            escalationLevel: attendanceRegularizations.escalation_level,
+            escalationReason: attendanceRegularizations.escalation_reason,
+            escalatedAt: attendanceRegularizations.escalated_at,
+            escalatedToName,
           })
           .from(attendanceRegularizations)
           .leftJoin(
@@ -271,15 +329,71 @@ export class DashboardService {
             eq(attendanceRegularizations.employee_id, employees.id),
           )
           .leftJoin(users, eq(employees.user_id, users.id))
+          .leftJoin(
+            escalatedTo,
+            and(
+              eq(escalatedTo.id, attendanceRegularizations.escalated_to_employee_id),
+              eq(escalatedTo.tenant_id, tenantId),
+            ),
+          )
           .where(
             and(
               eq(attendanceRegularizations.tenant_id, tenantId),
               eq(attendanceRegularizations.status, 'pending'),
               notOwnRequest(attendanceRegularizations.employee_id),
-              inScope(attendanceRegularizations.employee_id),
+              routedTo(attendanceRegularizations, attendanceRegularizations.employee_id),
             ),
           )
           .orderBy(desc(attendanceRegularizations.created_at))
+          .limit(pendingLimit),
+
+        // Round L: submitted timesheets routed to the caller — count + rows.
+        tx
+          .select({ count: sql<number>`COUNT(*)::int` })
+          .from(timesheetPeriods)
+          .where(
+            and(
+              eq(timesheetPeriods.tenant_id, tenantId),
+              eq(timesheetPeriods.status, 'submitted'),
+              notOwnRequest(timesheetPeriods.employee_id),
+              routedTo(timesheetPeriods, timesheetPeriods.employee_id),
+            ),
+          ),
+        tx
+          .select({
+            id: timesheetPeriods.id,
+            employeeId: timesheetPeriods.employee_id,
+            userId: sql<string | null>`(SELECT m.user_id FROM memberships m WHERE m.employee_id = ${timesheetPeriods.employee_id} AND m.tenant_id = ${timesheetPeriods.tenant_id} AND m.status = 'active' LIMIT 1)`,
+            employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
+            employeeCode: employees.employee_code,
+            periodStart: timesheetPeriods.period_start,
+            periodEnd: timesheetPeriods.period_end,
+            totalHours: timesheetPeriods.total_hours,
+            totalBillableHours: timesheetPeriods.total_billable_hours,
+            submittedAt: timesheetPeriods.submitted_at,
+            avatarUrl: users.avatar_url,
+            avatarKey: users.avatar_key,
+            escalationLevel: timesheetPeriods.escalation_level,
+            escalationReason: timesheetPeriods.escalation_reason,
+            escalatedAt: timesheetPeriods.escalated_at,
+            escalatedToName,
+          })
+          .from(timesheetPeriods)
+          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .leftJoin(users, eq(employees.user_id, users.id))
+          .leftJoin(
+            escalatedTo,
+            and(eq(escalatedTo.id, timesheetPeriods.escalated_to_employee_id), eq(escalatedTo.tenant_id, tenantId)),
+          )
+          .where(
+            and(
+              eq(timesheetPeriods.tenant_id, tenantId),
+              eq(timesheetPeriods.status, 'submitted'),
+              notOwnRequest(timesheetPeriods.employee_id),
+              routedTo(timesheetPeriods, timesheetPeriods.employee_id),
+            ),
+          )
+          .orderBy(desc(timesheetPeriods.submitted_at))
           .limit(pendingLimit),
 
         // 30-day attendance compliance: count('present' OR 'late' OR 'work_from_home')
@@ -337,17 +451,6 @@ export class DashboardService {
               gte(attendanceRecords.attendance_date, thirtyDaysAgo),
               eq(attendanceRecords.attendance_status, 'present'),
               inScope(attendanceRecords.employee_id),
-            ),
-          ),
-
-        // Is today a holiday for this tenant?
-        tx
-          .select({ count: sql<number>`COUNT(*)::int` })
-          .from(holidays)
-          .where(
-            and(
-              eq(holidays.tenant_id, tenantId),
-              eq(holidays.holiday_date, today),
             ),
           ),
 
@@ -442,28 +545,8 @@ export class DashboardService {
       const totalEmployees =
         headcount.active + headcount.notice + headcount.onLeave;
 
-      // ── Attendance today: pivot rows into named buckets ──
-      const att = {
-        present: 0,
-        late: 0,
-        onLeave: 0,
-        yetToClockIn: 0,
-        holiday: 0,
-      };
-      for (const r of attendanceTodayRows) {
-        if (r.status === 'present') att.present += r.count;
-        else if (r.status === 'late') att.late += r.count;
-        else if (r.status === 'work_from_home') att.present += r.count;
-        else if (r.status === 'on_leave') att.onLeave += r.count;
-        else if (r.status === 'holiday') att.holiday += r.count;
-      }
-      // "yet to clock in" = active employees minus those already accounted for.
-      // Holiday-aware: if today is a tenant-wide holiday, no one is expected.
-      const isTodayHoliday = (holidayTodayRow[0]?.count ?? 0) > 0;
-      if (!isTodayHoliday) {
-        const accounted = att.present + att.late + att.onLeave;
-        att.yetToClockIn = Math.max(0, headcount.active - accounted);
-      }
+      // ── Attendance today ── pivoted by attendanceTodayPivot (Round L).
+      const att = attendanceToday;
 
       // ── Trends ──
       const c = complianceRow[0] ?? { present: 0, workingTotal: 0 };
@@ -487,11 +570,15 @@ export class DashboardService {
         scope,
         stats: {
           totalEmployees,
-          presentToday: att.present + att.late,
+          // Round L: `present` already includes the late arrivals (late is
+          // the subset the snapshot calls out), so this is no longer a sum.
+          presentToday: att.present,
           onLeaveToday: att.onLeave,
+          // Round L: timesheets join the badge count.
           pendingApprovals:
             (pendingLeaveCountRow[0]?.count ?? 0) +
             (pendingRegCountRow[0]?.count ?? 0) +
+            (pendingTsCountRow[0]?.count ?? 0) +
             pendingOnboardingRows.length,
         },
         headcount,
@@ -499,6 +586,7 @@ export class DashboardService {
         pending: {
           leaveCount: pendingLeaveCountRow[0]?.count ?? 0,
           regularizationCount: pendingRegCountRow[0]?.count ?? 0,
+          timesheetCount: pendingTsCountRow[0]?.count ?? 0,
           onboardingCount: pendingOnboardingRows.length,
           onboarding: await this.withAvatars(pendingOnboardingRows),
           leaves: await Promise.all(pendingLeaveRows.map(async (r) => ({
@@ -520,6 +608,7 @@ export class DashboardService {
                 ? r.appliedAt.toISOString()
                 : String(r.appliedAt),
             avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            escalation: shapeEscalation(r, r.escalatedToName),
           }))),
           regularizations: await Promise.all(pendingRegRows.map(async (r) => ({
             id: r.id,
@@ -537,6 +626,21 @@ export class DashboardService {
                 ? r.requestedAt.toISOString()
                 : String(r.requestedAt),
             avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            escalation: shapeEscalation(r, r.escalatedToName),
+          }))),
+          timesheets: await Promise.all(pendingTsRows.map(async (r) => ({
+            id: r.id,
+            employeeId: r.employeeId,
+            userId: r.userId,
+            employeeName: r.employeeName,
+            employeeCode: r.employeeCode,
+            periodStart: r.periodStart,
+            periodEnd: r.periodEnd,
+            totalHours: Number(r.totalHours),
+            totalBillableHours: Number(r.totalBillableHours),
+            submittedAt: r.submittedAt instanceof Date ? r.submittedAt.toISOString() : r.submittedAt ? String(r.submittedAt) : null,
+            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            escalation: shapeEscalation(r, r.escalatedToName),
           }))),
         },
         trends: {
@@ -547,6 +651,127 @@ export class DashboardService {
         },
       };
     });
+  }
+
+  /**
+   * Round L — the "Attendance today" buckets for the snapshot card, derived
+   * from the shared day resolver (core/common/workday.ts):
+   *
+   *   present       rows in present/late/wfh/on_duty/comp_off, or half_day
+   *                 with a punch (late arrivals INCLUDED — `late` is a subset)
+   *   late          rows in late
+   *   onLeave       on_leave rows + approved full-day leave without a row
+   *   holiday       holiday rows + a blocking holiday without a row
+   *   weekend       weekend rows + a non-working day (shift) without a row
+   *   pendingLeave  expected, no row, a pending request covers the day
+   *   yetToClockIn  expected, no row, no pending request
+   *   expectedToday everyone whose day is a working (or half-day-leave) day
+   */
+  private async attendanceTodayPivot(
+    tx: Db,
+    tenantId: string,
+    today: string,
+    inScope: (employeeIdCol: SQL | AnyColumn) => SQL,
+    /** Only approvers get `pendingLeave` (the same gate as the pending buckets). */
+    includeApprovals: boolean,
+  ): Promise<AdminOverviewDto['attendanceToday']> {
+    const att = emptyAttendanceToday();
+    const roster = await tx
+      .select({ id: employees.id })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          isNull(employees.deleted_at),
+          eq(employees.status, 'active'),
+          inScope(employees.id),
+        ),
+      );
+    const ids = roster.map((r) => r.id);
+    if (ids.length === 0) return att;
+
+    const [expectations, records] = await Promise.all([
+      resolveExpectationsTx(tx, tenantId, ids, today),
+      tx
+        .select({
+          employeeId: attendanceRecords.employee_id,
+          status: attendanceRecords.attendance_status,
+          firstPunchInAt: attendanceRecords.first_punch_in_at,
+        })
+        .from(attendanceRecords)
+        .where(
+          and(
+            eq(attendanceRecords.tenant_id, tenantId),
+            inArray(attendanceRecords.employee_id, ids),
+            eq(attendanceRecords.attendance_date, today),
+          ),
+        ),
+    ]);
+    const recordBy = new Map(records.map((r) => [r.employeeId, r]));
+
+    for (const id of ids) {
+      const exp = expectations.get(id) ?? null;
+      const rec = recordBy.get(id) ?? null;
+      const expected = exp?.expected ?? true;
+      if (expected) att.expectedToday++;
+
+      const hasPunch = !!rec?.firstPunchInAt;
+      // A row that says nothing about the day (absent, or a leave backfill —
+      // half_day / on_leave — before any punch) is read from the expectation:
+      // a cancelled leave may leave its row behind.
+      const usable =
+        rec !== null &&
+        rec.status !== 'absent' &&
+        !(!hasPunch && (rec.status === 'half_day' || rec.status === 'on_leave'));
+
+      if (usable && rec) {
+        switch (rec.status) {
+          case 'present':
+          case 'work_from_home':
+          case 'on_duty':
+          case 'comp_off':
+          case 'half_day':
+            att.present++;
+            break;
+          case 'late':
+            att.present++;
+            att.late++;
+            break;
+          case 'on_leave':
+            att.onLeave++;
+            break;
+          case 'holiday':
+            att.holiday++;
+            break;
+          case 'weekend':
+            att.weekend++;
+            break;
+          default:
+            break;
+        }
+        continue;
+      }
+
+      switch (exp?.kind ?? 'working') {
+        case 'leave':
+          att.onLeave++;
+          break;
+        case 'holiday':
+          att.holiday++;
+          break;
+        case 'weekend':
+          att.weekend++;
+          break;
+        default:
+          // A pending request is an approvals fact: only reviewers get the
+          // count; everyone else sees the person under "yet to clock in",
+          // which they still are.
+          if (exp?.pendingLeave && includeApprovals) att.pendingLeave++;
+          else if (expected) att.yetToClockIn++;
+          break;
+      }
+    }
+    return att;
   }
 
   /**
@@ -620,10 +845,8 @@ export class DashboardService {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+// (Round L: the UTC `todayISO()` is gone — "today" comes from tenantTodayISOTx
+// inside the transaction. The 30-day trend windows below stay UTC-based.)
 
 /** Returns YYYY-MM-DD for `n` days ago (negative = in the future). */
 function isoDaysAgo(n: number): string {

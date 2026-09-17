@@ -12,7 +12,7 @@ import {
   date,
   real,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
 import { employees, locations } from './employees';
 
@@ -251,6 +251,18 @@ export const attendanceRegularizations = pgTable(
     }),
     approver_comment: text('approver_comment'),
     reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
+    // 0062 — Round L approval routing (see leave.ts for the level semantics).
+    escalation_level: smallint('escalation_level').notNull().default(0),
+    escalated_at: timestamp('escalated_at', { withTimezone: true }),
+    escalation_reason: text('escalation_reason'), // sla | reviewer_on_leave | no_manager | no_skip_manager
+    escalated_to_employee_id: uuid('escalated_to_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
+    routed_manager_employee_id: uuid('routed_manager_employee_id').references(
+      () => employees.id,
+      { onDelete: 'set null' },
+    ),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -262,6 +274,10 @@ export const attendanceRegularizations = pgTable(
       t.attendance_date,
     ),
     index('attendance_regularizations_status_idx').on(t.status),
+    // 0062 — the escalation sweep's scan over OPEN requests by level + anchor.
+    index('idx_attendance_regularizations_escalation')
+      .on(t.tenant_id, t.escalation_level, t.created_at)
+      .where(sql`status = 'pending'`),
   ],
 );
 

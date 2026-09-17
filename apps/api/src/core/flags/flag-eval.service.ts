@@ -18,6 +18,11 @@ import { DB_SERVICE_ROLE } from '../database/database.module';
  */
 const FLAG_DEFAULTS: Record<string, boolean> = {
   pm_sync_engine: true,
+  // Round L item 6 — PM attachments + the rich (Linear-style) editor. ON for
+  // everyone at launch; a FAM row for this key is the kill-switch (global or
+  // per tenant): off ⇒ POST pm/uploads refuses and the web falls back to the
+  // plain textarea/input experience. Reads/deletes of existing files stay up.
+  pm_attachments: true,
 };
 
 const CACHE_TTL_MS = 30_000;

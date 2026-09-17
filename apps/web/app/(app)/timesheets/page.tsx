@@ -285,8 +285,14 @@ export default function TimesheetsPage() {
     if (!current.data?.id) return
     await handleSave()
     try {
-      await submit.mutateAsync(current.data.id)
-      toast({ title: 'Week submitted', description: 'Sent to your manager for approval.' })
+      const res = await submit.mutateAsync(current.data.id)
+      toast({
+        title: 'Week submitted',
+        description:
+          res?.withLabel === 'hr'
+            ? 'No reporting manager is set, so HR will review it.'
+            : 'Sent to your manager for approval.',
+      })
     } catch (e) {
       toast({
         title: 'Could not submit',
@@ -624,6 +630,12 @@ export default function TimesheetsPage() {
         >
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-mute)' }}>Status:</span>
           {statusPill(status)}
+          {/* Round L: who it is with — the level only, never the reason. */}
+          {status === 'submitted' && current.data?.withLabel && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)' }} data-testid={`timesheet-with-${current.data.withLabel}`}>
+              With {current.data.withLabel === 'hr' ? 'HR' : 'your manager'}
+            </span>
+          )}
           <div style={{ flex: 1 }} />
           <Btn
             kind="secondary"

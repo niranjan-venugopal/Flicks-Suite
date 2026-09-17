@@ -518,10 +518,25 @@ export const recordFiles = pgTable(
     size_bytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     storage_key: text('storage_key').notNull(),
     uploaded_by: uuid('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+    // 0063 — PM attachments: 'attachment' (chip) | 'inline' (image referenced
+    // from a markdown body as flicks-file://<id>); image dimensions; 480-px
+    // WebP thumbnail key; sha256 of the stored bytes. object_type gained
+    // 'comment' and 'draft' (unbound until the issue/comment is created).
+    kind: text('kind').notNull().default('attachment'),
+    width: integer('width'),
+    height: integer('height'),
+    thumb_key: text('thumb_key'),
+    sha256: text('sha256'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     deleted_at: timestamp('deleted_at', { withTimezone: true }),
   },
-  (t) => [index('idx_record_files_object').on(t.tenant_id, t.object_type, t.object_id).where(sql`${t.deleted_at} IS NULL`)],
+  (t) => [
+    index('idx_record_files_object').on(t.tenant_id, t.object_type, t.object_id).where(sql`${t.deleted_at} IS NULL`),
+    // 0063 — tenant quota SUM(size_bytes) as an index-only scan.
+    index('idx_record_files_tenant_live').on(t.tenant_id, t.size_bytes).where(sql`${t.deleted_at} IS NULL`),
+    // 0063 — orphan-draft prune (drafts older than 24 h).
+    index('idx_record_files_drafts').on(t.created_at).where(sql`${t.object_type} = 'draft' AND ${t.deleted_at} IS NULL`),
+  ],
 );
 
 // ─── Automation & capture: leads, web forms, workflows (§5/§8 / 0036) ─────────

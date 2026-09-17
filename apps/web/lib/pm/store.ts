@@ -7,6 +7,7 @@ import type {
   PmMembershipRow,
   PmMilestoneRow,
   PmProjectRow,
+  PmRelationRow,
   PmStateRow,
   PmTeamRow,
   PmUpdateRow,
@@ -30,6 +31,12 @@ export class PmStore {
   /** issue_id → label ids / subscriber user ids */
   issueLabels = observable.map<string, string[]>()
   issueSubscribers = observable.map<string, string[]>()
+  /**
+   * Round L — relation_id → row. Flat on purpose: one row serves both issues
+   * (relationsForIssue scans both columns), so a delta that replaces the set
+   * for issue A can't strand A's rows under B's key.
+   */
+  relations = observable.map<string, PmRelationRow>()
   // Projects layer (§6)
   projects = observable.map<string, PmProjectRow>()
   milestones = observable.map<string, PmMilestoneRow>()
@@ -67,6 +74,7 @@ export class PmStore {
       memberships: false,
       issueLabels: false,
       issueSubscribers: false,
+      relations: false,
       projects: false,
       milestones: false,
       projectUpdates: false,
@@ -92,6 +100,13 @@ export class PmStore {
 
   issuesForTeam(teamId: string): PmIssueRow[] {
     return [...this.issues.values()].filter((i) => i.team_id === teamId && !i.deleted_at)
+  }
+
+  /** Round L — every relation touching this issue, from either column. */
+  relationsForIssue(issueId: string): PmRelationRow[] {
+    return [...this.relations.values()].filter(
+      (r) => r.issue_id === issueId || r.related_issue_id === issueId,
+    )
   }
 
   projectList(): PmProjectRow[] {
@@ -196,6 +211,11 @@ export class PmStore {
             if (!list.includes(r.user_id)) this.issueSubscribers.set(r.issue_id, [...list, r.user_id])
             break
           }
+          case 'pm_issue_relations': {
+            const r = row as unknown as PmRelationRow
+            this.relations.set(r.id, { ...r, _pending: false })
+            break
+          }
           case 'pm_projects': {
             const incoming = row as unknown as PmProjectRow
             const existing = this.projects.get(incoming.id)
@@ -254,6 +274,16 @@ export class PmStore {
           const list = this.issueSubscribers.get(r.issue_id) ?? []
           this.issueSubscribers.set(r.issue_id, [...list, r.user_id])
         }
+      } else if (table === 'pm_issue_relations') {
+        // Round L — the server ships every row touching a scoped issue (both
+        // directions), so drop every local row touching one first. Optimistic
+        // temp rows for these issues go too: the authoritative set replaces
+        // them (or the rejection rollback already removed them).
+        const scope = new Set(scopeIssueIds)
+        for (const [rid, r] of this.relations) {
+          if (scope.has(r.issue_id) || scope.has(r.related_issue_id)) this.relations.delete(rid)
+        }
+        for (const r of rows as unknown as PmRelationRow[]) this.relations.set(r.id, { ...r, _pending: false })
       } else if (table === 'pm_project_teams') {
         for (const id of scopeIssueIds) this.projectTeams.set(id, [])
         for (const r of rows as Array<{ project_id: string; team_id: string }>) {
@@ -276,12 +306,21 @@ export class PmStore {
     })
   }
 
+  /** Round L — drop every relation touching an issue that just went away. */
+  private pruneRelationsOf(issueId: string) {
+    for (const [rid, r] of this.relations) {
+      if (r.issue_id === issueId || r.related_issue_id === issueId) this.relations.delete(rid)
+    }
+  }
+
   applyTombstones(table: string, ids: string[]) {
     runInAction(() => {
       for (const id of ids) {
         this.tombstoned.add(id)
-        if (table === 'pm_issues') this.issues.delete(id)
-        else if (table === 'pm_teams') {
+        if (table === 'pm_issues') {
+          this.issues.delete(id)
+          this.pruneRelationsOf(id)
+        } else if (table === 'pm_teams') {
           // Losing a team (deleted OR visibility revoked, §16) purges every
           // team-scoped row locally — a revoked member keeps nothing.
           this.teams.delete(id)
@@ -293,9 +332,11 @@ export class PmStore {
               this.issues.delete(iid)
               this.issueLabels.delete(iid)
               this.issueSubscribers.delete(iid)
+              this.pruneRelationsOf(iid)
             }
           }
-        } else if (table === 'pm_workflow_states') this.states.delete(id)
+        } else if (table === 'pm_issue_relations') this.relations.delete(id)
+        else if (table === 'pm_workflow_states') this.states.delete(id)
         else if (table === 'pm_labels') this.labels.delete(id)
         else if (table === 'pm_projects') {
           // Losing a project (deleted OR visibility lost) purges its scoped rows.
@@ -346,6 +387,15 @@ export class PmStore {
       this.tombstoned.delete(row.id)
       this.issues.set(row.id, row)
     })
+  }
+
+  /** Round L — optimistic relation insert (temp id until the delta lands). */
+  insertRelation(row: PmRelationRow) {
+    runInAction(() => this.relations.set(row.id, { ...row, _pending: true }))
+  }
+
+  removeRelation(id: string) {
+    runInAction(() => this.relations.delete(id))
   }
 
   setCursor(seq: number) {
@@ -409,6 +459,7 @@ export class PmStore {
       this.memberships.clear()
       this.issueLabels.clear()
       this.issueSubscribers.clear()
+      this.relations.clear()
       this.projects.clear()
       this.milestones.clear()
       this.projectUpdates.clear()

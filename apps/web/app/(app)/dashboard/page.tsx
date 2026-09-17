@@ -368,19 +368,24 @@ function AdminDashboard() {
                 size={130}
                 thickness={14}
                 segments={[
-                  { value: data?.attendanceToday.present ?? 0, color: '#27D280' },
+                  // Round L: the API's `present` INCLUDES the late arrivals,
+                  // so the on-time slice is present − late (a late person
+                  // used to be drawn twice).
+                  { value: onTimeCount(data), color: '#27D280' },
                   { value: data?.attendanceToday.yetToClockIn ?? 0, color: '#FED800' },
                   { value: data?.attendanceToday.late ?? 0, color: '#F8786B' },
                   { value: data?.attendanceToday.onLeave ?? 0, color: '#3E7BFA' },
+                  { value: data?.attendanceToday.pendingLeave ?? 0, color: '#9B7BFA' },
                 ]}
                 label={`${onTimePct(data)}%`}
                 sub="On time"
               />
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <Legend color="#27D280" label="Clocked in" value={data?.attendanceToday.present ?? 0} />
+                <Legend color="#27D280" label="On time" value={onTimeCount(data)} />
                 <Legend color="#FED800" label="Yet to clock in" value={data?.attendanceToday.yetToClockIn ?? 0} />
                 <Legend color="#F8786B" label="Late > 15min" value={data?.attendanceToday.late ?? 0} />
                 <Legend color="#3E7BFA" label="On leave" value={data?.attendanceToday.onLeave ?? 0} />
+                <Legend color="#9B7BFA" label="Leave pending" value={data?.attendanceToday.pendingLeave ?? 0} />
               </div>
             </div>
 
@@ -713,15 +718,19 @@ function fmtRange(start: string, end: string): string {
   return `${s} – ${e}`
 }
 
+/** Clocked in AND on time — the API's `present` includes the late arrivals. */
+function onTimeCount(o: AdminOverview | undefined): number {
+  if (!o) return 0
+  return Math.max(0, o.attendanceToday.present - o.attendanceToday.late)
+}
+
 function onTimePct(o: AdminOverview | undefined): number {
   if (!o) return 0
-  const total =
-    o.attendanceToday.present +
-    o.attendanceToday.yetToClockIn +
-    o.attendanceToday.late +
-    o.attendanceToday.onLeave
+  const a = o.attendanceToday
+  // Everyone the day is about: in (on time + late), still to come, away.
+  const total = a.present + a.yetToClockIn + a.onLeave + (a.pendingLeave ?? 0)
   if (total === 0) return 0
-  return Math.round((o.attendanceToday.present / total) * 100)
+  return Math.round((onTimeCount(o) / total) * 100)
 }
 
 function prettifyAction(action: string): string {
@@ -735,26 +744,61 @@ function prettifyResource(type: string | null, _meta: Record<string, unknown> | 
 
 // ─── Manager dashboard ─────────────────────────────────────────────────────
 
-/** Round I — "Your team today" row state (manager-scoped /attendance/team/today). */
+/**
+ * Round I — "Your team today" row state (manager-scoped /attendance/team/today).
+ * Round L (founder item 1): a row without a record is read from the API's
+ * day semantics first — approved leave is "On leave", never "Not in yet";
+ * a pending request is "Leave pending"; holiday / weekend / not-expected
+ * read as such. "Not in yet" only when the person is expected and has no
+ * status (same rules as components/attendance/TeamToday.tsx).
+ */
 function teamTodayState(t: TeamMemberToday): { label: string; tone: PillTone } {
+  if (!t.attendanceStatus) {
+    switch (t.derivedStatus) {
+      case 'on_leave': return { label: 'On leave', tone: 'purple' }
+      case 'holiday':  return { label: t.holidayName ? `Holiday · ${t.holidayName}` : 'Holiday', tone: '' }
+      case 'weekend':  return { label: 'Weekend', tone: '' }
+      default: break
+    }
+    if (t.dayKind === 'half_day_leave') return { label: 'Half-day leave', tone: 'yellow' }
+    if (t.pendingLeave) return { label: 'Leave pending', tone: 'yellow' }
+    if (t.expected === false) return { label: 'Not expected', tone: '' }
+    return { label: 'Not in yet', tone: '' }
+  }
   switch (t.attendanceStatus) {
     case 'present':
     case 'on_duty':
+    case 'comp_off':
       return { label: t.isLate ? 'Late' : 'In', tone: t.isLate ? 'yellow' : 'green' }
     case 'late':
       return { label: 'Late', tone: 'yellow' }
     case 'work_from_home':
       return { label: 'Remote', tone: 'green' }
+    case 'half_day':
+      return { label: 'Half day', tone: 'yellow' }
     case 'on_leave':
       return { label: 'On leave', tone: 'purple' }
     case 'holiday':
+      return { label: t.holidayName ? `Holiday · ${t.holidayName}` : 'Holiday', tone: '' }
     case 'weekend':
-      return { label: 'Off', tone: '' }
+      return { label: 'Weekend', tone: '' }
     case 'absent':
       return { label: 'Absent', tone: 'coral' }
     default:
       return { label: 'Not in yet', tone: '' }
   }
+}
+
+/** The muted sub-line under the name when there is no punch yet. */
+function teamTodaySubline(t: TeamMemberToday): string {
+  if (t.firstPunchInAt) return `In ${fmtPunch(t.firstPunchInAt)}`
+  const type = t.leave?.leaveTypeName ?? 'Leave'
+  if (t.attendanceStatus === 'on_leave' || t.derivedStatus === 'on_leave') return `On approved leave · ${type}`
+  if (t.dayKind === 'half_day_leave') return `Half-day leave · ${type}`
+  if (t.pendingLeave) return `Leave pending · ${type}`
+  if (t.derivedStatus === 'holiday') return t.holidayName ? `Holiday · ${t.holidayName}` : 'Holiday'
+  if (t.derivedStatus === 'weekend') return 'Weekend'
+  return 'No punch yet'
 }
 
 function fmtPunch(iso: string | null): string {
@@ -907,6 +951,8 @@ function ManagerDashboard() {
                     <div
                       key={t.employeeId}
                       data-testid="team-today-row"
+                      data-employee-id={t.employeeId}
+                      data-status={st.label}
                       style={{
                         padding: '9px 0',
                         borderBottom: i < arr.length - 1 ? '1px solid var(--bord)' : 'none',
@@ -921,11 +967,11 @@ function ManagerDashboard() {
                           {t.employeeName}
                         </div>
                         <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                          {t.firstPunchInAt ? `In ${fmtPunch(t.firstPunchInAt)}` : 'No punch yet'}
+                          {teamTodaySubline(t)}
                           {t.locationName ? ` · ${t.locationName}` : ''}
                         </div>
                       </div>
-                      <Pill tone={st.tone} dot>{st.label}</Pill>
+                      <Pill tone={st.tone} dot={st.tone !== ''}>{st.label}</Pill>
                     </div>
                   )
                 })}

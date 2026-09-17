@@ -10,8 +10,12 @@ import { useBilling } from '@/lib/api/queries/use-billing'
 /**
  * D19 — trial & paywall states (PRD v4 §8B.5).
  *
- * BillingBanners: slim banner in normal flow under the topbar — whole-trial
- * countdown (dismissible per day) and the past-due grace countdown.
+ * BillingBanners: slim banner in normal flow under the topbar — the trial
+ * countdown for the people who can act on it (Owner / HR Admin), only inside
+ * the last 10 days, dismissible once per trial period (Round L, founder item
+ * 4: "not all the time, and not everyone"); plus the past-due grace countdown
+ * for everyone. Coupon activation and the T-10/T-3/T-1 reminders arrive as
+ * bell notifications + email instead of living in this banner.
  *
  * BillingWall: full-screen wall when the workspace is locked (trial expired /
  * grace exhausted / canceled). Single self-subscribe variant: Owner+Admin get
@@ -22,13 +26,29 @@ import { useBilling } from '@/lib/api/queries/use-billing'
 
 const WALL_ALLOWED = ['/settings/billing', '/profile']
 
-// Local calendar date (en-CA = YYYY-MM-DD) — "dismiss for today" must roll at
-// the user's midnight, not 05:30 IST (the UTC boundary).
-function localDay() {
-  return new Date().toLocaleDateString('en-CA')
+/** Show the trial countdown only inside the last N calendar days. */
+const TRIAL_BANNER_DAYS = 10
+
+// One dismissal per trial PERIOD: the key carries trial_ends_at, so a coupon
+// (new end date) or a fresh trial brings the banner back, and a plain reload
+// or a new day does not. localStorage may throw (private mode, blocked site
+// data) — treat that as "not dismissed" on read and a no-op on write.
+function trialDismissKey(trialEndsAt: string) {
+  return `fs_trial_banner_${trialEndsAt}`
 }
-function dismissKey() {
-  return `fs_trial_banner_${localDay()}`
+function readTrialDismissed(trialEndsAt: string): boolean {
+  try {
+    return !!localStorage.getItem(trialDismissKey(trialEndsAt))
+  } catch {
+    return false
+  }
+}
+function writeTrialDismissed(trialEndsAt: string) {
+  try {
+    localStorage.setItem(trialDismissKey(trialEndsAt), '1')
+  } catch {
+    /* storage unavailable — the banner simply returns on the next load */
+  }
 }
 
 /** Whole days until `iso`, by LOCAL calendar date — stable across the day. */
@@ -43,12 +63,14 @@ function calendarDaysLeft(iso: string): number {
 export function BillingBanners() {
   const { currentUser } = useAuthStore()
   const billing = useBilling({ enabled: currentUser?.role !== 'GUEST' })
+  const b = billing.data?.data
+  const trialEndsAt = b?.status === 'trialing' ? (b.trial_ends_at ?? null) : null
   const [dismissed, setDismissed] = useState(true) // assume dismissed until read
   useEffect(() => {
-    setDismissed(!!localStorage.getItem(dismissKey()))
-  }, [])
+    if (!trialEndsAt) return
+    setDismissed(readTrialDismissed(trialEndsAt))
+  }, [trialEndsAt])
 
-  const b = billing.data?.data
   // Guests are external collaborators: the host workspace's trial/billing
   // state is commercial information that isn't theirs to see (round 7).
   if (!b || b.locked || currentUser?.role === 'FAM' || currentUser?.role === 'GUEST') return null
@@ -84,10 +106,20 @@ export function BillingBanners() {
     )
   }
 
-  if (b.status !== 'trialing' || !b.trial_ends_at || dismissed) return null
-  const days = calendarDaysLeft(b.trial_ends_at)
+  // Trial countdown: Owner / HR Admin only (they are the ones who can
+  // subscribe), only inside the last 10 days, and dismissed once per trial
+  // period. Employees, managers, finance and auditors never see it.
+  if (b.status !== 'trialing' || !b.trial_ends_at || !canManage || dismissed) return null
+  // GET /billing computes days_left as an IST calendar diff — the exact
+  // number the T-10/T-3/T-1 bell rows quote — so the banner and the inbox
+  // never disagree; the local calendar diff is only the fallback.
+  const apiDays = (b as { days_left?: number | null }).days_left
+  const days = typeof apiDays === 'number' ? apiDays : calendarDaysLeft(b.trial_ends_at)
+  if (days > TRIAL_BANNER_DAYS) return null
+  const trialEndsAtKey = b.trial_ends_at
   return (
     <div
+      data-testid="trial-banner"
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -101,20 +133,23 @@ export function BillingBanners() {
     >
       <Icon.zap size={14} style={{ color: 'var(--yellow)', flexShrink: 0 }} />
       <span style={{ flex: 1 }}>
-        Free trial — {days} day{days === 1 ? '' : 's'} left. ₹499/seat/month after
+        {days === 0
+          ? 'Free trial ends today. ₹499/seat/month after'
+          : `Free trial — ${days} day${days === 1 ? '' : 's'} left. ₹499/seat/month after`}
         {b.coupon ? ` (coupon ${b.coupon.code} applied)` : ''}.
       </span>
-      {canManage && (
-        <Link href="/settings/billing">
-          <Btn kind="primary" size="sm">Subscribe</Btn>
-        </Link>
-      )}
+      <Link href="/settings/billing">
+        <Btn kind="primary" size="sm">Subscribe</Btn>
+      </Link>
       <button
+        type="button"
+        data-testid="trial-banner-dismiss"
         onClick={() => {
-          localStorage.setItem(dismissKey(), '1')
+          writeTrialDismissed(trialEndsAtKey)
           setDismissed(true)
         }}
-        title="Hide for today"
+        title="Dismiss"
+        aria-label="Dismiss trial reminder"
         style={{
           width: 22,
           height: 22,

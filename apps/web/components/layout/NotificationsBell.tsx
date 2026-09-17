@@ -25,6 +25,8 @@ function iconFor(type: string) {
   if (type.startsWith('onboarding.')) return <Icon.people size={14} />
   if (type.startsWith('employee.details_')) return <Icon.shield size={14} />
   if (type.startsWith('calendar.')) return <Icon.cal size={14} />
+  // Round L — coupon applied / trial ending (Owner + HR Admin only).
+  if (type.startsWith('billing.')) return <Icon.zap size={14} />
   return <Icon.bell size={14} />
 }
 
