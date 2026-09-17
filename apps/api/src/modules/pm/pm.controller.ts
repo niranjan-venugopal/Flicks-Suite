@@ -35,7 +35,15 @@ import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator
 import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
-import { PM_RELATION_TYPES } from '@flicks/shared/pm';
+import {
+  PM_INSIGHT_MEASURES,
+  PM_INSIGHT_SEGMENTS,
+  PM_INSIGHT_SLICES,
+  PM_RELATION_TYPES,
+  type PmInsightMeasure,
+  type PmInsightSegment,
+  type PmInsightSlice,
+} from '@flicks/shared/pm';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
 import { PmProjectsService } from './projects.service';
@@ -48,6 +56,7 @@ import { PmImportService } from './import.service';
 import { PmTemplatesService } from './templates.service';
 import { PmPublicService } from './public';
 import { PmGuestsService } from './guests.service';
+import { InsightsService } from './insights.service';
 
 class InviteGuestDto {
   @IsEmail() @MaxLength(320) email!: string;
@@ -122,8 +131,18 @@ class RankDto {
   @IsString() @MaxLength(64) rank!: string;
 }
 
-class CreateProjectDto {
+// Round M — the Insights card's saved config ("Set default for everyone").
+// Exported so founder-roundM-b.spec.ts can run the real ValidationPipe over it.
+export class SetInsightsDefaultDto {
+  @IsIn([...PM_INSIGHT_MEASURES]) measure!: PmInsightMeasure;
+  @IsIn([...PM_INSIGHT_SLICES]) slice!: PmInsightSlice;
+  @IsIn([...PM_INSIGHT_SEGMENTS]) segment!: PmInsightSegment;
+}
+
+export class CreateProjectDto {
   @IsString() @MaxLength(200) name!: string;
+  // Round M — issue scale: 0 none · 1 urgent · 2 high · 3 medium · 4 low
+  @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
   @IsOptional() @IsString() @MaxLength(300) summary?: string;
   @IsOptional() @IsString() description_md?: string;
   @IsOptional() @IsString() @MaxLength(16) icon?: string;
@@ -135,8 +154,10 @@ class CreateProjectDto {
   @IsOptional() @IsUUID(undefined, { each: true }) team_ids?: string[];
   @IsOptional() @IsUUID() deal_id?: string;
 }
-class UpdateProjectDto {
+export class UpdateProjectDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
+  // Round M — issue scale: 0 none · 1 urgent · 2 high · 3 medium · 4 low
+  @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
   @IsOptional() @IsString() @MaxLength(300) summary?: string | null;
   @IsOptional() @IsString() description_md?: string | null;
   @IsOptional() @IsString() @MaxLength(16) icon?: string | null;
@@ -155,20 +176,27 @@ class ProjectMemberDto {
 class ProjectVisibilityDto {
   @IsBoolean() is_private!: boolean;
 }
-class PostUpdateDto {
+export class PostUpdateDto {
   @IsIn(['on_track', 'at_risk', 'off_track']) health!: string;
-  @IsString() @MaxLength(4000) body_md!: string;
+  // Round M — the rich composer writes real update posts, not one-liners.
+  @IsString() @MaxLength(20_000) body_md!: string;
 }
-class CreateMilestoneDto {
+export class CreateMilestoneDto {
   @IsUUID() project_id!: string;
   @IsString() @MaxLength(200) name!: string;
-  @IsOptional() target_date?: string | null;
+  /** YYYY-MM-DD or null — the calendar check lives in the service (both doors). */
+  @IsOptional() @IsString() @MaxLength(10) target_date?: string | null;
   @IsOptional() @IsInt() @Type(() => Number) position?: number;
+  /** Round M — optional markdown body (cleaned server-side like issue descriptions). */
+  @IsOptional() @IsString() @MaxLength(20000) description_md?: string | null;
 }
-class UpdateMilestoneDto {
+export class UpdateMilestoneDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
-  @IsOptional() target_date?: string | null;
+  /** YYYY-MM-DD or null — the calendar check lives in the service (both doors). */
+  @IsOptional() @IsString() @MaxLength(10) target_date?: string | null;
   @IsOptional() @IsInt() @Type(() => Number) position?: number;
+  /** Round M — '' clears the description. */
+  @IsOptional() @IsString() @MaxLength(20000) description_md?: string | null;
 }
 class SetIssueProjectDto {
   @IsOptional() @IsUUID() project_id?: string | null;
@@ -285,6 +313,7 @@ export class PmController {
     private readonly templates: PmTemplatesService,
     private readonly pub: PmPublicService,
     private readonly guests: PmGuestsService,
+    private readonly insights: InsightsService,
   ) {}
 
   // ─── Teams ────────────────────────────────────────────────────────────────
@@ -528,6 +557,23 @@ export class PmController {
   @ApiOperation({ summary: 'Lazy detail: description, milestones, updates, issues, members' })
   projectDetail(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.projects.detail(user.tenantId, user.sub, id);
+  }
+
+  // Round M — the rail's Insights card + Progress graph (REST twin of the
+  // sync-mode computation). Same read gate as detail().
+  @Get('projects/:id/insights')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Insights + progress-graph data: live issues × states × labels, weekly series, predicted completion' })
+  projectInsights(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.insights.get(user.tenantId, user.sub, id);
+  }
+
+  // Authority (lead, or manager and above) is enforced inside the service.
+  @Post('projects/:id/insights-default')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Save the Insights config every viewer of this project starts from' })
+  setProjectInsightsDefault(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: SetInsightsDefaultDto) {
+    return this.insights.setDefault(user.tenantId, user.sub, user.role, id, dto);
   }
 
   @Post('projects')

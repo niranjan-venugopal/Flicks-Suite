@@ -163,11 +163,11 @@ export function CommentThread({
                 {c.edited_at && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>· edited</span>}
               </div>
               {rich ? (
-                <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.55 }}>
+                <div style={{ marginTop: 3, fontSize: 13, lineHeight: 1.55 }}>
                   <LazyRichBody value={c.body} fileUrls={urls} />
                 </div>
               ) : (
-                <div style={{ fontSize: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginTop: 3 }}>{c.body}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', marginTop: 3 }}>{c.body}</div>
               )}
               {chips.length > 0 && (
                 <AttachmentList

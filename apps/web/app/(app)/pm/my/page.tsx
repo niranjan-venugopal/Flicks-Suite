@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite'
 import { useQueryClient } from '@tanstack/react-query'
 import { Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
+import { PmPage } from '@/components/pm/PmPage'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useHotkeys } from '@/lib/pm/hotkeys'
 import { currentPmPath, issueHref } from '@/lib/pm/nav'
@@ -73,7 +74,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
   })
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 900, margin: '0 auto' }}>
+    <PmPage>
       <SectionHead
         title="My Issues"
         sub="Assigned to you, created by you, and everything you subscribe to — from the local graph, instantly."
@@ -106,7 +107,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
                 onClick={() => router.push(issueHref(issue.id, currentPmPath()))}
                 {...issuePrefetchProps(qc, issue.id)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 9, height: 38, minWidth: 0, padding: '0 12px', cursor: 'pointer',
                   borderBottom: i < rows.length - 1 ? '1px solid var(--bord)' : 'none',
                   outline: focused?.id === issue.id ? '2px solid var(--blue)' : 'none', outlineOffset: -2,
                   background: focused?.id === issue.id ? 'rgba(62,123,250,.06)' : 'transparent',
@@ -116,12 +117,12 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
                   {team?.key}-{issue.number}
                 </span>
                 <PriorityGlyph p={issue.priority} size={13} />
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
-                  {issue.title}
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{issue.title}</span>
                   {issue._pending && <PendingDot />}
                 </span>
                 {issue.due_date && (
-                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', flexShrink: 0 }}>
                     {new Date(issue.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                   </span>
                 )}
@@ -131,13 +132,13 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 14, marginTop: 10 }}>
+      <div style={{ display: 'flex', gap: 14, marginTop: 10, flexWrap: 'wrap' }}>
         {[['J/K', 'move'], ['Enter', 'open'], ['G then B', 'issues'], ['⌘K', 'palette']].map(([k, l]) => (
           <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
             <Kbd>{k}</Kbd>{l}
           </span>
         ))}
       </div>
-    </div>
+    </PmPage>
   )
 })

@@ -142,6 +142,7 @@ export type NotificationEvent =
   | 'pm_status'
   | 'pm_cycle_digest'
   | 'pm_project_nudge'
+  | 'pm_project_update'
   | 'pm_github'
   | 'calendar_invited'
   | 'calendar_updated'

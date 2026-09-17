@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmBoard } from '@/components/pm/board'
+import { PmPage } from '@/components/pm/PmPage'
 import { IssueComposer } from '@/components/pm/IssueComposer'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SkeletonRows } from '@/components/states'
@@ -236,12 +237,13 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
   }
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: viewMode === 'board' ? 1400 : 1060, margin: '0 auto' }}>
+    <PmPage wide={viewMode === 'board'}>
       <SectionHead
         title={`${team.key} · ${filters.showClosed ? 'All issues' : 'Active'}`}
         sub={`${issues.length} of ${allIssues.length} issues · ${store.pendingCount} pending · ${store.online ? 'live' : 'OFFLINE — changes queue'}`}
         right={
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          // Round M — may shrink and wrap (toggle · button · pill stack on a phone) instead of pushing the page wider.
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0 }}>
             <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
               {(['list', 'board'] as const).map((m) => (
                 <button key={m} onClick={() => setViewMode(m)}
@@ -267,7 +269,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
         {(views.data?.data.views ?? []).map((v) => (
           <button key={v.id} onClick={() => applyView(v)} style={viewTabStyle(activeViewId === v.id)}>
             {v.name}
-            {v.is_shared && <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '.05em', textTransform: 'uppercase', color: 'var(--blue)', border: '1px solid rgba(62,123,250,.4)', borderRadius: 99, padding: '0 4px', marginLeft: 5 }}>team</span>}
+            {v.is_shared && <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--blue)', border: '1px solid rgba(62,123,250,.4)', borderRadius: 99, padding: '0 5px', marginLeft: 5, lineHeight: 1.4 }}>team</span>}
             <span
               onClick={(e) => { e.stopPropagation(); favView.mutate({ id: v.id, favorite: !(views.data?.data.favorite_ids ?? []).includes(v.id) }) }}
               title="Pin to favorites"
@@ -409,7 +411,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
                 <Kbd>{k}</Kbd>{l}
               </span>
             ))}
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>cap 500</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>cap 500</span>
             <button onClick={() => setSel(new Set())} style={{ background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 11, fontWeight: 800, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
               <Kbd>Esc</Kbd> clear
             </button>
@@ -445,7 +447,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
           </span>
         ))}
       </div>
-    </div>
+    </PmPage>
   )
 })
 
@@ -542,8 +544,8 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       onMouseLeave={prefetch?.onMouseLeave}
       data-issue-row={issue.id}
       style={{
-        display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px',
-        cursor: 'pointer', position: 'relative',
+        display: 'flex', alignItems: 'center', gap: 9, height: 38, padding: '0 12px',
+        cursor: 'pointer', position: 'relative', minWidth: 0,
         borderBottom: last ? 'none' : '1px solid var(--bord)',
         outline: focused ? '2px solid var(--blue)' : 'none', outlineOffset: -2,
         background: selected ? 'rgba(62,123,250,.1)' : focused ? 'rgba(62,123,250,.06)' : 'transparent',
@@ -566,8 +568,8 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       <span title={PM_PRIORITY_LABEL[issue.priority]} style={{ display: 'flex', flexShrink: 0 }}>
         <PriorityGlyph p={issue.priority} size={13} />
       </span>
-      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
-        {issue.title}
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{issue.title}</span>
         {issue._pending && <PendingDot />}
       </span>
       {issue.estimate && (
@@ -576,7 +578,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
         </span>
       )}
       {issue.due_date && (
-        <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: overdue ? 'var(--coral)' : 'var(--text-faint)' }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, flexShrink: 0, color: overdue ? 'var(--coral)' : 'var(--text-faint)' }}>
           {new Date(issue.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
         </span>
       )}
@@ -670,7 +672,7 @@ function RestIssues({ teamId }: { teamId: string | null }) {
   const [composerOpen, setComposerOpen] = useState(false)
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 1060, margin: '0 auto' }}>
+    <PmPage>
       <SectionHead
         title={`${team?.key ?? 'PM'} · Issues`}
         sub="Create, assign and track the work for this team"
@@ -703,13 +705,13 @@ function RestIssues({ teamId }: { teamId: string | null }) {
               // Round C: the row opens the detail page — REST tenants had no
               // path into it at all (rows were plain, unclickable divs).
               <div key={i.id} data-issue-row={i.id} onClick={() => router.push(issueHref(i.id, currentPmPath()))}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, height: 34, padding: '0 12px', borderBottom: idx < arr.length - 1 ? '1px solid var(--bord)' : 'none', cursor: 'pointer', transition: 'background .12s ease-out' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, minWidth: 0, padding: '0 12px', borderBottom: idx < arr.length - 1 ? '1px solid var(--bord)' : 'none', cursor: 'pointer', transition: 'background .12s ease-out' }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)'; prefetchIssueDetail(qc, i.id) }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; cancelIssuePrefetch(i.id) }}>
                 {st && <StateGlyph cat={st.category} size={13} />}
-                <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58 }}>{team?.key}-{i.number}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58, flexShrink: 0 }}>{team?.key}-{i.number}</span>
                 <PriorityGlyph p={i.priority} size={13} />
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>{i.title}</span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
                 {next && <Btn kind="ghost" size="sm" disabled={move.isPending} onClick={(e) => { e.stopPropagation(); move.mutate({ id: i.id, state_id: next.id }) }}>Next state</Btn>}
               </div>
             )
@@ -719,6 +721,6 @@ function RestIssues({ teamId }: { teamId: string | null }) {
           )}
         </div>
       )}
-    </div>
+    </PmPage>
   )
 }

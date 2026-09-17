@@ -30,6 +30,7 @@ export const NOTIFICATION_EVENTS = [
   'pm_status',
   'pm_cycle_digest',
   'pm_project_nudge',
+  'pm_project_update',
   'pm_github',
   // Calendar (Round J) — invites, changes and cancellations of meetings/events.
   'calendar_invited',
@@ -65,6 +66,8 @@ const PREFERENCE_DEFAULTS: Record<
   pm_status: { in_app: true, email: false },
   pm_cycle_digest: { in_app: true, email: true },
   pm_project_nudge: { in_app: true, email: false },
+  // Round M: a posted project update rings the bell for members + lead; no email.
+  pm_project_update: { in_app: true, email: false },
   pm_github: { in_app: true, email: false },
   // Calendar (Round J): an invite and a cancellation are worth an email; a
   // reschedule/RSVP is ambient (bell only) unless the user opts in.
@@ -121,6 +124,7 @@ function eventForInAppType(type: string): NotificationEvent | null {
   if (type === 'pm.issue.status') return 'pm_status';
   if (type.startsWith('pm.cycle.')) return 'pm_cycle_digest';
   if (type === 'pm.project.stale') return 'pm_project_nudge';
+  if (type === 'pm.project.update_posted') return 'pm_project_update';
   if (type.startsWith('pm.github.')) return 'pm_github';
   if (type.startsWith('pm.digest')) return 'pm_comment';
   if (type.startsWith('pm.')) return 'pm_comment';

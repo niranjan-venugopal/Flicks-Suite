@@ -64,7 +64,12 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
   }
 
   return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', overflowX: 'auto', paddingBottom: 24 }}>
+    <>
+      {/* Round M — fluid columns: `minmax(248px, 1fr)` lets a handful of
+          states share the whole page width instead of huddling at a fixed
+          264px each; past the point where they fit, the board scrolls
+          sideways (that's the one PM surface allowed to). */}
+      <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(248px, 1fr)', gap: 12, alignItems: 'start', overflowX: 'auto', paddingBottom: 24, minWidth: 0 }}>
       {ordered.map((state) => {
         const rows = colRows(state.id)
         const points = rows.reduce((s, r) => s + (r.estimate ? Number(r.estimate) : 0), 0)
@@ -74,19 +79,19 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
             onDragOver={(e) => { e.preventDefault(); setOverCol(state.id) }}
             onDrop={(e) => { e.preventDefault(); drop(state.id) }}
             style={{
-              width: 264, flexShrink: 0, borderRadius: 12, padding: '10px 8px 8px',
+              minWidth: 0, borderRadius: 12, padding: '10px 8px 8px',
               background: overCol === state.id && dragId ? 'rgba(62,123,250,.06)' : 'var(--surf-0, rgba(255,255,255,.02))',
               border: `1px solid ${overCol === state.id && dragId ? 'rgba(62,123,250,.35)' : 'var(--bord)'}`,
               transition: 'border-color .12s ease-out',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 6px 8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 6px 8px', minWidth: 0 }}>
               <StateGlyph cat={state.category} size={13} />
-              <span style={{ fontSize: 11.5, fontWeight: 800 }}>{state.name}</span>
-              <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>{rows.length}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 800, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{state.name}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)', flexShrink: 0 }}>{rows.length}</span>
               <span style={{ flex: 1 }} />
               {points > 0 && (
-                <span title="Estimate points" style={{ fontSize: 9.5, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', background: 'var(--surf-2)', border: '1px solid var(--bord)', borderRadius: 5, padding: '1px 5px' }}>
+                <span title="Estimate points" style={{ fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', background: 'var(--surf-2)', border: '1px solid var(--bord)', borderRadius: 5, padding: '1px 5px' }}>
                   {points}
                 </span>
               )}
@@ -121,6 +126,8 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
           </div>
         )
       })}
+      </div>
+      {/* Outside the grid — a grid child would be given its own 248px track. */}
       <IssueComposer
         open={addingIn !== null}
         onClose={() => setAddingIn(null)}
@@ -128,7 +135,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
         teamId={teamId}
         stateId={addingIn ?? undefined}
       />
-    </div>
+    </>
   )
 })
 
@@ -168,24 +175,24 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
-        <span style={{ fontSize: 9.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
           {issue.number ? `${team?.key}-${issue.number}` : `${team?.key}-…`}
         </span>
         {issue._pending && <PendingDot />}
         <span style={{ flex: 1 }} />
         <PriorityGlyph p={issue.priority} size={12} />
       </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', lineHeight: 1.35, marginBottom: 6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.35, marginBottom: 6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>
         {issue.title}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {issue.estimate && (
-          <span style={{ fontSize: 9, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', background: 'var(--surf-2)', border: '1px solid var(--bord)', borderRadius: 4, padding: '0 4px' }}>
+          <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', background: 'var(--surf-2)', border: '1px solid var(--bord)', borderRadius: 4, padding: '0 4px' }}>
             {Number(issue.estimate)}
           </span>
         )}
         {issue.due_date && (
-          <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
             {new Date(issue.due_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
           </span>
         )}

@@ -838,13 +838,25 @@ export class PmSyncEngine {
       author_user_id: this.userId,
       snapshot: null, // Round M — the server computes it on ack; the delta row replaces this
       created_at: new Date().toISOString(),
+      // Client-only, like pm_projects/pm_issues. Anything that wants to mark
+      // this row unconfirmed must key on THIS flag, never on `snapshot ===
+      // null`: rows posted before 0064 carry a null snapshot forever. The
+      // ack/delta row (same id) has no `_pending`, so it clears on replace.
+      _pending: true,
     }])
-    this.store.patchProject(projectId, { health })
+    const prevProject = this.store.patchProject(projectId, { health })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
       op: 'project.post_update',
       id: projectId,
       fields: { update_id: updateId, health, body_md: bodyMd },
+      // Round M review — a server rejection (403 for a guest, 400 on an
+      // HTML-only body) drops the optimistic card and puts the health back,
+      // instead of leaving a pending row until reload.
+      inverse: { table: 'pm_project_updates', id: updateId, row: null },
+      ...(prevProject
+        ? { inverses: [{ table: 'pm_projects', id: projectId, row: prevProject as unknown as Record<string, unknown> }] }
+        : {}),
       enqueuedAt: Date.now(),
     })
     return updateId
@@ -1017,6 +1029,10 @@ export class PmSyncEngine {
               // Round L — relate: drop the temp row; unrelate: put it back.
               if (inv.row === null) this.store.removeRelation(inv.id)
               else this.store.applyRows('pm_issue_relations', [inv.row])
+            } else if (inv.table === 'pm_project_updates') {
+              // Round M — post_update: drop the optimistic card (row null).
+              if (inv.row === null) this.store.applyTombstones('pm_project_updates', [inv.id])
+              else this.store.applyRows('pm_project_updates', [inv.row])
             } else if (wasCreate) this.store.removeIssue(inv.id)
             else if (inv.row !== null) this.store.restoreIssue(inv.row as unknown as PmIssueRow)
             // update with no pre-image: nothing was optimistically applied,

@@ -23,7 +23,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsUUID } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
 import type Redis from 'ioredis';
 import type { Request, Response } from 'express';
 import type { JwtPayload } from '@flicks/shared/types';
@@ -40,10 +40,19 @@ import {
   type PmFileObjectType,
 } from './files.service';
 
-class UploadFilesDto {
-  @IsIn(['issue', 'comment', 'draft']) object_type!: PmFileObjectType;
+export class UploadFilesDto {
+  @IsIn(['issue', 'comment', 'draft', 'project']) object_type!: PmFileObjectType;
   @IsUUID() object_id!: string;
   @IsOptional() @IsIn(['attachment', 'inline']) kind?: PmFileKind;
+}
+
+/**
+ * Round M — drafts (own, live) to bind onto a project's description after it
+ * is saved. An empty list is a deliberate no-op (the card only calls when it
+ * has ids); the service holds the same 50 ceiling.
+ */
+export class BindProjectFilesDto {
+  @IsArray() @ArrayMaxSize(50) @IsUUID('4', { each: true }) draft_ids!: string[];
 }
 
 export const PM_UPLOADS_PER_MIN = 30;
@@ -181,7 +190,7 @@ export class PmFilesController {
   @UseGuards(PmUploadThrottleGuard)
   @UseInterceptors(PmUploadInterceptor)
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Upload up to 10 files (≤25 MB each) onto an issue, a comment, or a draft' })
+  @ApiOperation({ summary: 'Upload up to 10 files (≤25 MB each) onto an issue, a comment, a project, or a draft' })
   async upload(
     @CurrentUser() user: JwtPayload,
     @Body() dto: UploadFilesDto,
@@ -201,6 +210,22 @@ export class PmFilesController {
   @ApiOperation({ summary: 'Files of an issue and its comments (signed URLs, 1 h)' })
   listForIssue(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
     return this.files.listForIssue(user.tenantId, user.sub, id);
+  }
+
+  // ─── Round M — the project description's files ──────────────────────────
+
+  @Get('projects/:id/files')
+  @RequireGrant('pm', 'view')
+  @ApiOperation({ summary: 'Files of a project’s description (signed URLs, 1 h); 404 when the project is not readable' })
+  listForProject(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    return this.files.listForProject(user.tenantId, user.sub, id);
+  }
+
+  @Post('projects/:id/files/bind')
+  @RequireGrant('pm', 'edit')
+  @ApiOperation({ summary: 'Bind the caller’s draft uploads (inline images of the description) onto a project' })
+  bindProjectFiles(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: BindProjectFilesDto) {
+    return this.files.bindProjectDrafts(user.tenantId, user.sub, id, dto.draft_ids);
   }
 
   @Get('files/:id/url')

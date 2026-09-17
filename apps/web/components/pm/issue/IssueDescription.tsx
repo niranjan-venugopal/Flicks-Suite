@@ -11,10 +11,12 @@ import { AttachButton, AttachmentList, DropZone, useGlobalDropGuard } from '@/co
 import { useAuthStore } from '@/lib/stores/auth.store'
 import {
   invalidateIssueFiles,
+  invalidateProjectFiles,
   uploadPmFiles,
   useAttachmentsEnabled,
   useDeletePmFile,
   useIssueFiles,
+  useProjectFiles,
 } from '@/lib/api/queries/use-pm-files'
 import {
   extractFileIds,
@@ -39,7 +41,18 @@ import {
 // ─────────────────────────────────────────────────────────
 
 export interface IssueDescriptionProps {
+  /** The id of the object the description belongs to (an issue by default; see `objectType`). */
   issueId: string
+  /**
+   * Round M — the same card serves a PROJECT's description: files list/upload/
+   * remove address `pm/projects/:id/files` and chips filter on object_type
+   * 'project'. Default 'issue' — issue behaviour is byte-for-byte unchanged.
+   */
+  objectType?: 'issue' | 'project'
+  /** Empty-state copy shown to editors (default 'Add a description…'). */
+  emptyLabel?: string
+  /** Round M — optional card heading (the project page shows "Description" so the body can't read as an update). */
+  heading?: string
   /** Server markdown ('' when none). */
   value: string
   /** Every file of the issue (its own + comments') — filtered here. */
@@ -64,6 +77,9 @@ export interface IssueDescriptionProps {
 
 export function IssueDescription({
   issueId,
+  objectType = 'issue',
+  emptyLabel = 'Add a description…',
+  heading,
   value,
   files,
   canEdit,
@@ -97,14 +113,19 @@ export function IssueDescription({
   }, [value, editing])
 
   // The detail payload carries `files`; this hook re-signs them every 50 min
-  // so an open tab never shows expired images (union by id, hook wins).
-  const filesQ = useIssueFiles(issueId, { enabled: rich })
-  const allFiles = useMemo(() => mergeFiles(files, filesQ.data?.data), [files, filesQ.data])
+  // so an open tab never shows expired images (union by id, hook wins). One
+  // of the two is active — the other is a disabled observer.
+  const filesQ = useIssueFiles(objectType === 'issue' ? issueId : null, { enabled: rich })
+  const projectFilesQ = useProjectFiles(objectType === 'project' ? issueId : null, { enabled: rich })
+  const fresh = objectType === 'project' ? projectFilesQ.data?.data : filesQ.data?.data
+  const allFiles = useMemo(() => mergeFiles(files, fresh), [files, fresh])
   const urls = useMemo(() => ({ ...fileUrlMap(allFiles), ...localUrls }), [allFiles, localUrls])
   const chips = useMemo(
-    () => allFiles.filter((f) => f.object_type === 'issue' && f.kind === 'attachment'),
-    [allFiles],
+    () => allFiles.filter((f) => f.object_type === objectType && f.kind === 'attachment'),
+    [allFiles, objectType],
   )
+  const invalidateFiles = () =>
+    objectType === 'project' ? invalidateProjectFiles(qc, issueId) : invalidateIssueFiles(qc, issueId)
 
   const upload =
     onUpload ??
@@ -114,9 +135,9 @@ export function IssueDescription({
         return uploadPmFiles({ objectType: 'draft', objectId: sessionDraftId.current, kind, files: picked, onProgress, signal })
       }
       try {
-        return await uploadPmFiles({ objectType: 'issue', objectId: issueId, kind, files: picked, onProgress, signal })
+        return await uploadPmFiles({ objectType, objectId: issueId, kind, files: picked, onProgress, signal })
       } finally {
-        invalidateIssueFiles(qc, issueId) // a partial batch may have landed
+        invalidateFiles() // a partial batch may have landed
       }
     })
 
@@ -183,7 +204,7 @@ export function IssueDescription({
   const removeFile = async (f: PmFile) => {
     if (onDeleteFile) return onDeleteFile(f)
     try {
-      await del.mutateAsync({ fileId: f.id, issueId })
+      await del.mutateAsync(objectType === 'project' ? { fileId: f.id, projectId: issueId } : { fileId: f.id, issueId })
     } catch (err) {
       toast({ title: 'Couldn’t remove', description: err instanceof Error ? err.message : 'Try again', variant: 'destructive' })
     }
@@ -217,6 +238,9 @@ export function IssueDescription({
   if (!rich) {
     return (
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        {heading && (
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-2)', letterSpacing: '.04em', textTransform: 'uppercase', marginBottom: 8 }}>{heading}</div>
+        )}
         {editing ? (
           <>
             <textarea
@@ -225,7 +249,7 @@ export function IssueDescription({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={placeholder}
-              style={{ width: '100%', minHeight: 140, resize: 'vertical', fontSize: 12.5, lineHeight: 1.6, padding: 10 }}
+              style={{ width: '100%', minHeight: 140, resize: 'vertical', fontSize: 13.5, lineHeight: 1.6, padding: 10 }}
               onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void save() }}
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
@@ -243,9 +267,9 @@ export function IssueDescription({
         ) : (
           <div onClick={startEdit} style={{ cursor: canEdit ? 'text' : 'default', minHeight: 40 }}>
             {value ? (
-              <div style={{ fontSize: 12.5, lineHeight: 1.65, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{value}</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.65, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{value}</div>
             ) : (
-              <div className="t-mute" style={{ fontSize: 12 }}>{canEdit ? 'Add a description…' : 'No description'}</div>
+              <div className="t-mute" style={{ fontSize: 12 }}>{canEdit ? emptyLabel : 'No description'}</div>
             )}
           </div>
         )}
@@ -258,6 +282,9 @@ export function IssueDescription({
   return (
     <DropZone onFiles={attach} disabled={!canEdit || !attachments} acceptedExtensions={acceptedExtensions}>
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        {heading && (
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text-2)', letterSpacing: '.04em', textTransform: 'uppercase', marginBottom: 8 }}>{heading}</div>
+        )}
         {editing ? (
           <>
             <RichEditor
@@ -300,7 +327,7 @@ export function IssueDescription({
             <RichView
               value={value}
               fileUrls={urls}
-              empty={<div className="t-mute" style={{ fontSize: 12 }}>{canEdit ? 'Add a description…' : 'No description'}</div>}
+              empty={<div className="t-mute" style={{ fontSize: 12 }}>{canEdit ? emptyLabel : 'No description'}</div>}
             />
           </div>
         )}

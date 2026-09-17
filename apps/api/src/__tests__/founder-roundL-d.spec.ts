@@ -95,6 +95,7 @@ const executor = new PmMutationExecutor(dbSvc, issuesSvc, projectsSvc, syncSvc, 
 const controller = new PmController(
   null as never, issuesSvc, null as never, null as never, null as never, null as never,
   null as never, null as never, null as never, null as never, null as never, null as never,
+  null as never, // Round M — InsightsService
 );
 
 /** notifyInbox is fire-and-forget by design (house rule 6) — poll. */

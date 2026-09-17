@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react'
 import Link from 'next/link'
 import { FEATURES } from '@/lib/feature-flags'
 import { Icon, Toggle } from '@/components/proto'
+import { PmPage } from '@/components/pm/PmPage'
 import { useToast } from '@/components/ui/use-toast'
 import {
   useNotificationPreferences,
@@ -26,6 +27,7 @@ const EVENTS: Array<{ event: NotificationEvent; label: string }> = [
   { event: 'pm_status', label: 'Status → completed/canceled' },
   { event: 'pm_cycle_digest', label: 'Cycle review digest' },
   { event: 'pm_project_nudge', label: 'Project update nudge' },
+  { event: 'pm_project_update', label: 'Project updates' },
   // GitHub events can't fire while the integration is parked.
   ...(FEATURES.pm_github
     ? [{ event: 'pm_github' as const, label: 'GitHub state change on my issues' }]
@@ -39,7 +41,7 @@ const FREQS: Array<['urgent' | 'hourly' | 'daily', string]> = [
 ]
 
 const colHead: CSSProperties = {
-  fontSize: 9.5,
+  fontSize: 10.5,
   fontWeight: 800,
   letterSpacing: '.07em',
   textTransform: 'uppercase',
@@ -84,71 +86,73 @@ export default function PmNotifSettingsPage() {
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px' }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-        {FEATURES.pm_github && (
-          <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
-        )}
-        <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: '#fff', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
-        <Link href="/pm/settings/import" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Import</Link>
-        <Link href="/pm/settings/workspace" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Workspace</Link>
-      </div>
-      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px', gap: 0, padding: '10px 16px', borderBottom: '1px solid var(--bord)' }}>
-          <span style={colHead}>Event</span>
-          <span style={{ ...colHead, textAlign: 'center' }}>In-app</span>
-          <span style={{ ...colHead, textAlign: 'center' }}>Email</span>
+    <PmPage>
+      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+          {FEATURES.pm_github && (
+            <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
+          )}
+          <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: '#fff', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
+          <Link href="/pm/settings/import" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Import</Link>
+          <Link href="/pm/settings/workspace" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Workspace</Link>
         </div>
-        {EVENTS.map(({ event, label }) => {
-          const r = rowFor(event)
-          return (
-            <div key={event} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--bord)' }}>
-              <span style={{ fontSize: 12, fontWeight: 700 }}>{label}</span>
-              <span style={{ display: 'flex', justifyContent: 'center' }}>
-                <Toggle on={r?.inApp ?? true} onChange={(v) => toggle(event, 'in_app', v)} />
-              </span>
-              <span style={{ display: 'flex', justifyContent: 'center' }}>
-                <Toggle on={r?.email ?? false} onChange={(v) => toggle(event, 'email', v)} />
-              </span>
-            </div>
-          )
-        })}
-      </div>
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px', gap: 0, padding: '10px 16px', borderBottom: '1px solid var(--bord)' }}>
+            <span style={colHead}>Event</span>
+            <span style={{ ...colHead, textAlign: 'center' }}>In-app</span>
+            <span style={{ ...colHead, textAlign: 'center' }}>Email</span>
+          </div>
+          {EVENTS.map(({ event, label }) => {
+            const r = rowFor(event)
+            return (
+              <div key={event} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px', alignItems: 'center', padding: '9px 16px', borderBottom: '1px solid var(--bord)' }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{label}</span>
+                <span style={{ display: 'flex', justifyContent: 'center' }}>
+                  <Toggle on={r?.inApp ?? true} onChange={(v) => toggle(event, 'in_app', v)} />
+                </span>
+                <span style={{ display: 'flex', justifyContent: 'center' }}>
+                  <Toggle on={r?.email ?? false} onChange={(v) => toggle(event, 'email', v)} />
+                </span>
+              </div>
+            )
+          })}
+        </div>
 
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Email digest frequency</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {FREQS.map(([k, l]) => (
-            <button
-              key={k}
-              onClick={async () => {
-                try {
-                  await updateDigest.mutateAsync(k)
-                } catch (e) {
-                  toast({ title: 'Could not save', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
-                }
-              }}
-              style={{
-                flex: 1, padding: '9px 0', borderRadius: 9, cursor: 'pointer',
-                background: freq === k ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
-                border: `1px solid ${freq === k ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`,
-                color: freq === k ? '#fff' : 'var(--text-2)',
-                fontSize: 11.5, fontWeight: 800,
-              }}
-            >{l}</button>
-          ))}
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Email digest frequency</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {FREQS.map(([k, l]) => (
+              <button
+                key={k}
+                onClick={async () => {
+                  try {
+                    await updateDigest.mutateAsync(k)
+                  } catch (e) {
+                    toast({ title: 'Could not save', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+                  }
+                }}
+                style={{
+                  flex: 1, padding: '9px 0', borderRadius: 9, cursor: 'pointer',
+                  background: freq === k ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
+                  border: `1px solid ${freq === k ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`,
+                  color: freq === k ? '#fff' : 'var(--text-2)',
+                  fontSize: 11.5, fontWeight: 800,
+                }}
+              >{l}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 9 }}>
+            Mention/assignment emails send after 5 min only if still unread in-app · reading in-app cancels the pending email
+          </div>
         </div>
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 9 }}>
-          Mention/assignment emails send after 5 min only if still unread in-app · reading in-app cancels the pending email
-        </div>
-      </div>
 
-      <div style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '10px 14px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)' }}>
-        <DndDot size={10} />
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>
-          Do not disturb (your presence) mutes toasts automatically — Inbox still accrues.
-        </span>
+        <div style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '10px 14px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)' }}>
+          <DndDot size={10} />
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>
+            Do not disturb (your presence) mutes toasts automatically — Inbox still accrues.
+          </span>
+        </div>
       </div>
-    </div>
+    </PmPage>
   )
 }

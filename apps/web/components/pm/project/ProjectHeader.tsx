@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { observer } from 'mobx-react-lite'
 import { Icon } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
-import { HealthChip, PmProgressBar, PM_PROJECT_STATUS_LABEL, PendingDot } from '@/components/pm/glyphs'
+import { HealthChip, PmProgressBar, PM_PRIORITY_LABEL, PM_PROJECT_STATUS_LABEL, PendingDot, PriorityGlyph } from '@/components/pm/glyphs'
 import { PmAv, PROJECT_ICONS, ProjectLogo } from '@/components/pm/projects'
 import type { PmStore } from '@/lib/pm/store'
 import type { PmProjectRow } from '@/lib/pm/types'
@@ -50,8 +50,13 @@ export const ProjectHeader = observer(function ProjectHeader({
   // select doesn't silently rewrite it.
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
+  // Escape must not commit: Chrome fires blur on the input React removes,
+  // with the pre-Escape draft still in the closure (same guard as milestones).
+  const renameCancelledRef = useRef(false)
+  const cancelRename = () => { renameCancelledRef.current = true; setEditingName(false) }
   const commitName = () => {
     setEditingName(false)
+    if (renameCancelledRef.current) { renameCancelledRef.current = false; return }
     const next = nameDraft.trim()
     if (next && next !== project.name) patchProject({ name: next })
   }
@@ -60,11 +65,13 @@ export const ProjectHeader = observer(function ProjectHeader({
 
   return (
     <div className="card" style={{ marginBottom: 14 }}>
-      {/* One line, always (founder round E follow-up: the delete button
-          wrapped under the logo once the name + dates filled the row).
-          Nothing wraps — the NAME is the only element allowed to give up
-          width (ellipsis), everything else is flexShrink: 0. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9, minWidth: 0 }}>
+      {/* One line while it fits (founder round E: the delete button wrapped
+          under the logo once the name + dates filled the row) — the NAME is
+          the only element that gives up width (ellipsis, minWidth 60), so on a
+          desktop nothing wraps. Round M lets the row wrap only when even the
+          shrunken name can't fit (a 390 px phone), instead of overflowing the
+          card and giving the page a horizontal scroll. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 8, flexWrap: 'wrap', marginBottom: 9, minWidth: 0 }}>
         {/* Round E — the project's face: uploaded logo (click to change)
             or the emoji icon picker. */}
         <button
@@ -94,7 +101,7 @@ export const ProjectHeader = observer(function ProjectHeader({
             onBlur={commitName}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commitName()
-              if (e.key === 'Escape') setEditingName(false)
+              if (e.key === 'Escape') cancelRename()
             }}
             style={{ height: 32, flex: '0 1 280px', minWidth: 120, fontSize: 15, fontWeight: 800, letterSpacing: '-0.02em' }}
           />
@@ -114,20 +121,37 @@ export const ProjectHeader = observer(function ProjectHeader({
           </span>
         )}
         {project._pending && <PendingDot />}
-        <select className="input" value={project.status} onChange={(e) => patchProject({ status: e.target.value as PmProjectRow['status'] })}
+        <select className="input" title="Project status" aria-label="Project status" value={project.status} onChange={(e) => patchProject({ status: e.target.value as PmProjectRow['status'] })}
           style={{ height: 28, width: 116, fontSize: 11, fontWeight: 800, flexShrink: 0 }}>
           {Object.entries(PM_PROJECT_STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
+        {/* Round M — project priority on the issue scale. A native select can't
+            hold SVG, so the glyph sits beside it and tracks the value. Rows
+            cached before 0064 may lack the column: missing reads as 0. */}
+        <span title="Project priority" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+          <PriorityGlyph p={project.priority ?? 0} size={13} />
+          <select
+            className="input"
+            data-testid="project-priority"
+            aria-label="Project priority"
+            value={project.priority ?? 0}
+            onChange={(e) => patchProject({ priority: Number(e.target.value) })}
+            style={{ height: 28, width: 104, fontSize: 11, fontWeight: 800, flexShrink: 0 }}
+          >
+            {PM_PRIORITY_LABEL.map((l, p) => <option key={p} value={p}>{l}</option>)}
+          </select>
+        </span>
         <HealthChip h={project.health} />
         <span style={{ flex: 1 }} />
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
+        {/* Lead + dates: shrink and wrap on a phone instead of forcing the card wider. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, flexShrink: 1, minWidth: 0, flexWrap: 'wrap' }}>
           {leadName && (
             <span title={leadName} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700 }}>
               <PmAv name={leadName} src={project.lead_user_id ? users?.get(project.lead_user_id)?.avatar_url : null} size={18} />
               <span style={{ maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leadName}</span>
             </span>
           )}
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', display: 'inline-flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
             <DateField value={project.start_date ?? ''} onChange={(iso) => patchProject({ start_date: iso || null })} style={{ height: 26, width: 112, fontSize: 10 }} />
             →
             <DateField value={project.target_date ?? ''} onChange={(iso) => patchProject({ target_date: iso || null })} style={{ height: 26, width: 112, fontSize: 10 }} />

@@ -272,12 +272,18 @@ export class PmMutationExecutor {
       }
       case 'project.post_update': {
         // item.id is the PROJECT id; the update row id may ride in fields.
-        await this.projects.postUpdate(tenantId, userId, item.id, {
+        // Round M — the ack carries the stored update (WITH its snapshot) and
+        // the project (denormalized health), so the client's optimistic row
+        // (snapshot: null) is replaced immediately, not on a later delta.
+        const res = await this.projects.postUpdate(tenantId, userId, item.id, {
           id: f['update_id'],
           health: f['health'],
           body_md: f['body_md'],
         });
-        return {};
+        return {
+          pm_project_updates: [res.update as unknown as Record<string, unknown>],
+          pm_projects: [res.project as unknown as Record<string, unknown>],
+        };
       }
       // Same authority bar as the REST door — the service enforces it, and it
       // only works if the role actually reaches it from here too.
@@ -296,6 +302,7 @@ export class PmMutationExecutor {
           name: f['name'],
           target_date: f['target_date'] ?? null,
           position: f['position'],
+          description_md: f['description_md'] ?? null, // Round M
         });
         return { pm_project_milestones: [res.data as unknown as Record<string, unknown>] };
       }

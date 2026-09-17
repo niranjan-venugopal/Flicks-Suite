@@ -11,6 +11,7 @@ import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, 
 import { IssuePicker, type PickedIssue } from '@/components/pm/IssuePicker'
 import { RelationsCard, type DetailRelation } from '@/components/pm/RelationsCard'
 import { CommentComposer, CommentThread, IssueDescription } from '@/components/pm/issue'
+import { PmPage } from '@/components/pm/PmPage'
 import { SkeletonRows } from '@/components/states'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { api } from '@/lib/api/client'
@@ -467,8 +468,8 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
   const subIssueIds = (d?.sub_issues ?? []).map((s) => s.id)
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 1120, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+    <PmPage>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap', minWidth: 0 }}>
         <Btn kind="ghost" size="sm" icon={<Icon.chevL size={13} />} data-testid="issue-back" title={from ? `Back to ${back}` : 'Back to the issue list'} onClick={goBack}>
           {back}
         </Btn>
@@ -502,10 +503,10 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
         onConfirm={doDelete}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20, alignItems: 'start' }}>
+      <div className="pm-split">
         {/* ── Doc pane ── */}
-        <div>
-          <h1 data-testid="issue-title" style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.3, marginBottom: 14 }}>
+        <div style={{ minWidth: 0 }}>
+          <h1 data-testid="issue-title" style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.3, marginBottom: 14, overflowWrap: 'anywhere' }}>
             {issue.title}
           </h1>
 
@@ -534,11 +535,11 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                   data-sub-issue-id={s.id}
                   onClick={() => hop(s.id)}
                   {...issuePrefetchProps(qc, s.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 9, height: 32, padding: '0 14px', cursor: 'pointer', borderBottom: i < d!.sub_issues.length - 1 ? '1px solid var(--bord)' : 'none' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 9, height: 36, minWidth: 0, padding: '0 14px', cursor: 'pointer', borderBottom: i < d!.sub_issues.length - 1 ? '1px solid var(--bord)' : 'none' }}
                 >
-                  <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{s.team_key}-{s.number}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', flexShrink: 0 }}>{s.team_key}-{s.number}</span>
                   <PriorityGlyph p={s.priority} size={12} />
-                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: s.completed_at || s.canceled_at ? 'line-through' : 'none', opacity: s.completed_at || s.canceled_at ? 0.6 : 1 }}>{s.title}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: s.completed_at || s.canceled_at ? 'line-through' : 'none', opacity: s.completed_at || s.canceled_at ? 0.6 : 1 }}>{s.title}</span>
                 </div>
               ))}
             </div>
@@ -563,7 +564,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               {d!.git_links.map((g) => (
                 <PrChip key={g.id} g={{ t: g.kind, label: g.label, state: g.state, url: g.url } as GitLink} />
               ))}
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-faint)' }}>
                 PR merged → auto-moves to Done (team automation)
               </span>
             </div>
@@ -582,11 +583,11 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             <div style={{ maxHeight: 460, overflowY: 'auto' }}>
               {detail.isLoading && <SkeletonRows rows={2} height={34} />}
               {(d?.history ?? []).slice(0, 8).reverse().map((h) => (
-                <div key={h.id} data-history-field={h.field} style={{ display: 'flex', gap: 8, padding: '7px 14px', fontSize: 11, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)' }}>
-                  <span style={{ fontWeight: 800, color: 'var(--text-2)' }}>{users.find((u) => u.id === h.actor_user_id)?.name ?? '—'}</span>
-                  <span>{historyLine(h)}</span>
+                <div key={h.id} data-history-field={h.field} style={{ display: 'flex', gap: 8, padding: '8px 14px', fontSize: 12, color: 'var(--text-mute)', borderBottom: '1px solid var(--bord)', flexWrap: 'wrap', minWidth: 0 }}>
+                  <span style={{ fontWeight: 800, color: 'var(--text-2)', flexShrink: 0 }}>{users.find((u) => u.id === h.actor_user_id)?.name ?? '—'}</span>
+                  <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{historyLine(h)}</span>
                   <span style={{ flex: 1 }} />
-                  <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>{new Date(h.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)', flexShrink: 0 }}>{new Date(h.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                 </div>
               ))}
               <CommentThread
@@ -614,7 +615,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
         </div>
 
         {/* ── Properties rail ── */}
-        <div className="card" style={{ padding: 12, position: 'sticky', top: 80 }}>
+        <div className="card" style={{ padding: 12, position: 'sticky', top: 80, minWidth: 0 }}>
           <RailRow label="State" onClick={() => setMenu(menu === 'state' ? null : 'state')}>
             {state ? <><StateGlyph cat={state.category} size={13} /> <span>{state.name}</span></> : '—'}
           </RailRow>
@@ -743,7 +744,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                 if (engine) engine.updateIssue(id, { estimate: v || null })
                 else restUpdate.mutate({ estimate: v || null })
               }}
-              style={{ height: 26, width: 70, fontSize: 11.5 }}
+              style={{ height: 30, width: 76, fontSize: 12.5 }}
             />
           </RailRow>
           <RailRow label="Due">
@@ -753,7 +754,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
                 if (engine) engine.updateIssue(id, { due_date: iso || null })
                 else restUpdate.mutate({ due_date: iso || null })
               }}
-              style={{ height: 26, width: 130, fontSize: 11.5 }}
+              style={{ height: 30, width: 140, fontSize: 12.5 }}
             />
           </RailRow>
           <div style={{ borderTop: '1px solid var(--bord)', marginTop: 10, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -765,14 +766,14 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             </div>
           </div>
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <span style={{ fontSize: 10, color: 'var(--text-faint)', fontWeight: 700 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--text-faint)', fontWeight: 700 }}>
               Created {new Date(issue.created_at).toLocaleDateString()} · updated {new Date(issue.updated_at).toLocaleDateString()}
             </span>
             {issue.source !== 'manual' && <Pill>{issue.source}</Pill>}
           </div>
         </div>
       </div>
-    </div>
+    </PmPage>
   )
 })
 
@@ -781,8 +782,8 @@ function RailRow({ label, children, onClick, testId }: { label: string; children
     <div data-testid={testId} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 6px', borderRadius: 8, cursor: onClick ? 'pointer' : 'default', position: 'relative' }}
       onMouseEnter={(e) => { if (onClick) e.currentTarget.style.background = 'var(--surf-1)' }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
-      <span style={{ width: 74, fontSize: 10.5, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>{label}</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, minWidth: 0 }}>{children}</span>
+      <span style={{ width: 80, fontSize: 11.5, fontWeight: 800, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.05em', flexShrink: 0 }}>{label}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, minWidth: 0 }}>{children}</span>
     </div>
   )
 }
@@ -791,7 +792,7 @@ function RailMenu({ children, wide }: { children: React.ReactNode; wide?: boolea
   return (
     <div
       onClick={(e) => e.stopPropagation()}
-      style={{ margin: wide ? '2px 0 6px 0' : '2px 0 6px 80px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: wide ? 340 : 220, overflowY: 'auto' }}
+      style={{ margin: wide ? '2px 0 6px 0' : '2px 0 6px 88px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: wide ? 340 : 220, overflowY: 'auto' }}
     >
       {children}
     </div>
@@ -802,7 +803,7 @@ function railMenuRow(active: boolean): React.CSSProperties {
   return {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
     borderRadius: 7, background: active ? 'var(--surf-2)' : 'transparent', border: 'none',
-    cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
+    cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 700, textAlign: 'left',
   }
 }
 

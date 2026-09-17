@@ -78,7 +78,7 @@ function errorMessage(status: number, body: unknown): string {
   if (msg) return msg
   if (status === 413) return 'That upload is too large.'
   if (status === 503) return 'File storage is not configured on this server.'
-  if (status === 404) return 'That issue is not available.'
+  if (status === 404) return 'That item is not available.' // an issue, a comment or (Round M) a project
   if (status === 403) return 'You don’t have permission to attach files here.'
   return `Upload failed (${status})`
 }
@@ -185,14 +185,58 @@ export function invalidateIssueFiles(qc: ReturnType<typeof useQueryClient>, issu
   void qc.invalidateQueries({ queryKey: ['pm', 'issue-files', issueId] })
 }
 
-/** POST pm/files/:id/delete — uploader or Owner/Admin. Pass issueId to refresh that issue's detail + files. */
+// ─── Round M — the project description's files (object type 'project') ──────
+
+/** GET pm/projects/:id/files — 404 when the project is not readable; re-signed every 50 min like issue files. */
+export function useProjectFiles(projectId: string | null | undefined, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['pm', 'project-files', projectId],
+    queryFn: () => api.get<{ data: PmFile[] }>(`/api/v1/pm/projects/${projectId}/files`),
+    enabled: !!projectId && (opts.enabled ?? true),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: PM_FILES_REFRESH_MS,
+  })
+}
+
+export function invalidateProjectFiles(qc: ReturnType<typeof useQueryClient>, projectId: string) {
+  void qc.invalidateQueries({ queryKey: ['pm', 'project-files', projectId] })
+}
+
+/** POST pm/projects/:id/files/bind — the description's pasted images (drafts) once the description is saved. */
+export function bindProjectDrafts(projectId: string, draftIds: string[]) {
+  return api.post<{ data: { project_id: string; bound: string[] } }>(`/api/v1/pm/projects/${projectId}/files/bind`, {
+    draft_ids: draftIds,
+  })
+}
+
+/** Upload directly onto an existing project (the description card's Attach) and refresh it. */
+export function useUploadProjectFiles(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: { files: File[]; kind?: PmFileKind; onProgress?: (pct: number) => void }) =>
+      uploadPmFiles({
+        objectType: 'project',
+        objectId: projectId,
+        kind: vars.kind ?? 'attachment',
+        files: vars.files,
+        onProgress: vars.onProgress,
+      }),
+    onSuccess: () => invalidateProjectFiles(qc, projectId),
+  })
+}
+
+/**
+ * POST pm/files/:id/delete — uploader or Owner/Admin. Pass issueId to refresh
+ * that issue's detail + files, or projectId (Round M) for a project's files.
+ */
 export function useDeletePmFile() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (vars: { fileId: string; issueId?: string | null }) =>
+    mutationFn: (vars: { fileId: string; issueId?: string | null; projectId?: string | null }) =>
       api.post<{ data: { id: string; deleted: true } }>(`/api/v1/pm/files/${vars.fileId}/delete`, {}),
     onSuccess: (_res, vars) => {
       if (vars.issueId) invalidateIssueFiles(qc, vars.issueId)
+      if (vars.projectId) invalidateProjectFiles(qc, vars.projectId)
     },
   })
 }

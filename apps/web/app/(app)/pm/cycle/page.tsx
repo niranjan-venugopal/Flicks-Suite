@@ -1,11 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph } from '@/components/pm/glyphs'
+import { PmPage } from '@/components/pm/PmPage'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
 import { currentPmPath, issueHref } from '@/lib/pm/nav'
@@ -115,7 +116,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
 
   if (!team.cycles_enabled) {
     return (
-      <div style={{ padding: '22px 26px', maxWidth: 960, margin: '0 auto' }}>
+      <PmPage>
         <SectionHead title="Cycle" sub="Cycles create momentum — enable them and Autopilot handles the rest." right={<Pill tone="blue" dot>sync</Pill>} />
         <TeamPicker teams={teams} teamId={teamId} setTeamId={setTeamId} />
         <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '56px 24px', gap: 12, marginTop: 12 }}>
@@ -128,9 +129,9 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
           <Btn kind="primary" size="sm" onClick={() => enableCycles.mutate()} disabled={enableCycles.isPending}>
             Enable cycles for {team.key}
           </Btn>
-          <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>The scheduler creates the first cycle at the next {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][team.cycle_start_dow ?? 1]} midnight ({team.timezone ?? 'your workspace timezone'}).</div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', textAlign: 'center' }}>The scheduler creates the first cycle at the next {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][team.cycle_start_dow ?? 1]} midnight ({team.timezone ?? 'your workspace timezone'}).</div>
         </div>
-      </div>
+      </PmPage>
     )
   }
 
@@ -139,7 +140,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
   const endsInDays = active ? Math.max(0, Math.ceil((new Date(active.ends_at).getTime() - now) / 86_400_000)) : null
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 980, margin: '0 auto' }}>
+    <PmPage>
       <SectionHead title="Cycle" sub="Momentum with honest edges — Autopilot rolls urgent/high, returns the rest." right={<Pill tone="blue" dot>sync</Pill>} />
       <TeamPicker teams={teams} teamId={teamId} setTeamId={setTeamId} />
 
@@ -159,17 +160,17 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
           </>
         )}
         {d?.stats.velocity != null && (
-          <span title="3-cycle rolling completed points" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 99, background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.35)', fontSize: 10, fontWeight: 800, color: 'var(--green)' }}>
+          <span title="3-cycle rolling completed points" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 99, background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.35)', fontSize: 10.5, fontWeight: 800, color: 'var(--green)' }}>
             velocity {d.stats.velocity}
           </span>
         )}
         {d && d.stats.creep > 0 && (
-          <span title="Scope added after start" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 99, background: 'rgba(254,216,0,.09)', border: '1px solid rgba(254,216,0,.35)', fontSize: 10, fontWeight: 800, color: 'var(--yellow)' }}>
+          <span title="Scope added after start" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 9px', borderRadius: 99, background: 'rgba(254,216,0,.09)', border: '1px solid rgba(254,216,0,.35)', fontSize: 10.5, fontWeight: 800, color: 'var(--yellow)' }}>
             creep +{d.stats.creep}%
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
           {team.timezone ?? 'workspace timezone'} boundaries · cooldown {team.cooldown_days ?? 0}d after
         </span>
       </div>
@@ -192,12 +193,12 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
             <span style={{ fontSize: 12, fontWeight: 800, flex: 1 }}>
               Cycle {d.last_review.number} review — {d.last_review.returned.length} issue{d.last_review.returned.length === 1 ? '' : 's'} didn&apos;t make it
             </span>
-            <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>Autopilot · Inbox item to lead + assignees · sent once</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>Autopilot · Inbox item to lead + assignees · sent once</span>
           </div>
           {d.last_review.moved.length > 0 && (
             <div style={{ padding: '9px 15px', display: 'flex', gap: 7, flexWrap: 'wrap', borderBottom: '1px solid var(--bord)' }}>
               {d.last_review.moved.map((m) => (
-                <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 7, background: 'rgba(255,153,51,.09)', border: '1px solid rgba(255,153,51,.35)', fontSize: 10, fontWeight: 800 }}>
+                <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 7, background: 'rgba(255,153,51,.09)', border: '1px solid rgba(255,153,51,.35)', fontSize: 10.5, fontWeight: 800 }}>
                   <PriorityGlyph p={m.priority} size={10} />{team.key}-{m.number} → moved to the next cycle
                 </span>
               ))}
@@ -215,7 +216,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
               </div>
             ))}
             {d.last_review.returned.length > 3 && (
-              <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 4 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 4 }}>
                 +{d.last_review.returned.length - 3} more · urgent/high roll automatically; medium/low return honestly — the backlog never snowballs silently
               </div>
             )}
@@ -223,13 +224,13 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 14, alignItems: 'start', marginBottom: 14 }}>
+      <div className="pm-split" style={{ '--pm-rail': '300px', marginBottom: 14 } as CSSProperties}>
         {/* Burn columns from snapshots */}
-        <div className="card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 11.5, fontWeight: 800, flex: 1 }}>Scope · started · completed — daily snapshots</span>
+        <div className="card" style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1, minWidth: 0 }}>Scope · started · completed — daily snapshots</span>
             {[['var(--text-faint)', 'scope'], ['rgba(254,216,0,.8)', 'started'], ['var(--green)', 'completed']].map(([col, l]) => (
-              <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 700, color: 'var(--text-faint)' }}>
+              <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
                 <span style={{ width: 7, height: 7, borderRadius: 2, background: col }} />{l}
               </span>
             ))}
@@ -256,16 +257,16 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
                 })}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)' }}>{snapshots[0]?.snapshot_date}</span>
-                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-faint)' }}>today · {snapshots[snapshots.length - 1]?.snapshot_date}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>{snapshots[0]?.snapshot_date}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>today · {snapshots[snapshots.length - 1]?.snapshot_date}</span>
               </div>
             </>
           )}
         </div>
 
         {/* Previous cycles */}
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '10px 13px', borderBottom: '1px solid var(--bord)' }}><span style={{ fontSize: 11.5, fontWeight: 800 }}>Previous cycles</span></div>
+        <div className="card" style={{ padding: 0, overflow: 'hidden', minWidth: 0 }}>
+          <div style={{ padding: '10px 13px', borderBottom: '1px solid var(--bord)' }}><span style={{ fontSize: 12.5, fontWeight: 800 }}>Previous cycles</span></div>
           {(d?.stats.previous ?? []).length === 0 && (
             <div className="t-mute" style={{ padding: '16px 13px', fontSize: 11 }}>No completed cycles yet.</div>
           )}
@@ -284,7 +285,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
             )
           })}
           {d?.stats.completion_rate != null && (
-            <div style={{ padding: '9px 13px', fontSize: 9.5, fontWeight: 700, color: 'var(--text-faint)' }}>
+            <div style={{ padding: '9px 13px', fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
               completion {d.stats.completion_rate}% average across recent cycles
             </div>
           )}
@@ -294,39 +295,39 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
       {/* Cycle-scoped issues */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
-          <span style={{ fontSize: 11.5, fontWeight: 800 }}>In this cycle · {cycleIssues.length}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 800 }}>In this cycle · {cycleIssues.length}</span>
         </div>
-        {cycleIssues.length === 0 && <div className="t-mute" style={{ padding: '16px 14px', fontSize: 11.5 }}>Nothing in the cycle yet — move an issue to In Progress (auto-add) or set its cycle.</div>}
+        {cycleIssues.length === 0 && <div className="t-mute" style={{ padding: '16px 14px', fontSize: 12.5 }}>Nothing in the cycle yet — move an issue to In Progress (auto-add) or set its cycle.</div>}
         {cycleIssues.map((i) => {
           const st = store.states.get(i.state_id)
           return (
             <div key={i.id} data-issue-row={i.id}
               onClick={() => router.push(issueHref(i.id, currentPmPath()))}
               {...issuePrefetchProps(qc, i.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 12px', borderBottom: '1px solid var(--bord)', cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 9, height: 38, minWidth: 0, padding: '0 12px', borderBottom: '1px solid var(--bord)', cursor: 'pointer' }}>
               {st && <StateGlyph cat={st.category} size={13} />}
               <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', width: 58, flexShrink: 0 }}>
                 {team.key}-{i.number}
               </span>
               <PriorityGlyph p={i.priority} size={13} />
-              <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
-                {i.title}{i._pending && <PendingDot />}
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>{i._pending && <PendingDot />}
               </span>
               {i.estimate != null && (
-                <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>{Number(i.estimate)} pts</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)', flexShrink: 0 }}>{Number(i.estimate)} pts</span>
               )}
             </div>
           )
         })}
       </div>
-      <div style={{ display: 'flex', gap: 14, marginTop: 10 }}>
+      <div style={{ display: 'flex', gap: 14, marginTop: 10, flexWrap: 'wrap' }}>
         {[['G then T', 'triage'], ['G then B', 'issues'], ['⌘K', 'palette']].map(([k, l]) => (
           <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
             <Kbd>{k}</Kbd>{l}
           </span>
         ))}
       </div>
-    </div>
+    </PmPage>
   )
 })
 

@@ -6,8 +6,20 @@ import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { HealthChip, PmProgressBar } from '@/components/pm/glyphs'
-import { PmAv, ProjectCreateModal, ProjectLogo, TeamKeyChips } from '@/components/pm/projects'
+import { PmPage } from '@/components/pm/PmPage'
+import { ProjectCreateModal } from '@/components/pm/projects'
+import {
+  EMPTY_MILESTONES,
+  EMPTY_PROGRESS,
+  PROJECT_SORTS,
+  ProjectListRow,
+  projectMilestoneSummaryAll,
+  sortProjects,
+  type MilestoneSummary,
+  type ProjectProgress,
+  type ProjectSort,
+} from '@/components/pm/project/ProjectListRow'
+import { progressPct } from '@/components/pm/project/ProgressRing'
 import { GuestWorkspaceNudge } from '@/components/pm/GuestWorkspaceNudge'
 import { FirstRunChecklist } from '@/components/pm/FirstRunChecklist'
 import { api } from '@/lib/api/client'
@@ -15,7 +27,7 @@ import { uploadProjectLogoBlob } from '@/lib/api/queries/use-media'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
-import type { PmProjectRow } from '@/lib/pm/types'
+import type { PmProjectRow, PmTeamRow } from '@/lib/pm/types'
 
 /**
  * Who gets the delete affordance, mirroring the server bar in
@@ -43,9 +55,12 @@ function deleteBody(name: string, issueCount: number | null): string {
 }
 
 // ─────────────────────────────────────────────────────────
-// P11 — Projects list: health chips, stacked progress, team keys, lead.
-// Sync mode renders straight off the local graph (progress computed
-// client-side with the same formula the server uses); REST fallback below.
+// P11 — Projects list. Round M: one ProjectListRow for both transports
+// (progress ring + %, priority glyph, milestones done/total, sort), inside
+// the shared PmPage container. Sync mode renders straight off the local
+// graph (progress + the milestone rollup computed client-side with the same
+// formulas the server uses); REST fallback below reads them from the list
+// payload.
 // ─────────────────────────────────────────────────────────
 
 export default function PmProjectsPage() {
@@ -61,22 +76,44 @@ export default function PmProjectsPage() {
   return <SyncProjects engine={engine} />
 }
 
+/** Native select (house dropdown) — Target date is the list's long-standing default order. */
+function SortSelect({ value, onChange }: { value: ProjectSort; onChange: (v: ProjectSort) => void }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10.5, fontWeight: 800, color: 'var(--text-mute)' }}>
+      Sort
+      <select
+        className="input"
+        data-testid="projects-sort"
+        aria-label="Sort projects"
+        value={value}
+        onChange={(e) => onChange(e.target.value as ProjectSort)}
+        style={{ height: 30, padding: '0 8px', fontSize: 11, width: 'auto' }}
+      >
+        {PROJECT_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+    </label>
+  )
+}
+
 const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSyncEngine }) {
   const store = engine.store
   const router = useRouter()
   const { currentUser } = useAuthStore()
   const [tab, setTab] = useState<'all' | 'mine'>('all')
+  const [sort, setSort] = useState<ProjectSort>('target')
   const [openNew, setOpenNew] = useState(false)
 
   const me = currentUser?.id ?? ''
   const isGuest = currentUser?.role === 'GUEST'
   const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
   const projects = store.projectList().filter((p) => (tab === 'mine' ? p.lead_user_id === me : true))
-  const sorted = [...projects].sort((a, b) => (a.target_date ?? '9999') < (b.target_date ?? '9999') ? -1 : 1)
-  // Round E — one pass over the issue graph for every row's progress bar
-  // (this render body used to scan all issues once PER project).
+  // Round E — one pass over the issue graph for every row's progress (this
+  // render body used to scan all issues once PER project); Round M adds the
+  // milestone rollup in one more pass.
   const progressAll = store.projectProgressAll()
-  const emptyProgress = { scope: 0, started: 0, done: 0 }
+  const milestonesAll = projectMilestoneSummaryAll(store)
+  const pctOf = (id: string) => progressPct(progressAll.get(id) ?? EMPTY_PROGRESS)
+  const sorted = sortProjects(projects, sort, pctOf)
   // Sync mode: the engine applies the delete optimistically and flushes it —
   // no await, no spinner. The row is gone the moment the dialog closes.
   const confirmDelete = () => {
@@ -86,7 +123,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
   }
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
+    <PmPage>
       {/* Round 7: guest-only users get the "create your own workspace" strip */}
       <GuestWorkspaceNudge />
       <SectionHead
@@ -97,7 +134,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
       {/* Round 12: the first-run tour lives on the module's main page and
           starts with "Create a project" — its chip opens the modal below. */}
       <FirstRunChecklist onCreateProject={() => setOpenNew(true)} />
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
           {(isGuest
             ? ([['all', 'All projects']] as const)
@@ -109,6 +146,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
             </button>
           ))}
         </div>
+        <SortSelect value={sort} onChange={setSort} />
         <div style={{ flex: 1 }} />
         {/* Guests are project-scoped: creating projects / seeding sample data
             is a server-side 403 for them, so never offer the button. */}
@@ -125,10 +163,11 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {sorted.map((p) => (
-            <ProjectRow key={p.id} p={p}
-              progress={progressAll.get(p.id) ?? emptyProgress}
+            <ProjectListRow key={p.id} p={p}
+              progress={progressAll.get(p.id) ?? EMPTY_PROGRESS}
+              milestones={milestonesAll.get(p.id) ?? EMPTY_MILESTONES}
               teamIds={store.projectTeams.get(p.id) ?? []}
-              teams={store.teams as never}
+              teams={store.teams as unknown as Map<string, PmTeamRow>}
               leadName={p.lead_user_id ? store.users.get(p.lead_user_id)?.name ?? '' : ''}
               leadAvatarUrl={p.lead_user_id ? store.users.get(p.lead_user_id)?.avatar_url ?? null : null}
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
@@ -170,7 +209,8 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
         users={[...store.users.values()]}
         meId={me}
         onCreate={(input, logoFile) => {
-          const id = engine.createProject(input)
+          // Round M — `priority` (when the modal sets it) rides the create op.
+          const id = engine.createProject({ ...input, priority: input.priority })
           if (logoFile) {
             // The optimistic id isn't on the server yet — upload once the
             // create op is ACKED (round E; onFlushed is the same hook the
@@ -186,66 +226,9 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
           router.push(`/pm/projects/${id}`)
         }}
       />
-    </div>
+    </PmPage>
   )
 })
-
-function ProjectRow({ p, progress, teamIds, teams, leadName, leadAvatarUrl, onOpen, onDelete }: {
-  p: PmProjectRow
-  progress: { scope: number; started: number; done: number }
-  teamIds: string[]
-  teams: Map<string, never>
-  leadName: string
-  leadAvatarUrl: string | null
-  onOpen: () => void
-  /** Omitted when the viewer may not delete this project — see canDeleteProject. */
-  onDelete?: () => void
-}) {
-  const overdue = p.target_date && p.status === 'in_progress' && new Date(p.target_date) < new Date()
-  return (
-    <div onClick={onOpen}
-      style={{ display: 'flex', alignItems: 'center', gap: 11, height: 44, padding: '0 14px', borderBottom: '1px solid var(--bord)', cursor: 'pointer', transition: 'background .12s ease-out' }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
-      <ProjectLogo logoUrl={p.logo_url} icon={p.icon} size={20} />
-      <span style={{ fontSize: 12.5, fontWeight: 800, minWidth: 150, color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        {p.name}
-        {p.is_private && <Icon.lock size={11} style={{ color: 'var(--text-faint)' }} />}
-      </span>
-      <HealthChip h={p.health} small />
-      {p.deal_id && (
-        <span title="Created from a CRM deal" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', height: 16, borderRadius: 99, background: 'rgba(39,210,128,.1)', border: '1px solid rgba(39,210,128,.35)', fontSize: 9, fontWeight: 800, color: 'var(--green)' }}>
-          <Icon.funnel size={9} />deal
-        </span>
-      )}
-      <span style={{ flex: 1 }} />
-      <span style={{ width: 130 }}><PmProgressBar {...progress} /></span>
-      <span style={{ fontSize: 9.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)', width: 62 }}>
-        {progress.done}/{progress.scope} pts
-      </span>
-      <TeamKeyChips teamIds={teamIds} teams={teams as never} />
-      <span style={{ fontSize: 10, fontWeight: 700, color: overdue ? 'var(--yellow)' : 'var(--text-faint)', width: 62, textAlign: 'right' }}>
-        {p.target_date ? new Date(p.target_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
-      </span>
-      {leadName && <PmAv name={leadName} src={leadAvatarUrl} size={18} />}
-      {/* stopPropagation: the whole row is the "open project" click target
-          (crm/companies/page.tsx does exactly this for its trash button). */}
-      {onDelete && (
-        <button
-          type="button"
-          title="Delete project"
-          aria-label={`Delete ${p.name}`}
-          onClick={(e) => { e.stopPropagation(); onDelete() }}
-          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: 6, background: 'transparent', border: 'none', color: 'var(--text-faint)', cursor: 'pointer' }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--coral)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-faint)' }}
-        >
-          <Icon.trash size={13} />
-        </button>
-      )}
-    </div>
-  )
-}
 
 function EmptyProjects({ onCta, hideCta = false }: { onCta: () => void; hideCta?: boolean }) {
   return (
@@ -269,7 +252,9 @@ interface RestProjectsResponse {
   data: {
     projects: PmProjectRow[]
     teams: Record<string, string[]>
-    progress: Record<string, { scope: number; started: number; done: number }>
+    progress: Record<string, ProjectProgress>
+    /** Round M — milestones done/total per project (the server's rollup). */
+    milestones?: Record<string, MilestoneSummary>
   }
 }
 
@@ -279,6 +264,7 @@ function RestProjects() {
   const { currentUser } = useAuthStore()
   const isGuest = currentUser?.role === 'GUEST'
   const [openNew, setOpenNew] = useState(false)
+  const [sort, setSort] = useState<ProjectSort>('target')
   const projectsQ = useQuery({
     queryKey: ['pm', 'projects'],
     queryFn: () => api.get<RestProjectsResponse>('/api/v1/pm/projects'),
@@ -292,7 +278,7 @@ function RestProjects() {
     queryFn: () => api.get<{ data: Array<{ id: string; name: string | null; avatar_url: string | null }> }>('/api/v1/pm/users'),
   })
   const teamMap = useMemo(
-    () => new Map((teamsQ.data?.data.teams ?? []).map((t) => [t.id, t])),
+    () => new Map((teamsQ.data?.data.teams ?? []).map((t) => [t.id, t])) as unknown as Map<string, PmTeamRow>,
     [teamsQ.data],
   )
   const usersById = useMemo(
@@ -300,6 +286,10 @@ function RestProjects() {
     [usersQ.data],
   )
   const d = projectsQ.data?.data
+  const sorted = useMemo(
+    () => (d ? sortProjects(d.projects, sort, (id) => progressPct(d.progress[id] ?? EMPTY_PROGRESS)) : []),
+    [d, sort],
+  )
   // REST mode has no local graph, so this is a real round-trip with a spinner.
   const [deleting, setDeleting] = useState<PmProjectRow | null>(null)
   const del = useMutation({
@@ -313,10 +303,11 @@ function RestProjects() {
     },
   })
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 960, margin: '0 auto' }}>
+    <PmPage>
       <GuestWorkspaceNudge />
       <SectionHead title="Projects" sub="One lead, a target date, honest health updates." right={<Pill tone="yellow" dot>rest</Pill>} />
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+        <SortSelect value={sort} onChange={setSort} />
         <div style={{ flex: 1 }} />
         {!isGuest && (
           <>
@@ -329,11 +320,12 @@ function RestProjects() {
         <EmptyProjects onCta={() => setOpenNew(true)} hideCta={isGuest} />
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          {d.projects.map((p) => (
-            <ProjectRow key={p.id} p={p}
-              progress={d.progress[p.id] ?? { scope: 0, started: 0, done: 0 }}
+          {sorted.map((p) => (
+            <ProjectListRow key={p.id} p={p}
+              progress={d.progress[p.id] ?? EMPTY_PROGRESS}
+              milestones={d.milestones?.[p.id] ?? EMPTY_MILESTONES}
               teamIds={d.teams[p.id] ?? []}
-              teams={teamMap as never}
+              teams={teamMap}
               leadName={p.lead_user_id ? usersById.get(p.lead_user_id)?.name ?? '' : ''}
               leadAvatarUrl={p.lead_user_id ? usersById.get(p.lead_user_id)?.avatar_url ?? null : null}
               onOpen={() => router.push(`/pm/projects/${p.id}`)}
@@ -366,14 +358,16 @@ function RestProjects() {
         users={(usersQ.data?.data ?? []) as never}
         meId={currentUser?.id ?? ''}
         onCreate={(input, logoFile) => {
-          void api.post<{ data: { id: string } }>('/api/v1/pm/projects', input).then(async (res) => {
+          // Round M — `priority` (when the modal sets it) rides the POST body.
+          const body = { ...input, ...(input.priority !== undefined ? { priority: input.priority } : {}) }
+          void api.post<{ data: { id: string } }>('/api/v1/pm/projects', body).then(async (res) => {
             if (logoFile) await uploadProjectLogoBlob(res.data.id, logoFile).catch(() => undefined)
             void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
             router.push(`/pm/projects/${res.data.id}`)
           })
         }}
       />
-    </div>
+    </PmPage>
   )
 }
 

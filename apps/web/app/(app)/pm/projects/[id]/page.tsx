@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useEffect, useState } from 'react'
+import { use, useEffect, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { observer } from 'mobx-react-lite'
@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IssueComposer } from '@/components/pm/IssueComposer'
+import { PmPage } from '@/components/pm/PmPage'
 import { useUploadProjectLogo, useRemoveProjectLogo } from '@/lib/api/queries/use-media'
 // react-easy-crop is modal-only weight — load it when the modal first opens.
 const MediaCropModal = dynamic(
@@ -19,6 +20,9 @@ import { ProjectMilestones } from '@/components/pm/project/ProjectMilestones'
 import { ProjectIssues } from '@/components/pm/project/ProjectIssues'
 import { ProjectUpdates } from '@/components/pm/project/ProjectUpdates'
 import { ProjectMembers } from '@/components/pm/project/ProjectMembers'
+import { ProjectDescription } from '@/components/pm/project/ProjectDescription'
+import { ProjectInsightsCard } from '@/components/pm/project/ProjectInsightsCard'
+import { ProjectProgressGraph } from '@/components/pm/project/ProjectProgressGraph'
 import type { ProjectDetail, ProjectIssueLite } from '@/components/pm/project/types'
 import { api } from '@/lib/api/client'
 import { usePm } from '@/lib/pm/PmProvider'
@@ -222,8 +226,20 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   const lastUpdateAt = updates[0]?.created_at
   const staleDays = lastUpdateAt ? Math.floor((Date.now() - new Date(lastUpdateAt).getTime()) / 86_400_000) : null
 
+  // ── Agent C ── Round M: the Latest update card + its composer. Page state so
+  // the card's Update button and its empty state (and anything later) share
+  // one dialog; the composer seeds health from the live project row on open.
+  const [updateComposer, setUpdateComposer] = useState(false)
+
+  // ── Agent B ── Round M: the rail's Insights card + Progress graph. "Set
+  // default for everyone" follows the delete bar (manager and above, or the
+  // project lead) — the server enforces the same rule.
+  const canSetInsightsDefault =
+    mayDelete || (!!project.lead_user_id && project.lead_user_id === currentUser?.id)
+  // ── /Agent B ──
+
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 980, margin: '0 auto' }}>
+    <PmPage>
       <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 800, marginBottom: 12 }}>
         <Icon.chevL size={13} /> Projects
       </button>
@@ -242,11 +258,34 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         onOpenLogo={() => setLogoModal(true)}
         onDelete={() => setConfirmDelete(true)}
       />
-      {/* slot: latest-update (Agent C) */}
-      {/* slot: description (Agent D) */}
+      {/* Round M — Latest update (Agent C): health + body + what changed since the previous update. */}
+      <ProjectUpdates
+        projectId={id}
+        engine={engine}
+        project={project}
+        updates={updates}
+        users={users}
+        staleDays={staleDays}
+        invalidate={invalidate}
+        composerOpen={updateComposer}
+        onOpenComposer={() => setUpdateComposer(true)}
+        onCloseComposer={() => setUpdateComposer(false)}
+      />
+      {/* Round M — the project description (Round L editor + attachments on
+          object type 'project'). Same edit bar as the header's fields, the
+          milestones card and the API's project PATCH (assertNotGuestTx +
+          the `pm edit` grant): any non-guest, non-auditor member. Viewers
+          see it only when there is something to read. */}
+      <ProjectDescription
+        projectId={id}
+        engine={engine}
+        value={d.project.description_md ?? ''}
+        canEdit={!!role && role !== 'GUEST' && role !== 'AUDITOR'}
+        invalidate={invalidate}
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 14, alignItems: 'start' }}>
-        <div>
+      <div className="pm-split" style={{ '--pm-rail': '360px' } as CSSProperties}>
+        <div style={{ minWidth: 0 }}>
           <ProjectMilestones
             projectId={id}
             engine={engine}
@@ -263,21 +302,21 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           />
         </div>
 
-        {/* Right rail: health updates + guests. One wrapper div, because the
-            grid is '1fr 300px' — a third auto-placed child lands in row 2
+        {/* Right rail (Round M): Insights → Progress → Members → Guests. One
+            wrapper div, because a third auto-placed grid child lands in row 2
             column 1 (full width), which is where the Guests card had been
             rendering (founder round A). */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* slot: insights (Agent B) */}
-          {/* slot: progress (Agent B) */}
-          <ProjectUpdates
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+          <ProjectInsightsCard
             projectId={id}
             engine={engine}
-            initialHealth={project.health}
-            updates={updates}
-            users={users}
-            staleDays={staleDays}
-            invalidate={invalidate}
+            insightsDefault={project.insights_default}
+            canSetDefault={canSetInsightsDefault}
+          />
+          <ProjectProgressGraph
+            projectId={id}
+            engine={engine}
+            targetDate={project.target_date}
           />
           <ProjectMembers
             projectId={id}
@@ -334,6 +373,6 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
           }}
         />
       )}
-    </div>
+    </PmPage>
   )
 })

@@ -48,6 +48,9 @@ export const PM_INSIGHT_SEGMENTS = ['none', 'priority', 'status', 'assignee'] as
 export type PmInsightSegment = (typeof PM_INSIGHT_SEGMENTS)[number]
 export interface PmInsightsConfig { measure: PmInsightMeasure; slice: PmInsightSlice; segment: PmInsightSegment }
 export const PM_INSIGHTS_DEFAULT: PmInsightsConfig = { measure: 'count', slice: 'status', segment: 'priority' }
+// The Insights / Progress-graph math (pivot, weekly series, prediction) —
+// shared by the API payload and the web's sync-mode computation.
+export * from './insights'
 
 /** Project priority uses the issue scale: 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
 export const PM_PROJECT_PRIORITY_MAX = 4
@@ -65,6 +68,8 @@ export type PmUpdateDiffPropKey = 'status' | 'priority' | 'lead_user_id' | 'star
 export interface PmUpdateDiffProp { key: PmUpdateDiffPropKey; from: string | number | null; to: string | number | null }
 export interface PmUpdateDiffMilestone { id: string; name: string; from_pct: number; to_pct: number; completed_at: string | null }
 export interface PmUpdateDiff { since: string; props: PmUpdateDiffProp[]; milestones: PmUpdateDiffMilestone[]; issues_done_delta: number }
+// Read-time diff of two snapshots (API detail + web sync mode share it).
+export { diffProjectUpdate, baselineSnapshot, isUpdateSnapshot, PM_UPDATE_DIFF_PROP_KEYS } from './update-diff'
 
 /**
  * Sync-table registry (§3.3/§3.4): the ONLY tables the FSE ships to clients,

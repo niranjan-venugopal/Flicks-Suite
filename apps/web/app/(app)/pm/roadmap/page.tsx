@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { TimelineBoard, ZoomToggle, type TimelineLane } from '@/components/pm/timeline'
 import { InitiativeCreateModal } from '@/components/pm/projects'
+import { PmPage } from '@/components/pm/PmPage'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import type { PmSyncEngine } from '@/lib/pm/engine'
@@ -63,15 +64,15 @@ const Roadmap = observer(function Roadmap({ engine }: { engine: PmSyncEngine }) 
   )
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 1020, margin: '0 auto' }}>
+    <PmPage>
       <SectionHead
         title="Roadmap"
         sub="Initiative lanes containing project bars, quarter columns."
         right={<Pill tone="blue" dot>sync</Pill>}
       />
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <ZoomToggle zoom={zoom} setZoom={setZoom} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>lane per initiative · drag bars to re-date</span>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>lane per initiative · drag bars to re-date</span>
         <span style={{ flex: 1 }} />
         {canInit && <Btn kind="secondary" size="sm" icon={<Icon.plus size={12} />} onClick={() => setOpenNew(true)}>New initiative</Btn>}
       </div>
@@ -131,6 +132,6 @@ const Roadmap = observer(function Roadmap({ engine }: { engine: PmSyncEngine }) 
         onClose={() => setOpenNew(false)}
         onCreate={(input) => engine.createInitiative(input)}
       />
-    </div>
+    </PmPage>
   )
 })

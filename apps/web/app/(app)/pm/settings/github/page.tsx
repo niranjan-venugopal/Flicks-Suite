@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill, Toggle } from '@/components/proto'
 import { Kbd, StateGlyph } from '@/components/pm/glyphs'
+import { PmPage } from '@/components/pm/PmPage'
 import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
@@ -97,29 +98,31 @@ function FlowStep({
  */
 function GithubComingSoon() {
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px' }}>
-      <SettingsTabs active="github" />
-      <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 11, background: 'var(--surf-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>
-            <Icon.gitPr size={17} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 800 }}>GitHub integration</div>
-            <div className="t-mute" style={{ fontSize: 11.5 }}>
-              Branch → PR → merge moves the issue, with git chips on the issue page
+    <PmPage>
+      <div style={{ maxWidth: 640, margin: '0 auto' }}>
+        <SettingsTabs active="github" />
+        <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, background: 'var(--surf-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>
+              <Icon.gitPr size={17} />
             </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800 }}>GitHub integration</div>
+              <div className="t-mute" style={{ fontSize: 11.5 }}>
+                Branch → PR → merge moves the issue, with git chips on the issue page
+              </div>
+            </div>
+            <Pill tone="yellow">Coming soon</Pill>
           </div>
-          <Pill tone="yellow">Coming soon</Pill>
-        </div>
-        <div style={{ marginTop: 10, lineHeight: 1.6, fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-          We&apos;re switching the connection from an org-wide GitHub App install to
-          signing in with your own GitHub account (OAuth) — so the link is tied to
-          you, scopes stay minimal, and access follows your GitHub permissions.
-          The automations are built and tested; they turn on with the new connect flow.
+          <div style={{ marginTop: 10, lineHeight: 1.6, fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+            We&apos;re switching the connection from an org-wide GitHub App install to
+            signing in with your own GitHub account (OAuth) — so the link is tied to
+            you, scopes stay minimal, and access follows your GitHub permissions.
+            The automations are built and tested; they turn on with the new connect flow.
+          </div>
         </div>
       </div>
-    </div>
+    </PmPage>
   )
 }
 
@@ -244,194 +247,196 @@ function PmGithubSettingsPageInner() {
   }
 
   return (
-    <div style={{ maxWidth: 760, margin: '0 auto', padding: '18px 20px' }}>
-      <SettingsTabs active="github" />
+    <PmPage>
+      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+        <SettingsTabs active="github" />
 
-      {uiState === 'none' ? (
-        <div className="card" style={{ textAlign: 'center', padding: '34px 24px' }}>
-          <div style={{
-            width: 50, height: 50, borderRadius: 14, background: 'var(--surf-2)', color: 'var(--text-2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px',
-          }}><Icon.gitBranch size={22} /></div>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 7 }}>Connect GitHub</div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 400, margin: '0 auto 16px' }}>
-            One free GitHub App — branch/PR autolinks, magic words, status automation. Org admin installs; no paid plan required.
-          </div>
-          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', opacity: canAdmin ? 1 : 0.45, pointerEvents: canAdmin ? 'auto' : 'none' }}>
-            <Btn
-              kind="primary"
-              onClick={() => {
-                if (appSlug) window.open(`https://github.com/apps/${appSlug}/installations/new`, '_blank')
-                setClaimOpen(true)
-              }}
-            >Install GitHub App</Btn>
-          </div>
-          {!canAdmin && (
-            <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 8 }}>Owner/Admin only</div>
-          )}
-          {claimOpen && canAdmin && (
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
-              <input
-                className="input"
-                placeholder="installation id"
-                value={claimId}
-                onChange={(e) => setClaimId(e.target.value.replace(/\D/g, ''))}
-                style={{ width: 180, height: 32, fontSize: 12, fontFamily: 'var(--font-mono)' }}
-              />
-              <Btn kind="primary" size="sm" disabled={!claimId} onClick={() => claim.mutate()}>Finish connection</Btn>
+        {uiState === 'none' ? (
+          <div className="card" style={{ textAlign: 'center', padding: '34px 24px' }}>
+            <div style={{
+              width: 50, height: 50, borderRadius: 14, background: 'var(--surf-2)', color: 'var(--text-2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px',
+            }}><Icon.gitBranch size={22} /></div>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 7 }}>Connect GitHub</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 400, margin: '0 auto 16px' }}>
+              One free GitHub App — branch/PR autolinks, magic words, status automation. Org admin installs; no paid plan required.
             </div>
-          )}
-        </div>
-      ) : (
-        <>
-          {/* Status / health */}
-          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-            <span style={{
-              width: 38, height: 38, borderRadius: 11, flexShrink: 0,
-              background: uiState === 'error' ? 'rgba(248,120,107,.12)' : 'rgba(39,210,128,.12)',
-              color: uiState === 'error' ? 'var(--coral)' : 'var(--green)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>{uiState === 'error' ? <Icon.warn size={17} /> : <Icon.check size={17} />}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>github.com/{inst!.account_login}</div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>
-                installation {inst!.installation_id} · metadata:read · pull_requests:read/write · contents:read
-              </div>
+            <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center', opacity: canAdmin ? 1 : 0.45, pointerEvents: canAdmin ? 'auto' : 'none' }}>
+              <Btn
+                kind="primary"
+                onClick={() => {
+                  if (appSlug) window.open(`https://github.com/apps/${appSlug}/installations/new`, '_blank')
+                  setClaimOpen(true)
+                }}
+              >Install GitHub App</Btn>
             </div>
-            {uiState === 'error'
-              ? <Pill tone="coral" dot>{inst!.failed_deliveries} failed deliveries</Pill>
-              : <Pill tone="green" dot>Healthy</Pill>}
-            {canAdmin && (
-              <Btn kind="ghost" size="sm" onClick={() => uninstall.mutate()}>Uninstall</Btn>
+            {!canAdmin && (
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 8 }}>Owner/Admin only</div>
             )}
-          </div>
-
-          {/* Repo → team mapping */}
-          <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
-              <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Repo → team mapping</span>
-              {canAdmin && (
-                <Btn kind="ghost" size="sm" icon={<Icon.plus size={12} />} onClick={() => setMapOpen((o) => !o)}>Map repo</Btn>
-              )}
-            </div>
-            {mapOpen && canAdmin && (
-              <div style={{ display: 'flex', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+            {claimOpen && canAdmin && (
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
                 <input
                   className="input"
-                  placeholder="owner/repo"
-                  value={repoName}
-                  onChange={(e) => setRepoName(e.target.value)}
-                  style={{ flex: 1, height: 32, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                  placeholder="installation id"
+                  value={claimId}
+                  onChange={(e) => setClaimId(e.target.value.replace(/\D/g, ''))}
+                  style={{ width: 180, height: 32, fontSize: 12, fontFamily: 'var(--font-mono)' }}
                 />
-                <select className="input" value={repoTeam} onChange={(e) => setRepoTeam(e.target.value)} style={{ height: 32, fontSize: 12, fontWeight: 700 }}>
-                  <option value="">team…</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.key}</option>)}
-                </select>
-                <Btn kind="primary" size="sm" disabled={!repoName.trim() || !repoTeam} onClick={() => mapRepo.mutate()}>Add</Btn>
+                <Btn kind="primary" size="sm" disabled={!claimId} onClick={() => claim.mutate()}>Finish connection</Btn>
               </div>
             )}
-            {repos.length === 0 ? (
-              <div style={{ padding: '18px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                No repos mapped yet — map one so branches and PRs can link issues.
+          </div>
+        ) : (
+          <>
+            {/* Status / health */}
+            <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+              <span style={{
+                width: 38, height: 38, borderRadius: 11, flexShrink: 0,
+                background: uiState === 'error' ? 'rgba(248,120,107,.12)' : 'rgba(39,210,128,.12)',
+                color: uiState === 'error' ? 'var(--coral)' : 'var(--green)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>{uiState === 'error' ? <Icon.warn size={17} /> : <Icon.check size={17} />}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>github.com/{inst!.account_login}</div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>
+                  installation {inst!.installation_id} · metadata:read · pull_requests:read/write · contents:read
+                </div>
               </div>
-            ) : repos.map((r) => (
-              <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 14px', borderBottom: '1px solid var(--bord)' }}>
-                <Icon.gitBranch size={12} style={{ color: 'var(--text-mute)' }} />
-                <span style={{ flex: 1, fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.repo_full_name}</span>
-                <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#3E7BFA', border: '1px solid rgba(62,123,250,.4)', borderRadius: 6, padding: '1px 7px' }}>{r.team_key}</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 800, color: 'var(--green)' }}>
-                  <Icon.check size={10} /> autolink
-                </span>
+              {uiState === 'error'
+                ? <Pill tone="coral" dot>{inst!.failed_deliveries} failed deliveries</Pill>
+                : <Pill tone="green" dot>Healthy</Pill>}
+              {canAdmin && (
+                <Btn kind="ghost" size="sm" onClick={() => uninstall.mutate()}>Uninstall</Btn>
+              )}
+            </div>
+
+            {/* Repo → team mapping */}
+            <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Repo → team mapping</span>
                 {canAdmin && (
-                  <button onClick={() => unmapRepo.mutate(r.id)} title="Remove mapping" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2 }}>
-                    <Icon.x size={11} />
-                  </button>
+                  <Btn kind="ghost" size="sm" icon={<Icon.plus size={12} />} onClick={() => setMapOpen((o) => !o)}>Map repo</Btn>
                 )}
               </div>
-            ))}
-            <div style={{ padding: '9px 14px', fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
-              scoped to this workspace — a repo linked here can never touch another workspace’s issues
-            </div>
-          </div>
-
-          {/* Status automation */}
-          {team && (
-            <div className="card" style={{ marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontSize: 12.5, fontWeight: 800 }}>
-                  Status automation · {team.key}
-                  <span style={{ color: 'var(--text-faint)', fontWeight: 700 }}> on by default</span>
-                </span>
-                <span style={{ flex: 1 }} />
-                {teams.length > 1 && (
-                  <select className="input" value={team.id} onChange={(e) => setTeamId(e.target.value)} style={{ height: 28, fontSize: 11, fontWeight: 700 }}>
+              {mapOpen && canAdmin && (
+                <div style={{ display: 'flex', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+                  <input
+                    className="input"
+                    placeholder="owner/repo"
+                    value={repoName}
+                    onChange={(e) => setRepoName(e.target.value)}
+                    style={{ flex: 1, height: 32, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                  />
+                  <select className="input" value={repoTeam} onChange={(e) => setRepoTeam(e.target.value)} style={{ height: 32, fontSize: 12, fontWeight: 700 }}>
+                    <option value="">team…</option>
                     {teams.map((t) => <option key={t.id} value={t.id}>{t.key}</option>)}
                   </select>
-                )}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-                <FlowStep label="branch created" from="backlog" to="started" on={team.gh_auto_branch} disabled={!canAdmin} onChange={toggleTeam('gh_auto_branch')} />
-                <FlowStep label="PR opened" from="started" to="started" on={team.gh_auto_pr_open} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_open')} />
-                <FlowStep label="PR merged" from="started" to="completed" on={team.gh_auto_pr_merge} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_merge')} />
-                <FlowStep label="PR closed unmerged" from="started" to="unstarted" on={team.gh_auto_pr_close} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_close')} />
-              </div>
-              {[
-                { label: 'Magic words', sub: '“fixes ENG-142” closes on merge', on: team.gh_magic_words, onChange: toggleTeam('gh_magic_words') },
-                { label: 'Personal automation', sub: 'copy-branch assigns me + moves to started', on: personalAuto, onChange: togglePersonal },
-                { label: 'Bot comment on PR', sub: 'one link-back comment', on: team.gh_bot_comment, onChange: toggleTeam('gh_bot_comment') },
-              ].map((row) => (
-                <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px', borderTop: '1px solid var(--bord)' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800 }}>{row.label}</div>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{row.sub}</div>
-                  </div>
-                  <Toggle on={row.on} onChange={row.onChange} />
+                  <Btn kind="primary" size="sm" disabled={!repoName.trim() || !repoTeam} onClick={() => mapRepo.mutate()}>Add</Btn>
+                </div>
+              )}
+              {repos.length === 0 ? (
+                <div style={{ padding: '18px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                  No repos mapped yet — map one so branches and PRs can link issues.
+                </div>
+              ) : repos.map((r) => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 14px', borderBottom: '1px solid var(--bord)' }}>
+                  <Icon.gitBranch size={12} style={{ color: 'var(--text-mute)' }} />
+                  <span style={{ flex: 1, fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.repo_full_name}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#3E7BFA', border: '1px solid rgba(62,123,250,.4)', borderRadius: 6, padding: '1px 7px' }}>{r.team_key}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 800, color: 'var(--green)' }}>
+                    <Icon.check size={10} /> autolink
+                  </span>
+                  {canAdmin && (
+                    <button onClick={() => unmapRepo.mutate(r.id)} title="Remove mapping" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2 }}>
+                      <Icon.x size={11} />
+                    </button>
+                  )}
                 </div>
               ))}
-            </div>
-          )}
-
-          {/* Branch format */}
-          <div className="card" style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 9 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Branch format</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                <Kbd>⌘⇧B</Kbd>
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mute)' }}>copy on any issue</span>
-              </span>
-            </div>
-            <input
-              className="input"
-              value={format}
-              disabled={!canAdmin}
-              onChange={(e) => setFmt(e.target.value)}
-              onBlur={() => { if (fmt && fmt !== inst!.branch_format) saveFormat.mutate(fmt) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && fmt && fmt !== inst!.branch_format) saveFormat.mutate(fmt) }}
-              style={{ width: '100%', height: 34, fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
-            />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>preview</span>
-              <span style={{ fontSize: 11.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{preview}</span>
-            </div>
-          </div>
-
-          {/* Webhook health */}
-          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Icon.zap size={16} style={{ color: uiState === 'error' ? 'var(--coral)' : 'var(--purple)' }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800 }}>Webhook health</div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', marginTop: 2 }}>
-                {inst!.last_delivery_at
-                  ? `last delivery ${inst!.last_delivery_status ?? '—'} · ${new Date(inst!.last_delivery_at).toLocaleString()} · X-Hub-Signature-256 verified · idempotent by delivery-id`
-                  : 'no deliveries yet · X-Hub-Signature-256 verified · idempotent by delivery-id'}
+              <div style={{ padding: '9px 14px', fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>
+                scoped to this workspace — a repo linked here can never touch another workspace’s issues
               </div>
             </div>
-            {uiState === 'error' && canAdmin && (
-              <Btn kind="ghost" size="sm" icon={<Icon.refresh size={12} />} onClick={() => redeliver.mutate()}>Redeliver</Btn>
+
+            {/* Status automation */}
+            {team && (
+              <div className="card" style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800 }}>
+                    Status automation · {team.key}
+                    <span style={{ color: 'var(--text-faint)', fontWeight: 700 }}> on by default</span>
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  {teams.length > 1 && (
+                    <select className="input" value={team.id} onChange={(e) => setTeamId(e.target.value)} style={{ height: 28, fontSize: 11, fontWeight: 700 }}>
+                      {teams.map((t) => <option key={t.id} value={t.id}>{t.key}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  <FlowStep label="branch created" from="backlog" to="started" on={team.gh_auto_branch} disabled={!canAdmin} onChange={toggleTeam('gh_auto_branch')} />
+                  <FlowStep label="PR opened" from="started" to="started" on={team.gh_auto_pr_open} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_open')} />
+                  <FlowStep label="PR merged" from="started" to="completed" on={team.gh_auto_pr_merge} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_merge')} />
+                  <FlowStep label="PR closed unmerged" from="started" to="unstarted" on={team.gh_auto_pr_close} disabled={!canAdmin} onChange={toggleTeam('gh_auto_pr_close')} />
+                </div>
+                {[
+                  { label: 'Magic words', sub: '“fixes ENG-142” closes on merge', on: team.gh_magic_words, onChange: toggleTeam('gh_magic_words') },
+                  { label: 'Personal automation', sub: 'copy-branch assigns me + moves to started', on: personalAuto, onChange: togglePersonal },
+                  { label: 'Bot comment on PR', sub: 'one link-back comment', on: team.gh_bot_comment, onChange: toggleTeam('gh_bot_comment') },
+                ].map((row) => (
+                  <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px', borderTop: '1px solid var(--bord)' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800 }}>{row.label}</div>
+                      <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{row.sub}</div>
+                    </div>
+                    <Toggle on={row.on} onChange={row.onChange} />
+                  </div>
+                ))}
+              </div>
             )}
-          </div>
-        </>
-      )}
-    </div>
+
+            {/* Branch format */}
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 9 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Branch format</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <Kbd>⌘⇧B</Kbd>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mute)' }}>copy on any issue</span>
+                </span>
+              </div>
+              <input
+                className="input"
+                value={format}
+                disabled={!canAdmin}
+                onChange={(e) => setFmt(e.target.value)}
+                onBlur={() => { if (fmt && fmt !== inst!.branch_format) saveFormat.mutate(fmt) }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && fmt && fmt !== inst!.branch_format) saveFormat.mutate(fmt) }}
+                style={{ width: '100%', height: 34, fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>preview</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>{preview}</span>
+              </div>
+            </div>
+
+            {/* Webhook health */}
+            <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Icon.zap size={16} style={{ color: uiState === 'error' ? 'var(--coral)' : 'var(--purple)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800 }}>Webhook health</div>
+                <div style={{ fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', marginTop: 2 }}>
+                  {inst!.last_delivery_at
+                    ? `last delivery ${inst!.last_delivery_status ?? '—'} · ${new Date(inst!.last_delivery_at).toLocaleString()} · X-Hub-Signature-256 verified · idempotent by delivery-id`
+                    : 'no deliveries yet · X-Hub-Signature-256 verified · idempotent by delivery-id'}
+                </div>
+              </div>
+              {uiState === 'error' && canAdmin && (
+                <Btn kind="ghost" size="sm" icon={<Icon.refresh size={12} />} onClick={() => redeliver.mutate()}>Redeliver</Btn>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </PmPage>
   )
 }

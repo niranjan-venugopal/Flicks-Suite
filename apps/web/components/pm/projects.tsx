@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Btn, Icon, Modal, avBg, initials } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
+import { PM_PRIORITY_LABEL, PriorityGlyph } from '@/components/pm/glyphs'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
 
@@ -91,12 +92,13 @@ export function ProjectCreateModal({
   const [target, setTarget] = useState('')
   const [teamIds, setTeamIds] = useState<string[]>([])
   const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [priority, setPriority] = useState(0) // Round M — issue scale, default "No priority"
   if (!open) return null
   const tog = (id: string) => setTeamIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))
   const submit = () => {
     if (!name.trim()) return
-    onCreate({ name: name.trim(), icon, lead_user_id: lead, target_date: target || null, team_ids: teamIds }, logoFile)
-    setName(''); setTarget(''); setTeamIds([]); setLogoFile(null)
+    onCreate({ name: name.trim(), icon, lead_user_id: lead, target_date: target || null, team_ids: teamIds, priority }, logoFile)
+    setName(''); setTarget(''); setTeamIds([]); setLogoFile(null); setPriority(0)
     onClose()
   }
   return (
@@ -125,6 +127,24 @@ export function ProjectCreateModal({
         <div>
           <div className="label">Target date</div>
           <DateField value={target} onChange={setTarget} style={{ height: 38 }} />
+        </div>
+        {/* Round M — project priority (issue scale). The glyph sits beside the
+            native select, which can't render SVG in its options. */}
+        <div style={{ gridColumn: '1/4' }}>
+          <div className="label">Priority</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <PriorityGlyph p={priority} size={14} />
+            <select
+              className="input"
+              data-testid="project-create-priority"
+              aria-label="Project priority"
+              value={priority}
+              onChange={(e) => setPriority(Number(e.target.value))}
+              style={{ height: 38, flex: 1 }}
+            >
+              {PM_PRIORITY_LABEL.map((l, p) => <option key={p} value={p}>{l}</option>)}
+            </select>
+          </div>
         </div>
       </div>
       <div style={{ marginBottom: 12 }}>

@@ -27,10 +27,11 @@ const COACH_KEY = 'pm-inbox-coach-seen'
 type Kind =
   | 'mention' | 'comment' | 'assign' | 'cycle' | 'digest' | 'done' | 'github'
   | 'leave' | 'regularization' | 'timesheet' | 'onboarding' | 'crm' | 'billing'
-  | 'calendar' | 'trial'
+  | 'calendar' | 'trial' | 'project'
   | 'other'
 
 function kindOf(type: string): Kind {
+  if (type === 'pm.project.update_posted') return 'project' // Round M: a posted project update
   if (type === 'pm.issue.mention') return 'mention'
   if (type === 'pm.issue.comment') return 'comment'
   if (type === 'pm.issue.assigned') return 'assign'
@@ -66,6 +67,7 @@ const KIND_IC: Record<Kind, typeof Icon.bell> = {
   billing: Icon.wallet,
   calendar: Icon.cal,
   trial: Icon.zap,
+  project: Icon.target,
   other: Icon.bell,
 }
 

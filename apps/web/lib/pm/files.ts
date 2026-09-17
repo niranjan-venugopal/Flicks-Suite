@@ -52,7 +52,8 @@ export function modKey(): string {
   return /mac|iphone|ipad|ipod/i.test(`${navigator.platform ?? ''} ${navigator.userAgent ?? ''}`) ? '⌘' : 'Ctrl'
 }
 
-export type PmFileObjectType = 'issue' | 'comment' | 'draft'
+/** Round M adds 'project' — files on a project's description (mirror of the API). */
+export type PmFileObjectType = 'issue' | 'comment' | 'draft' | 'project'
 export type PmFileKind = 'attachment' | 'inline'
 
 /** Mirror of the API's PmFile (files.service.ts). */

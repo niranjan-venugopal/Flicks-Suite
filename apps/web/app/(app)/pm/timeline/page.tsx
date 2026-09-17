@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { Icon, Pill, SectionHead } from '@/components/proto'
 import { TimelineBoard, ZoomToggle, type TimelineLane } from '@/components/pm/timeline'
+import { PmPage } from '@/components/pm/PmPage'
 import { usePm } from '@/lib/pm/PmProvider'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 
@@ -62,7 +63,7 @@ const Timeline = observer(function Timeline({ engine }: { engine: PmSyncEngine }
   }, [group, store.projects.size, store.initiatives.size, store.teams.size, store.projectTeams, store.initiativeProjects])
 
   return (
-    <div style={{ padding: '22px 26px 64px', maxWidth: 1020, margin: '0 auto' }}>
+    <PmPage>
       <SectionHead
         title="Timeline"
         sub="Projects as bars from start to target — drag ends to re-date. Deliberately no task-Gantt."
@@ -78,7 +79,7 @@ const Timeline = observer(function Timeline({ engine }: { engine: PmSyncEngine }
           ))}
         </div>
         <ZoomToggle zoom={zoom} setZoom={setZoom} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>drag bar ends to re-date · milestone diamonds</span>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>drag bar ends to re-date · milestone diamonds</span>
       </div>
       <TimelineBoard
         lanes={lanes}
@@ -87,6 +88,6 @@ const Timeline = observer(function Timeline({ engine }: { engine: PmSyncEngine }
         onRedate={(pid, patch) => engine.updateProject(pid, patch)}
         onOpenProject={(pid) => router.push(`/pm/projects/${pid}`)}
       />
-    </div>
+    </PmPage>
   )
 })

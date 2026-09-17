@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmTeams,
@@ -7,6 +7,7 @@ import {
   pmWorkflowStates,
   pmLabels,
   pmIssues,
+  pmIssueComments,
   pmProjects,
   pmProjectMembers,
   memberships,
@@ -20,6 +21,7 @@ import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { MediaService } from '../media/media.service';
 import { PmVisibilityService } from './sync/visibility.service';
+import { PmFilesService } from './files.service';
 
 /**
  * PM teams (PRD v6 §4). Workspace = tenant; work happens in teams. First call
@@ -57,6 +59,8 @@ export class PmTeamsService {
     private readonly domainEvents: DomainEventsService,
     private readonly visibility: PmVisibilityService,
     private readonly media: MediaService,
+    // Round M — optional + last so the positional spec constructors keep compiling.
+    @Optional() private readonly files?: PmFilesService,
   ) {}
 
   /** Seed states + counter for a team inside the caller's tx. */
@@ -850,10 +854,44 @@ export class PmTeamsService {
   /** Hard-delete one soft-deleted row ahead of the 30-day purge (P18 Purge). */
   async purgeDeleted(tenantId: string, userId: string, kind: string, id: string) {
     if (kind !== 'issue' && kind !== 'project') throw new BadRequestException('kind must be issue|project');
-    return this.db.withTenant(
+    // Round M — a hard purge must take the attachments with it: record_files
+    // rows are polymorphic (no FK), so without this they would sit live
+    // against the tenant's quota forever and the R2 objects would never go.
+    // Collected inside the tx (rows soft-deleted), removed from storage only
+    // after commit (house rule 7).
+    const storageKeys: string[] = [];
+    const result = await this.db.withTenant(
       tenantId,
       async (tx) => {
         const table = kind === 'issue' ? pmIssues : pmProjects;
+        if (this.files) {
+          const issueIds =
+            kind === 'issue'
+              ? [id]
+              : (
+                  await tx
+                    .select({ id: pmIssues.id })
+                    .from(pmIssues)
+                    .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, id)))
+                ).map((r) => r.id);
+          const commentIds = issueIds.length
+            ? (
+                await tx
+                  .select({ id: pmIssueComments.id })
+                  .from(pmIssueComments)
+                  .where(and(eq(pmIssueComments.tenant_id, tenantId), inArray(pmIssueComments.issue_id, issueIds)))
+              ).map((r) => r.id)
+            : [];
+          if (kind === 'project') {
+            storageKeys.push(...(await this.files.softDeleteForObjectTx(tx, tenantId, { objectType: 'project', objectId: id })));
+          }
+          for (const issueId of issueIds) {
+            storageKeys.push(...(await this.files.softDeleteForObjectTx(tx, tenantId, { objectType: 'issue', objectId: issueId })));
+          }
+          for (const commentId of commentIds) {
+            storageKeys.push(...(await this.files.softDeleteForObjectTx(tx, tenantId, { objectType: 'comment', objectId: commentId })));
+          }
+        }
         // Purging a project takes its issues with it, explicitly, BEFORE the
         // project row goes (founder round 20: "issues don't survive without a
         // project"). pm_issues.project_id is ON DELETE SET NULL, so letting the
@@ -887,5 +925,7 @@ export class PmTeamsService {
       },
       userId,
     );
+    if (storageKeys.length) this.files?.deleteObjectsAfterCommit(storageKeys);
+    return result;
   }
 }

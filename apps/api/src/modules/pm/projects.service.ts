@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   pmProjects,
@@ -15,12 +15,26 @@ import {
   users,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
-import { PM_PROJECT_STATUSES, PM_PROJECT_HEALTH } from '@flicks/shared/pm';
+import {
+  PM_PROJECT_STATUSES,
+  PM_PROJECT_HEALTH,
+  PM_PROJECT_PRIORITY_MAX,
+  diffProjectUpdate,
+  isUpdateSnapshot,
+  type PmUpdateDiff,
+  type PmUpdateSnapshot,
+} from '@flicks/shared/pm';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { MediaService } from '../media/media.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PmVisibilityService } from './sync/visibility.service';
+import { cleanMarkdown } from './markdown';
+
+/** Round M — a milestone's markdown body; mirrors the DTO's @MaxLength. */
+export const MILESTONE_DESCRIPTION_MAX_LEN = 20_000;
+export const PROJECT_DESCRIPTION_MAX_LEN = 20_000;
 
 /**
  * PM projects + milestones + health updates + initiatives (PRD v6 §6).
@@ -47,12 +61,32 @@ export interface CreateProjectInput {
   target_date?: string | null;
   team_ids?: string[];
   deal_id?: string | null;
+  /** Round M — issue scale: 0 none · 1 urgent · 2 high · 3 medium · 4 low. */
+  priority?: number;
 }
 
 const PROJECT_PATCH_FIELDS = [
   'name', 'summary', 'description_md', 'icon', 'color', 'status',
-  'lead_user_id', 'start_date', 'target_date',
+  'lead_user_id', 'start_date', 'target_date', 'priority',
 ] as const;
+
+/** Health labels for inbox copy (Round M). */
+const HEALTH_LABEL: Record<string, string> = { on_track: 'On track', at_risk: 'At risk', off_track: 'Off track' };
+/** Round M — a project update's markdown body; mirrors PostUpdateDto's @MaxLength. */
+const UPDATE_BODY_MAX_LEN = 20_000;
+/**
+ * Round M security review — the sync executor's client-minted update id
+ * (`fields.update_id`) arrives untyped (MutationItemDto validates `id`, not
+ * `fields`), so it is shape-checked here before it can reach a uuid column.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The sync executor reaches `create`/`update` without the DTO — re-check here. */
+function assertPriority(value: unknown) {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > PM_PROJECT_PRIORITY_MAX) {
+    throw new BadRequestException(`priority must be an integer between 0 and ${PM_PROJECT_PRIORITY_MAX}`);
+  }
+}
 
 @Injectable()
 export class PmProjectsService {
@@ -62,6 +96,11 @@ export class PmProjectsService {
     private readonly domainEvents: DomainEventsService,
     private readonly visibility: PmVisibilityService,
     private readonly media: MediaService,
+    // Round M — project-update bell for members + lead. @Optional so the
+    // service-level specs that construct this positionally keep working;
+    // the module always provides it, and a missing service means no bell,
+    // never a failed post (house rule 6).
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   /**
@@ -96,6 +135,18 @@ export class PmProjectsService {
   ) {
     const visible = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId, opts);
     if (!visible.includes(id)) throw new ForbiddenException('Project not visible to you');
+  }
+
+  /**
+   * Round M — the read gate `detail()` applies, as one call for sibling
+   * services that add a projection over a project (insights.service.ts):
+   * visibility first (403 for a project outside the caller's readable set —
+   * unknown and foreign ids included), then the live row (404). Same two
+   * steps, same order, same status codes as detail(), by construction.
+   */
+  async assertReadableTx(tx: Db, tenantId: string, userId: string, id: string) {
+    await this.assertProjectAccess(tx, tenantId, userId, id);
+    return this.loadProject(tx, tenantId, id);
   }
 
   /**
@@ -164,7 +215,7 @@ export class PmProjectsService {
         category: pmWorkflowStates.category,
       })
       .from(pmIssues)
-      .innerJoin(pmWorkflowStates, eq(pmWorkflowStates.id, pmIssues.state_id))
+      .innerJoin(pmWorkflowStates, and(eq(pmWorkflowStates.id, pmIssues.state_id), eq(pmWorkflowStates.tenant_id, tenantId)))
       .where(and(eq(pmIssues.tenant_id, tenantId), inArray(pmIssues.project_id, projectIds), isNull(pmIssues.deleted_at)));
     for (const r of rows) {
       if (!r.project_id || r.category === 'canceled') continue;
@@ -177,6 +228,161 @@ export class PmProjectsService {
     return out;
   }
 
+  /**
+   * Round M — the project state captured with an update (PmUpdateSnapshot),
+   * inside the caller's tenant tx. Per milestone: scope = live, non-canceled
+   * issues on it; done = those with completed_at; pct = done/scope (0 when
+   * empty); completed_at = the latest issue completion once pct hits 1.
+   * `issues_done` counts every live, non-canceled issue with completed_at.
+   * The diff (packages/shared/src/pm/update-diff.ts) is computed at read time.
+   */
+  private async buildUpdateSnapshot(
+    tx: Db,
+    tenantId: string,
+    project: typeof pmProjects.$inferSelect,
+    health: string,
+    at: Date,
+  ): Promise<PmUpdateSnapshot> {
+    const progress = (await this.computeProgress(tx, tenantId, [project.id])).get(project.id)!;
+    const [issues, milestones] = await Promise.all([
+      tx
+        .select({
+          milestone_id: pmIssues.milestone_id,
+          completed_at: pmIssues.completed_at,
+          category: pmWorkflowStates.category,
+        })
+        .from(pmIssues)
+        .innerJoin(pmWorkflowStates, and(eq(pmWorkflowStates.id, pmIssues.state_id), eq(pmWorkflowStates.tenant_id, tenantId)))
+        .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, project.id), isNull(pmIssues.deleted_at))),
+      tx
+        .select()
+        .from(pmProjectMilestones)
+        .where(and(eq(pmProjectMilestones.tenant_id, tenantId), eq(pmProjectMilestones.project_id, project.id)))
+        .orderBy(asc(pmProjectMilestones.position), asc(pmProjectMilestones.created_at)),
+    ]);
+    let issuesDone = 0;
+    const perMilestone = new Map<string, { scope: number; done: number; last: Date | null }>();
+    for (const r of issues) {
+      if (r.category === 'canceled') continue;
+      if (r.completed_at) issuesDone += 1;
+      if (!r.milestone_id) continue;
+      const agg = perMilestone.get(r.milestone_id) ?? { scope: 0, done: 0, last: null };
+      agg.scope += 1;
+      if (r.completed_at) {
+        agg.done += 1;
+        if (!agg.last || r.completed_at > agg.last) agg.last = r.completed_at;
+      }
+      perMilestone.set(r.milestone_id, agg);
+    }
+    return {
+      v: 1,
+      at: at.toISOString(),
+      progress,
+      issues_done: issuesDone,
+      props: {
+        status: project.status,
+        priority: project.priority,
+        lead_user_id: project.lead_user_id,
+        start_date: project.start_date,
+        target_date: project.target_date,
+        health,
+      },
+      milestones: milestones.map((m) => {
+        const agg = perMilestone.get(m.id) ?? { scope: 0, done: 0, last: null };
+        const pct = agg.scope ? Math.round((agg.done / agg.scope) * 10_000) / 10_000 : 0;
+        return {
+          id: m.id,
+          name: m.name,
+          target_date: m.target_date,
+          scope: agg.scope,
+          done: agg.done,
+          pct,
+          completed_at: pct === 1 && agg.last ? agg.last.toISOString() : null,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Round M — attach `diff` to a newest-first update list: each snapshotted
+   * update is diffed against the next-older update that HAS a snapshot
+   * (legacy rows before 0064 are skipped), or against the project baseline
+   * (planned, no priority/lead/dates, milestones at 0 %) when there is none.
+   * Rows without a snapshot get `diff: null`.
+   */
+  private attachUpdateDiffs<T extends { snapshot: unknown }>(
+    updates: T[],
+    project: { created_at: Date },
+  ): Array<T & { diff: PmUpdateDiff | null }> {
+    const baseline = { created_at: project.created_at.toISOString() };
+    return updates.map((u, i) => {
+      if (!isUpdateSnapshot(u.snapshot)) return { ...u, diff: null };
+      let prev: PmUpdateSnapshot | null = null;
+      for (let j = i + 1; j < updates.length; j++) {
+        const older = updates[j]!.snapshot;
+        if (isUpdateSnapshot(older)) {
+          prev = older;
+          break;
+        }
+      }
+      return { ...u, diff: diffProjectUpdate(u.snapshot, prev, baseline) };
+    });
+  }
+
+  /**
+   * Round M — the projects list's milestone rollup: per project, how many
+   * milestones exist and how many are complete. ONE grouped query: every
+   * milestone of the visible projects LEFT JOINed to its live issues and their
+   * state category. COUNT-based (issues, not estimate points) — the same rule
+   * as `buildUpdateSnapshot`'s per-milestone scope/done and the web's
+   * `milestoneStats`, so the list, the milestone row ("11 issues · 100%") and
+   * the update card never disagree. Canceled issues are excluded. A milestone
+   * is done when it has scope and every live issue on it is completed — so a
+   * milestone with no issues, or whose only issue is canceled, counts toward
+   * `total` but never toward `done`.
+   */
+  private async computeMilestoneSummary(tx: Db, tenantId: string, projectIds: string[]) {
+    const out: Record<string, { done: number; total: number }> = {};
+    for (const id of projectIds) out[id] = { done: 0, total: 0 };
+    if (!projectIds.length) return out;
+    const rows = await tx
+      .select({
+        project_id: pmProjectMilestones.project_id,
+        id: pmProjectMilestones.id,
+        scope: sql<string>`coalesce(sum(case when ${pmIssues.id} is not null and ${pmWorkflowStates.category} <> 'canceled' then 1 else 0 end), 0)`,
+        done: sql<string>`coalesce(sum(case when ${pmIssues.id} is not null and ${pmWorkflowStates.category} = 'completed' then 1 else 0 end), 0)`,
+      })
+      .from(pmProjectMilestones)
+      .leftJoin(
+        pmIssues,
+        and(
+          eq(pmIssues.milestone_id, pmProjectMilestones.id),
+          // Same project as the milestone — parity with detail() and the
+          // update snapshot, and an issue whose project_id points elsewhere
+          // (FK checks bypass RLS — house rule 2) never adds to a milestone
+          // of a project it is not in.
+          eq(pmIssues.project_id, pmProjectMilestones.project_id),
+          eq(pmIssues.tenant_id, tenantId),
+          isNull(pmIssues.deleted_at),
+        ),
+      )
+      // Explicit tenant predicate on the joined state too (house rule 1): a
+      // state row from another tenant reads as no category, never as done.
+      .leftJoin(
+        pmWorkflowStates,
+        and(eq(pmWorkflowStates.id, pmIssues.state_id), eq(pmWorkflowStates.tenant_id, tenantId)),
+      )
+      .where(and(eq(pmProjectMilestones.tenant_id, tenantId), inArray(pmProjectMilestones.project_id, projectIds)))
+      .groupBy(pmProjectMilestones.project_id, pmProjectMilestones.id);
+    for (const r of rows) {
+      const agg = (out[r.project_id] ??= { done: 0, total: 0 });
+      agg.total += 1;
+      const scope = Number(r.scope);
+      if (scope > 0 && Number(r.done) >= scope) agg.done += 1;
+    }
+    return out;
+  }
+
   // ─── projects ─────────────────────────────────────────────────────────────
 
   async list(tenantId: string, userId: string) {
@@ -184,7 +390,7 @@ export class PmProjectsService {
       tenantId,
       async (tx) => {
         const visible = await this.visibility.visibleProjectIdsTx(tx, tenantId, userId);
-        if (!visible.length) return { data: { projects: [], teams: {}, progress: {} } };
+        if (!visible.length) return { data: { projects: [], teams: {}, progress: {}, milestones: {} } };
         const projects = await tx
           .select()
           .from(pmProjects)
@@ -197,8 +403,11 @@ export class PmProjectsService {
         const teams: Record<string, string[]> = {};
         for (const l of links) (teams[l.project_id] ??= []).push(l.team_id);
         const progress = Object.fromEntries(await this.computeProgress(tx, tenantId, visible));
+        // Round M — the list rows carry `priority` (select *) and the
+        // milestone rollup for the progress column.
+        const milestones = await this.computeMilestoneSummary(tx, tenantId, visible);
         return {
-          data: { projects: await Promise.all(projects.map((p) => this.stripAndSignLogo(p))), teams, progress },
+          data: { projects: await Promise.all(projects.map((p) => this.stripAndSignLogo(p))), teams, progress, milestones },
         };
       },
       userId,
@@ -251,7 +460,8 @@ export class PmProjectsService {
           data: {
             project: await this.stripAndSignLogo(project),
             milestones,
-            updates,
+            // Round M — each update carries what changed since the previous one.
+            updates: this.attachUpdateDiffs(updates, project),
             team_ids: teamLinks.map((t) => t.team_id),
             member_ids: members.map((m) => m.user_id),
             issues,
@@ -268,6 +478,7 @@ export class PmProjectsService {
     if (input.status && !PM_PROJECT_STATUSES.includes(input.status as never)) {
       throw new BadRequestException('invalid status');
     }
+    if (input.priority != null) assertPriority(input.priority);
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -282,10 +493,11 @@ export class PmProjectsService {
             tenant_id: tenantId,
             name: input.name.trim(),
             summary: input.summary ?? null,
-            description_md: input.description_md ?? null,
+            description_md: this.cleanProjectDescription(input.description_md),
             icon: input.icon ?? null,
             color: input.color ?? null,
             status: input.status ?? 'planned',
+            priority: input.priority ?? 0,
             lead_user_id: input.lead_user_id ?? userId,
             start_date: input.start_date ?? null,
             target_date: input.target_date ?? null,
@@ -330,6 +542,9 @@ export class PmProjectsService {
         for (const f of PROJECT_PATCH_FIELDS) {
           if (f in patch) clean[f] = patch[f];
         }
+        // Round M — the rich editor now writes this body (pasted images, links):
+        // same tag-strip / URL allowlist / cap as issue descriptions, on both doors.
+        if ('description_md' in clean) clean.description_md = this.cleanProjectDescription(clean.description_md);
         if (!Object.keys(clean).length) return { data: await this.stripAndSignLogo(project) };
         if ('name' in clean && !String(clean.name ?? '').trim()) {
           throw new BadRequestException('Project name is required');
@@ -337,6 +552,7 @@ export class PmProjectsService {
         if ('status' in clean && !PM_PROJECT_STATUSES.includes(clean.status as never)) {
           throw new BadRequestException('invalid status');
         }
+        if ('priority' in clean) assertPriority(clean.priority);
         if ('lead_user_id' in clean && clean.lead_user_id) {
           await this.assertActiveMember(tx, tenantId, [clean.lead_user_id as string]);
         }
@@ -400,55 +616,148 @@ export class PmProjectsService {
     );
   }
 
-  /** §6.3 — post a health update; latest health denormalizes onto the project. */
+  /**
+   * §6.3 — post a project update; latest health denormalizes onto the project.
+   *
+   * Round M: the row also stores a snapshot of the project (progress, props,
+   * milestones) taken in the same tx, so the feed can show "what changed
+   * since the previous update" at read time. Members + the lead (never the
+   * author) get one grouped inbox row per project — fanned out AFTER the tx
+   * commits, best-effort (house rules 6/7).
+   *
+   * Returns `{ data, update, project }`: `data` is the REST payload as
+   * before (the update row, now with its snapshot); `update`/`project` are
+   * the authoritative rows the sync executor acks with.
+   */
   async postUpdate(tenantId: string, userId: string, id: string, input: { id?: string; health: string; body_md: string }) {
     if (!PM_PROJECT_HEALTH.includes(input.health as never)) throw new BadRequestException('invalid health');
-    if (!input.body_md?.trim()) throw new BadRequestException('Update body is required');
-    return this.db.withTenant(
+    // Security review — the sync executor hands `fields` through untyped
+    // (MutationItemDto validates the item's `id`, not `fields.update_id` /
+    // `fields.body_md`): the client-minted row id must be a uuid (a malformed
+    // one would otherwise surface as a raw Postgres cast error) and the body
+    // must be a string (never `String({})` stored as prose).
+    const rawId: unknown = input.id;
+    if (rawId && (typeof rawId !== 'string' || !UUID_RE.test(rawId))) {
+      throw new BadRequestException('update id must be a uuid');
+    }
+    const rawBody: unknown = input.body_md;
+    if (rawBody != null && typeof rawBody !== 'string') {
+      throw new BadRequestException('Update body must be a string');
+    }
+    // Same markdown hygiene as issue descriptions / comments / milestone
+    // descriptions (Round L): raw HTML and unsafe links never reach storage.
+    const bodyMd = cleanMarkdown(input.body_md, { maxLen: UPDATE_BODY_MAX_LEN, label: 'Update' });
+    if (!bodyMd) throw new BadRequestException('Update body is required');
+    const { update, project, recipients, message } = await this.db.withTenant(
       tenantId,
       async (tx) => {
         await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
         const project = await this.loadProject(tx, tenantId, id);
+        let inserted: typeof pmProjectUpdates.$inferSelect | undefined;
+        try {
+          [inserted] = await tx
+            .insert(pmProjectUpdates)
+            .values({
+              ...(input.id ? { id: input.id } : {}),
+              tenant_id: tenantId,
+              project_id: id,
+              health: input.health,
+              body_md: bodyMd,
+              author_user_id: userId,
+            })
+            .returning();
+        } catch (err) {
+          // A client-minted id that already exists — in this tenant or any
+          // other (the PK is global) — is a clean 409, never the driver's
+          // "duplicate key value violates unique constraint" text. ONE answer
+          // for both cases, so the response never tells a foreign row from an
+          // own one; the insert is plain (no upsert), so nothing is overwritten.
+          if ((err as { code?: string })?.code === '23505') {
+            throw new ConflictException('An update with this id already exists');
+          }
+          throw err;
+        }
+        // Snapshot at write time — `at` is the row's own created_at so the
+        // next update's "Progress since <date>" names this post exactly.
+        const snapshot = await this.buildUpdateSnapshot(tx, tenantId, project, input.health, inserted!.created_at);
         const [update] = await tx
-          .insert(pmProjectUpdates)
-          .values({
-            ...(input.id ? { id: input.id } : {}),
-            tenant_id: tenantId,
-            project_id: id,
-            health: input.health,
-            body_md: input.body_md.trim(),
-            author_user_id: userId,
-          })
+          .update(pmProjectUpdates)
+          .set({ snapshot })
+          .where(and(eq(pmProjectUpdates.id, inserted!.id), eq(pmProjectUpdates.tenant_id, tenantId)))
           .returning();
+        let projectRow = project;
         if (project.health !== input.health) {
-          await tx
+          const [row] = await tx
             .update(pmProjects)
             .set({ health: input.health, updated_at: new Date() })
-            .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)));
+            .where(and(eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)))
+            .returning();
+          projectRow = row!;
         }
+        const eventPayload = {
+          project_id: id,
+          update_id: update!.id,
+          health: input.health,
+          deal_id: project.deal_id,
+          sync: [
+            { t: 'pm_project_updates', id: update!.id },
+            { t: 'pm_projects', id },
+          ],
+        };
         await this.domainEvents.publish(
-          {
-            name: 'pm.project.health_updated',
-            tenantId,
-            actorUserId: userId,
-            payload: {
-              project_id: id,
-              update_id: update!.id,
-              health: input.health,
-              deal_id: project.deal_id,
-              sync: [
-                { t: 'pm_project_updates', id: update!.id },
-                { t: 'pm_projects', id },
-              ],
-            },
-          },
+          { name: 'pm.project.health_updated', tenantId, actorUserId: userId, payload: eventPayload },
           tx,
         );
-        return { data: update! };
+        await this.domainEvents.publish(
+          { name: 'pm.project.update_posted', tenantId, actorUserId: userId, payload: eventPayload },
+          tx,
+        );
+        // Bell audience, collected in-tx: project members ∪ lead, minus the author.
+        const [members, [author]] = await Promise.all([
+          tx
+            .select({ user_id: pmProjectMembers.user_id })
+            .from(pmProjectMembers)
+            .where(and(eq(pmProjectMembers.tenant_id, tenantId), eq(pmProjectMembers.project_id, id))),
+          tx.select({ name: users.full_name }).from(users).where(eq(users.id, userId)).limit(1),
+        ]);
+        const candidates = [...new Set([...members.map((m) => m.user_id), project.lead_user_id])].filter(
+          (uid): uid is string => !!uid && uid !== userId,
+        );
+        // Security review — only CURRENT members of this workspace ring. A
+        // pm_project_members row outlives a deactivated membership, and the
+        // bell's socket push is per user (not per tenant), so without this an
+        // ex-member would still hear this workspace's project names + health.
+        const active = candidates.length
+          ? await tx
+              .select({ user_id: memberships.user_id })
+              .from(memberships)
+              .where(
+                and(
+                  eq(memberships.tenant_id, tenantId),
+                  inArray(memberships.user_id, candidates),
+                  eq(memberships.status, 'active'),
+                ),
+              )
+          : [];
+        const recipients = active.map((r) => r.user_id);
+        const authorName = author?.name?.trim() || 'Someone';
+        const message = `${authorName} posted an update on ${project.name} — ${HEALTH_LABEL[input.health] ?? input.health}`;
+        return { update: update!, project: await this.stripAndSignLogo(projectRow), recipients, message };
       },
       userId,
     );
+    // Post-commit, detached, per recipient: a bell hiccup never fails the post.
+    if (this.notifications) {
+      for (const uid of recipients) {
+        void this.notifications
+          .createInAppNotification(uid, 'pm.project.update_posted', message, `/pm/projects/${id}`, tenantId, {
+            groupKey: `pm.project:${id}`,
+          })
+          .catch(() => undefined);
+      }
+    }
+    return { data: update, update, project };
   }
 
   /**
@@ -963,9 +1272,21 @@ export class PmProjectsService {
   async createMilestone(
     tenantId: string,
     userId: string,
-    input: { id?: string; project_id: string; name: string; target_date?: string | null; position?: number },
+    input: {
+      id?: string;
+      project_id: string;
+      name: string;
+      target_date?: string | null;
+      position?: number;
+      /** Round M — optional markdown body (cleaned like issue descriptions). */
+      description_md?: string | null;
+    },
   ) {
-    if (!input.name?.trim()) throw new BadRequestException('Milestone name is required');
+    if (typeof input.name !== 'string' || !input.name.trim()) throw new BadRequestException('Milestone name is required');
+    // Judged BEFORE the tx (pure CPU; a bad field is a 400 with no writes) —
+    // the sync door reaches here without the DTO.
+    this.assertMilestoneScalars(input);
+    const descriptionMd = this.cleanMilestoneDescription(input.description_md);
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -979,6 +1300,7 @@ export class PmProjectsService {
             tenant_id: tenantId,
             project_id: input.project_id,
             name: input.name.trim(),
+            description_md: descriptionMd,
             target_date: input.target_date ?? null,
             position: input.position ?? 0,
           })
@@ -1002,8 +1324,12 @@ export class PmProjectsService {
     tenantId: string,
     userId: string,
     id: string,
-    patch: { name?: string; target_date?: string | null; position?: number },
+    patch: { name?: string; target_date?: string | null; position?: number; description_md?: string | null },
   ) {
+    // A malformed id or field is answered before any tx (never Postgres's
+    // own error text — the sync door forwards the client's fields as-is).
+    if (typeof id !== 'string' || !UUID_RE.test(id)) throw new NotFoundException('Milestone not found');
+    this.assertMilestoneScalars(patch);
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -1017,11 +1343,13 @@ export class PmProjectsService {
         await this.assertProjectAccess(tx, tenantId, userId, ms.project_id);
         const clean: Record<string, unknown> = {};
         if (patch.name !== undefined) {
-          if (!patch.name?.trim()) throw new BadRequestException('Milestone name is required');
+          if (typeof patch.name !== 'string' || !patch.name.trim()) throw new BadRequestException('Milestone name is required');
           clean.name = patch.name.trim();
         }
         if (patch.target_date !== undefined) clean.target_date = patch.target_date;
         if (patch.position !== undefined) clean.position = patch.position;
+        // Round M — the folding description; '' clears it (stored as NULL).
+        if (patch.description_md !== undefined) clean.description_md = this.cleanMilestoneDescription(patch.description_md);
         if (!Object.keys(clean).length) return { data: ms };
         const [row] = await tx
           .update(pmProjectMilestones)
@@ -1041,6 +1369,41 @@ export class PmProjectsService {
       },
       userId,
     );
+  }
+
+  /** Round M — project descriptions get the issue-description cleaner on both doors; null/'' ⇒ NULL. */
+  private cleanProjectDescription(input: unknown): string | null {
+    if (input == null) return null;
+    if (typeof input !== 'string') throw new BadRequestException('description_md must be a string');
+    return cleanMarkdown(input, { maxLen: PROJECT_DESCRIPTION_MAX_LEN, label: 'Description' }) || null;
+  }
+
+  /** Round M — same cleaner as issue descriptions (tags out, URL allowlist, cap); null/'' ⇒ NULL. */
+  private cleanMilestoneDescription(input: unknown): string | null {
+    if (input == null) return null;
+    if (typeof input !== 'string') throw new BadRequestException('description_md must be a string');
+    return cleanMarkdown(input, { maxLen: MILESTONE_DESCRIPTION_MAX_LEN, label: 'Milestone description' }) || null;
+  }
+
+  /**
+   * Round M review — `target_date` and `position` for BOTH milestone doors.
+   * The REST DTO types target_date loosely and the sync executor forwards the
+   * client's fields untyped, so a malformed date or a non-integer /
+   * out-of-range position used to reach Postgres and come back as its own
+   * error text (a 500 on REST, an E500 in the sync ack). Judged here instead.
+   */
+  private assertMilestoneScalars(patch: { target_date?: unknown; position?: unknown }) {
+    const d = patch.target_date;
+    if (d !== undefined && d !== null) {
+      const t = typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00Z`).getTime() : NaN;
+      if (Number.isNaN(t) || new Date(t).toISOString().slice(0, 10) !== d) {
+        throw new BadRequestException('target_date must be a calendar date (YYYY-MM-DD) or null');
+      }
+    }
+    const p = patch.position;
+    if (p !== undefined && (!Number.isInteger(p) || (p as number) < -32_768 || (p as number) > 32_767)) {
+      throw new BadRequestException('position must be a whole number');
+    }
   }
 
   async deleteMilestone(tenantId: string, userId: string, id: string) {

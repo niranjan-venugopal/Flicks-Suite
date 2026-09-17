@@ -28,6 +28,7 @@ import { PmGithubService } from './github.service';
 import { GithubWebhookController } from './github-webhook.controller';
 import { PmFilesService } from './files.service';
 import { PmFilesController, PmUploadThrottleGuard } from './files.controller';
+import { InsightsService } from './insights.service';
 
 /**
  * PM — Projects module (PRD v6). Ships behind the `pm` tenant toggle +
@@ -59,6 +60,7 @@ import { PmFilesController, PmUploadThrottleGuard } from './files.controller';
     PmGuestsService,
     PmFilesService,
     PmUploadThrottleGuard,
+    InsightsService,
   ],
   // PmFilesService is exported for the PmJobs orphan-draft prune (round L).
   exports: [PmTeamsService, PmIssuesService, PmProjectsService, PmCyclesService, PmPublicService, PmFilesService],

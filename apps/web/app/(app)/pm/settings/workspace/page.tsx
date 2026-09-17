@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Toggle } from '@/components/proto'
+import { PmPage } from '@/components/pm/PmPage'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { api } from '@/lib/api/client'
 import { FEATURES } from '@/lib/feature-flags'
@@ -105,145 +106,147 @@ export default function PmWorkspacePage() {
   const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 14px', borderBottom: '1px solid var(--bord)' } as const
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
-      <SettingsTabs active="workspace" />
+    <PmPage>
+      <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 13 }}>
+        <SettingsTabs active="workspace" />
 
-      {/* Projects module */}
-      <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <Icon.target size={16} style={{ color: 'var(--blue)' }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 800 }}>Projects module</div>
-          <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-            Available to everyone with Projects access · on by default for new workspaces
-          </div>
-        </div>
-        <Toggle on onChange={() => undefined} />
-      </div>
-
-      {/* Workspace labels */}
-      <div className="card">
-        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Workspace labels</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: canWs ? 10 : 0 }}>
-          {wsLabels.map((l) => (
-            <span key={l.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 99, background: 'var(--surf-1)', border: '1px solid var(--bord)', fontSize: 11, fontWeight: 700 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.color }} />
-              {l.name}
-            </span>
-          ))}
-          {wsLabels.length === 0 && <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)' }}>No workspace labels yet.</span>}
-        </div>
-        {canWs && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input className="input" placeholder="New workspace label…" value={newLabel} onChange={(e) => setNewLabel(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && newLabel.trim()) addLabel.mutate() }}
-              style={{ flex: 1, height: 32, fontSize: 12 }} />
-            <Btn kind="secondary" size="sm" disabled={!newLabel.trim()} onClick={() => addLabel.mutate()}>Add</Btn>
-          </div>
-        )}
-      </div>
-
-      {/* Branch format default — hidden while GitHub is parked */}
-      {FEATURES.pm_github && (
-      <div className="card">
-        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Branch format default</div>
-        <input
-          className="input"
-          value={ghQ.data?.data.installation?.branch_format ?? '{user}/{team-key-lower}-{number}-{slug}'}
-          disabled
-          style={{ width: '100%', height: 34, fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
-        />
-        <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)', marginTop: 6 }}>
-          Managed under Settings → GitHub once the App is connected.
-        </div>
-      </div>
-      )}
-
-      {/* Recently deleted */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
-          <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Recently deleted</span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>30-day restore · then purged</span>
-        </div>
-        {deleted && deleted.issues.length === 0 && deleted.projects.length === 0 && (
-          <div style={{ padding: '16px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-            Nothing here — deleted issues and projects appear for 30 days.
-          </div>
-        )}
-        {deleted?.issues.map((i) => (
-          <div key={i.id} style={rowStyle}>
-            <span style={{ width: 56, fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{i.key}</span>
-            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: 'line-through', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>deleted {daysAgo(i.deleted_at)}</span>
-            <Btn kind="secondary" size="sm" onClick={() => restoreIssue.mutate(i.id)}>Restore</Btn>
-            {canWs && (
-              <Btn kind="ghost" size="sm" onClick={() => purge.mutate({ kind: 'issue', id: i.id })}>
-                <span style={{ color: 'var(--coral)' }}>Purge</span>
-              </Btn>
-            )}
-          </div>
-        ))}
-        {deleted?.projects.map((p) => (
-          <div key={p.id} style={rowStyle}>
-            <span style={{ width: 56, fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)' }}>proj</span>
-            <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: 'line-through', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>deleted {daysAgo(p.deleted_at)}</span>
-            <Btn kind="secondary" size="sm" onClick={() => restoreProject.mutate(p.id)}>Restore</Btn>
-            {canWs && (
-              <Btn kind="ghost" size="sm" onClick={() => purge.mutate({ kind: 'project', id: p.id })}>
-                <span style={{ color: 'var(--coral)' }}>Purge</span>
-              </Btn>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Sync status + reset (§3.7 recovery surfaces) */}
-      <div className="card">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: engine ? 'var(--green)' : 'var(--text-faint)' }} />
-          <div>
-            <div style={{ fontSize: 12.5, fontWeight: 800 }}>Sync status</div>
-            <div style={{ fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
-              {engine ? `Up to date · ${cursor.toLocaleString()} changes applied on this device` : 'Working online — nothing cached on this device'}
-            </div>
-          </div>
-        </div>
-        <div style={{ borderTop: '1px solid var(--bord)', paddingTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        {/* Projects module */}
+        <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Icon.target size={16} style={{ color: 'var(--blue)' }} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Reset local data</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800 }}>Projects module</div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-              Wipes this device&apos;s cache and re-bootstraps from the server. Your data is safe — worst case is a refresh, never corruption.
+              Available to everyone with Projects access · on by default for new workspaces
             </div>
           </div>
-          <Btn kind="secondary" size="sm" disabled={!engine} onClick={() => setResetOpen(true)}>Reset…</Btn>
+          <Toggle on onChange={() => undefined} />
         </div>
-      </div>
 
-      <ConfirmDialog
-        open={resetOpen}
-        onClose={() => setResetOpen(false)}
-        title="Reset local data?"
-        body={
-          <>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 8 }}>Re-bootstrap takes ~2s on this workspace</div>
-            Pending offline mutations are replayed first when possible. The server remains the source of truth — nothing on it is touched.
-          </>
-        }
-        confirmLabel="Reset & re-sync"
-        loading={resetting}
-        loadingLabel="Re-syncing…"
-        onConfirm={async () => {
-          setResetting(true)
-          try {
-            await engine?.reset()
-            setResetOpen(false)
-          } catch (e) {
-            toast({ title: 'Could not reset local data', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
-          } finally {
-            setResetting(false)
+        {/* Workspace labels */}
+        <div className="card">
+          <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Workspace labels</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: canWs ? 10 : 0 }}>
+            {wsLabels.map((l) => (
+              <span key={l.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px', borderRadius: 99, background: 'var(--surf-1)', border: '1px solid var(--bord)', fontSize: 11, fontWeight: 700 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.color }} />
+                {l.name}
+              </span>
+            ))}
+            {wsLabels.length === 0 && <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)' }}>No workspace labels yet.</span>}
+          </div>
+          {canWs && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="input" placeholder="New workspace label…" value={newLabel} onChange={(e) => setNewLabel(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && newLabel.trim()) addLabel.mutate() }}
+                style={{ flex: 1, height: 32, fontSize: 12 }} />
+              <Btn kind="secondary" size="sm" disabled={!newLabel.trim()} onClick={() => addLabel.mutate()}>Add</Btn>
+            </div>
+          )}
+        </div>
+
+        {/* Branch format default — hidden while GitHub is parked */}
+        {FEATURES.pm_github && (
+        <div className="card">
+          <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 9 }}>Branch format default</div>
+          <input
+            className="input"
+            value={ghQ.data?.data.installation?.branch_format ?? '{user}/{team-key-lower}-{number}-{slug}'}
+            disabled
+            style={{ width: '100%', height: 34, fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700 }}
+          />
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)', marginTop: 6 }}>
+            Managed under Settings → GitHub once the App is connected.
+          </div>
+        </div>
+        )}
+
+        {/* Recently deleted */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--bord)' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1 }}>Recently deleted</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-faint)' }}>30-day restore · then purged</span>
+          </div>
+          {deleted && deleted.issues.length === 0 && deleted.projects.length === 0 && (
+            <div style={{ padding: '16px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+              Nothing here — deleted issues and projects appear for 30 days.
+            </div>
+          )}
+          {deleted?.issues.map((i) => (
+            <div key={i.id} style={rowStyle}>
+              <span style={{ width: 56, fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{i.key}</span>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: 'line-through', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>deleted {daysAgo(i.deleted_at)}</span>
+              <Btn kind="secondary" size="sm" onClick={() => restoreIssue.mutate(i.id)}>Restore</Btn>
+              {canWs && (
+                <Btn kind="ghost" size="sm" onClick={() => purge.mutate({ kind: 'issue', id: i.id })}>
+                  <span style={{ color: 'var(--coral)' }}>Purge</span>
+                </Btn>
+              )}
+            </div>
+          ))}
+          {deleted?.projects.map((p) => (
+            <div key={p.id} style={rowStyle}>
+              <span style={{ width: 56, fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)' }}>proj</span>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 700, textDecoration: 'line-through', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-faint)' }}>deleted {daysAgo(p.deleted_at)}</span>
+              <Btn kind="secondary" size="sm" onClick={() => restoreProject.mutate(p.id)}>Restore</Btn>
+              {canWs && (
+                <Btn kind="ghost" size="sm" onClick={() => purge.mutate({ kind: 'project', id: p.id })}>
+                  <span style={{ color: 'var(--coral)' }}>Purge</span>
+                </Btn>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Sync status + reset (§3.7 recovery surfaces) */}
+        <div className="card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: engine ? 'var(--green)' : 'var(--text-faint)' }} />
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 800 }}>Sync status</div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
+                {engine ? `Up to date · ${cursor.toLocaleString()} changes applied on this device` : 'Working online — nothing cached on this device'}
+              </div>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid var(--bord)', paddingTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>Reset local data</div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
+                Wipes this device&apos;s cache and re-bootstraps from the server. Your data is safe — worst case is a refresh, never corruption.
+              </div>
+            </div>
+            <Btn kind="secondary" size="sm" disabled={!engine} onClick={() => setResetOpen(true)}>Reset…</Btn>
+          </div>
+        </div>
+
+        <ConfirmDialog
+          open={resetOpen}
+          onClose={() => setResetOpen(false)}
+          title="Reset local data?"
+          body={
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', marginBottom: 8 }}>Re-bootstrap takes ~2s on this workspace</div>
+              Pending offline mutations are replayed first when possible. The server remains the source of truth — nothing on it is touched.
+            </>
           }
-        }}
-      />
-    </div>
+          confirmLabel="Reset & re-sync"
+          loading={resetting}
+          loadingLabel="Re-syncing…"
+          onConfirm={async () => {
+            setResetting(true)
+            try {
+              await engine?.reset()
+              setResetOpen(false)
+            } catch (e) {
+              toast({ title: 'Could not reset local data', description: e instanceof Error ? e.message : undefined, variant: 'destructive' })
+            } finally {
+              setResetting(false)
+            }
+          }}
+        />
+      </div>
+    </PmPage>
   )
 }
