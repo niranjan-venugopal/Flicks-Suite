@@ -450,6 +450,10 @@ export const pmProjects = pgTable(
     color: text('color'),
     status: text('status').notNull().default('planned'), // backlog|planned|in_progress|paused|completed|canceled
     health: text('health').notNull().default('on_track'), // denormalized latest; pm_project_updates is the log
+    // 0064 — issue scale: 0 none · 1 urgent … 4 low (CHECK in SQL).
+    priority: smallint('priority').notNull().default(0),
+    // 0064 — saved Insights panel config {measure, slice, segment}; NULL = shared default.
+    insights_default: jsonb('insights_default'),
     // 0059 — opt-in: visible only to members + lead + full-access roles.
     is_private: boolean('is_private').notNull().default(false),
     // 0059 — uploaded logo (R2 WebP variants); raw key never serialized out.
@@ -526,6 +530,7 @@ export const pmProjectMilestones = pgTable(
       .notNull()
       .references(() => pmProjects.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    description_md: text('description_md'), // 0064 — optional markdown body
     target_date: date('target_date'),
     position: smallint('position').notNull().default(0),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -546,6 +551,9 @@ export const pmProjectUpdates = pgTable(
     health: text('health').notNull(), // on_track|at_risk|off_track
     body_md: text('body_md').notNull(),
     author_user_id: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // 0064 — project state captured at post time (PmUpdateSnapshot in
+    // packages/shared/src/pm); NULL for rows older than the migration.
+    snapshot: jsonb('snapshot'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('idx_pm_updates_project').on(t.tenant_id, t.project_id, t.created_at)],

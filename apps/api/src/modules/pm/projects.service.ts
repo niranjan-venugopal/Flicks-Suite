@@ -238,7 +238,9 @@ export class PmProjectsService {
               title: pmIssues.title, state_id: pmIssues.state_id, priority: pmIssues.priority,
               estimate: pmIssues.estimate, assignee_user_id: pmIssues.assignee_user_id,
               milestone_id: pmIssues.milestone_id, due_date: pmIssues.due_date,
-              completed_at: pmIssues.completed_at,
+              // Round M — lifecycle stamps for the Insights panel + update diffs.
+              created_at: pmIssues.created_at, started_at: pmIssues.started_at,
+              completed_at: pmIssues.completed_at, canceled_at: pmIssues.canceled_at,
             })
             .from(pmIssues)
             .where(and(eq(pmIssues.tenant_id, tenantId), eq(pmIssues.project_id, id), isNull(pmIssues.deleted_at)))

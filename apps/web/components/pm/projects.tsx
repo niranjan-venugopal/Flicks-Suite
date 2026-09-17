@@ -77,6 +77,8 @@ export function ProjectCreateModal({
       lead_user_id: string
       target_date: string | null
       team_ids: string[]
+      /** Round M — 0 none · 1 urgent · 2 high · 3 medium · 4 low (issue scale). */
+      priority?: number
     },
     /** Round E — optional logo picked at create; the caller uploads it once
      *  the new project's id exists (server center-crops + re-encodes). */

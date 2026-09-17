@@ -750,6 +750,8 @@ export class PmSyncEngine {
     start_date?: string | null
     target_date?: string | null
     team_ids?: string[]
+    /** Round M — 0 none · 1 urgent · 2 high · 3 medium · 4 low (issue scale). */
+    priority?: number
   }): string {
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
@@ -761,6 +763,8 @@ export class PmSyncEngine {
       color: null,
       status: input.status ?? 'planned',
       health: 'on_track',
+      priority: input.priority ?? 0,
+      insights_default: null,
       is_private: false,
       logo_url: null,
       lead_user_id: input.lead_user_id ?? this.userId,
@@ -793,7 +797,9 @@ export class PmSyncEngine {
 
   updateProject(
     id: string,
-    fields: Partial<Pick<PmProjectRow, 'name' | 'summary' | 'icon' | 'color' | 'status' | 'lead_user_id' | 'start_date' | 'target_date'>>,
+    fields: Partial<Pick<PmProjectRow, 'name' | 'summary' | 'icon' | 'color' | 'status' | 'lead_user_id' | 'start_date' | 'target_date' | 'priority'>>
+      // description_md is lazy (detail-only, not in the sync projection) — it rides the op but is not a PmProjectRow column.
+      & { description_md?: string | null },
   ): void {
     const prev = this.store.patchProject(id, { ...fields, updated_at: new Date().toISOString() })
     this.enqueue({
@@ -830,6 +836,7 @@ export class PmSyncEngine {
       health,
       body_md: bodyMd,
       author_user_id: this.userId,
+      snapshot: null, // Round M — the server computes it on ack; the delta row replaces this
       created_at: new Date().toISOString(),
     }])
     this.store.patchProject(projectId, { health })
@@ -871,7 +878,7 @@ export class PmSyncEngine {
     const id = crypto.randomUUID()
     const position = this.store.milestonesForProject(projectId).length
     this.store.applyRows('pm_project_milestones', [{
-      id, project_id: projectId, name, target_date: targetDate ?? null, position,
+      id, project_id: projectId, name, description_md: null, target_date: targetDate ?? null, position,
       created_at: new Date().toISOString(),
     }])
     this.enqueue({
@@ -884,7 +891,7 @@ export class PmSyncEngine {
     return id
   }
 
-  updateMilestone(id: string, fields: { name?: string; target_date?: string | null; position?: number }): void {
+  updateMilestone(id: string, fields: { name?: string; target_date?: string | null; position?: number; description_md?: string | null }): void {
     const prev = this.store.milestones.get(id)
     if (prev) this.store.applyRows('pm_project_milestones', [{ ...prev, ...fields } as unknown as Record<string, unknown>])
     this.enqueue({

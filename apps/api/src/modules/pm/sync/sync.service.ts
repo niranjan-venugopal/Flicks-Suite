@@ -85,6 +85,8 @@ const PM_PROJECT_PROJECTION = {
   color: pmProjects.color,
   status: pmProjects.status,
   health: pmProjects.health,
+  priority: pmProjects.priority, // round M — issue scale
+  insights_default: pmProjects.insights_default, // round M — saved Insights config
   is_private: pmProjects.is_private, // round E — lock chip + members-only visibility
   logo_key: pmProjects.logo_key, // round E — swapped for a signed logo_url before the wire
   lead_user_id: pmProjects.lead_user_id,
@@ -366,14 +368,15 @@ export class PmSyncService {
             tx
               .select({
                 id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
-                name: pmProjectMilestones.name, target_date: pmProjectMilestones.target_date,
+                name: pmProjectMilestones.name, description_md: pmProjectMilestones.description_md,
+                target_date: pmProjectMilestones.target_date,
                 position: pmProjectMilestones.position, created_at: pmProjectMilestones.created_at,
               })
               .from(pmProjectMilestones)
               .where(and(eq(pmProjectMilestones.tenant_id, tenantId), inArray(pmProjectMilestones.project_id, visibleProjects))),
             tx.execute(sql`
-              SELECT id, project_id, health, body_md, author_user_id, created_at FROM (
-                SELECT id, project_id, health, body_md, author_user_id, created_at,
+              SELECT id, project_id, health, body_md, author_user_id, snapshot, created_at FROM (
+                SELECT id, project_id, health, body_md, author_user_id, snapshot, created_at,
                        row_number() OVER (PARTITION BY project_id ORDER BY created_at DESC) AS rn
                 FROM pm_project_updates
                 WHERE tenant_id = ${tenantId}
@@ -591,7 +594,8 @@ export class PmSyncService {
               const rows = await tx
                 .select({
                   id: pmProjectMilestones.id, project_id: pmProjectMilestones.project_id,
-                  name: pmProjectMilestones.name, target_date: pmProjectMilestones.target_date,
+                  name: pmProjectMilestones.name, description_md: pmProjectMilestones.description_md,
+                  target_date: pmProjectMilestones.target_date,
                   position: pmProjectMilestones.position, created_at: pmProjectMilestones.created_at,
                 })
                 .from(pmProjectMilestones)
@@ -605,7 +609,8 @@ export class PmSyncService {
                 .select({
                   id: pmProjectUpdates.id, project_id: pmProjectUpdates.project_id,
                   health: pmProjectUpdates.health, body_md: pmProjectUpdates.body_md,
-                  author_user_id: pmProjectUpdates.author_user_id, created_at: pmProjectUpdates.created_at,
+                  author_user_id: pmProjectUpdates.author_user_id, snapshot: pmProjectUpdates.snapshot,
+                  created_at: pmProjectUpdates.created_at,
                 })
                 .from(pmProjectUpdates)
                 .where(and(eq(pmProjectUpdates.tenant_id, tenantId), inArray(pmProjectUpdates.id, ids)));

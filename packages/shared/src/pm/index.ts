@@ -38,6 +38,34 @@ export const PM_PROJECT_HEALTH = ['on_track', 'at_risk', 'off_track'] as const;
 export type PmProjectHealth = (typeof PM_PROJECT_HEALTH)[number];
 export const PM_INITIATIVE_STATUSES = ['active', 'completed', 'paused'] as const;
 
+// ─── Round M — project Insights panel, project priority, update snapshots ────
+
+export const PM_INSIGHT_MEASURES = ['count', 'points'] as const
+export type PmInsightMeasure = (typeof PM_INSIGHT_MEASURES)[number]
+export const PM_INSIGHT_SLICES = ['status', 'priority', 'assignee', 'milestone', 'label'] as const
+export type PmInsightSlice = (typeof PM_INSIGHT_SLICES)[number]
+export const PM_INSIGHT_SEGMENTS = ['none', 'priority', 'status', 'assignee'] as const
+export type PmInsightSegment = (typeof PM_INSIGHT_SEGMENTS)[number]
+export interface PmInsightsConfig { measure: PmInsightMeasure; slice: PmInsightSlice; segment: PmInsightSegment }
+export const PM_INSIGHTS_DEFAULT: PmInsightsConfig = { measure: 'count', slice: 'status', segment: 'priority' }
+
+/** Project priority uses the issue scale: 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
+export const PM_PROJECT_PRIORITY_MAX = 4
+
+export interface PmUpdateSnapshotMilestone { id: string; name: string; target_date: string | null; scope: number; done: number; pct: number; completed_at: string | null }
+export interface PmUpdateSnapshot {
+  v: 1
+  at: string
+  progress: { scope: number; started: number; done: number }
+  issues_done: number
+  props: { status: string; priority: number; lead_user_id: string | null; start_date: string | null; target_date: string | null; health: string | null }
+  milestones: PmUpdateSnapshotMilestone[]
+}
+export type PmUpdateDiffPropKey = 'status' | 'priority' | 'lead_user_id' | 'start_date' | 'target_date'
+export interface PmUpdateDiffProp { key: PmUpdateDiffPropKey; from: string | number | null; to: string | number | null }
+export interface PmUpdateDiffMilestone { id: string; name: string; from_pct: number; to_pct: number; completed_at: string | null }
+export interface PmUpdateDiff { since: string; props: PmUpdateDiffProp[]; milestones: PmUpdateDiffMilestone[]; issues_done_delta: number }
+
 /**
  * Sync-table registry (§3.3/§3.4): the ONLY tables the FSE ships to clients,
  * with the columns each row snapshot carries. `pm_issues` deliberately omits
@@ -71,16 +99,18 @@ export const PM_SYNC_TABLES = {
   // Round E: is_private (members-only visibility) + logo_url — the SIGNED
   // serving URL, never the raw storage key (the emoji icon is the fallback
   // when a persisted signature has aged out).
+  // Round M: priority (issue scale) + insights_default (saved Insights config).
   pm_projects: [
-    'id', 'name', 'summary', 'icon', 'color', 'status', 'health', 'is_private',
-    'logo_url', 'lead_user_id', 'start_date', 'target_date', 'deal_id',
-    'completed_at', 'created_at', 'updated_at', 'deleted_at',
+    'id', 'name', 'summary', 'icon', 'color', 'status', 'health', 'priority',
+    'insights_default', 'is_private', 'logo_url', 'lead_user_id', 'start_date',
+    'target_date', 'deal_id', 'completed_at', 'created_at', 'updated_at', 'deleted_at',
   ],
   pm_project_teams: ['project_id', 'team_id'],
   pm_project_members: ['project_id', 'user_id'],
-  pm_project_milestones: ['id', 'project_id', 'name', 'target_date', 'position', 'created_at'],
+  pm_project_milestones: ['id', 'project_id', 'name', 'description_md', 'target_date', 'position', 'created_at'],
   // Updates: bootstrap ships the latest 10 per project; deltas upsert per row.
-  pm_project_updates: ['id', 'project_id', 'health', 'body_md', 'author_user_id', 'created_at'],
+  // Round M: snapshot — the project state captured at post time (PmUpdateSnapshot).
+  pm_project_updates: ['id', 'project_id', 'health', 'body_md', 'author_user_id', 'snapshot', 'created_at'],
   pm_initiatives: [
     'id', 'name', 'description', 'status', 'owner_user_id', 'target_quarter',
     'created_at', 'updated_at', 'deleted_at',

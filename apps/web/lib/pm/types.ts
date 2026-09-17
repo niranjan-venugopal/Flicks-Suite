@@ -1,6 +1,8 @@
 // PM row shapes as shipped by the sync registry (packages/shared/src/pm).
 // Issues arrive WITHOUT description — that's lazy-loaded on open.
 
+import type { PmInsightsConfig, PmUpdateSnapshot } from '@flicks/shared/pm'
+
 export interface PmTeamRow {
   id: string
   key: string
@@ -105,6 +107,10 @@ export interface PmProjectRow {
   color: string | null
   status: 'backlog' | 'planned' | 'in_progress' | 'paused' | 'completed' | 'canceled'
   health: 'on_track' | 'at_risk' | 'off_track'
+  /** Round M — issue scale (0 none · 1 urgent … 4 low). Rows cached before 0064 may lack it: treat missing as 0. */
+  priority: number
+  /** Round M — saved Insights panel config; null = PM_INSIGHTS_DEFAULT. */
+  insights_default: PmInsightsConfig | null
   is_private: boolean
   logo_url: string | null
   lead_user_id: string | null
@@ -122,6 +128,8 @@ export interface PmMilestoneRow {
   id: string
   project_id: string
   name: string
+  /** Round M — optional markdown body. */
+  description_md: string | null
   target_date: string | null
   position: number
   created_at: string
@@ -133,6 +141,8 @@ export interface PmUpdateRow {
   health: 'on_track' | 'at_risk' | 'off_track'
   body_md: string
   author_user_id: string | null
+  /** Round M — project state captured at post time; null for pre-0064 rows. */
+  snapshot: PmUpdateSnapshot | null
   created_at: string
 }
 
