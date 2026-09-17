@@ -388,7 +388,8 @@ export const ProjectInsightsCard = observer(function ProjectInsightsCard({
                     data-testid="project-insights-bar"
                     data-row={r.key}
                     title={`${r.label} — ${fmt(r.total)}${segmented ? '\n' + r.cells.filter((c) => c.value > 0).map((c) => `${c.label}: ${fmt(c.value)}`).join(' · ') : ''}`}
-                    style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}
+                    // maxWidth: a one-row pivot (every issue Done) must not render one wall-to-wall slab.
+                    style={{ flex: 1, minWidth: 0, maxWidth: 96, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}
                   >
                     {segmented
                       ? [...r.cells].reverse().filter((c) => c.value > 0).map((c, ci, arr) => (
@@ -414,7 +415,7 @@ export const ProjectInsightsCard = observer(function ProjectInsightsCard({
           </div>
           <div style={{ display: 'flex', gap: rows.length > 12 ? 2 : 5, marginLeft: 32, marginTop: 4 }}>
             {rows.map((r) => (
-              <span key={r.key} title={r.label} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center', ...chartLabel }}>
+              <span key={r.key} title={r.label} style={{ flex: 1, minWidth: 0, maxWidth: 96, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center', ...chartLabel }}>
                 {rows.length > 8 ? r.label.slice(0, 3) : r.label}
               </span>
             ))}

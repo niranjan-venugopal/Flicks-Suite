@@ -121,8 +121,10 @@ One row component for both transports (`ProjectListRow.tsx`): logo · name (lock
 
 **Order matters this round:** the new API selects the 0064 columns by name, so it must not run against a database that lacks them. `main` and the session branch carry Round M; **`production` was deliberately held at the Round L commit** (`b2f8071`) until the migration is in.
 
+**Correction, learned live the same night:** only the **API** (Railway) releases from `production` — **the web releases from `main` on Vercel**, so holding `production` back held only half the stack. The Round M web went live immediately against the Round L API, and until the release below completes, browsers log 404s on the two new routes (project files, set-insights-default → the card shows "Couldn't save — try again") and the Update dialog cannot post. Nothing leaks and nothing is corrupted — the missing-route calls just fail. Future rounds with an API/DB dependency must hold **`main` and `production` together**.
+
 1. **Supabase → SQL editor → paste `docs/handoff/apply-0064.sql` → Run** (idempotent; safe to re-run). Adds `pm_projects.priority` + check, `pm_projects.insights_default`, `pm_project_milestones.description_md`, `pm_project_updates.snapshot`. No new tables (existing RLS and grants apply), no backfill needed.
-2. Then release: `git push origin main:production` — Railway deploys the API and Vercel deploys the web from `production`. No new environment variables.
+2. Then release the API: `git push origin main:production` — Railway deploys it. No new environment variables.
 3. Nothing to flip: the rail, the update card and the listing are on for everyone. The editor and attachments follow the existing `pm_attachments` flag (kill switch in the FAM console; textarea fallback everywhere when off). The local browser cache keeps its version; cached project rows learn their priority on their next change.
 
 ## 11. Verification
@@ -164,6 +166,12 @@ Screenshots for the walkthrough: `rm-1-*-{1440,1920,390}.png` (sizing, all PM pa
 9. Anyone who can edit a project can post an update (unchanged rule); guests cannot.
 10. The Insights response caps at the 5 000 most recent issues of a project and says so.
 
+## 13. Follow-up fix, same night — the graph must trust the issue's state, not just the timestamps
+
+The founder's real project (72 issues, everything in Done states, all milestones at 100 %) showed **Progress: Done 11** and **"Predicted: 11 Mar · 24 weeks past target · 61 left · about 2.5 done a week"**. Root cause: the Progress graph and the prediction counted an issue as done only when it carried a `completed_at` timestamp — but issues finished before the lifecycle stamps existed (earlier builds, imports) carry none. The Insights card, the header bar and the milestone rows all count by the issue's **state category**, so the page disagreed with itself.
+
+Fixed in the shared math (`packages/shared/src/pm/insights.ts` `buildProgressSeries`) and in the update snapshot (`projects.service.ts` `buildUpdateSnapshot`): **the issue's current state category decides what it is now** — done, started, or neither; the timestamps only supply the timing, and a missing stamp falls back to the closest earlier stamp the issue has (started date, then creation). A stale `completed_at` on an issue that was pulled back out of Done is ignored the same way, so nothing reads done that isn't. The listing rollup (`computeMilestoneSummary`) already counted by category and is unchanged. On the founder's project the graph now reads Done 72, remaining 0, and shows "All issues done" instead of a prediction. Also capped the Insights chart's bar width (a one-row pivot no longer renders a wall-to-wall slab). New pins: two pure-math cases in `founder-roundM-b.spec.ts` (stamp-less done issues count, stale stamps do not; a finished stamp-less project predicts nothing) and one DB case in `founder-roundM-c.spec.ts` (snapshot `issues_done` and milestone pct follow the category). One residual gap, kill-switch mode only: the milestone card's REST branch still falls back to stamps because the lazy detail payload carries no state categories — listed below.
+
 **Follow-ups**
 
 - Daily project snapshots (`pm_project_snapshots`, like cycles) for exact history in the Progress graph.
@@ -175,3 +183,5 @@ Screenshots for the walkthrough: `rm-1-*-{1440,1920,390}.png` (sizing, all PM pa
 - The "sync / rest" transport pills on PM pages are developer words in the UI (cross-page convention; decide once).
 - The **dashboard** (not a PM page) still overflows `main` by ~120 px at 390 px, and the app shell keeps the sidebar at phone widths, leaving 318 px for content; a phone pass on the shell is a separate round.
 - Insights table columns beyond the 360 px rail scroll inside the card; "Slice / Segment" are Linear's words — "Group by / Split by" would be plainer if the founder prefers.
+- Kill-switch (REST) mode only: the milestone card computes % from timestamps because the lazy detail payload has no state categories — ship categories (or the milestone summary) in the detail payload to close it.
+- Backfill option for exact history: one SQL pass setting `completed_at = updated_at` where a Done-category issue has none would give the graph real completion dates instead of the creation-week fallback.

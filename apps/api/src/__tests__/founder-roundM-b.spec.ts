@@ -588,10 +588,10 @@ describe('Round M/B — shared math (pure)', () => {
     expect(weekMondayISO('2026-09-14T00:00:00Z')).toBe('2026-09-14');
 
     const issues = [
-      issue({ id: 'a', created_at: '2026-08-25T09:00:00Z', started_at: '2026-08-26T09:00:00Z', completed_at: '2026-09-02T09:00:00Z' }), // wk Aug 24: started · wk Aug 31: done
+      issue({ id: 'a', state_id: S.done.id, created_at: '2026-08-25T09:00:00Z', started_at: '2026-08-26T09:00:00Z', completed_at: '2026-09-02T09:00:00Z' }), // wk Aug 24: started · wk Aug 31: done
       issue({ id: 'b', created_at: '2026-09-01T09:00:00Z' }), // wk Aug 31: scope only
       issue({ id: 'c', created_at: '2026-08-25T09:00:00Z', canceled_at: '2026-09-08T09:00:00Z' }), // in scope for two weeks, gone from wk Sep 7
-      issue({ id: 'd', created_at: '2026-09-15T09:00:00Z', completed_at: '2026-09-15T10:00:00Z' }), // done without a started stamp still counts as started
+      issue({ id: 'd', state_id: S.done.id, created_at: '2026-09-15T09:00:00Z', completed_at: '2026-09-15T10:00:00Z' }), // done without a started stamp still counts as started
       issue({ id: 'e', created_at: '2026-08-25T09:00:00Z', state_id: S.dead.id }), // canceled by category, no stamp → never in scope (with states)
     ];
     const to = '2026-09-17T12:00:00Z';
@@ -613,6 +613,32 @@ describe('Round M/B — shared math (pure)', () => {
     expect(old).toHaveLength(104);
     expect(old[old.length - 1]!.week).toBe('2026-09-14');
     expect(old[0]!.week).toBe(isoDay(addDays(new Date('2026-09-14T00:00:00Z'), -103 * 7)));
+  });
+
+  it('buildProgressSeries: the state category is the truth for NOW — stamp-less finished issues count done, stale stamps on reopened issues do not (founder, Round M follow-up)', () => {
+    const to = '2026-09-17T12:00:00Z';
+    const legacy = [
+      // Finished before the lifecycle stamps existed: no completed_at at all.
+      issue({ id: 'g', created_at: '2026-08-25T09:00:00Z', state_id: S.done.id }),
+      // In progress, never stamped.
+      issue({ id: 'h', created_at: '2026-09-01T09:00:00Z', state_id: S.doing.id }),
+      // Reopened on an old build that kept the stamp: NOT done now.
+      issue({ id: 'r', created_at: '2026-08-25T09:00:00Z', started_at: '2026-08-26T09:00:00Z', completed_at: '2026-09-02T09:00:00Z', state_id: S.doing.id }),
+    ];
+    expect(buildProgressSeries(legacy, { to, states: lookups.states })).toEqual([
+      { week: '2026-08-24', scope: 2, started: 2, done: 1 }, // g: done from creation (fallback) · r: started by stamp
+      { week: '2026-08-31', scope: 3, started: 3, done: 1 }, // h: started from creation (fallback) · r's stale completed stamp ignored
+      { week: '2026-09-07', scope: 3, started: 3, done: 1 },
+      { week: '2026-09-14', scope: 3, started: 3, done: 1 },
+    ]);
+    // A finished stamp-less project reads done and predicts NOTHING — this was
+    // the live bug: 61 "left" and a date months out on a project at 100 %.
+    const doneOnly = [issue({ id: 'p', created_at: '2026-08-03T09:00:00Z', state_id: S.done.id })];
+    const ds = buildProgressSeries(doneOnly, { to, states: lookups.states });
+    expect(ds[ds.length - 1]).toEqual({ week: '2026-09-14', scope: 1, started: 1, done: 1 });
+    expect(predictCompletion(ds, to).predicted_completion).toBeNull();
+    // Without states there is no category to trust — stamps alone (g never done).
+    expect(buildProgressSeries(legacy, { to }).map((p) => p.done)).toEqual([0, 1, 1, 1]);
   });
 
   it('predictCompletion: null under 2 complete weeks; mean of the last 4 complete-week deltas; null at zero velocity or nothing left; 52-week cap', () => {

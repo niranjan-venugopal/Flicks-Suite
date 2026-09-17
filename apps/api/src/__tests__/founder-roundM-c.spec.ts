@@ -295,6 +295,19 @@ describe('Round M — update snapshots + read-time diffs', () => {
     expect(stored!.snapshot).toEqual(snap);
   });
 
+  it('legacy data: a Done-state issue with NO completed_at still counts — issues_done and milestone pct follow the state category, a stale stamp on a reopened issue does not (founder, Round M follow-up)', async () => {
+    const pid = (await projectsSvc.create(T1, ownerId, { name: 'Legacy stamps', team_ids: [teamId] })).data.id;
+    const mid = (await projectsSvc.createMilestone(T1, ownerId, { project_id: pid, name: 'Shipped' })).data.id;
+    const a = await mkIssue('finished before the stamps existed', { project_id: pid, milestone_id: mid });
+    const b = await mkIssue('reopened on an old build, stamp kept', { project_id: pid });
+    await dbAdmin.update(pmIssues).set({ state_id: completedStateId, completed_at: null }).where(eq(pmIssues.id, a.id));
+    await dbAdmin.update(pmIssues).set({ completed_at: new Date('2026-09-01T00:00:00Z') }).where(eq(pmIssues.id, b.id));
+    const res = await projectsSvc.postUpdate(T1, ownerId, pid, { health: 'on_track', body_md: 'closing out' });
+    const snap = res.data.snapshot as PmUpdateSnapshot;
+    expect(snap.issues_done).toBe(1); // a counts by category; b's stale stamp is ignored
+    expect(snap.milestones.find((m) => m.id === mid)).toMatchObject({ scope: 1, done: 1, pct: 1, completed_at: null }); // 100 %, no date to show
+  });
+
   it('the first snapshotted update diffs against the baseline (legacy null-snapshot rows are skipped and get diff null)', async () => {
     const d = (await projectsSvc.detail(T1, ownerId, projectId)).data;
     expect(d.updates.map((u) => u.id)).toEqual([first.data.id, legacyId]); // newest first

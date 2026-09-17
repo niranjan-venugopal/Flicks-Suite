@@ -294,9 +294,17 @@ const ms = (iso: string | null | undefined): number | null => {
  * answers "how much". Always at least one point (the current week) when
  * there are issues; [] when there are none.
  *
- * `states` is optional: with it, an issue sitting in a canceled-category
- * state WITHOUT a canceled_at stamp (imports) is treated as canceled from
- * creation, matching pivotInsights.
+ * `states` is optional but both real callers pass it, and with it the issue's
+ * CURRENT state category decides what the issue is NOW — the header bar,
+ * milestones and pivotInsights all count that way, and the graph's latest
+ * point must agree with them (Round M follow-up: a finished project predicted
+ * months of remaining work because its issues were completed before the
+ * lifecycle stamps existed and carried no completed_at). The stamps only
+ * supply the TIMING: a missing stamp falls back to the closest earlier stamp
+ * the issue does have (completed → started_at → created_at), and a stale
+ * stamp on an issue that was since pulled back out of Done is ignored.
+ * Canceled stays a union (stamp OR category) so the series can never include
+ * an issue pivotInsights excludes. Without `states`, stamps alone decide.
  */
 export function buildProgressSeries(
   issues: PmInsightIssue[],
@@ -308,13 +316,23 @@ export function buildProgressSeries(
     .map((i) => {
       const created = ms(i.created_at)
       if (created == null) return null
+      const cat = states.get(i.state_id)?.category ?? null
+      const stampStarted = ms(i.started_at)
+      const stampCompleted = ms(i.completed_at)
       const stampCanceled = ms(i.canceled_at)
-      const catCanceled = states.get(i.state_id)?.category === 'canceled'
+      const completed =
+        cat == null ? stampCompleted : cat === 'completed' ? (stampCompleted ?? stampStarted ?? created) : null
+      const started =
+        cat == null
+          ? stampStarted
+          : cat === 'started' || cat === 'completed'
+            ? (stampStarted ?? completed ?? created)
+            : null
       return {
         created,
-        started: ms(i.started_at),
-        completed: ms(i.completed_at),
-        canceled: stampCanceled ?? (catCanceled ? created : null),
+        started,
+        completed,
+        canceled: stampCanceled ?? (cat === 'canceled' ? created : null),
       }
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)

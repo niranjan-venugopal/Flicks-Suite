@@ -264,13 +264,20 @@ export class PmProjectsService {
     const perMilestone = new Map<string, { scope: number; done: number; last: Date | null }>();
     for (const r of issues) {
       if (r.category === 'canceled') continue;
-      if (r.completed_at) issuesDone += 1;
+      // Done = the state's CATEGORY, exactly like computeProgress, the
+      // milestone rows and computeMilestoneSummary — never the completed_at
+      // stamp alone: issues finished before the lifecycle stamps existed
+      // carry none, and the update block must not read "0 %" on a milestone
+      // the card shows at 100 % (founder, Round M follow-up). The stamp only
+      // dates the milestone's completion, when we have it.
+      const done = r.category === 'completed';
+      if (done) issuesDone += 1;
       if (!r.milestone_id) continue;
       const agg = perMilestone.get(r.milestone_id) ?? { scope: 0, done: 0, last: null };
       agg.scope += 1;
-      if (r.completed_at) {
+      if (done) {
         agg.done += 1;
-        if (!agg.last || r.completed_at > agg.last) agg.last = r.completed_at;
+        if (r.completed_at && (!agg.last || r.completed_at > agg.last)) agg.last = r.completed_at;
       }
       perMilestone.set(r.milestone_id, agg);
     }
