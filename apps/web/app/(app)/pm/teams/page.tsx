@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon, Modal, Pill, avBg, initials } from '@/components/proto'
+import { Btn, Icon, Modal, Pill } from '@/components/proto'
 import { PmPage } from '@/components/pm/PmPage'
+import { PmAv } from '@/components/pm/projects'
 import { api } from '@/lib/api/client'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useToast } from '@/components/ui/use-toast'
@@ -25,7 +26,7 @@ interface TeamsResp {
     memberships_all: Array<{ team_id: string; user_id: string; is_lead: boolean }>
   }
 }
-interface UsersResp { data: Array<{ id: string; name: string }> }
+interface UsersResp { data: Array<{ id: string; name: string; avatar_url?: string | null }> }
 
 export default function PmTeamsPage() {
   const router = useRouter()
@@ -60,6 +61,7 @@ export default function PmTeamsPage() {
 
   const d = teamsQ.data?.data
   const userName = (id: string) => usersQ.data?.data.find((u) => u.id === id)?.name ?? '—'
+  const userAvatar = (id: string) => usersQ.data?.data.find((u) => u.id === id)?.avatar_url ?? null
   const membersOf = (teamId: string) => (d?.memberships_all ?? []).filter((m) => m.team_id === teamId)
   const joined = new Set((d?.memberships ?? []).map((m) => m.team_id))
 
@@ -118,8 +120,8 @@ export default function PmTeamsPage() {
                 <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{t.key}</span>
                 <div style={{ display: 'flex', alignItems: 'center' }}>
                   {members.slice(0, 3).map((m, i) => (
-                    <span key={m.user_id} title={userName(m.user_id)} style={{ width: 19, height: 19, borderRadius: '50%', background: avBg(userName(m.user_id)), color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 7.5, fontWeight: 800, marginLeft: i > 0 ? -6 : 0, boxShadow: '0 0 0 2px var(--bg)' }}>
-                      {initials(userName(m.user_id))}
+                    <span key={m.user_id} title={userName(m.user_id)} style={{ display: 'inline-flex', borderRadius: '50%', marginLeft: i > 0 ? -6 : 0, boxShadow: '0 0 0 2px var(--bg)' }}>
+                      <PmAv name={userName(m.user_id)} src={userAvatar(m.user_id)} size={19} />
                     </span>
                   ))}
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)', marginLeft: 6 }}>{members.length}</span>

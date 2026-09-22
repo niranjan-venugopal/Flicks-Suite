@@ -128,7 +128,7 @@ export default function UtilizationReportPage() {
                       >
                         <td style={{ padding: '12px 14px' }}>
                           <div className="flex items-center gap-3">
-                            <Avatar name={e.name ?? '—'} size="sm" />
+                            <Avatar name={e.name ?? '—'} size="sm" src={e.avatarUrl ?? undefined} />
                             <div>
                               <div style={{ fontSize: 13, fontWeight: 800 }}>{e.name ?? '—'}</div>
                               {e.employeeCode && (

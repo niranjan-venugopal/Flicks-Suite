@@ -47,6 +47,8 @@ export interface FamFeedbackRow {
   tenant_name: string
   user_id: string
   user_name: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  user_avatar_url?: string | null
   user_email: string | null
   category: 'bug' | 'idea' | 'question' | 'other'
   message: string

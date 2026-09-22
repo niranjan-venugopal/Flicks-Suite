@@ -216,7 +216,7 @@ export default function FamFeedbackPage() {
                 {selected.message}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                <Avatar name={selected.user_name ?? '?'} size="sm" />
+                <Avatar name={selected.user_name ?? '?'} size="sm" src={selected.user_avatar_url ?? undefined} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, fontWeight: 800 }}>{selected.user_name ?? 'Unknown'}</div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{selected.tenant_name}</div>

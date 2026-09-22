@@ -928,7 +928,7 @@ export class LeaveService {
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const data = await this.databaseService.withTenant(tenantId, async (tx) => {
+    const rows = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
       const escalatedTo = alias(employees, 'escalated_to');
       const rows = await tx
@@ -943,6 +943,10 @@ export class LeaveService {
           appliedAt: leaveRequests.applied_at,
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
+          // Round N — the approval queue renders the same face as Team →
+          // Leave; signed AFTER the tx, the key stripped by the mapper.
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
           leaveTypeName: leaveTypes.name,
           leaveTypeCode: leaveTypes.code,
           escalationLevel: leaveRequests.escalation_level,
@@ -952,6 +956,9 @@ export class LeaveService {
         })
         .from(leaveRequests)
         .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+        // LEFT — an employee with no user account keeps its row in the queue
+        // (the `IS DISTINCT FROM` predicate below relies on exactly that).
+        .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
         .leftJoin(
           escalatedTo,
@@ -984,6 +991,9 @@ export class LeaveService {
       }));
     });
 
+    // Round N — sign AFTER the tenant transaction (local SigV4 crypto, no DB);
+    // the mapper strips avatarKey from every row.
+    const data = await withSignedAvatars(this.signAvatar, rows);
     return { data, pagination: { page, limit, total: data.length } };
   }
 

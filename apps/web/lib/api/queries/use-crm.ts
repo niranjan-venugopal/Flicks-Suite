@@ -162,6 +162,8 @@ export interface DealCard {
   primary_person_id: string | null
   owner_user_id: string
   owner_name?: string | null
+  /** Signed owner photo — optional: older API builds omit it. */
+  owner_avatar_url?: string | null
   value_amount: string
   currency: string
   value_base_amount: string
@@ -299,6 +301,8 @@ export interface ClosedDealRow {
   company_name: string | null
   owner_user_id: string
   owner_name: string | null
+  /** Signed owner photo — optional: older API builds omit it. */
+  owner_avatar_url?: string | null
   value_amount: string
   currency: string
   value_base_amount: string
@@ -344,7 +348,10 @@ export function useClosedDeals(params: ClosedDealsParams, enabled = true) {
 export function useReps() {
   return useQuery({
     queryKey: ['crm', 'reps'],
-    queryFn: () => api.get<{ data: Array<{ user_id: string; name: string; role: string }> }>('/api/v1/crm/reps'),
+    queryFn: () =>
+      api.get<{ data: Array<{ user_id: string; name: string; role: string; avatar_url?: string | null }> }>(
+        '/api/v1/crm/reps',
+      ),
   })
 }
 
@@ -873,6 +880,8 @@ export interface Lead {
   status: string
   owner_user_id: string | null
   owner_name?: string | null
+  /** Signed owner photo — optional: older API builds omit it. */
+  owner_avatar_url?: string | null
   utm: Record<string, string>
   converted_deal_id: string | null
   created_at: string
@@ -1042,7 +1051,10 @@ export interface ReportsOverview {
   }
   lost_reasons: Array<{ label: string; count: number }>
   velocity: Array<{ month: string; value: number }>
-  leaderboard: Array<{ user_id: string; name: string; calls: number; meetings: number; tasks: number; emails: number; goal_target: number | null; goal_pct: number | null }>
+  // The rep's signed photo — both spellings are optional so the UI renders
+  // whichever the API ships (owner_* on deal-shaped rows, user_* on
+  // user-shaped ones) and falls back to initials until then.
+  leaderboard: Array<{ user_id: string; name: string; user_avatar_url?: string | null; owner_avatar_url?: string | null; calls: number; meetings: number; tasks: number; emails: number; goal_target: number | null; goal_pct: number | null }>
 }
 
 export function useReportsOverview(days?: number) {
@@ -1059,7 +1071,7 @@ export interface ForecastRow {
   won: number
   goal: number | null
   gap_to_goal: number | null
-  deals: Array<{ id: string; title: string; owner_name: string | null; value: number; probability: number }>
+  deals: Array<{ id: string; title: string; owner_name: string | null; owner_avatar_url?: string | null; value: number; probability: number }>
 }
 
 export function useForecastReport(months?: number) {
@@ -1073,6 +1085,9 @@ export interface SalesGoal {
   id: string
   user_id: string | null
   user_name?: string | null
+  /** Signed photo of the goal's owner — optional (see leaderboard note). */
+  user_avatar_url?: string | null
+  owner_avatar_url?: string | null
   period: string
   target_base: number
 }

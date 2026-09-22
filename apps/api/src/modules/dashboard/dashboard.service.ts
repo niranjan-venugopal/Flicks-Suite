@@ -785,7 +785,7 @@ export class DashboardService {
   ): Promise<ActivityItemDto[]> {
     const limit = Math.min(opts.limit ?? 20, 100);
 
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    const items = await this.databaseService.withTenant(tenantId, async (tx) => {
       // Resolve the cursor's created_at (if provided) — we paginate by
       // (created_at DESC, id DESC) to be deterministic with same-second rows.
       let cursorTimestamp: Date | null = null;
@@ -811,6 +811,9 @@ export class DashboardService {
           resourceId: auditLog.resource_id,
           actorUserId: auditLog.actor_user_id,
           actorName: users.full_name,
+          // Round N: the activity feed renders the actor's face.
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
           metadata: auditLog.metadata,
           createdAt: auditLog.created_at,
         })
@@ -834,6 +837,8 @@ export class DashboardService {
         resourceId: r.resourceId,
         actorUserId: r.actorUserId,
         actorName: r.actorName,
+        avatarKey: r.avatarKey,
+        avatarUrl: r.avatarUrl,
         metadata: (r.metadata as Record<string, unknown> | null) ?? null,
         createdAt:
           r.createdAt instanceof Date
@@ -841,6 +846,10 @@ export class DashboardService {
             : String(r.createdAt),
       }));
     });
+
+    // Round N — sign the actors' photos after the tenant transaction (local
+    // SigV4 crypto, no DB); withAvatars strips avatarKey from every row.
+    return this.withAvatars(items);
   }
 }
 

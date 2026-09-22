@@ -2,8 +2,10 @@
 
 import { useMemo } from 'react'
 import { Loader2 } from 'lucide-react'
-import { Avatar, Icon, Kpi, Pill, type PillTone } from '@/components/proto'
+import { Icon, Kpi, Pill, type PillTone } from '@/components/proto'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { useTeamToday, type TeamMemberToday } from '@/lib/api/queries/use-attendance'
+import { usePresence } from '@/lib/api/queries/use-presence'
 import { useAuthStore } from '@/lib/stores/auth.store'
 
 // The "complete" attendance view (founder round 14): embedded in the
@@ -95,6 +97,15 @@ export function TeamToday() {
   // role (owner/admin/finance) gets the whole workspace.
   const orgWide = role !== 'MANAGER'
   const rows = data ?? []
+
+  // Seed the presence batch for the faces on screen; the socket keeps the
+  // dots live from there (mirrors the Team page).
+  usePresence(
+    useMemo(
+      () => rows.map((r) => r.employeeUserId).filter((id): id is string => !!id),
+      [rows],
+    ),
+  )
 
   const kpis = useMemo(() => {
     let inOffice = 0
@@ -250,7 +261,12 @@ export function TeamToday() {
                   >
                     <td style={{ padding: '12px 14px' }}>
                       <div className="flex items-center gap-3">
-                        <Avatar name={r.employeeName} size="sm" />
+                        <RowPresenceAvatar
+                          name={r.employeeName}
+                          src={r.avatarUrl ?? null}
+                          userId={r.employeeUserId ?? null}
+                          size={30}
+                        />
                         <div>
                           <div style={{ fontSize: 13, fontWeight: 800 }}>
                             {r.employeeName}

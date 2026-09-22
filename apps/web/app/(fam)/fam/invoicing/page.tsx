@@ -64,7 +64,7 @@ export default function FamInvoicingPage() {
                     <td>
                       {idx === 0 ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <Avatar name={a.fullName ?? a.email ?? '?'} size="sm" />
+                          <Avatar name={a.fullName ?? a.email ?? '?'} size="sm" src={a.avatarUrl ?? undefined} />
                           <div>
                             <div style={{ fontWeight: 800 }}>{a.fullName ?? '—'}</div>
                             <div style={{ fontSize: 11, color: 'var(--text-mute)' }}>{a.email}</div>

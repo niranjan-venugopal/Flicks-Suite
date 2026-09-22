@@ -655,7 +655,7 @@ function MembersTab({ tenantId }: { tenantId: string }) {
                 <tr key={m.membershipId}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                      <Avatar name={m.fullName ?? m.email ?? '?'} size="sm" />
+                      <Avatar name={m.fullName ?? m.email ?? '?'} size="sm" src={m.avatarUrl ?? undefined} />
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 800 }}>
                           {m.fullName ?? '—'}

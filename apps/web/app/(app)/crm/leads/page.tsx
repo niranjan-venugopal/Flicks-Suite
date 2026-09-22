@@ -114,7 +114,7 @@ export default function LeadsPage() {
                   <td><Pill tone={SRC_TONE(l.source)}>{l.source}</Pill></td>
                   <td>
                     {l.owner_name
-                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><OwnerAv name={l.owner_name} size={20} /><span style={{ fontSize: 11.5, fontWeight: 700 }}>{l.owner_name.split(' ')[0]}</span></span>
+                      ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><OwnerAv name={l.owner_name} src={l.owner_avatar_url} size={20} /><span style={{ fontSize: 11.5, fontWeight: 700 }}>{l.owner_name.split(' ')[0]}</span></span>
                       : <span className="t-caption">unassigned</span>}
                   </td>
                   <td className="t-mute" style={{ fontSize: 11.5 }}>{ago(l.created_at)}</td>

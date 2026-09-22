@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import { activities, deals, directoryCompanies, directoryPeople, memberships, users } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
@@ -7,6 +7,7 @@ import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PresencePublicService } from '../presence/public';
+import { MediaService } from '../media/public';
 
 const TYPES = ['task', 'call', 'meeting', 'note'] as const;
 const CALL_OUTCOMES = ['connected', 'no_answer', 'busy', 'voicemail', 'wrong_number'] as const;
@@ -46,7 +47,14 @@ export class ActivitiesService {
     private readonly domainEvents: DomainEventsService,
     private readonly notifications: NotificationsService,
     private readonly presence: PresencePublicService,
+    // Round N: LAST + optional so hand-built specs keep compiling; without it
+    // avatar signing falls back to the legacy public URL.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /** Signed avatar URL (64px) or the legacy public URL — never throws a read. */
+  private readonly signAvatar = (k: string | null, l: string | null): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(k, l, 64) : Promise.resolve(l);
 
   /**
    * In-app ping to the assignee of an activity someone ELSE scheduled (§6.3),
@@ -279,7 +287,7 @@ export class ActivitiesService {
         // bucket ALSO includes activities the user completed for teammates
         // (completed_by = me) — e.g. closing a colleague's "Call within 1h"
         // from the deal timeline — so done work never vanishes from their view.
-        const rows = await tx
+        const rawRows = await tx
           .select({
             id: activities.id,
             type: activities.type,
@@ -291,6 +299,10 @@ export class ActivitiesService {
             outcome: activities.outcome,
             assignee_user_id: activities.assignee_user_id,
             assignee_name: users.full_name,
+            // Round N: the assignee's face on My Activities. Selected as a
+            // key/url pair; the key is stripped below and never leaves.
+            assignee_avatar_key: users.avatar_key,
+            assignee_avatar_url: users.avatar_url,
             deal_id: activities.deal_id,
             deal_title: deals.title,
             person_id: activities.person_id,
@@ -301,11 +313,34 @@ export class ActivitiesService {
           .leftJoin(users, eq(users.id, activities.assignee_user_id))
           .where(
             and(
+              // Round N (house rule 1, defense-in-depth): this predicate is the
+              // one that anchors the users join. The filter below is keyed on a
+              // USER id, and a user legitimately belongs to several workspaces —
+              // so on a connection that is not RLS-bound (the round-F mis-roled
+              // DATABASE_URL) this list would hand the caller their OTHER
+              // workspaces' activities, complete with those teammates' names and
+              // now their photos. Scope to the tenant explicitly first.
+              eq(activities.tenant_id, tenantId),
               or(eq(activities.assignee_user_id, userId), eq(activities.completed_by, userId)),
               isNull(activities.deleted_at),
             ),
           )
           .orderBy(asc(activities.due_at));
+
+        // Round N: one signature per distinct assignee (local SigV4), then the
+        // raw key is dropped from every row.
+        const signedByAssignee = new Map(
+          await Promise.all(
+            [...new Map(rawRows.map((r) => [r.assignee_user_id, r])).values()].map(
+              async (r) =>
+                [r.assignee_user_id, await this.signAvatar(r.assignee_avatar_key, r.assignee_avatar_url)] as const,
+            ),
+          ),
+        );
+        const rows = rawRows.map(({ assignee_avatar_key: _k, ...r }) => ({
+          ...r,
+          assignee_avatar_url: signedByAssignee.get(r.assignee_user_id) ?? null,
+        }));
 
         const now = new Date();
         const endOfToday = new Date(now); endOfToday.setHours(23, 59, 59, 999);

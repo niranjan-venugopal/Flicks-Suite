@@ -112,8 +112,26 @@ export default function MyCompaniesPage() {
                   e.currentTarget.style.borderColor = 'var(--bord)'
                 }}
               >
-                <div className="avatar lg" style={{ background: avBg(c.name) }}>
-                  {initials(c.name)}
+                {/* Uploaded org logo in a circular mask; initials fallback —
+                    matches the company switcher's chip. */}
+                <div
+                  className="avatar lg"
+                  style={
+                    c.logoUrl
+                      ? { background: 'var(--surf-2)', overflow: 'hidden', padding: 0 }
+                      : { background: avBg(c.name) }
+                  }
+                >
+                  {c.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={c.logoUrl}
+                      alt={c.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                    />
+                  ) : (
+                    initials(c.name)
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 3 }}>

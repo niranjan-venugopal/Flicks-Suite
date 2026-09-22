@@ -5,7 +5,6 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import {
-  Avatar,
   Btn,
   Icon,
   Kpi,
@@ -14,6 +13,8 @@ import {
   SectionHead,
   type PillTone,
 } from '@/components/proto'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 import {
   useTeamLeave,
   useReviewLeave,
@@ -176,6 +177,15 @@ function TeamLeaveInner() {
   }, [pendingRows])
 
   const rows = tab === 'pending' ? pendingRows : tab === 'upcoming' ? upcomingRows : historyRows
+
+  // Seed presence for the faces on screen; the socket keeps the dots live.
+  usePresence(
+    useMemo(
+      () => rows.map((r) => r.employeeUserId).filter((id): id is string => !!id),
+      [rows],
+    ),
+  )
+
   const loading = tab === 'pending' ? pending.isLoading : tab === 'upcoming' ? upcoming.isLoading : history.isLoading
   const errored = tab === 'pending' ? pending.isError : tab === 'upcoming' ? upcoming.isError : history.isError
   const refetch = tab === 'pending' ? pending.refetch : tab === 'upcoming' ? upcoming.refetch : history.refetch
@@ -260,7 +270,12 @@ function TeamLeaveInner() {
                   >
                     <td style={{ padding: '12px 14px' }}>
                       <div className="flex items-center gap-3">
-                        <Avatar name={r.employeeName} size="sm" />
+                        <RowPresenceAvatar
+                          name={r.employeeName}
+                          src={r.avatarUrl ?? null}
+                          userId={r.employeeUserId}
+                          size={30}
+                        />
                         <div>
                           <div style={{ fontSize: 13, fontWeight: 800 }}>{r.employeeName}</div>
                           {r.employeeCode && <div style={{ fontSize: 11, color: 'var(--text-mute)', fontFamily: 'var(--font-mono)' }}>{r.employeeCode}</div>}

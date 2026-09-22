@@ -1,9 +1,11 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { eq, and, gte, lte, ilike, desc, sql } from 'drizzle-orm';
 import { DB_TENANT, DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { auditLog, auditLogPlatform, users } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
+import { R2Service } from '../../core/storage/r2.service';
+import { servedAvatarUrl } from '../../core/storage/signed-avatar';
 
 export interface AuditLogDto {
   tenantId: string;
@@ -70,6 +72,13 @@ export class AuditService {
     @Inject(DB_TENANT) private readonly db: Db,
     @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
     private readonly databaseService: DatabaseService,
+    // Round N: the audit trail renders the actor's face. Audit must NOT import
+    // MediaModule (media → audit → media is a cycle lint:boundaries rejects),
+    // so it signs with the R2Service alone — StorageModule is @Global(), so DI
+    // supplies it without an import here. Optional + LAST so the many
+    // hand-built `new AuditService(db, dbAdmin, databaseService)` specs keep
+    // compiling; without it the legacy users.avatar_url still serves.
+    @Optional() private readonly r2?: R2Service,
   ) {}
 
   async log(dto: AuditLogDto): Promise<void> {
@@ -151,6 +160,9 @@ export class AuditService {
               actorUserId: auditLog.actor_user_id,
               actorName: users.full_name,
               actorEmail: users.email,
+              // Round N: the actor's photo (private R2 key, signed below).
+              avatarKey: users.avatar_key,
+              avatarUrl: users.avatar_url,
               action: auditLog.action,
               resourceType: auditLog.resource_type,
               resourceId: auditLog.resource_id,
@@ -173,8 +185,17 @@ export class AuditService {
         ]),
     );
 
+    // Round N — sign the actors' photos AFTER the tenant transaction (local
+    // SigV4 crypto, no DB) and drop the private key from every row.
+    const data = await Promise.all(
+      logs.map(async ({ avatarKey, ...row }) => ({
+        ...row,
+        avatarUrl: await servedAvatarUrl(this.r2, avatarKey, row.avatarUrl, 64),
+      })),
+    );
+
     return {
-      data: logs,
+      data,
       pagination: {
         page,
         limit,

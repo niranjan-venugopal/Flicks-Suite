@@ -179,7 +179,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
                 <Icon.cal size={13} style={{ color: 'var(--text-mute)' }} />Close {d.expected_close_date ?? '—'}
               </span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>
-                <OwnerAv name={d.owner_name ?? null} size={20} /> {d.owner_name ?? '—'}
+                <OwnerAv name={d.owner_name ?? null} src={d.owner_avatar_url} size={20} /> {d.owner_name ?? '—'}
               </span>
             </div>
           </div>

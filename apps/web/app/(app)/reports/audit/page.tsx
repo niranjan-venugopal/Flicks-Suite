@@ -235,7 +235,7 @@ export default function AuditLogReportPage() {
                         <td style={{ padding: '10px 14px' }}>
                           {e.actorName ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Avatar name={e.actorName} size="sm" />
+                              <Avatar name={e.actorName} size="sm" src={e.avatarUrl ?? undefined} />
                               <div>
                                 <div style={{ fontSize: 12.5, fontWeight: 800 }}>{e.actorName}</div>
                                 {e.actorEmail && (

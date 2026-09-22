@@ -149,6 +149,10 @@ export interface TeamMemberToday extends DayExpectation {
   employeeId: string
   employeeName: string
   employeeCode: string
+  /** Signed photo URL — optional: older API builds omit it (falls back to initials). */
+  avatarUrl?: string | null
+  /** The employee's login user id, for the live presence dot. */
+  employeeUserId?: string | null
   recordId: string | null
   attendanceStatus: AttendanceStatus | null
   workMode: WorkMode | null

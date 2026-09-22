@@ -189,6 +189,8 @@ export interface AuditorRegistryEntry {
   userId: string
   email: string | null
   fullName: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   companies: Array<{
     tenantId: string
     tenantName: string

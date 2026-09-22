@@ -515,6 +515,10 @@ export class FamService {
         userId: memberships.user_id,
         email: users.email,
         fullName: users.full_name,
+        // Round N: the member list shows faces. The photo upload writes
+        // users.avatar_key only, so sign it here; avatarKey never leaves.
+        avatarKey: users.avatar_key,
+        avatarUrlLegacy: users.avatar_url,
       })
       .from(memberships)
       .leftJoin(users, eq(users.id, memberships.user_id))
@@ -522,16 +526,19 @@ export class FamService {
       .orderBy(rolePrecedence, users.full_name);
 
     return {
-      data: rows.map((r) => ({
-        membershipId: r.membershipId,
-        userId: r.userId,
-        email: r.email ?? null,
-        fullName: r.fullName ?? null,
-        role: r.role,
-        status: r.status,
-        invitedAt: r.invitedAt?.toISOString() ?? null,
-        acceptedAt: r.acceptedAt?.toISOString() ?? null,
-      })),
+      data: await Promise.all(
+        rows.map(async (r) => ({
+          membershipId: r.membershipId,
+          userId: r.userId,
+          email: r.email ?? null,
+          fullName: r.fullName ?? null,
+          avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrlLegacy, 64),
+          role: r.role,
+          status: r.status,
+          invitedAt: r.invitedAt?.toISOString() ?? null,
+          acceptedAt: r.acceptedAt?.toISOString() ?? null,
+        })),
+      ),
     };
   }
 
@@ -1795,6 +1802,10 @@ export class FamService {
         invitedAt: memberships.invited_at,
         email: users.email,
         fullName: users.full_name,
+        // Round N: the registry renders a person chip per auditor — signed
+        // below, one signature per auditor (not per auditor↔company link).
+        avatarKey: users.avatar_key,
+        avatarUrlLegacy: users.avatar_url,
         tenantName: tenants.name,
       })
       .from(memberships)
@@ -1810,6 +1821,8 @@ export class FamService {
         userId: string;
         email: string | null;
         fullName: string | null;
+        avatarKey: string | null;
+        avatarUrlLegacy: string | null;
         companies: Array<{
           tenantId: string;
           tenantName: string;
@@ -1824,6 +1837,8 @@ export class FamService {
         userId: r.userId,
         email: r.email,
         fullName: r.fullName,
+        avatarKey: r.avatarKey,
+        avatarUrlLegacy: r.avatarUrlLegacy,
         companies: [],
       };
       entry.companies.push({
@@ -1838,7 +1853,15 @@ export class FamService {
       byUser.set(r.userId, entry);
     }
 
-    return { data: Array.from(byUser.values()) };
+    // Round N: strip the raw key and hand back a signed 64px url instead.
+    return {
+      data: await Promise.all(
+        Array.from(byUser.values()).map(async ({ avatarKey, avatarUrlLegacy, ...a }) => ({
+          ...a,
+          avatarUrl: await this.mediaService.servedUrl(avatarKey, avatarUrlLegacy, 64),
+        })),
+      ),
+    };
   }
 
   /** Revoke a single auditor↔company link (deactivate the membership). */

@@ -137,6 +137,8 @@ export interface TeamLeaveRequest {
   employeeUserId: string | null
   employeeName: string
   employeeCode: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   leaveTypeId: string
   leaveTypeName: string | null
   leaveTypeCode: string | null

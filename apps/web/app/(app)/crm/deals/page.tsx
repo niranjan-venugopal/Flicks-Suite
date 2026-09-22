@@ -430,7 +430,7 @@ function Column({ col, base, over, onDragOver, onDragLeave, onDrop, selected, on
   setQuickAdd: (open: boolean) => void
   pipelineId?: string
   onInlineEdit: (id: string, patch: Record<string, unknown>) => void
-  reps: Array<{ user_id: string; name: string }>
+  reps: Array<{ user_id: string; name: string; avatar_url?: string | null }>
 }) {
   const st = col.stage
   return (
@@ -493,7 +493,7 @@ function DealCardView({ d, base, selected, dragging, onSelect, onOpen, onDragSta
   onDragStart: () => void
   onDragEnd: () => void
   onInlineEdit: (patch: Record<string, unknown>) => void
-  reps: Array<{ user_id: string; name: string }>
+  reps: Array<{ user_id: string; name: string; avatar_url?: string | null }>
 }) {
   const [editingValue, setEditingValue] = useState(false)
   const [editingDate, setEditingDate] = useState(false)
@@ -544,14 +544,14 @@ function DealCardView({ d, base, selected, dragging, onSelect, onOpen, onDragSta
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <span style={{ position: 'relative', lineHeight: 0 }} onClick={(e) => { e.stopPropagation(); setPickOwner((o) => !o) }}>
           <span title="Click to change owner" style={{ cursor: 'pointer', display: 'inline-flex' }}>
-            <OwnerAv name={d.owner_name ?? null} size={20} />
+            <OwnerAv name={d.owner_name ?? null} src={d.owner_avatar_url} size={20} />
           </span>
           {pickOwner && (
             <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 60, width: 172, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
               {reps.map((r) => (
                 <button key={r.user_id} onClick={(e) => { e.stopPropagation(); setPickOwner(false); onInlineEdit({ owner_user_id: r.user_id }) }}
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 7px', borderRadius: 7, background: r.user_id === d.owner_user_id ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer' }}>
-                  <OwnerAv name={r.name} size={18} /><span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{r.name}</span>
+                  <OwnerAv name={r.name} src={r.avatar_url} size={18} /><span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{r.name}</span>
                 </button>
               ))}
             </div>
@@ -682,7 +682,7 @@ function MobileSwimlane({ columns, base, onOpen, onQuickAdd, quickAddCol, pipeli
             </div>
             {col.cards.map((d) => (
               <div key={d.id} onClick={() => onOpen(d.id)} style={{ padding: '12px 14px', borderBottom: '1px solid var(--bord)', display: 'flex', gap: 11, alignItems: 'center', cursor: 'pointer' }}>
-                <OwnerAv name={d.owner_name ?? null} size={30} />
+                <OwnerAv name={d.owner_name ?? null} src={d.owner_avatar_url} size={30} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</div>
                   <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 2 }}>

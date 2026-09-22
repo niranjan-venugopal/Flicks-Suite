@@ -129,7 +129,7 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
                     <td style={td}>{d.company_name ?? <span style={{ color: 'var(--text-faint)' }}>—</span>}</td>
                     <td style={td}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                        <OwnerAv name={d.owner_name ?? null} size={18} />{d.owner_name ?? '—'}
+                        <OwnerAv name={d.owner_name ?? null} src={d.owner_avatar_url} size={18} />{d.owner_name ?? '—'}
                       </span>
                     </td>
                     <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>

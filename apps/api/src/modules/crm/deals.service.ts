@@ -272,7 +272,17 @@ export class DealsService {
   /** Full deal payload for the C3 detail page — one request, everything on it. */
   async get(tenantId: string, id: string) {
     return this.db.withTenant(tenantId, async (tx) => {
-      const [d] = await tx.select().from(deals).where(and(eq(deals.id, id), isNull(deals.deleted_at))).limit(1);
+      // `id` is a path param. House rule 1: anchor it to the tenant explicitly
+      // rather than trusting RLS alone — everything else on this page (stage
+      // history, products, people, tags and, since Round N, the OWNER's name
+      // and signed photo) hangs off this one row, so this predicate is what
+      // keeps the whole payload in-workspace. A foreign id reads as "not
+      // found", which is also what the caller should be told.
+      const [d] = await tx
+        .select()
+        .from(deals)
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.id, id), isNull(deals.deleted_at)))
+        .limit(1);
       if (!d) throw new NotFoundException('Deal not found');
       const base = await this.baseCurrency(tx, tenantId);
       const [history, products, people, tagRows, [owner], company] = await Promise.all([
@@ -416,6 +426,9 @@ export class DealsService {
             company_name: directoryCompanies.name,
             owner_user_id: deals.owner_user_id,
             owner_name: users.full_name,
+            // Round N: the key is stripped by signOwnerAvatars below.
+            owner_avatar_key: users.avatar_key,
+            owner_avatar_url: users.avatar_url,
             value_amount: deals.value_amount,
             currency: deals.currency,
             value_base_amount: deals.value_base_amount,
@@ -447,7 +460,8 @@ export class DealsService {
       ]);
       const total = countRow?.total ?? 0;
       return {
-        data: rows,
+        // Round N: owner face on every closed-deal row — the raw key never leaves.
+        data: await signOwnerAvatars(this.signAvatar, rows),
         pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
         base_currency: base,
       };
@@ -471,6 +485,9 @@ export class DealsService {
           expected_close_date: deals.expected_close_date,
           owner_user_id: deals.owner_user_id,
           owner_name: users.full_name,
+          // Round N: the key is stripped by signOwnerAvatars below.
+          owner_avatar_key: users.avatar_key,
+          owner_avatar_url: users.avatar_url,
           updated_at: deals.updated_at,
         })
         .from(deals)
@@ -479,7 +496,7 @@ export class DealsService {
         .where(and(eq(deals.tenant_id, tenantId), refWhere, isNull(deals.deleted_at)))
         .orderBy(desc(deals.updated_at))
         .limit(50);
-      return { data: rows, base_currency: base };
+      return { data: await signOwnerAvatars(this.signAvatar, rows), base_currency: base };
     });
   }
 

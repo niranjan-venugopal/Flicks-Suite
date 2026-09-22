@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
   activities,
@@ -15,6 +15,8 @@ import {
 import type { Db } from '@flicks/db';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
+import { MediaService } from '../media/public';
+import { signOwnerAvatars } from './owner-avatars';
 
 /**
  * CRM reports (PRD v5 §10, C16/C17, §19.6 goals). All sums in the tenant's
@@ -41,7 +43,14 @@ export class ReportsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
+    // Round N: LAST + optional so hand-built specs keep compiling; without it
+    // avatar signing falls back to the legacy public URL.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /** Signed avatar URL (64px) or the legacy public URL — never throws a read. */
+  private readonly signAvatar = (k: string | null, l: string | null): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(k, l, 64) : Promise.resolve(l);
 
   /**
    * C16 dashboard: pipeline snapshot, funnel conversion, win/loss by
@@ -53,14 +62,21 @@ export class ReportsService {
     const since = new Date(Date.now() - days * MS_DAY);
 
     return this.db.withTenant(tenantId, async (tx) => {
+      // `pipeline_id` arrives from the query string, and house rule 2 is that
+      // an id off the wire is resolved INSIDE the tenant tx with an explicit
+      // tenant predicate — `board()` already does exactly this. Without it the
+      // whole report (and, since Round N, the owner names + photos on it) hangs
+      // off a pipeline the caller merely named. An unknown/foreign id now falls
+      // through to `{ data: null }`, the same empty state as a CRM with no
+      // pipeline — no dead end, and nothing echoed back about it.
       const pl = opts.pipeline_id
-        ? (await tx.select().from(pipelines).where(and(eq(pipelines.id, opts.pipeline_id), isNull(pipelines.deleted_at))).limit(1))[0]
-        : (await tx.select().from(pipelines).where(isNull(pipelines.deleted_at)).orderBy(asc(pipelines.display_order)).limit(1))[0];
+        ? (await tx.select().from(pipelines).where(and(eq(pipelines.tenant_id, tenantId), eq(pipelines.id, opts.pipeline_id), isNull(pipelines.deleted_at))).limit(1))[0]
+        : (await tx.select().from(pipelines).where(and(eq(pipelines.tenant_id, tenantId), isNull(pipelines.deleted_at))).orderBy(asc(pipelines.display_order)).limit(1))[0];
       if (!pl) return { data: null };
       const stages = await tx
         .select()
         .from(pipelineStages)
-        .where(and(eq(pipelineStages.pipeline_id, pl.id), isNull(pipelineStages.deleted_at)))
+        .where(and(eq(pipelineStages.tenant_id, tenantId), eq(pipelineStages.pipeline_id, pl.id), isNull(pipelineStages.deleted_at)))
         .orderBy(asc(pipelineStages.display_order));
       const openStages = stages.filter((s) => s.stage_type === 'open');
 
@@ -73,7 +89,7 @@ export class ReportsService {
           avg_days: sql<number>`coalesce(avg(extract(epoch from now() - ${deals.updated_at})) / 86400, 0)::float`,
         })
         .from(deals)
-        .where(and(eq(deals.pipeline_id, pl.id), eq(deals.status, 'open'), isNull(deals.deleted_at)))
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.pipeline_id, pl.id), eq(deals.status, 'open'), isNull(deals.deleted_at)))
         .groupBy(deals.stage_id);
       const snapMap = new Map(snapshotRows.map((r) => [r.stage_id, r]));
       const snapshot = openStages.map((s) => {
@@ -93,13 +109,13 @@ export class ReportsService {
       const windowDeals = await tx
         .select({ id: deals.id, status: deals.status })
         .from(deals)
-        .where(and(eq(deals.pipeline_id, pl.id), gte(deals.created_at, since), isNull(deals.deleted_at)));
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.pipeline_id, pl.id), gte(deals.created_at, since), isNull(deals.deleted_at)));
       const windowIds = windowDeals.map((d) => d.id);
       const reached = windowIds.length
         ? await tx
             .select({ stage_id: dealStageHistory.to_stage_id, n: sql<number>`count(distinct ${dealStageHistory.deal_id})::int` })
             .from(dealStageHistory)
-            .where(inArray(dealStageHistory.deal_id, windowIds))
+            .where(and(eq(dealStageHistory.tenant_id, tenantId), inArray(dealStageHistory.deal_id, windowIds)))
             .groupBy(dealStageHistory.to_stage_id)
         : [];
       const reachedMap = new Map(reached.map((r) => [r.stage_id, r.n]));
@@ -124,6 +140,9 @@ export class ReportsService {
         .from(deals)
         .leftJoin(users, eq(users.id, deals.owner_user_id))
         .where(and(
+          // `by_owner` is keyed on users.full_name — the tenant predicate is
+          // what keeps that join anchored to THIS workspace's deals.
+          eq(deals.tenant_id, tenantId),
           eq(deals.pipeline_id, pl.id),
           inArray(deals.status, ['won', 'lost']),
           sql`coalesce(${deals.won_at}, ${deals.lost_at}) >= ${since.toISOString()}`,
@@ -178,6 +197,7 @@ export class ReportsService {
           .select({ n: sql<number>`count(*)::int` })
           .from(deals)
           .where(and(
+            eq(deals.tenant_id, tenantId),
             eq(deals.pipeline_id, pl.id),
             lt(deals.created_at, mEnd),
             sql`(${deals.status} = 'open' OR coalesce(${deals.won_at}, ${deals.lost_at}) >= ${mEnd.toISOString()})`,
@@ -194,19 +214,26 @@ export class ReportsService {
 
       // 5 · Activity leaderboard over the window + §19.6 goal progress this month.
       const reps = await tx
-        .select({ user_id: memberships.user_id, name: users.full_name })
+        .select({
+          user_id: memberships.user_id,
+          name: users.full_name,
+          // Round N: the leaderboard renders a person chip — sign below, and
+          // never put the raw key on a leaderboard row.
+          avatar_key: users.avatar_key,
+          avatar_url: users.avatar_url,
+        })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.user_id))
         .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active'), sql`${memberships.role} NOT IN ('auditor', 'guest')`));
       const actRows = await tx
         .select({ assignee: activities.assignee_user_id, type: activities.type, n: sql<number>`count(*)::int` })
         .from(activities)
-        .where(and(gte(activities.completed_at, since), sql`${activities.completed_at} IS NOT NULL`))
+        .where(and(eq(activities.tenant_id, tenantId), gte(activities.completed_at, since), sql`${activities.completed_at} IS NOT NULL`))
         .groupBy(activities.assignee_user_id, activities.type);
       const emailRows = await tx
         .select({ sender: emailMessages.sender_user_id, n: sql<number>`count(*)::int` })
         .from(emailMessages)
-        .where(and(eq(emailMessages.direction, 'out'), gte(emailMessages.created_at, since)))
+        .where(and(eq(emailMessages.tenant_id, tenantId), eq(emailMessages.direction, 'out'), gte(emailMessages.created_at, since)))
         .groupBy(emailMessages.sender_user_id);
       const emailMap = new Map(emailRows.map((r) => [r.sender, r.n]));
       const thisMonth = monthKey(new Date());
@@ -215,9 +242,16 @@ export class ReportsService {
       const wonThisMonth = await tx
         .select({ owner: deals.owner_user_id, total: sql<number>`coalesce(sum(${deals.value_base_amount}), 0)::float` })
         .from(deals)
-        .where(and(eq(deals.status, 'won'), gte(deals.won_at, monthStart(thisMonth)), isNull(deals.deleted_at)))
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.status, 'won'), gte(deals.won_at, monthStart(thisMonth)), isNull(deals.deleted_at)))
         .groupBy(deals.owner_user_id);
       const wonMap = new Map(wonThisMonth.map((r) => [r.owner, r.total]));
+
+      // Round N: one signature per rep (local SigV4 — no network, no DB).
+      const repAvatar = new Map(
+        await Promise.all(
+          reps.map(async (r) => [r.user_id, await this.signAvatar(r.avatar_key, r.avatar_url)] as const),
+        ),
+      );
 
       const leaderboard = reps.map((r) => {
         const acts = actRows.filter((a) => a.assignee === r.user_id);
@@ -226,6 +260,7 @@ export class ReportsService {
         return {
           user_id: r.user_id,
           name: r.name,
+          avatar_url: repAvatar.get(r.user_id) ?? null,
           calls: byType('call'),
           meetings: byType('meeting'),
           tasks: byType('task'),
@@ -258,26 +293,39 @@ export class ReportsService {
   async forecast(tenantId: string, opts: { months?: number } = {}) {
     const months = Math.min(Math.max(opts.months ?? 4, 2), 12);
     return this.db.withTenant(tenantId, async (tx) => {
-      const stages = await tx.select().from(pipelineStages).where(isNull(pipelineStages.deleted_at));
+      // Round N (house rule 1): every read in this method carries its own
+      // tenant predicate. The drill-down rows now render the deal OWNER — name
+      // and photo — so leaning on RLS alone here would make a mis-roled
+      // DATABASE_URL (round F) show other workspaces' people, not just numbers.
+      const stages = await tx
+        .select()
+        .from(pipelineStages)
+        .where(and(eq(pipelineStages.tenant_id, tenantId), isNull(pipelineStages.deleted_at)));
       const probOf = new Map(stages.map((s) => [s.id, s.win_probability]));
 
       const startKey = monthKey(new Date());
       const horizonStart = monthStart(startKey);
       const horizonEnd = monthStart(addMonths(startKey, months));
 
-      const open = await tx
+      const openRows = await tx
         .select({
           id: deals.id, title: deals.title, stage_id: deals.stage_id, owner_name: users.full_name,
+          // Round N: the drill-down rows show the owner — stripped + signed below.
+          owner_avatar_key: users.avatar_key,
+          owner_avatar_url: users.avatar_url,
           value: sql<number>`${deals.value_base_amount}::float`,
           close: deals.expected_close_date,
         })
         .from(deals)
         .leftJoin(users, eq(users.id, deals.owner_user_id))
-        .where(and(eq(deals.status, 'open'), isNull(deals.deleted_at), sql`${deals.expected_close_date} IS NOT NULL`));
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.status, 'open'), isNull(deals.deleted_at), sql`${deals.expected_close_date} IS NOT NULL`));
+      // Signed once for the whole horizon — the same deal can be sliced into a
+      // month more than once and must never re-sign per row.
+      const open = await signOwnerAvatars(this.signAvatar, openRows);
       const won = await tx
         .select({ won_at: deals.won_at, value: sql<number>`${deals.value_base_amount}::float` })
         .from(deals)
-        .where(and(eq(deals.status, 'won'), gte(deals.won_at, horizonStart), lt(deals.won_at, horizonEnd), isNull(deals.deleted_at)));
+        .where(and(eq(deals.tenant_id, tenantId), eq(deals.status, 'won'), gte(deals.won_at, horizonStart), lt(deals.won_at, horizonEnd), isNull(deals.deleted_at)));
       const goals = await tx.select().from(salesGoals).where(and(eq(salesGoals.tenant_id, tenantId), isNull(salesGoals.user_id)));
       const teamGoal = new Map(goals.map((g) => [g.period, Number(g.target_base)]));
 
@@ -304,7 +352,14 @@ export class ReportsService {
           deals: inMonth
             .sort((a, b) => b.value - a.value)
             .slice(0, 10)
-            .map((d) => ({ id: d.id, title: d.title, owner_name: d.owner_name, value: d.value, probability: probOf.get(d.stage_id) ?? 0 })),
+            .map((d) => ({
+              id: d.id,
+              title: d.title,
+              owner_name: d.owner_name,
+              owner_avatar_url: d.owner_avatar_url,
+              value: d.value,
+              probability: probOf.get(d.stage_id) ?? 0,
+            })),
         });
       }
       return { data: rows };
@@ -316,12 +371,31 @@ export class ReportsService {
   async listGoals(tenantId: string, period?: string) {
     return this.db.withTenant(tenantId, async (tx) => {
       const rows = await tx
-        .select({ goal: salesGoals, user_name: users.full_name })
+        .select({
+          goal: salesGoals,
+          user_name: users.full_name,
+          // Round N: the goals table renders a person chip (team rows have no
+          // user — both fields stay null there).
+          user_avatar_key: users.avatar_key,
+          user_avatar_url: users.avatar_url,
+        })
         .from(salesGoals)
         .leftJoin(users, eq(users.id, salesGoals.user_id))
         .where(period ? and(eq(salesGoals.tenant_id, tenantId), eq(salesGoals.period, period)) : eq(salesGoals.tenant_id, tenantId))
         .orderBy(desc(salesGoals.period));
-      return { data: rows.map((r) => ({ ...r.goal, target_base: Number(r.goal.target_base), user_name: r.user_name })) };
+      return {
+        data: await signOwnerAvatars(
+          this.signAvatar,
+          rows.map((r) => ({
+            ...r.goal,
+            target_base: Number(r.goal.target_base),
+            user_name: r.user_name,
+            user_avatar_key: r.user_avatar_key,
+            user_avatar_url: r.user_avatar_url,
+          })),
+          { keyField: 'user_avatar_key', urlField: 'user_avatar_url' },
+        ),
+      };
     });
   }
 

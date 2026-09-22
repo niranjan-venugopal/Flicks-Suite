@@ -191,8 +191,26 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
                   if (!active) e.currentTarget.style.background = 'transparent'
                 }}
               >
-                <div className="avatar sm" style={{ background: avBg(c.name) }}>
-                  {initials(c.name)}
+                {/* Same uploaded-logo-in-a-circular-mask pattern as the
+                    current-tenant chip above; initials when there's no logo. */}
+                <div
+                  className="avatar sm"
+                  style={
+                    c.logoUrl
+                      ? { background: 'var(--surf-2)', overflow: 'hidden', padding: 0 }
+                      : { background: avBg(c.name) }
+                  }
+                >
+                  {c.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={c.logoUrl}
+                      alt={c.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+                    />
+                  ) : (
+                    initials(c.name)
+                  )}
                 </div>
                 <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
                   <div

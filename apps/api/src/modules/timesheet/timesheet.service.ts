@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   Inject,
+  Optional,
   NotFoundException,
   ForbiddenException,
   BadRequestException,
@@ -31,6 +32,8 @@ import {
   routeStateColumns,
   shapeEscalation,
 } from '../approvals/public';
+import { MediaService } from '../media/media.service';
+import { withSignedAvatars } from '../../core/storage/signed-avatar';
 import type {
   BulkSaveEntriesDto,
   SubmitTimesheetDto,
@@ -81,7 +84,23 @@ export class TimesheetService {
     private readonly notificationsService: NotificationsService,
     // Round L: routing (who reviews, who may act) + escalation state.
     private readonly routing: ApprovalRoutingService,
+    // Round N: the team list and the utilization report render the person's
+    // photo (users.avatar_key needs signing). Optional + LAST so hand-built
+    // specs — `new TimesheetService(dbAdmin, db, audit, notifications, routing)`
+    // — keep compiling; without it the legacy users.avatar_url still serves.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /**
+   * Round N — 64 px signed avatar URL for a stored key, falling back to the
+   * legacy users.avatar_url (and to it alone when built without MediaService).
+   * Local SigV4 crypto — safe inside or after a tenant tx; prefer after.
+   */
+  private readonly signAvatar = (
+    key: string | null,
+    legacyUrl: string | null,
+  ): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(key, legacyUrl, 64) : Promise.resolve(legacyUrl);
 
   // ─── Internal helpers ──────────────────────────────────────────────────
 
@@ -276,6 +295,11 @@ export class TimesheetService {
           employeeId: timesheetEntries.employee_id,
           name: users.full_name,
           employeeCode: employees.employee_code,
+          // Round N: the report renders faces. Both columns are functionally
+          // dependent on the grouped employee, so adding them to GROUP BY
+          // (Postgres requires it) cannot change the aggregates.
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
           billable: sql<number>`COALESCE(SUM(CASE WHEN ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
           nonBillable: sql<number>`COALESCE(SUM(CASE WHEN NOT ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
         })
@@ -293,23 +317,30 @@ export class TimesheetService {
           timesheetEntries.employee_id,
           users.full_name,
           employees.employee_code,
+          users.avatar_key,
+          users.avatar_url,
         ),
     );
 
-    const byEmployee = rows.map((r) => {
-      const billable = Number(r.billable ?? 0);
-      const nonBillable = Number(r.nonBillable ?? 0);
-      const total = billable + nonBillable;
-      return {
-        employeeId: r.employeeId,
-        name: r.name,
-        employeeCode: r.employeeCode,
-        billableHours: billable,
-        nonBillableHours: nonBillable,
-        totalHours: total,
-        utilization: total > 0 ? billable / total : 0,
-      };
-    });
+    // Signing is local crypto (no network, no DB) and the tx has returned —
+    // the mapper drops avatarKey so the private R2 key never ships.
+    const byEmployee = await Promise.all(
+      rows.map(async (r) => {
+        const billable = Number(r.billable ?? 0);
+        const nonBillable = Number(r.nonBillable ?? 0);
+        const total = billable + nonBillable;
+        return {
+          employeeId: r.employeeId,
+          name: r.name,
+          employeeCode: r.employeeCode,
+          avatarUrl: await this.signAvatar(r.avatarKey, r.avatarUrl),
+          billableHours: billable,
+          nonBillableHours: nonBillable,
+          totalHours: total,
+          utilization: total > 0 ? billable / total : 0,
+        };
+      }),
+    );
     byEmployee.sort((a, b) => b.totalHours - a.totalHours);
 
     const totals = byEmployee.reduce(
@@ -743,7 +774,7 @@ export class TimesheetService {
     query: TimesheetListQueryDto,
     roleHint?: string,
   ) {
-    return this.databaseService.withTenant(tenantId, async (db) => {
+    const result = await this.databaseService.withTenant(tenantId, async (db) => {
       const reviewer = await this.routing.resolveReviewerTx(db, tenantId, userId, roleHint);
       const page = query.page ?? 1;
       const limit = Math.min(query.limit ?? 20, 100);
@@ -763,6 +794,11 @@ export class TimesheetService {
             id: timesheetPeriods.id,
             employeeId: timesheetPeriods.employee_id,
             employeeUserId: employees.user_id,
+            // Round N — the approval queue renders the same face as the team
+            // list (/team/timesheets reads both); signed AFTER the tx and the
+            // private key stripped by the mapper.
+            avatarKey: users.avatar_key,
+            avatarUrl: users.avatar_url,
             employeeCode: employees.employee_code,
             employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
             periodStart: timesheetPeriods.period_start,
@@ -779,6 +815,8 @@ export class TimesheetService {
           })
           .from(timesheetPeriods)
           .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // LEFT — an employee with no user account keeps its row in the queue.
+          .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
             escalatedTo,
             and(
@@ -807,6 +845,9 @@ export class TimesheetService {
         pagination: { page, limit, total: Number(totalRow[0]?.n ?? 0) },
       };
     });
+    // Round N — sign AFTER the tenant transaction (local SigV4 crypto, no DB);
+    // the mapper strips avatarKey from every row.
+    return { ...result, data: await withSignedAvatars(this.signAvatar, result.data) };
   }
 
   // ─── 6b. Team periods (Round I: Team → Timesheets — Pending review | All) ──
@@ -830,7 +871,7 @@ export class TimesheetService {
     const offset = (page - 1) * limit;
     const status = query.status ?? 'all';
 
-    return this.databaseService.withTenant(tenantId, async (db) => {
+    const result = await this.databaseService.withTenant(tenantId, async (db) => {
       // Round L: the org chart still decides the SCOPE (owner/admin: the
       // workspace — the "open directly" surface; managers: direct reports),
       // while `routedToMe` says whether the row is in the caller's queue.
@@ -866,6 +907,11 @@ export class TimesheetService {
             id: timesheetPeriods.id,
             employeeId: timesheetPeriods.employee_id,
             employeeUserId: employees.user_id,
+            // Round N: the row renders the person's face. `users` is
+            // platform-global — joined by id off the tenant-scoped employee,
+            // which keeps the tenant predicate on timesheet_periods.
+            avatarKey: users.avatar_key,
+            avatarUrl: users.avatar_url,
             employeeCode: employees.employee_code,
             employeeName: sql<string>`COALESCE(${employees.first_name}, '') || ' ' || COALESCE(${employees.last_name}, '')`,
             periodStart: timesheetPeriods.period_start,
@@ -890,6 +936,7 @@ export class TimesheetService {
           })
           .from(timesheetPeriods)
           .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
             approver,
             and(eq(approver.id, timesheetPeriods.approver_id), eq(approver.tenant_id, tenantId)),
@@ -931,6 +978,9 @@ export class TimesheetService {
         scope: orgWide ? ('org' as const) : ('team' as const),
       };
     });
+    // Round N — sign the photos AFTER the tenant transaction (local SigV4
+    // crypto, no DB); the mapper strips avatarKey from every row.
+    return { ...result, data: await withSignedAvatars(this.signAvatar, result.data) };
   }
 
   // ─── 7. Review (approve / reject / rework) ─────────────────────────────

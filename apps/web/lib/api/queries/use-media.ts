@@ -51,6 +51,16 @@ const AVATAR_QUERY_KEYS = [
   ['reports'],
   ['pm', 'users'],
   ['dashboard'],
+  // Round N: every list that now renders a face off its own payload. Roots
+  // match the real queryKey heads in lib/api/queries (note 'timesheet',
+  // singular). Coarse roots are fine — invalidate only refetches what's live.
+  ['attendance'],
+  ['leave'],
+  ['timesheet'],
+  ['crm'],
+  ['calendar'],
+  ['audit'],
+  ['fam'],
 ] as const
 
 function invalidateAvatarSurfaces(qc: ReturnType<typeof useQueryClient>) {

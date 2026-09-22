@@ -146,6 +146,8 @@ export interface FamTenantMember {
   userId: string
   email: string | null
   fullName: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   role: string
   status: string
   invitedAt: string | null

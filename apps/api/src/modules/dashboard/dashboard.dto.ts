@@ -169,6 +169,8 @@ export interface ActivityItemDto {
   resourceId: string | null;
   actorUserId: string | null;
   actorName: string | null;
+  /** Round N — signed 64 px photo of the actor (legacy URL / null fallback). */
+  avatarUrl: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string;
 }

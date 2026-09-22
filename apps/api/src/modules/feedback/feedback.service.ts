@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { and, count, desc, eq, gt, sql } from 'drizzle-orm';
 import {
@@ -21,6 +22,7 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { DatabaseService } from '../../core/database/database.service';
 import { AnalyticsService } from '../../core/analytics/analytics.service';
 import { AuditService } from '../audit/audit.service';
+import { MediaService } from '../media/media.service';
 
 const SURVEY_KEY = 'beta_nps_v1';
 const NPS_MIN_ACCOUNT_AGE_DAYS = 21;
@@ -39,7 +41,14 @@ export class FeedbackService {
     private readonly db: DatabaseService,
     private readonly analytics: AnalyticsService,
     private readonly audit: AuditService,
+    // Round N: LAST + optional so hand-built specs keep compiling; without it
+    // avatar signing falls back to the legacy public URL.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /** Signed avatar URL (64px) or the legacy public URL — never throws a read. */
+  private readonly signAvatar = (k: string | null, l: string | null): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(k, l, 64) : Promise.resolve(l);
 
   // ─── Feedback (D10-R panel) ─────────────────────────────────────────────────
 
@@ -267,6 +276,9 @@ export class FeedbackService {
         tenant_name: tenants.name,
         user_id: feedbackSubmissions.user_id,
         user_name: users.full_name,
+        // Round N: the FAM inbox shows who wrote it — key stripped + signed below.
+        user_avatar_key: users.avatar_key,
+        user_avatar_url: users.avatar_url,
         user_email: users.email,
         category: feedbackSubmissions.category,
         message: feedbackSubmissions.message,
@@ -283,7 +295,13 @@ export class FeedbackService {
       .limit(200);
     // Contact-ok gates the email in the payload (D12: "contact-ok exposes email").
     return {
-      data: rows.map((r) => ({ ...r, user_email: r.contact_ok ? r.user_email : null })),
+      data: await Promise.all(
+        rows.map(async ({ user_avatar_key, ...r }) => ({
+          ...r,
+          user_email: r.contact_ok ? r.user_email : null,
+          user_avatar_url: await this.signAvatar(user_avatar_key, r.user_avatar_url),
+        })),
+      ),
     };
   }
 

@@ -26,6 +26,8 @@ import {
   Sparkline,
 } from '@/components/proto'
 import { ClockCard } from '@/components/attendance/ClockCard'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -265,7 +267,7 @@ function AdminDashboard() {
                     gap: 14,
                   }}
                 >
-                  <Avatar name={a.who} size="sm" />
+                  <Avatar name={a.who} size="sm" src={a.avatarUrl ?? undefined} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                       <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: '-0.01em' }}>
@@ -473,6 +475,7 @@ function AdminDashboard() {
                   verb={prettifyAction(item.action)}
                   target={prettifyResource(item.resourceType, item.metadata)}
                   when={relativeTime(item.createdAt)}
+                  avatarUrl={item.avatarUrl}
                 />
               ))}
               {activity.data?.pages.flat().length === 0 && !activity.isLoading && (
@@ -641,15 +644,17 @@ function ActivityRow({
   verb,
   target,
   when,
+  avatarUrl,
 }: {
   who: string
   verb: string
   target: string
   when: string
+  avatarUrl?: string | null
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-      <Avatar name={who} size="sm" />
+      <Avatar name={who} size="sm" src={avatarUrl ?? undefined} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
           <span style={{ color: '#fff', fontWeight: 800 }}>{who}</span> {verb}{' '}
@@ -681,6 +686,8 @@ interface PendingItem {
   what: string
   when: string
   tone: PillTone
+  /** Signed photo off the approval row; null → initials. */
+  avatarUrl: string | null
 }
 
 function buildPendingList(o: AdminOverview | undefined): PendingItem[] {
@@ -694,6 +701,7 @@ function buildPendingList(o: AdminOverview | undefined): PendingItem[] {
       what: `${l.leaveTypeCode ?? l.leaveTypeName ?? 'Leave'} · ${l.totalDays}d (${fmtRange(l.startDate, l.endDate)})`,
       when: relativeTime(l.appliedAt),
       tone: 'blue',
+      avatarUrl: l.avatarUrl ?? null,
     })
   }
   for (const r of o.pending.regularizations) {
@@ -704,6 +712,7 @@ function buildPendingList(o: AdminOverview | undefined): PendingItem[] {
       what: `${r.requestType} · ${r.attendanceDate}`,
       when: relativeTime(r.requestedAt),
       tone: 'coral',
+      avatarUrl: r.avatarUrl ?? null,
     })
   }
   return items
@@ -818,6 +827,15 @@ function ManagerDashboard() {
   const data = overview.data
   const pending = useMemo(() => buildPendingList(data), [data])
   const roster = teamToday.data ?? []
+
+  // Seed presence for the faces in "Your team today"; the socket keeps the
+  // dots live afterwards.
+  usePresence(
+    useMemo(
+      () => roster.map((t) => t.employeeUserId).filter((id): id is string => !!id),
+      [roster],
+    ),
+  )
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
 
@@ -961,7 +979,12 @@ function ManagerDashboard() {
                         gap: 10,
                       }}
                     >
-                      <Avatar name={t.employeeName} size="sm" />
+                      <RowPresenceAvatar
+                        name={t.employeeName}
+                        src={t.avatarUrl ?? null}
+                        userId={t.employeeUserId ?? null}
+                        size={26}
+                      />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {t.employeeName}
@@ -1011,7 +1034,7 @@ function ManagerDashboard() {
                     gap: 10,
                   }}
                 >
-                  <Avatar name={a.who} size="sm" />
+                  <Avatar name={a.who} size="sm" src={a.avatarUrl ?? undefined} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{

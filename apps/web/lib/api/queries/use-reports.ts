@@ -80,6 +80,8 @@ export interface UtilizationEmployeeRow {
   employeeId: string
   name: string | null
   employeeCode: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   billableHours: number
   nonBillableHours: number
   totalHours: number
@@ -222,6 +224,8 @@ export interface AuditLogEntry {
   actorUserId: string | null
   actorName: string | null
   actorEmail: string | null
+  /** Signed actor photo — optional: older API builds omit it. */
+  avatarUrl?: string | null
   action: string
   resourceType: string
   resourceId: string | null

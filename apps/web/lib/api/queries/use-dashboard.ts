@@ -138,6 +138,8 @@ export interface ActivityItem {
   resourceId: string | null
   actorUserId: string | null
   actorName: string | null
+  /** Signed actor photo — optional: older API builds omit it. */
+  avatarUrl?: string | null
   metadata: Record<string, unknown> | null
   createdAt: string
 }

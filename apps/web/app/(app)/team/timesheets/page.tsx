@@ -3,7 +3,9 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
-import { Avatar, Btn, Icon, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { Btn, Icon, Pill, SectionHead, type PillTone } from '@/components/proto'
+import { RowPresenceAvatar } from '@/components/presence/RowPresence'
+import { usePresence } from '@/lib/api/queries/use-presence'
 import { EscalationPill } from '@/components/approvals/EscalationPill'
 import type { ApprovalEscalation } from '@/lib/api/queries/use-dashboard'
 import {
@@ -42,6 +44,9 @@ type Row = {
   employeeId?: string
   employeeCode?: string | null
   employeeName?: string | null
+  employeeUserId?: string | null
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   periodStart: string
   periodEnd: string
   status: string
@@ -126,6 +131,15 @@ function TeamTimesheetsInner() {
   const pendingRows: Row[] = useMemo(() => [...mine, ...others], [mine, others])
   const allRows: Row[] = all.data?.data ?? []
   const rows = tab === 'pending' ? pendingRows : allRows
+
+  // Seed presence for the faces on screen; the socket keeps the dots live.
+  usePresence(
+    useMemo(
+      () => rows.map((r) => r.employeeUserId).filter((id): id is string => !!id),
+      [rows],
+    ),
+  )
+
   const loading = tab === 'pending' ? (pending.isLoading || teamSubmitted.isLoading) : all.isLoading
   const scope = teamSubmitted.data?.scope ?? all.data?.scope
 
@@ -256,7 +270,12 @@ function TeamTimesheetsInner() {
                     >
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                          <Avatar name={name} size="sm" />
+                          <RowPresenceAvatar
+                            name={name}
+                            src={r.avatarUrl ?? null}
+                            userId={r.employeeUserId ?? null}
+                            size={30}
+                          />
                           <div>
                             <div style={{ fontSize: 13, fontWeight: 800 }}>{name}</div>
                             {r.employeeCode && r.employeeName && (
@@ -352,7 +371,12 @@ function ReviewDialog({ period, action, comment, setComment, isPending, onSubmit
         </DialogHeader>
 
         <div style={{ background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, padding: 14, display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0 14px' }}>
-          <Avatar name={displayName(period)} size="sm" />
+          <RowPresenceAvatar
+            name={displayName(period)}
+            src={period.avatarUrl ?? null}
+            userId={period.employeeUserId ?? null}
+            size={30}
+          />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 800 }}>{displayName(period)}</div>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>

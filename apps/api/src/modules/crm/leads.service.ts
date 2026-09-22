@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
   directoryCompanies,
@@ -12,7 +12,9 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { PresencePublicService } from '../presence/public';
+import { MediaService } from '../media/public';
 import { DealsService } from './deals.service';
+import { signOwnerAvatars } from './owner-avatars';
 
 /**
  * Leads inbox (PRD v5 §5.1, C6) — a lead is a lightweight triage row from web
@@ -56,7 +58,14 @@ export class LeadsService {
     private readonly domainEvents: DomainEventsService,
     private readonly presence: PresencePublicService,
     private readonly deals: DealsService,
+    // Round N: LAST + optional so hand-built specs keep compiling; without it
+    // avatar signing falls back to the legacy public URL.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /** Signed avatar URL (64px) or the legacy public URL — never throws a read. */
+  private readonly signAvatar = (k: string | null, l: string | null): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(k, l, 64) : Promise.resolve(l);
 
   async list(tenantId: string, status?: string) {
     return this.db.withTenant(tenantId, async (tx) => {
@@ -69,6 +78,10 @@ export class LeadsService {
         .select({
           lead: leads,
           owner_name: users.full_name,
+          // Round N: the owner's face on the inbox row — the key is stripped
+          // (and turned into a signed url) by signOwnerAvatars below.
+          owner_avatar_key: users.avatar_key,
+          owner_avatar_url: users.avatar_url,
         })
         .from(leads)
         .leftJoin(users, eq(users.id, leads.owner_user_id))
@@ -93,13 +106,18 @@ export class LeadsService {
         .groupBy(leads.status);
 
       return {
-        data: rows.map((r) => ({
-          ...r.lead,
-          owner_name: r.owner_name,
-          dupe_person: r.lead.status === 'new' || r.lead.status === 'working'
-            ? (dupeByEmail.get(r.lead.email?.toLowerCase() ?? '') ?? null)
-            : null,
-        })),
+        data: await signOwnerAvatars(
+          this.signAvatar,
+          rows.map((r) => ({
+            ...r.lead,
+            owner_name: r.owner_name,
+            owner_avatar_key: r.owner_avatar_key,
+            owner_avatar_url: r.owner_avatar_url,
+            dupe_person: r.lead.status === 'new' || r.lead.status === 'working'
+              ? (dupeByEmail.get(r.lead.email?.toLowerCase() ?? '') ?? null)
+              : null,
+          })),
+        ),
         counts: Object.fromEntries(counts.map((c) => [c.status, c.n])),
       };
     });

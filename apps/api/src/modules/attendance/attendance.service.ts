@@ -1830,7 +1830,7 @@ export class AttendanceService {
     const limit = Math.min(query.limit ?? 20, 100);
     const offset = (page - 1) * limit;
 
-    const data = await this.databaseService.withTenant(tenantId, async (tx) => {
+    const queueRows = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewerScope(tx, userId, tenantId, roleHint);
       const escalatedTo = pgAlias(employees, 'reg_escalated_to');
       const rows = await tx
@@ -1845,6 +1845,11 @@ export class AttendanceService {
           createdAt: attendanceRegularizations.created_at,
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
+          // Round N — the queue renders the same face as the detail view
+          // (getRegularizationForReviewer); signed AFTER the tx, the private
+          // key stripped by the mapper.
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
           escalationLevel: attendanceRegularizations.escalation_level,
           escalationReason: attendanceRegularizations.escalation_reason,
           escalatedAt: attendanceRegularizations.escalated_at,
@@ -1855,6 +1860,9 @@ export class AttendanceService {
           employees,
           eq(attendanceRegularizations.employee_id, employees.id),
         )
+        // LEFT — an employee with no user account keeps its row in the queue
+        // (the `IS DISTINCT FROM` predicate below relies on exactly that).
+        .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(
           escalatedTo,
           and(
@@ -1891,6 +1899,9 @@ export class AttendanceService {
       }));
     });
 
+    // Round N — sign AFTER the tenant transaction (local SigV4 crypto, no DB);
+    // the mapper strips avatarKey from every row.
+    const data = await withSignedAvatars(this.signAvatar, queueRows);
     return { data, pagination: { page, limit, total: data.length } };
   }
 
@@ -1908,7 +1919,7 @@ export class AttendanceService {
     tenantId: string,
     roleHint?: string,
   ) {
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    const shaped = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewerScope(tx, userId, tenantId, roleHint);
       const escalatedTo = pgAlias(employees, 'reg_escalated_to');
       const [row] = await tx
@@ -1980,12 +1991,18 @@ export class AttendanceService {
         reason: row.reason,
         status: row.status,
         requestedAt: row.requestedAt.toISOString(),
-        // Round N — was a hard-coded null (initials forever). Signing is
-        // local SigV4 crypto, safe inside the tx; the key never leaves here.
-        avatarUrl: await this.signAvatar(row.avatarKey, row.avatarUrlRaw),
+        // Round N — was a hard-coded null (initials forever). Carried out of
+        // the tx as the key + legacy pair and signed below, so the pool
+        // connection is never held for crypto.
+        avatarKey: row.avatarKey,
+        avatarUrlRaw: row.avatarUrlRaw,
         escalation: shapeEscalation(row, row.escalatedToName),
       };
     });
+    // Round N — sign AFTER the tenant transaction; neither the key nor the
+    // raw legacy column survives into the response.
+    const { avatarKey, avatarUrlRaw, ...rest } = shaped;
+    return { ...rest, avatarUrl: await this.signAvatar(avatarKey, avatarUrlRaw) };
   }
 
   async reviewRegularization(

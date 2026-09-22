@@ -128,6 +128,8 @@ export interface TeamTimesheetPeriod {
   employeeUserId: string | null
   employeeCode: string | null
   employeeName: string
+  /** Signed photo URL — optional: older API builds omit it. */
+  avatarUrl?: string | null
   periodStart: string
   periodEnd: string
   status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'locked'

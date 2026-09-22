@@ -3,7 +3,8 @@
 import { use, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon, Pill, Toggle, avBg, initials } from '@/components/proto'
+import { Btn, Icon, Pill, Toggle } from '@/components/proto'
+import { PmAv } from '@/components/pm/projects'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { StateGlyph, PM_CAT_COLOR } from '@/components/pm/glyphs'
 import { PmPage } from '@/components/pm/PmPage'
@@ -42,7 +43,7 @@ interface TeamsResp {
     labels: Array<{ id: string; team_id: string | null; name: string; color: string }>
   }
 }
-interface UsersResp { data: Array<{ id: string; name: string }> }
+interface UsersResp { data: Array<{ id: string; name: string; avatar_url?: string | null }> }
 interface TemplatesResp { data: Array<{ id: string; name: string; title_pattern: string | null; description_md: string | null; default_priority: number | null; is_team_default: boolean }> }
 
 export default function TeamSettingsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -112,6 +113,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
   const states = (d?.states ?? []).filter((s) => s.team_id === teamId)
   const teamLabels = (d?.labels ?? []).filter((l) => l.team_id === teamId)
   const userName = (id: string) => usersQ.data?.data.find((u) => u.id === id)?.name ?? '—'
+  const userAvatar = (id: string) => usersQ.data?.data.find((u) => u.id === id)?.avatar_url ?? null
   const templates = templatesQ.data?.data ?? []
   const tmpl = templates.find((t) => t.id === tmplSel) ?? templates[0] ?? null
 
@@ -198,7 +200,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {members.map((m) => (
               <div key={m.user_id} style={rowCard}>
-                <span style={{ width: 22, height: 22, borderRadius: '50%', background: avBg(userName(m.user_id)), color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8.5, fontWeight: 800 }}>{initials(userName(m.user_id))}</span>
+                <PmAv name={userName(m.user_id)} src={userAvatar(m.user_id)} size={22} />
                 <span style={{ flex: 1, fontSize: 12.5, fontWeight: 700 }}>{userName(m.user_id)}</span>
                 {m.is_lead && <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)' }}>★ Lead</span>}
                 {canCfg && (
