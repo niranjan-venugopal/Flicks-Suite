@@ -96,7 +96,10 @@ export function TeamToday() {
   // Managers get their direct reports from the API; every other permitted
   // role (owner/admin/finance) gets the whole workspace.
   const orgWide = role !== 'MANAGER'
-  const rows = data ?? []
+  // `data ?? []` inline would be a fresh array on every render while the query
+  // is loading, which makes `[rows]` a dep that always changes — the memos
+  // below would then re-run each render and hand usePresence a new id array.
+  const rows = useMemo(() => data ?? [], [data])
 
   // Seed the presence batch for the faces on screen; the socket keeps the
   // dots live from there (mirrors the Team page).

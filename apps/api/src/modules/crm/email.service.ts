@@ -101,13 +101,18 @@ export class CrmEmailService {
       tenantId,
       async (tx) => {
         // Resolve the deal + person context.
+        // House rule 2: `deal_id` / `person_id` / `template_id` all arrive off
+        // the wire, so each is resolved with an explicit tenant predicate. The
+        // person one is the sharp end — its `email` becomes the RECIPIENT, so
+        // an unscoped lookup would let a foreign id address the message out of
+        // this workspace entirely.
         const [deal] = dto.deal_id
-          ? await tx.select().from(deals).where(and(eq(deals.id, dto.deal_id), isNull(deals.deleted_at))).limit(1)
+          ? await tx.select().from(deals).where(and(eq(deals.tenant_id, tenantId), eq(deals.id, dto.deal_id), isNull(deals.deleted_at))).limit(1)
           : [undefined];
         if (dto.deal_id && !deal) throw new NotFoundException('Deal not found');
         const personId = dto.person_id ?? deal?.primary_person_id ?? null;
         const [person] = personId
-          ? await tx.select().from(directoryPeople).where(and(eq(directoryPeople.id, personId), isNull(directoryPeople.deleted_at))).limit(1)
+          ? await tx.select().from(directoryPeople).where(and(eq(directoryPeople.tenant_id, tenantId), eq(directoryPeople.id, personId), isNull(directoryPeople.deleted_at))).limit(1)
           : [undefined];
         const to = (dto.to ?? person?.email ?? '').trim().toLowerCase();
         if (!to) throw new BadRequestException('No recipient — link a contact with an email or pass `to`');
@@ -123,7 +128,7 @@ export class CrmEmailService {
         let subject = dto.subject;
         let body = dto.body_html;
         if (dto.template_id) {
-          const [tpl] = await tx.select().from(emailTemplates).where(and(eq(emailTemplates.id, dto.template_id), eq(emailTemplates.archived, false))).limit(1);
+          const [tpl] = await tx.select().from(emailTemplates).where(and(eq(emailTemplates.tenant_id, tenantId), eq(emailTemplates.id, dto.template_id), eq(emailTemplates.archived, false))).limit(1);
           if (!tpl) throw new NotFoundException('Template not found');
           subject = dto.subject?.trim() ? dto.subject : tpl.subject;
           body = dto.body_html?.trim() ? dto.body_html : tpl.body_html;

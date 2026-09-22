@@ -826,7 +826,9 @@ function ManagerDashboard() {
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
   const pending = useMemo(() => buildPendingList(data), [data])
-  const roster = teamToday.data ?? []
+  // Memoised: an inline `?? []` is a fresh array every render, which would
+  // make the presence id array below recompute on each one.
+  const roster = useMemo(() => teamToday.data ?? [], [teamToday.data])
 
   // Seed presence for the faces in "Your team today"; the socket keeps the
   // dots live afterwards.

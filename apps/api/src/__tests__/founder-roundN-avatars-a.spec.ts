@@ -385,6 +385,10 @@ describe('Round N — attendance', () => {
       expect(res.employeeId).toBe(p.employeeId);
       expect([label, res.avatarUrl]).toEqual([label, p.expected]);
       expectNoKeyLeak(res);
+      // The detail carries the pair out of the transaction under working
+      // names; neither may survive into the response shape the Inbox reads.
+      expect(Object.keys(res)).not.toContain('avatarKey');
+      expect(Object.keys(res)).not.toContain('avatarUrlRaw');
     }
   });
 
@@ -546,6 +550,117 @@ describe('Round N — dashboard', () => {
     }
     expectNoKeyLeak(items);
   });
+
+  // Round N review: the feed paginates by cursor, and the cursor branch is a
+  // SECOND query — one that must hand its rows to the same mapper. A row that
+  // skips it keeps `avatarKey` (the private path) and loses its face.
+  it('signs the actor photo on the cursor (`before`) branch too', async () => {
+    const firstPage = await dashboardService.getActivity(T1, { limit: 1 });
+    expect(firstPage).toHaveLength(1);
+    const rest = await dashboardService.getActivity(T1, { limit: 50, before: firstPage[0]!.id });
+    expect(rest.length).toBeGreaterThan(0);
+    expectNoKeyLeak(rest);
+    const all = [...firstPage, ...rest];
+    for (const [label, p] of cases()) {
+      const item = all.find((i) => i.actorUserId === p.userId);
+      expect(item).toBeDefined();
+      expect([label, item!.avatarUrl]).toEqual([label, p.expected]);
+    }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 4b. The Inbox approvals queue — dashboard.getAdminOverview
+//
+// Round N review: `getActivity` was the endpoint Round N changed, but it is the
+// SIBLING on the same service that the whole company looks at — the Inbox
+// (components/inbox/ApprovalsTab reads exactly these four buckets, each with a
+// face). Its four person projections each sign by hand, so the leak sweep and
+// the 64 px contract have to be pinned here rather than inferred from the feed.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('Round N — the Inbox approvals queue carries the same faces', () => {
+  /** An onboarding candidate awaiting review — the `withAvatars` bucket. */
+  let onboarding: Person;
+
+  beforeAll(async () => {
+    onboarding = await mkPerson('Onboard', 'employee', {
+      managerId: owner.employeeId,
+      avatarKey: 'ob',
+    });
+    // Submitted for review and not yet active — the exact pair the onboarding
+    // bucket filters on. Left out of every other fixture count on purpose.
+    await dbAdmin
+      .update(employees)
+      .set({
+        status: 'inactive',
+        custom_fields: {
+          onboarding_submitted_for_review: true,
+          onboarding_submitted_at: '2026-09-01T00:00:00.000Z',
+        },
+      })
+      .where(eq(employees.id, onboarding.employeeId));
+  });
+
+  const asOwner = () =>
+    dashboardService.getAdminOverview(T1, {
+      callerUserId: owner.userId,
+      includeOnboarding: true,
+      includeApprovals: true,
+      pendingLimit: 50,
+    });
+
+  it('signs every pending bucket — leave, regularization, timesheet, onboarding', async () => {
+    const overview = await asOwner();
+    for (const [label, p] of cases()) {
+      const leave = overview.pending.leaves.find((r) => r.employeeId === p.employeeId);
+      const reg = overview.pending.regularizations.find((r) => r.employeeId === p.employeeId);
+      const ts = overview.pending.timesheets.find((r) => r.employeeId === p.employeeId);
+      expect([label, leave?.avatarUrl]).toEqual([label, p.expected]);
+      expect([label, reg?.avatarUrl]).toEqual([label, p.expected]);
+      expect([label, ts?.avatarUrl]).toEqual([label, p.expected]);
+    }
+    const ob = overview.pending.onboarding.find((r) => r.employeeId === onboarding.employeeId);
+    expect(ob).toBeDefined();
+    expect(ob!.avatarUrl).toBe(onboarding.expected);
+    // `withAvatars` must DELETE the column, not null it: JSON.stringify hides
+    // `avatarKey: undefined`, so the sweep below would never see it.
+    expect(Object.prototype.hasOwnProperty.call(ob!, 'avatarKey')).toBe(false);
+    expectNoKeyLeak(overview);
+  });
+
+  it('asks for the 64 px rendition on all four buckets', async () => {
+    mediaCalls.length = 0;
+    await asOwner();
+    // 3 photo states × 3 approval buckets + the onboarding candidate.
+    expect(mediaCalls.length).toBeGreaterThanOrEqual(10);
+    expect([...new Set(mediaCalls.map((c) => c.size))]).toStrictEqual([64]);
+  });
+
+  it('degrades to the legacy column — never the raw key — with no MediaService', async () => {
+    // The dashboard takes its signer as a REQUIRED ctor argument, so this can
+    // only happen through a cast today; the read path must still answer rather
+    // than throw a TypeError at an Inbox that only wanted a picture.
+    const noMedia = new DashboardService(dbSvc, undefined as unknown as MediaService, routing);
+    const overview = await noMedia.getAdminOverview(T1, {
+      callerUserId: owner.userId,
+      includeOnboarding: true,
+      includeApprovals: true,
+      pendingLimit: 50,
+    });
+    const pick = (p: Person) => overview.pending.leaves.find((r) => r.employeeId === p.employeeId);
+    expect(pick(keyed)!.avatarUrl).toBeNull();
+    expect(pick(legacy)!.avatarUrl).toBe(LEGACY_URL);
+    expect(
+      overview.pending.onboarding.find((r) => r.employeeId === onboarding.employeeId)!.avatarUrl,
+    ).toBeNull();
+    expectNoKeyLeak(overview);
+
+    const feed = await noMedia.getActivity(T1, { limit: 50 });
+    expect(feed.find((i) => i.actorUserId === keyed.userId)!.avatarUrl).toBeNull();
+    expect(feed.find((i) => i.actorUserId === legacy.userId)!.avatarUrl).toBe(LEGACY_URL);
+    expectNoKeyLeak(feed);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -639,6 +754,48 @@ describe('Round N — the avatar join never narrows a list', () => {
     expect(tsPending.data).toHaveLength(4);
     expect(tsPending.pagination.total).toBe(4);
   });
+
+  /**
+   * Round N review: the team lists sign OUTSIDE the transaction, on the object
+   * the tx returned — so every branch that builds that object has to reach the
+   * mapper. A status filter and an offset each take their own path through the
+   * query; a row that came back on page 2, or under `?status=`, must arrive
+   * signed and without the private key exactly like page 1.
+   */
+  it('signs (and strips) on the status-filtered and paginated branches', async () => {
+    const seenLeave = new Map<string, string | null>();
+    for (let page = 1; page <= 4; page++) {
+      const res = await leaveService.listTeam(owner.userId, T1, { status: 'pending', page, limit: 1 }, 'owner');
+      expectNoKeyLeak(res);
+      for (const r of res.data) seenLeave.set(r.employeeId, r.avatarUrl ?? null);
+    }
+    const seenTs = new Map<string, string | null>();
+    for (let page = 1; page <= 4; page++) {
+      const res = await timesheetService.listTeam(owner.userId, T1, { status: 'submitted', page, limit: 1 }, 'owner');
+      expectNoKeyLeak(res);
+      for (const r of res.data) seenTs.set(r.employeeId, r.avatarUrl ?? null);
+    }
+    for (const [label, p] of cases()) {
+      expect([label, seenLeave.get(p.employeeId)]).toEqual([label, p.expected]);
+      expect([label, seenTs.get(p.employeeId)]).toEqual([label, p.expected]);
+    }
+
+    // A filter that matches nothing must still answer an empty list, never a
+    // half-mapped row set.
+    const none = await leaveService.listTeam(owner.userId, T1, { status: 'cancelled' }, 'owner');
+    expect(none.data).toEqual([]);
+    expectNoKeyLeak(none);
+  });
+
+  /**
+   * The roster short-circuits (`people.length === 0 → return []`) BEFORE the
+   * mapper — a manager with nobody under them must get an empty list back, not
+   * a crash from a mapper handed `undefined`.
+   */
+  it('answers an empty roster for a manager with no reports', async () => {
+    const rows = await attendanceService.listTeamToday(bare.userId, T1, 'manager');
+    expect(rows).toEqual([]);
+  });
 });
 
 describe('Round N — every list asks for the 64 px rendition', () => {
@@ -659,6 +816,13 @@ describe('Round N — every list asks for the 64 px rendition', () => {
     await timesheetService.listPending(owner.userId, T1, {}, 'owner');
     await timesheetService.getUtilizationReport(T1, { from: '2026-01-01', to: '2026-12-31' });
     await dashboardService.getActivity(T1, { limit: 50 });
+    // The Inbox — four more person projections on the same service.
+    await dashboardService.getAdminOverview(T1, {
+      callerUserId: owner.userId,
+      includeOnboarding: true,
+      includeApprovals: true,
+      pendingLimit: 50,
+    });
     expect(mediaCalls.length).toBeGreaterThan(20);
     // toStrictEqual, NOT toEqual: `toEqual` ignores undefined array items, so
     // an endpoint that OMITS the size argument (the 256 default — exactly the
@@ -902,6 +1066,13 @@ describe('Round N — the users join never crosses a tenant', () => {
       tsTeam: await timesheetService.listTeam(owner.userId, T1, { limit: 100 }, 'owner'),
       tsPending: await timesheetService.listPending(owner.userId, T1, { limit: 100 }, 'owner'),
       utilization: await timesheetService.getUtilizationReport(T1, { from: '2026-01-01', to: '2026-12-31' }),
+      // The Inbox: four person projections, the ones an approver stares at.
+      inbox: await dashboardService.getAdminOverview(T1, {
+        callerUserId: owner.userId,
+        includeOnboarding: true,
+        includeApprovals: true,
+        pendingLimit: 50,
+      }),
     };
     const json = JSON.stringify(lists);
     // Neither the person, nor their rows, nor — the Round N addition — the
@@ -965,6 +1136,96 @@ describe('Round N — the users join never crosses a tenant', () => {
     await expect(
       attendanceService.getRegularizationForReviewer(foreignRegId, owner.userId, T1, 'owner'),
     ).rejects.toThrow(/Regularization not found/);
+  });
+
+  // ─── the predicates, not the connection, are what scope these reads ───────
+  //
+  // Every read above runs through `withTenant`, which pins the RLS-bound app
+  // role — so `employees` and `users` are already filtered to this workspace
+  // before the query's own predicates are read. That makes it impossible to
+  // tell a query that IS scoped from one that merely RUNS on a scoped
+  // connection. These re-run the same reads on a connection RLS does not bind
+  // (the round-F posture the CRM half of Round N pins for its own reads).
+  //
+  // The fixture is the case house rule 2 warns about: `employee_id` is a plain
+  // FK and FK checks BYPASS RLS, so a tenant-1 row can legitimately be written
+  // pointing at a tenant-2 employee. Round N hung a FACE off exactly that
+  // join, so the predicate on it is what decides whether such a row renders as
+  // "nobody" or as another workspace's employee, photo included.
+  describe('with RLS not binding the connection (the round-F posture)', () => {
+    /** `withTenant` replaced by the service-role connection: no role, no context. */
+    const rlsOff = {
+      withTenant: async <T>(_tenantId: string, cb: (tx: never) => Promise<T>) =>
+        cb(dbAdmin as never),
+    } as unknown as DatabaseService;
+    const rlsOffLeave = new LeaveService(rlsOff, auditStub, notifications, config, routing, media);
+    const rlsOffTimesheet = new TimesheetService(dbAdmin as never, rlsOff, auditStub, notifications, routing, media);
+
+    let orphanLeaveId: string;
+
+    beforeAll(async () => {
+      // A TENANT 1 leave request whose employee lives in tenant 2, and the
+      // same shape for timesheets. Seeded last so no count another test pins
+      // can move.
+      const [orphan] = await dbAdmin
+        .insert(leaveRequests)
+        .values({
+          tenant_id: T1,
+          employee_id: foreign.employeeId,
+          leave_type_id: leaveTypeId,
+          start_date: '2026-11-02',
+          end_date: '2026-11-03',
+          total_days: 2,
+          status: 'pending',
+          reason: 'RN avatars — orphan row',
+        })
+        .returning();
+      orphanLeaveId = orphan!.id;
+      await seedTimesheet({ employeeId: foreign.employeeId } as Person, { billable: 5, nonBillable: 0 });
+    });
+
+    it('a tenant 1 row pointing at another workspace has no name AND no photo', async () => {
+      const team = await rlsOffLeave.listTeam(owner.userId, T1, { limit: 100 }, 'owner');
+      const orphan = team.data.find((r) => r.id === orphanLeaveId);
+      // The ROW is tenant 1's and stays visible — it is the PERSON on it that
+      // belongs to another workspace and must not resolve.
+      expect(orphan).toBeDefined();
+      expect(orphan!.employeeName).toBeNull();
+      expect(orphan!.avatarUrl).toBeNull();
+      const json = JSON.stringify(team);
+      expect(json).not.toContain('Foreign Tester');
+      expect(json).not.toContain('avatar/foreign');
+      expectNoKeyLeak(team);
+      expectNoRawKeyValue(team);
+      // Sanity: with the connection wide open, tenant 1's own faces still
+      // resolve — the assertions above are not passing on an empty list.
+      expect(team.data.find((r) => r.employeeId === keyed.employeeId)!.avatarUrl).toBe(keyed.expected);
+    });
+
+    it('the utilization report keeps the hours and drops the borrowed face', async () => {
+      const report = await rlsOffTimesheet.getUtilizationReport(T1, { from: '2026-01-01', to: '2026-12-31' });
+      const row = report.byEmployee.find((r) => r.employeeId === foreign.employeeId);
+      expect(row).toBeDefined();
+      // Tenant 1's hours are tenant 1's, whoever logged them…
+      expect(row!.totalHours).toBe(5);
+      // …but the person behind them belongs to another workspace.
+      expect(row!.name).toBeNull();
+      expect(row!.avatarUrl).toBeNull();
+      const json = JSON.stringify(report);
+      expect(json).not.toContain('Foreign Tester');
+      expect(json).not.toContain('avatar/foreign');
+      expectNoRawKeyValue(report);
+    });
+
+    it('never reaches the other workspace’s OWN rows, with or without RLS', async () => {
+      // T2's leave request and timesheet period exist (seeded above) — the
+      // tenant predicate on the driving table is what keeps them out.
+      const team = await rlsOffLeave.listTeam(owner.userId, T1, { limit: 100 }, 'owner');
+      expect(team.data.some((r) => r.reason === 'RN avatars — foreign tenant')).toBe(false);
+      const tsTeam = await rlsOffTimesheet.listTeam(owner.userId, T1, { limit: 100 }, 'owner');
+      expect(tsTeam.data.some((r) => r.periodStart === '2026-03-02')).toBe(false);
+      expect(JSON.stringify(tsTeam)).not.toContain('avatar/foreign');
+    });
   });
 });
 

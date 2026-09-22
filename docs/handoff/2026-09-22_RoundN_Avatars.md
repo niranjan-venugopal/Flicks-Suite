@@ -41,7 +41,7 @@ Rules held everywhere: the photo is signed at the **64 px** rendition, signing h
 ### Web
 - The Team attendance chip (the founder's screenshot) now renders the photo with the live presence dot, matching the Team page.
 - Photos passed through on: dashboard team-today, pending approvals and recent activity; Team → Leave and Team → Timesheets; Reports → Utilization and Audit; CRM owner chips; the project team pages; the platform console.
-- **Expired-link resilience:** signed URLs last 24 hours. The legacy avatar component had no error handling, so a tab left open overnight showed a broken-image icon. It now falls back to initials and recovers on the next data refresh.
+- **Expired-link resilience:** signed URLs last 24 hours. None of the three avatar components reset their "this image failed" flag when the row's photo changed. That is the founder's own bug in a second form: once a link expired, that row slot stayed on initials for the session, and — because lists re-sort and paginate — the stale failure was handed to **the next person to occupy that slot**, who then showed initials despite having a perfectly good photo. All three components now reset on change and recover on the next data refresh.
 - **Upload propagation:** a new photo previously refreshed only a few screens. The invalidation list now covers attendance, leave, timesheets, CRM, calendar, audit and the platform console.
 - Cleanup: two duplicate copies of the project avatar component collapsed onto the shared one; an unused avatar component deleted.
 
@@ -50,11 +50,19 @@ Rules held everywhere: the photo is signed at the **64 px** rendition, signing h
 Reviewing which rows the newly-photographed reads return exposed **pre-existing** gaps in CRM: several reads were relying on database row-level security alone to scope them, without the explicit tenant predicate the house rules require as a second line of defence. Attaching a face to those rows is what made them worth proving.
 
 Fixed, each with a regression test that runs on a **security-role connection with row-level security off** — the only way to distinguish "the query is scoped" from "the connection is scoped":
+
+*Reads that gained a face:*
 - **My activities** filtered on assignee/completed-by only. A person who belongs to more than one workspace is the normal case here, so this one genuinely spanned workspaces.
 - **Deal detail** looked up by the id in the URL with no tenant predicate; the whole payload (stage history, products, people, tags, owner) hangs off that row.
 - **CRM reports**: a `pipeline_id` from the query string resolved unscoped, and the forecast drill-down had no tenant predicate at all; plus the snapshot, funnel, stage-history, velocity and counters reads.
 
-No customer data was exposed by these in production: row-level security was doing its job on the tenant connection. The predicates restore the defence-in-depth the codebase standard requires. The leak probe reports **0 leaks across 133 tenant tables**.
+*Two write/send paths found while sweeping for the same pattern — these matter more than the reads:*
+- **Offboarding bulk reassignment** (`crm/merge.service.ts`) took two user ids from the request and had no tenant predicate on the membership check **or on its three bulk UPDATEs**. Demonstrated with row-level security not binding: it moved a deal, an activity and a lead into another workspace. Now scoped, and it refuses a receiver who isn't a member *before* writing anything.
+- **CRM send email** (`crm/email.service.ts`) resolved the deal, template and **person** ids on row-level security alone. The person id is the sharp end: that person's address becomes the **recipient**, so a foreign id could have addressed a message outside the workspace. All three are now tenant-scoped.
+
+No customer data was exposed by any of these in production: row-level security was doing its job on the tenant connection, which is why they were invisible. The predicates restore the defence-in-depth the codebase standard requires. The leak probe reports **0 leaks across 133 tenant tables**.
+
+**Known remaining posture (not a regression):** roughly 120 other CRM reads across 16 services still rely on row-level security alone rather than carrying their own filter. That is the module's pre-existing standard and every avatar-bearing read in this round is now explicit. Hardening the rest deserves its own change and its own test run — listed as a follow-up rather than smuggled into a photo fix.
 
 ## 5. Not changed (and why)
 
@@ -81,6 +89,9 @@ No customer data was exposed by these in production: row-level security was doin
 
 - Contact/lead photos in CRM; customer logos in invoicing.
 - Actor identity (and faces) on notification rows.
+- **Bulk hardening pass**: give the remaining ~120 CRM reads their own workspace filter instead of relying on row-level security alone (see §4).
 - The owner picker in CRM lists auditor and guest seats while the reports leaderboard excludes them — the two should agree.
+- The CRM win/loss "by owner" report groups by name, so two reps with the same name merge into one row.
+- A contact's chip in the CRM directory shows the *owner's* availability dot, which is misleading.
 - The feedback inbox hides a respondent's email behind their contact preference but still shows their name and now their photo; decide whether the photo belongs behind that preference.
 - Converge the remaining avatar components (proto, the newer one, the project one) on a single primitive.

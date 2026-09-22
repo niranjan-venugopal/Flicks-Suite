@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Btn, Icon, Modal, avBg, initials } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { PM_PRIORITY_LABEL, PriorityGlyph } from '@/components/pm/glyphs'
@@ -17,6 +17,13 @@ import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
 // image 404s) the initials chip is the fallback, so callers can always pass it.
 export function PmAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
   const [broken, setBroken] = useState(false)
+  // Issue rows are re-sorted, re-grouped and re-filtered constantly, so React
+  // hands this same instance a different person's `src` all the time; signed
+  // urls also age out and come back re-signed. Reset, or one 404 pins that
+  // slot to initials for the rest of the session.
+  useEffect(() => {
+    setBroken(false)
+  }, [src])
   const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
   if (src && !broken) {
     return (
@@ -45,6 +52,9 @@ export const PROJECT_ICONS = ['🤝', '⚡', '📣', '🚀', '🛠️', '🎯']
  */
 export function ProjectLogo({ logoUrl, icon, size = 18 }: { logoUrl?: string | null; icon?: string | null; size?: number }) {
   const [broken, setBroken] = useState(false)
+  useEffect(() => {
+    setBroken(false)
+  }, [logoUrl])
   if (logoUrl && !broken) {
     return (
       <img

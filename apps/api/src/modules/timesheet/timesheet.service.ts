@@ -304,7 +304,16 @@ export class TimesheetService {
           nonBillable: sql<number>`COALESCE(SUM(CASE WHEN NOT ${timesheetEntries.is_billable} THEN ${timesheetEntries.hours} ELSE 0 END), 0)::float`,
         })
         .from(timesheetEntries)
-        .leftJoin(employees, eq(timesheetEntries.employee_id, employees.id))
+        // Round N review: the tenant predicate rides the join, not RLS alone —
+        // employee_id is an FK and FK checks bypass RLS (house rule 2). The
+        // name AND the photo below both hang off this row, so an entry that
+        // points outside the tenant must read as an anonymous group, never as
+        // that workspace's person. Grouping is unaffected (the group key is
+        // the entry's employee_id either way).
+        .leftJoin(
+          employees,
+          and(eq(timesheetEntries.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+        )
         .leftJoin(users, eq(employees.user_id, users.id))
         .where(
           and(
@@ -814,7 +823,12 @@ export class TimesheetService {
             escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE COALESCE(${escalatedTo.first_name}, '') || ' ' || COALESCE(${escalatedTo.last_name}, '') END`,
           })
           .from(timesheetPeriods)
-          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // Round N review: tenant-predicated join — employee_id is an FK and
+          // FK checks bypass RLS (house rule 2); the photo hangs off this row.
+          .leftJoin(
+            employees,
+            and(eq(timesheetPeriods.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           // LEFT — an employee with no user account keeps its row in the queue.
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
@@ -831,7 +845,11 @@ export class TimesheetService {
         db
           .select({ n: sql<number>`COUNT(*)::int` })
           .from(timesheetPeriods)
-          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // Same join shape as the data query, so the total cannot drift.
+          .leftJoin(
+            employees,
+            and(eq(timesheetPeriods.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .where(where),
       ]);
 
@@ -935,7 +953,11 @@ export class TimesheetService {
             escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE COALESCE(${escalatedTo.first_name}, '') || ' ' || COALESCE(${escalatedTo.last_name}, '') END`,
           })
           .from(timesheetPeriods)
-          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // Round N review: tenant-predicated join (see listPending).
+          .leftJoin(
+            employees,
+            and(eq(timesheetPeriods.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
             approver,
@@ -963,7 +985,11 @@ export class TimesheetService {
         db
           .select({ n: sql<number>`COUNT(*)::int` })
           .from(timesheetPeriods)
-          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // Same join shape as the data query, so the total cannot drift.
+          .leftJoin(
+            employees,
+            and(eq(timesheetPeriods.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .where(where),
       ]);
 

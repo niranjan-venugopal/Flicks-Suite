@@ -99,10 +99,16 @@ function TeamLeaveInner() {
   const upcoming = useTeamLeave({ status: 'approved', from: today, limit: 100 }, tab === 'upcoming')
   const history = useTeamLeave({ status: 'all', from: historyFrom, limit: 100 }, tab === 'history')
 
-  const pendingRows = pending.data?.data ?? []
-  const upcomingRows = upcoming.data?.data ?? []
+  // Memoised so the deep-link effect below (dep: pendingRows) and the presence
+  // id array don't re-run on every render — `?? []` / `.filter()` inline would
+  // hand them a brand-new array each time.
+  const pendingRows = useMemo(() => pending.data?.data ?? [], [pending.data])
+  const upcomingRows = useMemo(() => upcoming.data?.data ?? [], [upcoming.data])
   // History = everything decided/cancelled in the window (pending has its own tab).
-  const historyRows = (history.data?.data ?? []).filter((r) => r.status !== 'pending')
+  const historyRows = useMemo(
+    () => (history.data?.data ?? []).filter((r) => r.status !== 'pending'),
+    [history.data],
+  )
   const scope = pending.data?.scope
 
   // ── Review dialog state ────────────────────────────────────────────────

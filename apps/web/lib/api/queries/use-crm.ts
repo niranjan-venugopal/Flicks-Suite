@@ -1051,10 +1051,11 @@ export interface ReportsOverview {
   }
   lost_reasons: Array<{ label: string; count: number }>
   velocity: Array<{ month: string; value: number }>
-  // The rep's signed photo — both spellings are optional so the UI renders
-  // whichever the API ships (owner_* on deal-shaped rows, user_* on
-  // user-shaped ones) and falls back to initials until then.
-  leaderboard: Array<{ user_id: string; name: string; user_avatar_url?: string | null; owner_avatar_url?: string | null; calls: number; meetings: number; tasks: number; emails: number; goal_target: number | null; goal_pct: number | null }>
+  // The rep's signed photo. A leaderboard row is not a deal and not a goal —
+  // it IS the person — so ReportsService ships it as a bare `avatar_url`
+  // (pinned by founder-roundN-avatars-b). Optional only because an older API
+  // build omits the field; the chip then falls back to initials.
+  leaderboard: Array<{ user_id: string; name: string; avatar_url?: string | null; calls: number; meetings: number; tasks: number; emails: number; goal_target: number | null; goal_pct: number | null }>
 }
 
 export function useReportsOverview(days?: number) {
@@ -1085,9 +1086,8 @@ export interface SalesGoal {
   id: string
   user_id: string | null
   user_name?: string | null
-  /** Signed photo of the goal's owner — optional (see leaderboard note). */
+  /** Signed photo of the goal's owner — null on the whole-team row. */
   user_avatar_url?: string | null
-  owner_avatar_url?: string | null
   period: string
   target_base: number
 }

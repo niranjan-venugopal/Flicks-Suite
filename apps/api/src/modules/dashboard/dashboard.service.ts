@@ -56,6 +56,20 @@ export class DashboardService {
     this.routing = routing ?? new ApprovalRoutingService();
   }
 
+  /**
+   * Round N review — 64 px signed URL for a stored key, falling back to the
+   * legacy users.avatar_url (and to it ALONE when the service was built
+   * without a MediaService). Same signer the HR services carry, so a
+   * hand-built dashboard degrades to the legacy column on every read path
+   * instead of throwing a TypeError at the caller — a read must never fail
+   * over a picture.
+   */
+  private readonly signAvatar = (
+    key: string | null,
+    legacyUrl: string | null,
+  ): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(key, legacyUrl, 64) : Promise.resolve(legacyUrl);
+
   /** Signed-URL swap for a row set carrying `avatarKey` (§4 media pipeline). */
   private async withAvatars<
     T extends { avatarKey: string | null; avatarUrl: string | null },
@@ -63,7 +77,7 @@ export class DashboardService {
     return Promise.all(
       rows.map(async ({ avatarKey, ...row }) => ({
         ...(row as Omit<T, 'avatarKey'>),
-        avatarUrl: await this.mediaService.servedUrl(avatarKey, row.avatarUrl, 64),
+        avatarUrl: await this.signAvatar(avatarKey, row.avatarUrl),
       })),
     );
   }
@@ -281,7 +295,13 @@ export class DashboardService {
             escalatedToName,
           })
           .from(leaveRequests)
-          .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          // Round N review: the tenant predicate rides the join, not RLS alone
+          // — employee_id is an FK and FK checks bypass RLS (house rule 2).
+          // The Inbox reads the name AND the photo off this row.
+          .leftJoin(
+            employees,
+            and(eq(leaveRequests.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
           .leftJoin(
@@ -324,9 +344,13 @@ export class DashboardService {
             escalatedToName,
           })
           .from(attendanceRegularizations)
+          // Round N review: tenant-predicated join (see the leaves bucket).
           .leftJoin(
             employees,
-            eq(attendanceRegularizations.employee_id, employees.id),
+            and(
+              eq(attendanceRegularizations.employee_id, employees.id),
+              eq(employees.tenant_id, tenantId),
+            ),
           )
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
@@ -379,7 +403,11 @@ export class DashboardService {
             escalatedToName,
           })
           .from(timesheetPeriods)
-          .leftJoin(employees, eq(timesheetPeriods.employee_id, employees.id))
+          // Round N review: tenant-predicated join (see the leaves bucket).
+          .leftJoin(
+            employees,
+            and(eq(timesheetPeriods.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(
             escalatedTo,
@@ -607,7 +635,7 @@ export class DashboardService {
               r.appliedAt instanceof Date
                 ? r.appliedAt.toISOString()
                 : String(r.appliedAt),
-            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            avatarUrl: await this.signAvatar(r.avatarKey, r.avatarUrl),
             escalation: shapeEscalation(r, r.escalatedToName),
           }))),
           regularizations: await Promise.all(pendingRegRows.map(async (r) => ({
@@ -625,7 +653,7 @@ export class DashboardService {
               r.requestedAt instanceof Date
                 ? r.requestedAt.toISOString()
                 : String(r.requestedAt),
-            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            avatarUrl: await this.signAvatar(r.avatarKey, r.avatarUrl),
             escalation: shapeEscalation(r, r.escalatedToName),
           }))),
           timesheets: await Promise.all(pendingTsRows.map(async (r) => ({
@@ -639,7 +667,7 @@ export class DashboardService {
             totalHours: Number(r.totalHours),
             totalBillableHours: Number(r.totalBillableHours),
             submittedAt: r.submittedAt instanceof Date ? r.submittedAt.toISOString() : r.submittedAt ? String(r.submittedAt) : null,
-            avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrl, 64),
+            avatarUrl: await this.signAvatar(r.avatarKey, r.avatarUrl),
             escalation: shapeEscalation(r, r.escalatedToName),
           }))),
         },

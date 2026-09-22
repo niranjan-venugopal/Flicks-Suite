@@ -51,6 +51,7 @@ import { DealsService } from '../modules/crm/deals.service';
 import { LeadsService } from '../modules/crm/leads.service';
 import { ActivitiesService } from '../modules/crm/activities.service';
 import { ReportsService } from '../modules/crm/reports.service';
+import { MergeService } from '../modules/crm/merge.service';
 import { FxService } from '../modules/crm/fx.service';
 import { FamService } from '../modules/fam/fam.service';
 import { FeedbackService } from '../modules/feedback/feedback.service';
@@ -116,6 +117,13 @@ const rlsOffDb = {
 const rlsOffDeals = new DealsService(rlsOffDb, audit, eventsStub as never, fx, emitter, {} as never, media);
 const rlsOffActivities = new ActivitiesService(rlsOffDb, audit, eventsStub as never, notifyStub as never, presenceStub as never, media);
 const rlsOffReports = new ReportsService(rlsOffDb, audit, media);
+// The one write path pointed at the double, and only because the assertion is
+// that it REFUSES before it writes anything: §19.7 offboarding hands one
+// member's whole book of work to another, keyed on two DTO user ids, and a
+// user legitimately belongs to several workspaces. If its membership guard
+// ever loses its tenant predicate this throws nothing and moves rows instead,
+// which is exactly what the test below has to be able to see.
+const rlsOffMerge = new MergeService(rlsOffDb, audit, eventsStub as never);
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -413,6 +421,15 @@ describe('Round N — CRM reports carry the person avatar', () => {
       expect(typeof row.tasks).toBe('number');
       expect(row.goal_target).toBeGreaterThan(0);
     }
+    // A leaderboard row is not a deal and not a goal — it IS the person, so the
+    // field is the bare `avatar_url`. The web chip reads exactly that one name
+    // (it used to hedge across `user_avatar_url ?? owner_avatar_url` and so
+    // rendered initials forever), which makes the spelling a contract now.
+    for (const row of lb) {
+      expect(Object.keys(row)).toContain('avatar_url');
+      expect(Object.keys(row)).not.toContain('user_avatar_url');
+      expect(Object.keys(row)).not.toContain('owner_avatar_url');
+    }
     // win/loss stays a name-keyed aggregate (no per-face rows there).
     expect(res.data!.win_loss.by_owner.every((r) => typeof r.key === 'string')).toBe(true);
     noKeysLeak(res);
@@ -440,6 +457,9 @@ describe('Round N — CRM reports carry the person avatar', () => {
     const team = res.data.find((r) => r.user_id === null)!;
     expect(team.user_name).toBeNull();
     expect(team.user_avatar_url).toBeNull();
+    // Same contract note as the leaderboard: a goal row is user-shaped, so the
+    // one spelling the web may read is `user_avatar_url`.
+    for (const row of res.data) expect(Object.keys(row)).not.toContain('owner_avatar_url');
     noKeysLeak(res);
   });
 });
@@ -704,6 +724,20 @@ describe('Round N security — the avatar joins stay anchored to the tenant', ()
 
     it('the deal detail page still refuses a deal id from another workspace', async () => {
       await expect(rlsOffDeals.get(T1, t2Deal)).rejects.toThrow(/not found/i);
+    });
+
+    it('offboarding refuses to hand this workspace’s book of work to another workspace’s member', async () => {
+      // F is an ACTIVE, non-auditor OWNER — of T2. Nothing about him qualifies
+      // him to receive T1's open deals, activities and leads, and the only
+      // thing that can say so is the guard's own tenant predicate.
+      await expect(rlsOffMerge.reassign(T1, K, K, F)).rejects.toThrow(/active/i);
+      // …and it refused BEFORE the bulk update, so K still owns his deals.
+      const [stillK] = await dbAdmin
+        .select({ owner: deals.owner_user_id })
+        .from(deals)
+        .where(eq(deals.id, dealOf.K))
+        .limit(1);
+      expect(stillK!.owner).toBe(K);
     });
   });
 

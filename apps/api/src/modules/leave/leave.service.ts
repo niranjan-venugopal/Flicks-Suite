@@ -955,7 +955,15 @@ export class LeaveService {
           escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
         })
         .from(leaveRequests)
-        .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+        // Round N review: the tenant predicate on the join, not RLS alone —
+        // employee_id is an FK, and FK checks bypass RLS (house rule 2), so a
+        // row pointing outside this tenant must resolve to NULL here rather
+        // than to that workspace's person. The photo below hangs off exactly
+        // this row; the sibling alias joins already carry the same predicate.
+        .leftJoin(
+          employees,
+          and(eq(leaveRequests.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+        )
         // LEFT — an employee with no user account keeps its row in the queue
         // (the `IS DISTINCT FROM` predicate below relies on exactly that).
         .leftJoin(users, eq(employees.user_id, users.id))
@@ -1080,7 +1088,12 @@ export class LeaveService {
             escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
           })
           .from(leaveRequests)
-          .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          // Round N review: tenant-predicated join (see listPending) — the
+          // photo below hangs off this row, and the count query mirrors it.
+          .leftJoin(
+            employees,
+            and(eq(leaveRequests.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           // Round N — the requester's account row carries the photo key.
           .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
@@ -1112,7 +1125,12 @@ export class LeaveService {
         tx
           .select({ total: sql<number>`COUNT(*)::int` })
           .from(leaveRequests)
-          .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          // Same join shape as the data query above, or the total could count
+          // a row the page cannot show.
+          .leftJoin(
+            employees,
+            and(eq(leaveRequests.employee_id, employees.id), eq(employees.tenant_id, tenantId)),
+          )
           .where(where),
       ]);
 

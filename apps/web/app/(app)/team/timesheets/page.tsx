@@ -129,7 +129,9 @@ function TeamTimesheetsInner() {
     [teamSubmitted.data, mine],
   )
   const pendingRows: Row[] = useMemo(() => [...mine, ...others], [mine, others])
-  const allRows: Row[] = all.data?.data ?? []
+  // Memoised for the same reason as `mine`/`others` above: an inline `?? []`
+  // is a new array every render, and `rows` feeds a useMemo dep below.
+  const allRows: Row[] = useMemo(() => all.data?.data ?? [], [all.data])
   const rows = tab === 'pending' ? pendingRows : allRows
 
   // Seed presence for the faces on screen; the socket keeps the dots live.

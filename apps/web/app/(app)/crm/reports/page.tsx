@@ -170,7 +170,7 @@ function Dashboard() {
           <tbody>
             {d.leaderboard.map((r) => (
               <tr key={r.user_id}>
-                <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}><OwnerAv name={r.name} src={r.user_avatar_url ?? r.owner_avatar_url} size={24} /><span style={{ fontWeight: 800 }}>{r.name}</span></span></td>
+                <td><span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}><OwnerAv name={r.name} src={r.avatar_url} size={24} /><span style={{ fontWeight: 800 }}>{r.name}</span></span></td>
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.calls}</td>
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.meetings}</td>
                 <td className="t-num" style={{ textAlign: 'right' }}>{r.tasks}</td>
@@ -316,7 +316,7 @@ function Goals() {
               {rows.map((g) => (
                 <tr key={g.id}>
                   <td style={{ fontWeight: 800 }}>{g.period}</td>
-                  <td>{g.user_id ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><OwnerAv name={g.user_name ?? '?'} src={g.user_avatar_url ?? g.owner_avatar_url} size={20} />{g.user_name}</span> : <Pill tone="blue">Whole team</Pill>}</td>
+                  <td>{g.user_id ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><OwnerAv name={g.user_name ?? '?'} src={g.user_avatar_url} size={20} />{g.user_name}</span> : <Pill tone="blue">Whole team</Pill>}</td>
                   <td className="t-num" style={{ textAlign: 'right', fontWeight: 800 }}>{fmtBase(g.target_base)}</td>
                   <td style={{ textAlign: 'right' }}>
                     <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={setGoal.isPending}

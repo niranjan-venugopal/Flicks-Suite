@@ -196,22 +196,32 @@ export class MergeService {
     return this.db.withTenant(
       tenantId,
       async (tx) => {
+        // House rules 1+2: `fromUserId`/`toUserId` are DTO ids and a user
+        // belongs to several workspaces, so every predicate here is keyed on a
+        // value that spans tenants. Without the explicit tenant scoping, a
+        // connection that is not RLS-bound would let this hand another
+        // workspace's open deals, activities and leads to a local member.
         const [target] = await tx.select({ id: memberships.id }).from(memberships)
-          .where(and(eq(memberships.user_id, toUserId), eq(memberships.status, 'active'), ne(memberships.role, 'auditor')))
+          .where(and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.user_id, toUserId),
+            eq(memberships.status, 'active'),
+            ne(memberships.role, 'auditor'),
+          ))
           .limit(1);
         if (!target) throw new BadRequestException('The receiving member must be active (and not an auditor)');
 
         const movedDeals = await tx.update(deals)
           .set({ owner_user_id: toUserId, updated_at: new Date(), updated_by: userId })
-          .where(and(eq(deals.owner_user_id, fromUserId), eq(deals.status, 'open'), isNull(deals.deleted_at)))
+          .where(and(eq(deals.tenant_id, tenantId), eq(deals.owner_user_id, fromUserId), eq(deals.status, 'open'), isNull(deals.deleted_at)))
           .returning({ id: deals.id });
         const movedActs = await tx.update(activities)
           .set({ assignee_user_id: toUserId, updated_at: new Date() })
-          .where(and(eq(activities.assignee_user_id, fromUserId), sql`${activities.completed_at} IS NULL`))
+          .where(and(eq(activities.tenant_id, tenantId), eq(activities.assignee_user_id, fromUserId), sql`${activities.completed_at} IS NULL`))
           .returning({ id: activities.id });
         const movedLeads = await tx.update(leads)
           .set({ owner_user_id: toUserId, updated_at: new Date() })
-          .where(and(eq(leads.owner_user_id, fromUserId), sql`${leads.status} IN ('new','working')`))
+          .where(and(eq(leads.tenant_id, tenantId), eq(leads.owner_user_id, fromUserId), sql`${leads.status} IN ('new','working')`))
           .returning({ id: leads.id });
 
         await this.audit.log({

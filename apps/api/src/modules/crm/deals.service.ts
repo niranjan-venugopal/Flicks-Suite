@@ -194,7 +194,7 @@ export class DealsService {
       const stages = await tx
         .select()
         .from(pipelineStages)
-        .where(and(eq(pipelineStages.pipeline_id, pl.id), isNull(pipelineStages.deleted_at)))
+        .where(and(eq(pipelineStages.tenant_id, tenantId), eq(pipelineStages.pipeline_id, pl.id), isNull(pipelineStages.deleted_at)))
         .orderBy(asc(pipelineStages.display_order));
 
       const openDeals = await tx

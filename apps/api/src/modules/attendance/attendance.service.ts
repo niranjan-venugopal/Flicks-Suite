@@ -1856,9 +1856,15 @@ export class AttendanceService {
           escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
         })
         .from(attendanceRegularizations)
+        // Round N review: the tenant predicate rides the join, not RLS alone —
+        // employee_id is an FK and FK checks bypass RLS (house rule 2), and
+        // the requester's photo hangs off this row.
         .leftJoin(
           employees,
-          eq(attendanceRegularizations.employee_id, employees.id),
+          and(
+            eq(attendanceRegularizations.employee_id, employees.id),
+            eq(employees.tenant_id, tenantId),
+          ),
         )
         // LEFT — an employee with no user account keeps its row in the queue
         // (the `IS DISTINCT FROM` predicate below relies on exactly that).
@@ -1947,7 +1953,15 @@ export class AttendanceService {
           avatarUrlRaw: users.avatar_url,
         })
         .from(attendanceRegularizations)
-        .leftJoin(employees, eq(attendanceRegularizations.employee_id, employees.id))
+        // Round N review: tenant-predicated join (see listPendingRegularizations)
+        // — the detail view hands the reviewer this person's name AND photo.
+        .leftJoin(
+          employees,
+          and(
+            eq(attendanceRegularizations.employee_id, employees.id),
+            eq(employees.tenant_id, tenantId),
+          ),
+        )
         .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(
           escalatedTo,

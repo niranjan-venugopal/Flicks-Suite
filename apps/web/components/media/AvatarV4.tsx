@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { avBg, initials } from '@/components/proto'
 import { PresenceDot, type PresenceStatus } from '@/components/presence/PresenceDot'
 
@@ -29,6 +29,14 @@ export function AvatarV4({
   ring?: string
 }) {
   const [broken, setBroken] = useState(false)
+  // Round N: `broken` is per-INSTANCE, but a table row is per-POSITION — React
+  // reuses the same AvatarV4 when a list is re-sorted, filtered or paginated,
+  // and a refetch hands the same row a freshly signed url. Without this reset
+  // one 404 (an expired signature) makes that slot show initials forever,
+  // which is the founder's "photos don't show" bug wearing a different hat.
+  useEffect(() => {
+    setBroken(false)
+  }, [src])
   const dotSize = Math.max(8, Math.round(size * 0.3))
 
   const inner = (() => {
