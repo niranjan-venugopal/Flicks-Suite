@@ -28,10 +28,10 @@ An audit of the whole app found **33 person chips** showing initials-only, in tw
 | Area | Endpoint | Field |
 |---|---|---|
 | Attendance | `GET attendance/team/today` | `avatarUrl` + `employeeUserId` (the id also powers the live presence dot) |
-| Attendance | regularization detail (reviewer) | `avatarUrl` — replaces a hard-coded `null` |
-| Leave | `GET leave/team` | `avatarUrl` |
+| Attendance | regularization detail (reviewer) + pending regularizations | `avatarUrl` — the detail replaces a hard-coded `null` |
+| Leave | `GET leave/team`, `GET leave/pending` | `avatarUrl` |
 | Timesheets | team list, approval queue, utilization report | `avatarUrl` |
-| Dashboard | `GET dashboard/admin/activity` | `avatarUrl` |
+| Dashboard | `GET dashboard/admin/activity`, and all four Inbox approval buckets (leave, regularizations, timesheets, onboarding) | `avatarUrl` |
 | Audit | audit log search | `avatarUrl` |
 | CRM | deals (board, list open/closed, detail, contact & company timelines), owner picker, leads, reports (leaderboard, forecast drill-down, goals), my activities | `owner_avatar_url` / `user_avatar_url` / `assignee_avatar_url` |
 | Platform console | tenant members, auditor registry, feedback inbox | `avatarUrl` / `user_avatar_url` |
@@ -55,6 +55,8 @@ Fixed, each with a regression test that runs on a **security-role connection wit
 - **My activities** filtered on assignee/completed-by only. A person who belongs to more than one workspace is the normal case here, so this one genuinely spanned workspaces.
 - **Deal detail** looked up by the id in the URL with no tenant predicate; the whole payload (stage history, products, people, tags, owner) hangs off that row.
 - **CRM reports**: a `pipeline_id` from the query string resolved unscoped, and the forecast drill-down had no tenant predicate at all; plus the snapshot, funnel, stage-history, velocity and counters reads.
+
+*The HR side, where the risk was subtler:* six team/approval reads anchored their `employees` join on row-level security alone. Foreign-key checks deliberately bypass that security layer, so a row in one workspace **can** point at an employee in another — and this round hung a **face** off exactly that join, while the sibling joins in the very same queries already carried their own filter. Eleven sites now carry it, data and count queries in step. Demonstrated by reverting one: the read returned a foreign workspace's employee and their signed photo. Also fixed: the dashboard's signing helper threw when built without a signer instead of degrading, which broke this round's own rule that a read never fails over a picture.
 
 *Two write/send paths found while sweeping for the same pattern — these matter more than the reads:*
 - **Offboarding bulk reassignment** (`crm/merge.service.ts`) took two user ids from the request and had no tenant predicate on the membership check **or on its three bulk UPDATEs**. Demonstrated with row-level security not binding: it moved a deal, an activity and a lead into another workspace. Now scoped, and it refuses a receiver who isn't a member *before* writing anything.
