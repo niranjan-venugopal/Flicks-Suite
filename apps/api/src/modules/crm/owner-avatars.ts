@@ -14,10 +14,17 @@ export type AvatarSigner = (
   legacyUrl: string | null,
 ) => Promise<string | null>;
 
+/**
+ * `keyField` / `urlField` are constrained to keys the row actually HAS. Without
+ * that a mistyped field name compiles, the destructure below finds nothing, and
+ * the real key rides along in `...rest` all the way to the client — the exact
+ * leak this helper exists to prevent. The defaults intersect with `keyof T` so
+ * the common (no-opts) call keeps inferring `owner_avatar_key` unchanged.
+ */
 export async function signOwnerAvatars<
   T extends Record<string, unknown>,
-  K extends string = 'owner_avatar_key',
-  U extends string = 'owner_avatar_url',
+  K extends Extract<keyof T, string> = Extract<keyof T, string> & 'owner_avatar_key',
+  U extends Extract<keyof T, string> = Extract<keyof T, string> & 'owner_avatar_url',
 >(
   sign: AvatarSigner,
   rows: T[],

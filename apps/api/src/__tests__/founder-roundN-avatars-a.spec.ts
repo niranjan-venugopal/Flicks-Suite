@@ -660,7 +660,11 @@ describe('Round N — every list asks for the 64 px rendition', () => {
     await timesheetService.getUtilizationReport(T1, { from: '2026-01-01', to: '2026-12-31' });
     await dashboardService.getActivity(T1, { limit: 50 });
     expect(mediaCalls.length).toBeGreaterThan(20);
-    expect([...new Set(mediaCalls.map((c) => c.size))]).toEqual([64]);
+    // toStrictEqual, NOT toEqual: `toEqual` ignores undefined array items, so
+    // an endpoint that OMITS the size argument (the 256 default — exactly the
+    // bug this test exists for) would slip through `[64, undefined]`.
+    expect([...new Set(mediaCalls.map((c) => c.size))]).toStrictEqual([64]);
+    expect(mediaCalls.every((c) => c.size === 64)).toBe(true);
   });
 });
 
@@ -703,5 +707,345 @@ describe('Round N — signed-avatar helper', () => {
     expect(noKey!.avatarUrl).toBe(LEGACY_URL);
 
     expect(await withSignedAvatars(sign, [])).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. Tenant isolation — the security contract of the new `users` join
+//    (founder round N security review of agent A's change)
+//
+// `users` is a PLATFORM-GLOBAL table: it has no tenant_id, and every row of
+// every workspace lives in it. Round N joined it onto seven read paths, so the
+// question that decides whether this change is safe is not "does the photo
+// render" but "which `users` row can this join reach".
+//
+// Two things keep it bounded, and BOTH are pinned below because either can be
+// undone by a one-word edit:
+//
+//   1. migration 0010 — `users` is ENABLE + FORCE RLS with `tenant_members_users`:
+//      a tenant connection sees a user ONLY if that user holds a membership in
+//      current_setting('app.tenant_id'). Every one of these reads runs inside
+//      `withTenant`, which assumes the RLS-bound app role. Move any of them to
+//      `dbAdmin` and the join silently reaches every workspace's faces — these
+//      tests fail if that ever happens. (scripts/diagnose-rls.sh CANNOT catch
+//      it: its sweep only visits tables that have a tenant_id column, and
+//      `users` has none.)
+//
+//   2. the join key is always an id off a row that is ALREADY tenant-scoped —
+//      `employees.user_id` from a `tenant_id`-predicated employee, or
+//      `audit_log.actor_user_id` from a `tenant_id`-predicated audit row.
+//
+// The invariant the founder rule reduces to: **a photo may never be exposed
+// where the same person's NAME is not already exposed.** The audit trail is
+// the sharp edge — `actor_user_id` is a global FK, so a tenant-1 audit row can
+// legitimately name a user who is not a tenant-1 member (a platform-admin
+// action, or someone whose seat was removed). Those rows already render a null
+// actor name; they must now also render a null photo.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** A raw R2 key in a payload — the signed form is always `signed:users/…`. */
+const RAW_AVATAR_KEY = /"users\/[0-9a-f-]{36}\/avatar\//;
+
+/** No response may ship the private object path as a value, on any branch. */
+function expectNoRawKeyValue(payload: unknown) {
+  expect(JSON.stringify(payload) ?? '').not.toMatch(RAW_AVATAR_KEY);
+}
+
+/** A seat in an arbitrary tenant with an arbitrary role (mkPerson is T1-only). */
+async function mkSeat(
+  tenantId: string,
+  label: string,
+  role: 'owner' | 'admin' | 'manager' | 'finance' | 'employee',
+  opts: { managerId?: string | null; avatarKey?: string } = {},
+): Promise<Person> {
+  const email = `rn-sec-${label}-${rid()}@t.test`;
+  const [u] = await dbAdmin
+    .insert(users)
+    .values({ email, full_name: `${label} Tester`, status: 'active' })
+    .returning();
+  userIds.push(u!.id);
+  const avatarKey = opts.avatarKey ? `users/${u!.id}/avatar/${opts.avatarKey}_256.webp` : null;
+  if (avatarKey) {
+    await dbAdmin.update(users).set({ avatar_key: avatarKey }).where(eq(users.id, u!.id));
+  }
+  const [e] = await dbAdmin
+    .insert(employees)
+    .values({
+      tenant_id: tenantId,
+      user_id: u!.id,
+      employee_code: `RN-S-${rid()}`,
+      first_name: label,
+      last_name: 'Tester',
+      work_email: email,
+      date_of_joining: '2026-01-01',
+      status: 'active',
+      reporting_manager_id: opts.managerId ?? null,
+    })
+    .returning();
+  await dbAdmin
+    .insert(memberships)
+    .values({ tenant_id: tenantId, user_id: u!.id, role, status: 'active', employee_id: e!.id });
+  return { userId: u!.id, employeeId: e!.id, email, expected: avatarKey ? `signed:${avatarKey}` : null };
+}
+
+describe('Round N — the users join never crosses a tenant', () => {
+  let T2: string;
+  let foreign: Person; // a member of T2 ONLY, with a photo
+  let departedUserId: string; // a user with a photo and no membership anywhere
+  let foreignRegId: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenants)
+      .values({
+        name: `RN Avatars T2 ${rid()}`,
+        slug: `rn-av2-${rid()}-${Date.now()}`,
+        status: 'active',
+        currency: 'INR',
+        timezone: 'Asia/Kolkata',
+      })
+      .returning();
+    T2 = t!.id;
+    foreign = await mkSeat(T2, 'Foreign', 'employee', { avatarKey: 'foreign' });
+
+    // T2's own rows on every surface that grew an avatar join.
+    const [lt2] = await dbAdmin
+      .insert(leaveTypes)
+      .values({ tenant_id: T2, name: 'Casual Leave', code: 'CL', default_quota_days: 12 })
+      .returning();
+    await dbAdmin.insert(leaveRequests).values({
+      tenant_id: T2,
+      employee_id: foreign.employeeId,
+      leave_type_id: lt2!.id,
+      start_date: '2026-11-02',
+      end_date: '2026-11-03',
+      total_days: 2,
+      status: 'pending',
+      reason: 'RN avatars — foreign tenant',
+    });
+    const [reg2] = await dbAdmin
+      .insert(attendanceRegularizations)
+      .values({
+        tenant_id: T2,
+        employee_id: foreign.employeeId,
+        attendance_date: '2026-08-03',
+        request_type: 'missing_punch',
+        reason: 'RN avatars — foreign tenant',
+        status: 'pending',
+      })
+      .returning();
+    foreignRegId = reg2!.id;
+    const [p2] = await dbAdmin
+      .insert(timesheetPeriods)
+      .values({
+        tenant_id: T2,
+        employee_id: foreign.employeeId,
+        period_start: '2026-03-02',
+        period_end: '2026-03-08',
+        status: 'submitted',
+        total_hours: 8,
+        total_billable_hours: 8,
+        total_non_billable_hours: 0,
+        submitted_at: new Date(),
+      })
+      .returning();
+    await dbAdmin.insert(timesheetEntries).values({
+      tenant_id: T2,
+      timesheet_period_id: p2!.id,
+      employee_id: foreign.employeeId,
+      entry_date: '2026-03-02',
+      hours: 8,
+      category: 'development' as const,
+      is_billable: true,
+    });
+
+    // Someone who held a seat here and no longer does: the audit row survives
+    // the membership (that is the point of an audit trail), so `actor_user_id`
+    // still points at a real, photographed user that this tenant may not see.
+    const [gone] = await dbAdmin
+      .insert(users)
+      .values({ email: `rn-sec-gone-${rid()}@t.test`, full_name: 'Departed Tester', status: 'active' })
+      .returning();
+    departedUserId = gone!.id;
+    userIds.push(departedUserId);
+    await dbAdmin
+      .update(users)
+      .set({ avatar_key: `users/${departedUserId}/avatar/gone_256.webp` })
+      .where(eq(users.id, departedUserId));
+
+    // Two tenant-1 audit rows whose actor is NOT a tenant-1 member. Written
+    // with dbAdmin exactly as a platform-admin action or a pre-offboarding
+    // write would have left them behind.
+    for (const actor of [foreign.userId, departedUserId]) {
+      await dbAdmin.insert(auditLog).values({
+        tenant_id: T1,
+        actor_user_id: actor,
+        action: 'employee.updated',
+        resource_type: 'employee',
+        resource_id: keyed.employeeId,
+      });
+    }
+  });
+
+  afterAll(async () => {
+    // T1's audit rows still reference T2's user; the file-level afterAll drops
+    // T1 (cascading those rows) before it deletes `userIds`, so order holds.
+    await dbAdmin.delete(tenants).where(eq(tenants.id, T2));
+  });
+
+  it('keeps tenant 2 people — and their photos — out of every tenant 1 list', async () => {
+    const lists = {
+      roster: await attendanceService.listTeamToday(owner.userId, T1, 'owner'),
+      regQueue: await attendanceService.listPendingRegularizations(owner.userId, T1, {}, 'owner'),
+      leaveTeam: await leaveService.listTeam(owner.userId, T1, { limit: 100 }, 'owner'),
+      leavePending: await leaveService.listPending(owner.userId, T1, { limit: 100 }, 'owner'),
+      tsTeam: await timesheetService.listTeam(owner.userId, T1, { limit: 100 }, 'owner'),
+      tsPending: await timesheetService.listPending(owner.userId, T1, { limit: 100 }, 'owner'),
+      utilization: await timesheetService.getUtilizationReport(T1, { from: '2026-01-01', to: '2026-12-31' }),
+    };
+    const json = JSON.stringify(lists);
+    // Neither the person, nor their rows, nor — the Round N addition — the
+    // signed URL that would let the caller FETCH their face.
+    expect(json).not.toContain(foreign.employeeId);
+    expect(json).not.toContain(foreign.userId);
+    expect(json).not.toContain(foreign.email);
+    expect(json).not.toContain('Foreign Tester');
+    expect(json).not.toContain('avatar/foreign');
+    expectNoKeyLeak(lists);
+    expectNoRawKeyValue(lists);
+
+    // Sanity: the same call DOES carry tenant 1's own photographed people, so
+    // the assertions above are not passing on an empty payload.
+    expect(lists.roster.find((r) => r.employeeId === keyed.employeeId)?.avatarUrl).toBe(keyed.expected);
+    expect(lists.utilization.byEmployee.some((r) => r.avatarUrl === keyed.expected)).toBe(true);
+  });
+
+  it('gives an audit actor from another tenant no name AND no photo', async () => {
+    // The ROW belongs to tenant 1 and must stay visible — it is the actor's
+    // identity that RLS withholds, and the photo must be withheld with it.
+    const audit = await auditSigned.search(T1, { limit: 200 });
+    for (const actorId of [foreign.userId, departedUserId]) {
+      const row = audit.data.find((r) => r.actorUserId === actorId);
+      expect(row).toBeDefined();
+      expect(row!.actorName).toBeNull();
+      expect(row!.actorEmail).toBeNull();
+      expect(row!.avatarUrl).toBeNull();
+    }
+
+    const feed = await dashboardService.getActivity(T1, { limit: 200 });
+    for (const actorId of [foreign.userId, departedUserId]) {
+      const item = feed.find((i) => i.actorUserId === actorId);
+      expect(item).toBeDefined();
+      expect(item!.actorName).toBeNull();
+      expect(item!.avatarUrl).toBeNull();
+    }
+
+    const json = JSON.stringify({ audit, feed });
+    expect(json).not.toContain('avatar/foreign');
+    expect(json).not.toContain('avatar/gone');
+    expect(json).not.toContain('Departed Tester');
+    expectNoRawKeyValue({ audit, feed });
+  });
+
+  it('never serves a photo for anyone whose name it withholds', async () => {
+    // The founder invariant, asserted over whole payloads rather than named
+    // rows: a face is never MORE exposed than the identity beside it.
+    const audit = await auditSigned.search(T1, { limit: 200 });
+    for (const row of audit.data) {
+      if (row.avatarUrl !== null) expect(row.actorName).not.toBeNull();
+    }
+    const feed = await dashboardService.getActivity(T1, { limit: 200 });
+    for (const item of feed) {
+      if (item.avatarUrl !== null) expect(item.actorName).not.toBeNull();
+    }
+    expect(audit.data.some((r) => r.avatarUrl !== null)).toBe(true);
+  });
+
+  it("refuses a tenant 2 regularization to tenant 1's owner, photo and all", async () => {
+    await expect(
+      attendanceService.getRegularizationForReviewer(foreignRegId, owner.userId, T1, 'owner'),
+    ).rejects.toThrow(/Regularization not found/);
+  });
+});
+
+describe("Round N — the photo respects the caller's scope", () => {
+  let mgr: Person; // a manager of exactly one person
+  let report: Person; // that person, photographed
+  let fin: Person; // a finance seat: roster yes, leave detail no
+
+  beforeAll(async () => {
+    // Declared AFTER the fixture counts this file asserts elsewhere, and
+    // deliberately WITHOUT leave / timesheet / audit rows, so the seats below
+    // cannot move any total another test pins.
+    mgr = await mkSeat(T1, 'Mgr', 'manager');
+    report = await mkSeat(T1, 'Report', 'employee', { managerId: mgr.employeeId, avatarKey: 'rep' });
+    fin = await mkSeat(T1, 'Fin', 'finance');
+  });
+
+  it('shows a manager their own reports — and nobody else — with faces', async () => {
+    const rows = await attendanceService.listTeamToday(mgr.userId, T1, 'manager');
+    expect(rows.map((r) => r.employeeId)).toEqual([report.employeeId]);
+    expect(rows[0]!.avatarUrl).toBe(report.expected);
+    // The org's other photographed people never reach this manager's payload.
+    const json = JSON.stringify(rows);
+    expect(json).not.toContain(keyed.employeeId);
+    expect(json).not.toContain('avatar/abc'); // `keyed`'s object path
+    expectNoKeyLeak(rows);
+    expectNoRawKeyValue(rows);
+  });
+
+  it('gives a manager no rows — and no photos — from outside their team', async () => {
+    // `report` has no leave / timesheet rows, so these queues are empty for
+    // this manager: every row in them would belong to somebody else's team.
+    for (const res of [
+      await leaveService.listTeam(mgr.userId, T1, { limit: 100 }, 'manager'),
+      await leaveService.listPending(mgr.userId, T1, { limit: 100 }, 'manager'),
+      await timesheetService.listTeam(mgr.userId, T1, { limit: 100 }, 'manager'),
+      await timesheetService.listPending(mgr.userId, T1, { limit: 100 }, 'manager'),
+    ]) {
+      expect(res.data).toEqual([]);
+    }
+    const regQueue = await attendanceService.listPendingRegularizations(mgr.userId, T1, {}, 'manager');
+    expect(regQueue.data).toEqual([]);
+  });
+
+  it('runs the may-act guard BEFORE it hands over the requester’s photo', async () => {
+    // `keyed` reports to the owner, not to this manager. The refusal must be
+    // the same 404 it always was — never a row that happens to carry a face.
+    await expect(
+      attendanceService.getRegularizationForReviewer(regIds.keyed!, mgr.userId, T1, 'manager'),
+    ).rejects.toThrow(/Regularization not found/);
+    // …and the same for a finance seat, which reviews nothing at all.
+    await expect(
+      attendanceService.getRegularizationForReviewer(regIds.keyed!, fin.userId, T1, 'finance'),
+    ).rejects.toThrow(/Regularization not found/);
+  });
+
+  it('keeps finance on the roster with faces, but still without leave details', async () => {
+    // Round L put finance on `team/today` (roster + "On leave"/expected) while
+    // withholding the request behind it. Adding the join must not have moved
+    // that line: photos yes, leave payload no. (The positive branch — an
+    // approved leave TODAY that the owner can see and finance cannot — is
+    // covered with its own fixture in founder-roundL-a.spec.ts.)
+    const rows = await attendanceService.listTeamToday(fin.userId, T1, 'finance');
+    expect(rows.find((r) => r.employeeId === keyed.employeeId)?.avatarUrl).toBe(keyed.expected);
+    for (const r of rows) {
+      expect(r.leave).toBeNull();
+      expect(r.pendingLeave).toBe(false);
+      expect(r.dayKind).not.toBe('half_day_leave');
+    }
+    expectNoKeyLeak(rows);
+    expectNoRawKeyValue(rows);
+  });
+
+  it('gives a finance seat no approval rows — and so no photos — to review', async () => {
+    for (const res of [
+      await leaveService.listTeam(fin.userId, T1, { limit: 100 }, 'finance'),
+      await leaveService.listPending(fin.userId, T1, { limit: 100 }, 'finance'),
+      await timesheetService.listTeam(fin.userId, T1, { limit: 100 }, 'finance'),
+      await timesheetService.listPending(fin.userId, T1, { limit: 100 }, 'finance'),
+    ]) {
+      expect(res.data).toEqual([]);
+    }
   });
 });

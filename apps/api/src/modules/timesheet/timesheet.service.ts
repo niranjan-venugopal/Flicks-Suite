@@ -1132,7 +1132,13 @@ export class TimesheetService {
       })
       .from(employees)
       .leftJoin(users, eq(employees.user_id, users.id))
-      .where(eq(employees.id, period.employee_id))
+      // dbAdmin BYPASSES RLS, so this query carries its own tenant predicate
+      // (house rule 1) — the two sibling dbAdmin reads above already do. The
+      // id comes from a period resolved inside the tenant transaction, so this
+      // is defence in depth: it keeps the `users` join (email + full name)
+      // reachable only through an employee row of THIS tenant, whatever a
+      // future caller hands in.
+      .where(and(eq(employees.id, period.employee_id), eq(employees.tenant_id, tenantId)))
       .limit(1);
     if (ownerUser?.userId) {
       const verb =
