@@ -12,6 +12,7 @@ import { users, tenants } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { R2Service } from '../../core/storage/r2.service';
+import { servedAvatarUrl } from '../../core/storage/signed-avatar';
 import { AuditService } from '../audit/audit.service';
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB (§4.1)
@@ -205,22 +206,16 @@ export class MediaService {
 
   // ─── Signed-URL serialization helpers ──────────────────────────────────────
 
-  /** Signed URL for a stored key, or the legacy URL fallback (§4/D6). */
+  /**
+   * Signed URL for a stored key, or the legacy URL fallback (§4/D6).
+   * Round N: delegates to the shared core helper so modules that cannot
+   * import MediaModule (audit — cycle) sign identically via R2Service.
+   */
   async servedUrl(
     key: string | null,
     legacyUrl: string | null,
     size: 256 | 64 = 256,
   ): Promise<string | null> {
-    if (key && this.r2.isConfigured()) {
-      const k = size === 64 ? key.replace('_256.webp', '_64.webp') : key;
-      try {
-        return await this.r2.signedGetUrl(k);
-      } catch (err) {
-        this.logger.warn(
-          `signedGetUrl failed for ${k}: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    }
-    return legacyUrl;
+    return servedAvatarUrl(this.r2, key, legacyUrl, size);
   }
 }
