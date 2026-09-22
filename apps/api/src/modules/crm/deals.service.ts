@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, sql } from 'drizzle-orm';
@@ -30,8 +31,10 @@ import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
 import { InvoicingPublicService } from '../invoicing/public';
+import { MediaService } from '../media/public';
 import { FxService } from './fx.service';
 import { ensureDefaultLostReasons } from './lost-reasons.seed';
+import { signOwnerAvatars } from './owner-avatars';
 
 /** Query for the closed-deals list (Round I). `closed` = won + lost. */
 export interface ListDealsQuery {
@@ -60,7 +63,14 @@ export class DealsService {
     private readonly fx: FxService,
     private readonly eventEmitter: EventEmitter2,
     private readonly invoicing: InvoicingPublicService,
+    // Round N: LAST + optional so hand-built specs keep compiling; without it
+    // avatar signing falls back to the legacy public URL.
+    @Optional() private readonly mediaService?: MediaService,
   ) {}
+
+  /** Signed avatar URL (64px) or the legacy public URL — never throws a read. */
+  private readonly signAvatar = (k: string | null, l: string | null): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(k, l, 64) : Promise.resolve(l);
 
   private async baseCurrency(tx: Db, tenantId: string): Promise<string> {
     const [t] = await tx.select({ currency: tenants.currency }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
@@ -205,9 +215,18 @@ export class DealsService {
         : [];
       const ownerIds = [...new Set(openDeals.map((d) => d.owner_user_id))];
       const ownerRows = ownerIds.length
-        ? await tx.select({ id: users.id, name: users.full_name }).from(users).where(inArray(users.id, ownerIds))
+        ? await tx
+            .select({ id: users.id, name: users.full_name, avatar_key: users.avatar_key, avatar_url: users.avatar_url })
+            .from(users)
+            .where(inArray(users.id, ownerIds))
         : [];
       const ownerName = new Map(ownerRows.map((o) => [o.id, o.name]));
+      // Round N: one signature per unique owner (local SigV4 — safe in the tx).
+      const ownerAvatar = new Map(
+        await Promise.all(
+          ownerRows.map(async (o) => [o.id, await this.signAvatar(o.avatar_key, o.avatar_url)] as const),
+        ),
+      );
       const tagsByDeal = new Map<string, Array<{ id: string; label: string; color: string | null }>>();
       for (const t of tagRows) {
         const list = tagsByDeal.get(t.object_id) ?? [];
@@ -231,6 +250,7 @@ export class DealsService {
                 idle_days: idleDays,
                 rot_state: rotState,
                 owner_name: ownerName.get(d.owner_user_id) ?? null,
+                owner_avatar_url: ownerAvatar.get(d.owner_user_id) ?? null,
                 tags: tagsByDeal.get(d.id) ?? [],
               };
             });
@@ -275,7 +295,11 @@ export class DealsService {
           .from(recordTags)
           .innerJoin(tags, eq(tags.id, recordTags.tag_id))
           .where(and(eq(recordTags.object_type, 'deal'), eq(recordTags.object_id, id))),
-        tx.select({ name: users.full_name }).from(users).where(eq(users.id, d.owner_user_id)).limit(1),
+        tx
+          .select({ name: users.full_name, avatar_key: users.avatar_key, avatar_url: users.avatar_url })
+          .from(users)
+          .where(eq(users.id, d.owner_user_id))
+          .limit(1),
         d.company_id
           ? tx
               .select({ id: directoryCompanies.id, name: directoryCompanies.name, country_code: directoryCompanies.country_code })
@@ -306,6 +330,8 @@ export class DealsService {
           ...d,
           base_currency: base,
           owner_name: owner?.name ?? null,
+          // Round N: signed 64px avatar (or legacy URL) — the key never leaves.
+          owner_avatar_url: await this.signAvatar(owner?.avatar_key ?? null, owner?.avatar_url ?? null),
           lost_reason_label: reason?.label ?? null,
           company: company[0] ?? null,
           stage_history: history,
@@ -319,17 +345,24 @@ export class DealsService {
     });
   }
 
-  /** Active workspace members for owner pickers / filters (id + name). */
+  /** Active workspace members for owner pickers / filters (id + name + avatar). */
   async reps(tenantId: string) {
-    return this.db.withTenant(tenantId, async (tx) => {
-      const rows = await tx
-        .select({ user_id: memberships.user_id, name: users.full_name, role: memberships.role })
+    const rows = await this.db.withTenant(tenantId, async (tx) =>
+      tx
+        .select({
+          user_id: memberships.user_id,
+          name: users.full_name,
+          role: memberships.role,
+          avatar_key: users.avatar_key,
+          avatar_url: users.avatar_url,
+        })
         .from(memberships)
         .innerJoin(users, eq(users.id, memberships.user_id))
         .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.status, 'active')))
-        .orderBy(asc(users.full_name));
-      return { data: rows };
-    });
+        .orderBy(asc(users.full_name)),
+    );
+    // Round N: sign after the tx; the raw key never reaches the response.
+    return { data: await signOwnerAvatars(this.signAvatar, rows, { keyField: 'avatar_key', urlField: 'avatar_url' }) };
   }
 
   /** Compact deal list for a contact / company detail page. */

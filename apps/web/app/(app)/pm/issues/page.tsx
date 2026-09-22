@@ -4,8 +4,9 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon, Pill, SectionHead, Toggle, avBg, initials } from '@/components/proto'
+import { Btn, Icon, Pill, SectionHead, Toggle } from '@/components/proto'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
+import { PmAv } from '@/components/pm/projects'
 import { PmBoard } from '@/components/pm/board'
 import { PmPage } from '@/components/pm/PmPage'
 import { IssueComposer } from '@/components/pm/IssueComposer'
@@ -431,7 +432,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
                 </button>
                 {[...store.users.values()].map((u) => (
                   <button key={u.id} onClick={() => { engine.bulkApply(targets, (id) => engine.assignIssue(id, u.id)); setBulkMenu(null); setSel(new Set()) }} style={menuRowStyle(false)}>
-                    <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
+                    <PmAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
                   </button>
                 ))}
               </BulkMenu>
@@ -493,20 +494,6 @@ function BulkMenu({ children, onClose }: { children: React.ReactNode; onClose: (
 
 function engineUserId(engine: PmSyncEngine): string {
   return (engine as unknown as { userId: string }).userId
-}
-
-// Signed avatar when the workspace roster has one, initials otherwise.
-function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
-  const [broken, setBroken] = useState(false)
-  const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
-  if (src && !broken) {
-    return <img src={src} alt={name} onError={() => setBroken(true)} style={{ ...box, objectFit: 'cover', display: 'inline-block' }} />
-  }
-  return (
-    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
-      {initials(name)}
-    </span>
-  )
 }
 
 // ─── Row ─────────────────────────────────────────────────────────────────────
@@ -585,7 +572,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       <button onClick={(e) => { e.stopPropagation(); onFocus(); openMenu('assignee') }} title={assignee?.name ?? 'Unassigned'}
         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}>
         {assignee?.name ? (
-          <MiniAv name={assignee.name} src={assignee.avatar_url} size={18} />
+          <PmAv name={assignee.name} src={assignee.avatar_url} size={18} />
         ) : (
           <span style={{ width: 18, height: 18, borderRadius: '50%', border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
         )}
@@ -618,7 +605,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
           {[...store.users.values()].map((u) => (
             <button key={u.id} onClick={(e) => { e.stopPropagation(); engine.assignIssue(issue.id, u.id); closeMenu() }}
               style={menuRowStyle(u.id === issue.assignee_user_id)}>
-              <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
+              <PmAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
             </button>
           ))}
         </RowMenu>

@@ -29,6 +29,8 @@ import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MediaService } from '../media/media.service';
+import { withSignedAvatars } from '../../core/storage/signed-avatar';
 import {
   ApprovalRoutingService,
   routeStateColumns,
@@ -138,9 +140,24 @@ export class AttendanceService {
     // it; a hand-built service falls back to a routing service bound to the
     // same notifications + config it was given.
     @Optional() routing?: ApprovalRoutingService,
+    // Round N: Team-today rows and the reviewer's regularization view carry
+    // the person's photo (users.avatar_key needs signing). Optional + LAST
+    // for the same hand-built-spec reason as configService above.
+    @Optional() private readonly mediaService?: MediaService,
   ) {
     this.routing = routing ?? new ApprovalRoutingService(notificationsService, configService);
   }
+
+  /**
+   * Round N — 64 px signed avatar URL for a stored key, falling back to the
+   * legacy users.avatar_url (and to it alone when built without MediaService).
+   * Local SigV4 crypto — safe inside or after a tenant tx; prefer after.
+   */
+  private readonly signAvatar = (
+    key: string | null,
+    legacyUrl: string | null,
+  ): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(key, legacyUrl, 64) : Promise.resolve(legacyUrl);
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1403,15 +1420,22 @@ export class AttendanceService {
     // shift timezone (was a hard-coded IST date), and a row without a record
     // carries the day's expectation — on leave / holiday / weekend / leave
     // pending — instead of reading as "missed punch" to the manager.
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    const teamRows = await this.databaseService.withTenant(tenantId, async (tx) => {
       const people = await tx
         .select({
           employeeId: employees.id,
+          employeeUserId: employees.user_id,
           employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
           employeeCode: employees.employee_code,
           locationName: locations.name,
+          // Round N — the photo lives in users.avatar_key (private R2 key);
+          // signed AFTER the tx below, never returned raw. `users` is
+          // platform-global, joined by id from the tenant-scoped employee row.
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
         })
         .from(employees)
+        .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(
           locations,
           and(eq(employees.location_id, locations.id), eq(locations.tenant_id, tenantId)),
@@ -1462,8 +1486,11 @@ export class AttendanceService {
         const kind = exp?.kind ?? ('working' as const);
         return {
           employeeId: p.employeeId,
+          employeeUserId: p.employeeUserId,
           employeeName: p.employeeName,
           employeeCode: p.employeeCode,
+          avatarKey: p.avatarKey,
+          avatarUrl: p.avatarUrl,
           recordId: rec?.id ?? null,
           attendanceStatus: status,
           workMode: rec?.workMode ?? null,
@@ -1486,6 +1513,9 @@ export class AttendanceService {
         };
       });
     });
+    // Round N — sign after the tenant tx returns (local SigV4 crypto,
+    // pm/teams precedent); the mapper strips avatarKey from every row.
+    return withSignedAvatars(this.signAvatar, teamRows);
   }
 
   // ─── Regularization ───────────────────────────────────────────────────────
@@ -1901,9 +1931,13 @@ export class AttendanceService {
           escalatedAt: attendanceRegularizations.escalated_at,
           escalatedTo: attendanceRegularizations.escalated_to_employee_id,
           escalatedToName: sql<string | null>`CASE WHEN ${escalatedTo.id} IS NULL THEN NULL ELSE ${escalatedTo.first_name} || ' ' || ${escalatedTo.last_name} END`,
+          // Round N — signed below; neither field is ever returned raw.
+          avatarKey: users.avatar_key,
+          avatarUrlRaw: users.avatar_url,
         })
         .from(attendanceRegularizations)
         .leftJoin(employees, eq(attendanceRegularizations.employee_id, employees.id))
+        .leftJoin(users, eq(employees.user_id, users.id))
         .leftJoin(
           escalatedTo,
           and(
@@ -1946,7 +1980,9 @@ export class AttendanceService {
         reason: row.reason,
         status: row.status,
         requestedAt: row.requestedAt.toISOString(),
-        avatarUrl: null as string | null,
+        // Round N — was a hard-coded null (initials forever). Signing is
+        // local SigV4 crypto, safe inside the tx; the key never leaves here.
+        avatarUrl: await this.signAvatar(row.avatarKey, row.avatarUrlRaw),
         escalation: shapeEscalation(row, row.escalatedToName),
       };
     });

@@ -37,6 +37,8 @@ import {
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MediaService } from '../media/media.service';
+import { withSignedAvatars } from '../../core/storage/signed-avatar';
 import { resolveShiftsTx, tenantTodayISOTx } from '../../core/common/workday';
 import {
   ApprovalRoutingService,
@@ -144,9 +146,24 @@ export class LeaveService {
     // it; a hand-built service falls back to a routing service bound to the
     // same notifications + config it was given.
     @Optional() routing?: ApprovalRoutingService,
+    // Round N: Team → Leave rows carry the requester's photo
+    // (users.avatar_key needs signing). Optional + LAST for the same
+    // hand-built-spec reason as configService above.
+    @Optional() private readonly mediaService?: MediaService,
   ) {
     this.routing = routing ?? new ApprovalRoutingService(notificationsService, configService);
   }
+
+  /**
+   * Round N — 64 px signed avatar URL for a stored key, falling back to the
+   * legacy users.avatar_url (and to it alone when built without MediaService).
+   * Local SigV4 crypto — safe inside or after a tenant tx; prefer after.
+   */
+  private readonly signAvatar = (
+    key: string | null,
+    legacyUrl: string | null,
+  ): Promise<string | null> =>
+    this.mediaService ? this.mediaService.servedUrl(key, legacyUrl, 64) : Promise.resolve(legacyUrl);
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -989,7 +1006,7 @@ export class LeaveService {
     const offset = (page - 1) * limit;
     const status = query.status ?? 'all';
 
-    return this.databaseService.withTenant(tenantId, async (tx) => {
+    const result = await this.databaseService.withTenant(tenantId, async (tx) => {
       const reviewer = await this.resolveReviewer(tx, userId, tenantId, roleHint);
       const approver = alias(employees, 'approver');
       // Round L: the org chart still decides the SCOPE (owner/admin: the
@@ -1025,6 +1042,10 @@ export class LeaveService {
             employeeUserId: employees.user_id,
             employeeName: sql<string>`${employees.first_name} || ' ' || ${employees.last_name}`,
             employeeCode: employees.employee_code,
+            // Round N — the requester's photo; signed AFTER the tx, the key
+            // is stripped by the mapper and never reaches a response.
+            avatarKey: users.avatar_key,
+            avatarUrl: users.avatar_url,
             leaveTypeId: leaveRequests.leave_type_id,
             leaveTypeName: leaveTypes.name,
             leaveTypeCode: leaveTypes.code,
@@ -1050,6 +1071,8 @@ export class LeaveService {
           })
           .from(leaveRequests)
           .leftJoin(employees, eq(leaveRequests.employee_id, employees.id))
+          // Round N — the requester's account row carries the photo key.
+          .leftJoin(users, eq(employees.user_id, users.id))
           .leftJoin(leaveTypes, eq(leaveRequests.leave_type_id, leaveTypes.id))
           .leftJoin(
             approver,
@@ -1095,6 +1118,9 @@ export class LeaveService {
         scope: reviewer.orgWide ? ('org' as const) : ('team' as const),
       };
     });
+    // Round N — sign the photos AFTER the tenant transaction (local SigV4
+    // crypto, no DB); the mapper strips avatarKey from every row.
+    return { ...result, data: await withSignedAvatars(this.signAvatar, result.data) };
   }
 
   // ─── Review (approve/reject) ──────────────────────────────────────────────

@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 
 const AV_BG: Array<[string, string]> = [
@@ -39,14 +40,27 @@ interface AvatarProps {
 }
 
 export function Avatar({ name = '', size = 'md', src, className = '', style }: AvatarProps) {
+  // Signed avatar URLs expire; when the img 404s we fall back to initials
+  // instead of the browser's broken-image glyph.
+  const [broken, setBroken] = useState(false)
+  useEffect(() => {
+    setBroken(false)
+  }, [src])
+
   const sizeCls =
     size === 'lg' ? ' lg' : size === 'xl' ? ' xl' : size === 'sm' ? ' sm' : ''
   const cls = 'avatar' + sizeCls + (className ? ' ' + className : '')
 
-  if (src) {
+  if (src && !broken) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
-      <img src={src} alt={name} className={cls} style={{ objectFit: 'cover', ...style }} />
+      <img
+        src={src}
+        alt={name}
+        className={cls}
+        style={{ objectFit: 'cover', ...style }}
+        onError={() => setBroken(true)}
+      />
     )
   }
   return (

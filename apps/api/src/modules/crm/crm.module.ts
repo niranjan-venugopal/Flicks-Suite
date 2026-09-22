@@ -38,6 +38,9 @@ import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { PresenceModule } from '../presence/presence.module';
 import { InvoicingModule } from '../invoicing/invoicing.module';
+// Round N: MediaService signs owner/assignee avatar keys on person rows.
+// Facade import — the crm-imports-only-facades boundary rule.
+import { MediaModule } from '../media/public';
 
 /**
  * CRM module (PRD v5). Sprint 25: directory kernel (Contacts/Companies).
@@ -47,7 +50,7 @@ import { InvoicingModule } from '../invoicing/invoicing.module';
  */
 @Module({
   // InvoicingModule provides the InvoicingPublicService facade (deal→invoice).
-  imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule],
+  imports: [AuditModule, InvoicingModule, NotificationsModule, PresenceModule, MediaModule],
   controllers: [DirectoryController, DealsController, CrmConfigController, ActivitiesController, CrmEmailController, CrmEmailPublicController, ResendWebhookController, SequencesController, LeadsController, FormsController, PublicFormsController, WorkflowsController, ReportsController],
   providers: [
     DirectoryService,

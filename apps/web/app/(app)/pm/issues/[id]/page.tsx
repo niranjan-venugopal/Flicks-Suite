@@ -4,8 +4,9 @@ import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Btn, Icon, Pill, avBg, initials } from '@/components/proto'
+import { Btn, Icon, Pill } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { PmAv } from '@/components/pm/projects'
 import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
 import { IssuePicker, type PickedIssue } from '@/components/pm/IssuePicker'
@@ -641,14 +642,14 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             </RailMenu>
           )}
           <RailRow label="Assignee" onClick={() => setMenu(menu === 'assignee' ? null : 'assignee')}>
-            {assignee?.name ? <><MiniAv name={assignee.name} src={assignee.avatar_url} size={16} /> <span>{assignee.name}</span></> : <span className="t-mute">Unassigned</span>}
+            {assignee?.name ? <><PmAv name={assignee.name} src={assignee.avatar_url} size={16} /> <span>{assignee.name}</span></> : <span className="t-mute">Unassigned</span>}
           </RailRow>
           {menu === 'assignee' && (
             <RailMenu>
               <button onClick={() => { doAssign(null); setMenu(null) }} style={railMenuRow(!issue.assignee_user_id)}>Unassigned</button>
               {users.map((u) => (
                 <button key={u.id} onClick={() => { doAssign(u.id); setMenu(null) }} style={railMenuRow(u.id === issue.assignee_user_id)}>
-                  <MiniAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
+                  <PmAv name={u.name ?? '?'} src={u.avatar_url} size={15} /> {u.name}
                 </button>
               ))}
             </RailMenu>
@@ -761,7 +762,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
             <span className="t-caption">Subscribers</span>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {(d?.subscriber_ids ?? []).map((uid) => (
-                <MiniAv key={uid} name={users.find((u) => u.id === uid)?.name ?? '?'} src={users.find((u) => u.id === uid)?.avatar_url} size={18} />
+                <PmAv key={uid} name={users.find((u) => u.id === uid)?.name ?? '?'} src={users.find((u) => u.id === uid)?.avatar_url} size={18} />
               ))}
             </div>
           </div>
@@ -805,18 +806,4 @@ function railMenuRow(active: boolean): React.CSSProperties {
     borderRadius: 7, background: active ? 'var(--surf-2)' : 'transparent', border: 'none',
     cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 700, textAlign: 'left',
   }
-}
-
-// Signed avatar when the workspace roster has one, initials otherwise.
-function MiniAv({ name, src, size = 18 }: { name: string; src?: string | null; size?: number }) {
-  const [broken, setBroken] = useState(false)
-  const box = { width: size, height: size, borderRadius: '50%', flexShrink: 0 } as const
-  if (src && !broken) {
-    return <img src={src} alt={name} onError={() => setBroken(true)} style={{ ...box, objectFit: 'cover', display: 'inline-block' }} />
-  }
-  return (
-    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
-      {initials(name)}
-    </span>
-  )
 }
