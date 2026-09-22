@@ -78,7 +78,21 @@ No customer data was exposed by any of these in production: row-level security w
 
 **Gate:** API typecheck · build · full Jest · module-boundary lint · web typecheck · web production build · leak probe = 0.
 
-<!-- LIVE-RESULTS -->
+**Live verification** (`scratchpad/verify-roundN.mjs`, 9 sections, **32 pass / 0 fail / 2 skip**): a real browser driving the **production web build** against the API and a local object store, on a seeded workspace of five people — two with uploaded photos, one deliberately without. Every assertion decodes the image (`naturalWidth > 0`), so a broken link cannot pass as a face.
+
+| § | Surface | Result |
+|---|---|---|
+| 1 | **Time → Attendance → Team** — the founder's screenshot | 5 rows, 2 decoded photos, and the person without one renders **no image at all** (initials, as intended) |
+| 2 | Dashboard — approvals queue + recent activity | 2 decoded faces each |
+| 3 | Team → Leave · Team → Timesheets | the requester's photo on their row; the person without one stays on initials |
+| 4 | Reports → Utilization · Audit log | 1 and 7 decoded actor faces |
+| 5 | CRM — deal owner chips + reports leaderboard | 2 decoded faces each |
+| 6 | Projects → Teams member stack | decoded face |
+| 7 | Inbox → approval deep link (the pane that used to be hard-coded blank) | the requester's photo, on the right request |
+| 8 | A **newly uploaded** photo reaches the lists | the person moves from initials to their photo |
+| 9 | A **dead** photo link | the image is replaced by that person's own initials chip — not a broken-image icon |
+
+Two honest skips, both fixture limitations rather than untested behaviour: the manager's "team today" card is empty in this seed (everyone reports to the owner, so the identical payload is proven by §1 instead), and the crop-modal upload path could not be driven in-browser (§8 proves the same propagation via a direct upload).
 
 ## 7. What to tell your team
 
