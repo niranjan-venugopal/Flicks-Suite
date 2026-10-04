@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import {
+  useDeferOnboarding,
   useEmployeeOnboardingStatus,
   useSubmitOnboardingStep,
   type SubmitOnboardingStepPayload,
@@ -119,6 +120,7 @@ export default function EmployeeOnboardingPage() {
   const me = useCurrentUser()
   const status = useEmployeeOnboardingStatus()
   const submit = useSubmitOnboardingStep()
+  const defer = useDeferOnboarding()
 
   // Statutory fields follow the employee's assigned location country, falling
   // back to the organization's country (the org GET is readable by employees).
@@ -364,6 +366,28 @@ export default function EmployeeOnboardingPage() {
   }
 
   const handleBack = () => setStepIdx((cur) => Math.max(0, cur - 1))
+
+  // Round P (R1.6 / contract C7): owners and HR admins may skip the wizard
+  // for now — the server says who qualifies (canDefer), the privileged
+  // variant is the fallback while the status loads. Nothing is validated or
+  // saved; the dashboard keeps a "Complete your profile" reminder.
+  const canDefer = status.data?.canDefer ?? isPrivileged
+  const handleDefer = async () => {
+    try {
+      await defer.mutateAsync()
+      toast({
+        title: 'Skipped for now',
+        description: 'You can finish your profile any time from the dashboard reminder.',
+      })
+      router.replace('/dashboard')
+    } catch (e: any) {
+      toast({
+        title: 'Could not skip',
+        description: e?.message ?? 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const handleSaveAndExit = async () => {
     const payload = validateAndBuildPayload()
@@ -634,6 +658,29 @@ export default function EmployeeOnboardingPage() {
                   : 'Continue'}
             </Btn>
           </div>
+          {canDefer && (
+            <div style={{ marginTop: 14, textAlign: 'right' }}>
+              <button
+                type="button"
+                onClick={handleDefer}
+                disabled={defer.isPending || submit.isPending}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: defer.isPending ? 'default' : 'pointer',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: 'var(--text-mute)',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                  opacity: defer.isPending ? 0.6 : 1,
+                }}
+              >
+                {defer.isPending ? 'Skipping…' : 'Skip for now — I’ll complete this later'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </AuthLayout>

@@ -6,9 +6,12 @@ import { useRouter } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
+import { ToastAction } from '@/components/ui/toast'
+import { APIError } from '@/lib/api/client'
 import {
   useEmployees,
   useInviteEmployee,
+  useNextEmployeeCode,
   type InviteEmployeePayload,
 } from '@/lib/api/queries/use-employees'
 import {
@@ -43,27 +46,34 @@ interface FormState {
   probationEndDate: string
   noticePeriodDays: string
   shiftTemplateId: string
-  annualCtc: string
   employeeCode: string
-  sendInviteImmediately: boolean
 }
 
 export default function InviteEmployeePage() {
   const router = useRouter()
   const { toast } = useToast()
   const invite = useInviteEmployee()
-  const employees = useEmployees()
+  // Reporting-manager pool: active people only, at the API's page cap
+  // (round P, R1.3).
+  const employees = useEmployees({ status: 'active', limit: 100 })
+  // The client-side code fallback must see EVERY live status (an invited or
+  // on-leave person holds a code just as firmly as an active one), so it
+  // reads the unfiltered roster rather than the manager pool above.
+  const roster = useEmployees({ limit: 100 })
+  // Round P (contract C6): the server suggests the next free code over EVERY
+  // row — removed employees included, since they still hold the unique index
+  // and a client-side guess from the visible list walked straight into 409s.
+  const nextCode = useNextEmployeeCode()
   const departments = useDepartments()
   const designations = useDesignations()
   const locations = useLocations()
   const shifts = useShifts()
 
-  // Auto-suggest the next employee code from the workspace's OWN pattern:
-  // parse existing codes as (prefix)(number), continue the dominant prefix
-  // with its digit width. A workspace that switched from EMP001 to a custom
-  // scheme (e.g. SPF-014) keeps counting in the custom scheme.
-  const suggestedCode = useMemo(() => {
-    const parsed = (employees.data?.employees ?? [])
+  // Client-side fallback while the server suggestion loads (or if that
+  // endpoint is unavailable): parse the visible codes as (prefix)(number)
+  // and continue the dominant prefix at its digit width.
+  const clientSuggestedCode = useMemo(() => {
+    const parsed = (roster.data?.employees ?? [])
       .map((e) => /^(.*?)(\d+)$/.exec(e.employeeCode ?? ''))
       .filter((m): m is RegExpExecArray => m !== null)
     if (parsed.length === 0) return 'EMP001'
@@ -85,10 +95,12 @@ export default function InviteEmployeePage() {
       (a, b) => b[1].count - a[1].count || b[1].max - a[1].max,
     )[0]!
     return `${prefix}${String(info.max + 1).padStart(info.width, '0')}`
-  }, [employees.data])
+  }, [roster.data])
 
-  // Prefill once the roster loads — still fully editable. Tracks whether the
-  // user has typed so we never clobber their input.
+  const suggestedCode = nextCode.data?.suggested?.trim() || clientSuggestedCode
+
+  // Prefill once the suggestion lands — still fully editable. Tracks whether
+  // the user has typed so we never clobber their input.
   const codeTouched = useRef(false)
   useEffect(() => {
     if (!codeTouched.current) {
@@ -113,9 +125,7 @@ export default function InviteEmployeePage() {
     probationEndDate: '',
     noticePeriodDays: '',
     shiftTemplateId: '',
-    annualCtc: '',
     employeeCode: '',
-    sendInviteImmediately: true,
   })
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
@@ -214,21 +224,52 @@ export default function InviteEmployeePage() {
     }
 
     try {
-      await invite.mutateAsync(payload)
-      toast({
-        title: form.sendInviteImmediately
-          ? 'Invite sent'
-          : 'Saved as draft',
-        description: form.sendInviteImmediately
-          ? `${email} will receive a magic-link to self-onboard.`
-          : 'You can send the invite from the Onboarding pipeline.',
-      })
+      const res = await invite.mutateAsync(payload)
+      // Round P (contract C3): the invite is always sent — the old "Saved as
+      // draft" toast described a checkbox the server never read. A 200 can
+      // still mean the email bounced at the provider (emailSent:false), and a
+      // pending invitee re-added from this form is updated + re-invited.
+      if (res.emailSent === false) {
+        toast({
+          title: 'Invite saved but the email could not be sent — try Resend in a minute',
+          description: `${email} is in the directory. Use Resend invite from their row.`,
+          variant: 'destructive',
+        })
+      } else if (res.reinvited) {
+        toast({
+          title: `Invite re-sent to ${email} — their details were updated`,
+          description: 'Their earlier link still works too.',
+        })
+      } else if (res.rehired) {
+        toast({
+          title: `${fullName} is back`,
+          description: `Their record was restored and a fresh invite went to ${email}.`,
+        })
+      } else {
+        toast({
+          title: 'Invite sent',
+          description: `${email} will receive a magic-link to self-onboard.`,
+        })
+      }
       router.push('/employees')
-    } catch (err: any) {
+    } catch (err) {
+      // 409s carry copy written for the user (ALREADY_EMPLOYEE / EXTERNAL_SEAT
+      // / employee-code clashes) — show it as-is and offer the directory,
+      // since every one of them is resolved from there.
+      const conflict = err instanceof APIError && err.status === 409
       toast({
         title: 'Could not send invite',
-        description: err?.message ?? 'Try again',
+        description: err instanceof Error ? err.message : 'Try again',
         variant: 'destructive',
+        ...(conflict
+          ? {
+              action: (
+                <ToastAction altText="View employees" onClick={() => router.push('/employees')}>
+                  View employees
+                </ToastAction>
+              ),
+            }
+          : {}),
       })
     }
   }
@@ -444,7 +485,7 @@ export default function InviteEmployeePage() {
                 >
                   <option value="">—</option>
                   {(employees.data?.employees ?? [])
-                    .filter((e) => e.status === 'active')
+                    .filter((e) => e.uiStatus === 'active')
                     .map((e) => (
                       <option key={e.id} value={e.id}>
                         {e.name}
@@ -528,20 +569,6 @@ export default function InviteEmployeePage() {
                     ))}
                 </select>
               </div>
-              <div>
-                <label className="label">
-                  Annual CTC{' '}
-                  <span style={{ color: 'var(--text-faint)' }}>
-                    (optional, hidden from employee)
-                  </span>
-                </label>
-                <input
-                  className="input"
-                  value={form.annualCtc}
-                  onChange={(e) => set('annualCtc', e.target.value)}
-                  placeholder="₹ 6,00,000"
-                />
-              </div>
             </div>
 
             {/* ─── Footer ───────────────────────────────────────────────── */}
@@ -555,27 +582,19 @@ export default function InviteEmployeePage() {
                 alignItems: 'center',
               }}
             >
-              <label
+              <div
                 style={{
                   display: 'flex',
                   gap: 8,
                   alignItems: 'center',
                   fontSize: 12.5,
                   fontWeight: 600,
-                  color: 'var(--text-2)',
-                  cursor: 'pointer',
+                  color: 'var(--text-mute)',
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={form.sendInviteImmediately}
-                  onChange={(e) =>
-                    set('sendInviteImmediately', e.target.checked)
-                  }
-                  style={{ accentColor: 'var(--blue)' }}
-                />
-                Send invite email immediately
-              </label>
+                <Icon.mail size={14} />
+                The invite email goes out as soon as you send.
+              </div>
               <div style={{ flex: 1 }} />
               <Btn kind="ghost" type="button" onClick={() => router.push('/employees')}>
                 Cancel

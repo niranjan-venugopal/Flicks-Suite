@@ -248,7 +248,10 @@ describe('Founder round 21 — the seat goes with the person', () => {
     expect(seat!.employee_id).toBeNull();
   });
 
-  it('restore does NOT hand the login back — re-inviting is a deliberate act', async () => {
+  // Round P R1.2: Restore relinks the seat so "Restore → re-invite" is no
+  // longer a dead end. A seat that never accepted comes back as 'invited'
+  // (Resend invite finishes it); one that had accepted comes back 'active'.
+  it('restore relinks the seat (invited until they accept; Resend finishes it)', async () => {
     const emp = await seedEmployee('seated2', { role: 'employee' });
     await giveHistory(emp.id);
     await employeesService.removeEmployee(emp.id, tenantId, ownerUserId);
@@ -258,7 +261,8 @@ describe('Founder round 21 — the seat goes with the person', () => {
       .select()
       .from(memberships)
       .where(eq(memberships.id, emp.membershipId!));
-    expect(seat!.status).toBe('deactivated');
+    expect(seat!.status).toBe('invited');
+    expect(seat!.employee_id).toBe(emp.id);
   });
 });
 

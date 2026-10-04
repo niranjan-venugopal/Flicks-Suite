@@ -225,7 +225,9 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { key: 'business_details_confirmed', label: 'Confirm business details', sub: 'GSTIN, PAN, address & state', href: '/settings/organization' },
+  // Round P (R1.6): GSTIN + state live on Settings → General (the IGST
+  // guard, contract C10, reads tenants.state_code) — not on bank accounts.
+  { key: 'business_details_confirmed', label: 'Confirm business details', sub: 'GSTIN, state & address', href: '/settings' },
   { key: 'numbering_configured', label: 'Set invoice numbering', sub: 'Prefix, FY format, starting number', href: '/invoicing/settings' },
   { key: 'payment_terms_set', label: 'Default payment terms', sub: 'Net days applied to new invoices', href: '/invoicing/settings' },
   { key: 'default_gst_set', label: 'Default GST & compliance', sub: 'Filing frequency, default rate', href: '/invoicing/settings' },

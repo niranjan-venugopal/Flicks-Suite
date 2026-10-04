@@ -4,11 +4,13 @@ import {
   ConflictException,
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Logger,
   Inject,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull, lte, gte, lt } from 'drizzle-orm';
+import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull, lte, gte, lt, gt } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import {
@@ -32,6 +34,7 @@ import {
   employeeChangeRequests,
   shiftTemplates,
   employeeShifts,
+  employeeInvitations,
 } from '@flicks/db/schema';
 
 // Bump when the privacy policy / consent copy materially changes so we can
@@ -60,6 +63,54 @@ import { ConfigService } from '@nestjs/config';
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
+
+// ─── Round P (R1.1 / R1.2) invite plumbing ───────────────────────────────────
+
+/** A second invite to the same person is allowed once a minute. */
+const RESEND_WINDOW_MS = 60_000;
+
+/** Import-only signal: the row matched a pending invitee and was skipped. */
+class PendingInviteeSkipped extends Error {
+  constructor(public readonly email: string) {
+    super('already invited — use Resend invite');
+    this.name = 'PendingInviteeSkipped';
+  }
+}
+
+interface PgErrorLike {
+  code?: string;
+  /** node-postgres spelling. */
+  constraint?: string;
+  /** postgres.js spelling (what @flicks/db uses). */
+  constraint_name?: string;
+  cause?: unknown;
+}
+
+/** The Postgres unique violation on `err` or up its `cause` chain, if any. */
+function findUniqueViolation(err: unknown): PgErrorLike | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth++) {
+    const candidate = current as PgErrorLike;
+    if (candidate.code === '23505') return candidate;
+    current = candidate.cause;
+  }
+  return null;
+}
+
+// Correlated columns the directory and the 360 both need (R1.3). The seat is
+// looked up by employee_id first (how inviteEmployee links it) and by user_id
+// second (legacy rows whose seat was never linked), inside the tenant tx so
+// RLS scopes both subqueries.
+const MEMBERSHIP_STATUS_SQL = sql<string | null>`COALESCE(
+  (SELECT m.status::text FROM memberships m
+     WHERE m.tenant_id = ${employees.tenant_id} AND m.employee_id = ${employees.id}
+     ORDER BY m.created_at ASC LIMIT 1),
+  (SELECT m.status::text FROM memberships m
+     WHERE m.tenant_id = ${employees.tenant_id} AND ${employees.user_id} IS NOT NULL AND m.user_id = ${employees.user_id}
+     ORDER BY m.created_at ASC LIMIT 1)
+)`;
+const ONBOARDING_STEP_SQL = sql<number>`COALESCE((${employees.custom_fields}->>'onboarding_step')::int, 0)`;
+const ONBOARDING_SUBMITTED_SQL = sql<boolean>`COALESCE((${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean, false)`;
 
 // Fields to exclude from API responses (sensitive data)
 const SAFE_EMPLOYEE_FIELDS = {
@@ -211,8 +262,8 @@ export class EmployeesService {
       conditions.push(eq(employees.status, query.status as typeof employees.status._.data));
     }
 
-    const result = await this.databaseService.withTenant(tenantId, (db) =>
-      db
+    const { result, total } = await this.databaseService.withTenant(tenantId, async (db) => {
+      const result = await db
         .select({
           id: employees.id,
           employeeCode: employees.employee_code,
@@ -231,6 +282,11 @@ export class EmployeesService {
           avatarUrl: users.avatar_url,
           avatarKey: users.avatar_key, // §4 — controller swaps for a signed URL
           createdAt: employees.created_at,
+          // Round P (R1.3): the directory derives its Invited / Onboarding /
+          // Awaiting approval / No access pills from these three.
+          membershipStatus: MEMBERSHIP_STATUS_SQL,
+          onboardingStep: ONBOARDING_STEP_SQL,
+          onboardingSubmitted: ONBOARDING_SUBMITTED_SQL,
         })
         .from(employees)
         .leftJoin(users, eq(employees.user_id, users.id))
@@ -239,12 +295,19 @@ export class EmployeesService {
         .where(and(...conditions))
         .orderBy(desc(employees.created_at))
         .limit(limit)
-        .offset(offset),
-    );
+        .offset(offset);
+      // A real count: `total = rows on this page` made "Showing first N"
+      // and the header counts lie past the first page.
+      const [cnt] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(employees)
+        .where(and(...conditions));
+      return { result, total: Number(cnt?.n ?? 0) };
+    });
 
     return {
       data: result,
-      pagination: { page, limit, total: result.length },
+      pagination: { page, limit, total },
     };
   }
 
@@ -360,190 +423,633 @@ export class EmployeesService {
     }
   }
 
+  /**
+   * Resolves the AuthService invite-link call. The real service exposes the
+   * detailed shape (url + token hash + expiry, Round P) which the
+   * `employee_invitations` ledger needs. AuthService doubles that predate it
+   * only expose the URL (and may hand back the same URL every call), so on
+   * that path the ledger gets a random placeholder hash — the row still
+   * records the send for throttling and resent_count.
+   */
+  private async issueInviteLink(
+    userId: string,
+    email: string,
+  ): Promise<{ url: string; tokenHash: string; expiresAt: Date }> {
+    const auth = this.authService as Partial<AuthService>;
+    if (typeof auth.issueInviteMagicLinkDetailed === 'function') {
+      return auth.issueInviteMagicLinkDetailed(userId, email);
+    }
+    const url = await this.authService.issueInviteMagicLink(userId, email);
+    return {
+      url,
+      tokenHash: sha256(`legacy:${crypto.randomBytes(32).toString('hex')}`),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    };
+  }
+
+  /**
+   * One `employee_invitations` row per send; `resent_count` is the ordinal
+   * (0 = the first invite). Runs inside the caller's tenant tx; flicks_app
+   * holds INSERT on the table under the tenant_isolation policy (verified).
+   */
+  private async writeInvitationLedger(
+    db: Db,
+    args: {
+      tenantId: string;
+      employeeId: string;
+      email: string;
+      tokenHash: string;
+      expiresAt: Date;
+      invitedBy: string;
+    },
+  ): Promise<number> {
+    const [prior] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(employeeInvitations)
+      .where(
+        and(
+          eq(employeeInvitations.tenant_id, args.tenantId),
+          eq(employeeInvitations.employee_id, args.employeeId),
+        ),
+      );
+    const resentCount = Number(prior?.n ?? 0);
+    await db.insert(employeeInvitations).values({
+      tenant_id: args.tenantId,
+      employee_id: args.employeeId,
+      email: args.email,
+      token_hash: args.tokenHash,
+      expires_at: args.expiresAt,
+      resent_count: resentCount,
+      invited_by: args.invitedBy,
+    });
+    return resentCount;
+  }
+
+  /**
+   * True when the seat's `employee_id` points at a LIVE row other than
+   * `employeeId` — e.g. the person was removed and re-added under another
+   * work email. A restore / resend must not steal that seat (the person would
+   * end up with two live rows and every "me" surface on the wrong one).
+   */
+  private async seatHeldByAnotherLiveRow(
+    db: Db,
+    tenantId: string,
+    seat: { employee_id: string | null },
+    employeeId: string,
+  ): Promise<boolean> {
+    if (!seat.employee_id || seat.employee_id === employeeId) return false;
+    const [other] = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.id, seat.employee_id),
+          eq(employees.tenant_id, tenantId),
+          isNull(employees.deleted_at),
+        ),
+      )
+      .limit(1);
+    return !!other;
+  }
+
+  /** 429 when the ledger shows a send for this employee inside the window. */
+  private async assertResendWindow(db: Db, tenantId: string, employeeId: string): Promise<void> {
+    const since = new Date(Date.now() - RESEND_WINDOW_MS);
+    const [recent] = await db
+      .select({ id: employeeInvitations.id })
+      .from(employeeInvitations)
+      .where(
+        and(
+          eq(employeeInvitations.tenant_id, tenantId),
+          eq(employeeInvitations.employee_id, employeeId),
+          gt(employeeInvitations.created_at, since),
+        ),
+      )
+      .limit(1);
+    if (recent) {
+      throw new HttpException(
+        {
+          code: 'RESEND_TOO_SOON',
+          message: 'An invite was sent less than a minute ago — try again shortly',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  /**
+   * Find-or-create the platform user for an invite. Service-role: a person
+   * may already exist in another tenant and be invisible under the users RLS
+   * policy. Called only AFTER the tenant-side prechecks passed, so a 409
+   * never leaves an orphan users row behind (Round P R1.2).
+   */
+  private async findOrCreateInviteUser(email: string, fullName: string) {
+    const [found] = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    if (found) return found;
+    // Two admins inviting the same address at once: let the unique index
+    // decide and re-read instead of surfacing a 23505.
+    const [inserted] = await this.dbAdmin
+      .insert(users)
+      .values({ email, full_name: fullName })
+      .onConflictDoNothing({ target: users.email })
+      .returning();
+    if (inserted) return inserted;
+    const [again] = await this.dbAdmin
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    if (!again) throw new Error('Could not provision the invited user');
+    return again;
+  }
+
+  /** Maps a unique violation raised inside the write tx to the user-facing 409. */
+  private rethrowInviteWriteError(err: unknown, employeeCode: string): never {
+    const violation = findUniqueViolation(err);
+    if (!violation) throw err;
+    const constraint = violation.constraint ?? violation.constraint_name;
+    if (constraint === 'employees_tenant_work_email_unique') {
+      throw new ConflictException({
+        code: 'DUPLICATE',
+        message: 'An employee with this work email already exists',
+      });
+    }
+    if (constraint === 'employees_tenant_code_unique') {
+      throw new ConflictException({
+        code: 'DUPLICATE',
+        message: `Employee code ${employeeCode} is already in use`,
+      });
+    }
+    throw new ConflictException({
+      code: 'DUPLICATE',
+      message: 'A record with the same value already exists.',
+    });
+  }
+
+  /**
+   * Invite (or re-invite, or re-hire) a person by work email.
+   *
+   * Round P (R1.2) — "re-adding the same person" used to hit the raw
+   * `employees_tenant_work_email_unique` text. The row for `(tenant, email)`
+   * is now looked up INCLUDING archived rows, inside the tenant tx, before any
+   * write, and the outcome follows the matrix:
+   *
+   *   no row                             → create (today's path); a deactivated
+   *                                        seat for the same user (prior hard
+   *                                        delete) is re-invited and linked, an
+   *                                        active/invited unlinked seat is linked
+   *   no row, guest/auditor seat         → 409 EXTERNAL_SEAT
+   *   live, inactive, not yet submitted  → UPDATE with the form values + re-send
+   *                                        the invite (`reinvited: true`)
+   *   live, submitted / active / …       → 409 ALREADY_EMPLOYEE
+   *   archived (deleted_at)              → re-hire IN PLACE (same employees.id,
+   *                                        history intact), seat → invited
+   *
+   * Order of operations: tenant-side prechecks (read-only tx) → users
+   * find-or-create (service role) → write tx (23505 mapped by constraint) →
+   * invite link + ledger row → email → audit. Email sends and the magic-link
+   * insert never run inside a tenant transaction.
+   */
   async inviteEmployee(
     dto: InviteEmployeeDto,
     adminId: string,
     tenantId: string,
+    opts?: { onPendingInvitee?: 'resend' | 'skip' },
   ) {
     const normalizedEmail = dto.email.toLowerCase().trim();
 
     const joiningDate = dto.joiningDate
       ? dto.joiningDate
-      : new Date().toISOString().split('T')[0];
+      : new Date().toISOString().split('T')[0]!;
 
     const nameParts = dto.fullName.trim().split(/\s+/);
     const firstName = nameParts[0] ?? dto.fullName;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
-    // Find or create the user on the service-role connection: an existing user
-    // may belong to a different tenant and would be invisible under the users
-    // RLS policy, so this lookup/creation must bypass RLS.
-    let user = await this.dbAdmin
-      .select()
+    // ─── Phase 1: who is this, if anyone (read-only, service role) ──────────
+    const [knownUser] = await this.dbAdmin
+      .select({ id: users.id })
       .from(users)
       .where(eq(users.email, normalizedEmail))
       .limit(1);
 
-    if (!user[0]) {
-      const inserted = await this.dbAdmin
-        .insert(users)
-        .values({
-          email: normalizedEmail,
-          full_name: dto.fullName,
+    // ─── Phase 2: tenant-side prechecks — nothing is written yet ────────────
+    type Mode = 'create' | 'reinvite' | 'rehire';
+    const plan = await this.databaseService.withTenant(tenantId, async (db) => {
+      // Reject cross-tenant / dangling org refs before writing them.
+      await this.assertOrgRefsInTenant(db, tenantId, {
+        departmentId: dto.departmentId,
+        designationId: dto.designationId,
+        locationId: dto.locationId,
+        managerEmployeeId: dto.managerId,
+        shiftTemplateId: dto.shiftTemplateId,
+      });
+
+      const [byEmail] = await db
+        .select({
+          id: employees.id,
+          userId: employees.user_id,
+          employeeCode: employees.employee_code,
+          status: employees.status,
+          deletedAt: employees.deleted_at,
+          customFields: employees.custom_fields,
         })
-        .returning();
-      user = inserted;
-    }
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            eq(employees.work_email, normalizedEmail),
+          ),
+        )
+        .limit(1);
 
-    const currentUser = user[0];
+      // The seat for this person in THIS workspace, if the user exists.
+      const seatUserId = byEmail?.userId ?? knownUser?.id ?? null;
+      const [seat] = seatUserId
+        ? await db
+            .select()
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, tenantId),
+                eq(memberships.user_id, seatUserId),
+              ),
+            )
+            .orderBy(asc(memberships.created_at))
+            .limit(1)
+        : [];
 
-    const { employee, companyName } =
-      await this.databaseService.withTenant(tenantId, async (db) => {
-        // Reject cross-tenant / dangling org refs before writing them.
-        await this.assertOrgRefsInTenant(db, tenantId, {
-          departmentId: dto.departmentId,
-          designationId: dto.designationId,
-          locationId: dto.locationId,
-          managerEmployeeId: dto.managerId,
-          shiftTemplateId: dto.shiftTemplateId,
+      // A guest/auditor seat never becomes an employee seat by side effect —
+      // whichever row state the email is in, the admin removes that seat
+      // first (the 409 says so).
+      const externalSeat = !!seat && (seat.role === 'guest' || seat.role === 'auditor');
+      const externalSeatConflict = () =>
+        new ConflictException({
+          code: 'EXTERNAL_SEAT',
+          message: `${normalizedEmail} holds a guest/auditor seat — remove that seat in Settings → Members first`,
         });
 
-        // Check for duplicate employee code within tenant. REMOVED employees
-        // are deliberately included: their row still holds the unique index on
-        // (tenant_id, employee_code), so skipping them here would only move
-        // the failure to a raw constraint violation. Say so instead of leaving
-        // the user staring at "already in use" for a code they cannot see.
-        const existing = await db
-          .select({ id: employees.id, deletedAt: employees.deleted_at })
-          .from(employees)
-          .where(
-            and(
-              eq(employees.tenant_id, tenantId),
-              eq(employees.employee_code, dto.employeeCode),
-            ),
-          )
-          .limit(1);
-
-        if (existing[0]) {
-          throw new ConflictException(
-            existing[0].deletedAt
-              ? `Employee code ${dto.employeeCode} belongs to a removed employee. Restore them from People → Removed, or use a different code.`
-              : `Employee code ${dto.employeeCode} is already in use`,
-          );
+      let mode: Mode;
+      if (byEmail && !byEmail.deletedAt) {
+        const custom = (byEmail.customFields as Record<string, unknown> | null) ?? {};
+        const stillPending =
+          byEmail.status === 'inactive' &&
+          custom.onboarding_submitted_for_review !== true;
+        if (!stillPending) {
+          throw new ConflictException({
+            code: 'ALREADY_EMPLOYEE',
+            message: `${normalizedEmail} is already an employee (${byEmail.employeeCode}). Open their profile instead.`,
+          });
         }
+        if (opts?.onPendingInvitee === 'skip') {
+          throw new PendingInviteeSkipped(normalizedEmail);
+        }
+        if (externalSeat) throw externalSeatConflict();
+        // A seat revoked on purpose from Settings → Members stays revoked:
+        // the form must agree with Resend invite (R1.1) instead of quietly
+        // re-opening access as a side effect of a submit.
+        if (seat?.status === 'deactivated') {
+          throw new ConflictException({
+            code: 'SEAT_DEACTIVATED',
+            message:
+              'Their workspace seat is deactivated — reactivate them from Settings → Members first',
+          });
+        }
+        // Re-adding a pending invitee from the form = "send it again". Same
+        // 60 s window as Resend invite, checked BEFORE any write.
+        await this.assertResendWindow(db, tenantId, byEmail.id);
+        mode = 'reinvite';
+      } else if (byEmail?.deletedAt) {
+        if (externalSeat) throw externalSeatConflict();
+        mode = 'rehire';
+      } else {
+        mode = 'create';
+        if (externalSeat) throw externalSeatConflict();
+        if (seat?.employee_id) {
+          // The seat already points at a live record under another work
+          // email (HR changed it) — don't grow a second employee row.
+          const [linked] = await db
+            .select({
+              code: employees.employee_code,
+              workEmail: employees.work_email,
+              deletedAt: employees.deleted_at,
+            })
+            .from(employees)
+            .where(and(eq(employees.id, seat.employee_id), eq(employees.tenant_id, tenantId)))
+            .limit(1);
+          if (linked && !linked.deletedAt) {
+            throw new ConflictException({
+              code: 'ALREADY_EMPLOYEE',
+              message: `This person is already an employee as ${linked.workEmail} (${linked.code}). Open their profile instead.`,
+            });
+          }
+        }
+      }
 
-        // Create employee record
-        const [employee] = await db
-          .insert(employees)
-          .values({
-            tenant_id: tenantId,
-            user_id: currentUser.id,
-            employee_code: dto.employeeCode,
+      // Employee-code check. REMOVED employees are deliberately included:
+      // their row still holds the unique index on (tenant_id, employee_code),
+      // so skipping them here would only move the failure to a raw
+      // constraint violation. The row being re-invited / re-hired is excluded
+      // — its own code is not a clash.
+      const [codeClash] = await db
+        .select({ id: employees.id, deletedAt: employees.deleted_at })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            eq(employees.employee_code, dto.employeeCode),
+            byEmail ? ne(employees.id, byEmail.id) : undefined,
+          ),
+        )
+        .limit(1);
+
+      if (codeClash && mode === 'create') {
+        throw new ConflictException(
+          codeClash.deletedAt
+            ? `Employee code ${dto.employeeCode} belongs to a removed employee. Restore them from People → Removed, or use a different code.`
+            : `Employee code ${dto.employeeCode} is already in use`,
+        );
+      }
+      // Re-invite / re-hire: the form's code applies only when it is free;
+      // otherwise the row keeps the code it already has.
+      const employeeCode =
+        mode === 'create' || !codeClash ? dto.employeeCode : byEmail!.employeeCode;
+
+      return { mode, byEmail: byEmail ?? null, seat: seat ?? null, employeeCode };
+    });
+
+    // ─── Phase 3: the platform user (after every 409 that could fire) ──────
+    const currentUser = await this.findOrCreateInviteUser(normalizedEmail, dto.fullName);
+
+    // ─── Phase 4: the write transaction ─────────────────────────────────────
+    const { employee, companyName, seatAction } = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        try {
+          const now = new Date();
+          const orgFields = {
             first_name: firstName,
             last_name: lastName,
-            work_email: normalizedEmail,
-            designation_id: dto.designationId,
-            department_id: dto.departmentId,
-            location_id: dto.locationId,
-            reporting_manager_id: dto.managerId,
-            employment_type:
-              (dto.employmentType as typeof employees.$inferInsert['employment_type']) ??
-              'full_time',
-            date_of_joining: joiningDate,
+            designation_id: dto.designationId ?? null,
+            department_id: dto.departmentId ?? null,
+            location_id: dto.locationId ?? null,
+            reporting_manager_id: dto.managerId ?? null,
             // Pre-fills from the Invite form — the wizard lets the employee
             // edit them later but admins typically know phone + DOB up front.
             ...(dto.personalPhone ? { personal_phone: dto.personalPhone } : {}),
             ...(dto.dateOfBirth ? { date_of_birth: dto.dateOfBirth } : {}),
             // Employment terms set by HR at hire time. noticePeriodDays keys
             // on !== undefined so an explicit 0 sticks; omitted → column
-            // default (30).
-            ...(dto.probationEndDate
-              ? { probation_end_date: dto.probationEndDate }
-              : {}),
+            // default (30) on create, unchanged on re-invite / re-hire.
+            ...(dto.probationEndDate ? { probation_end_date: dto.probationEndDate } : {}),
             ...(dto.noticePeriodDays !== undefined
               ? { notice_period_days: dto.noticePeriodDays }
               : {}),
-            status: 'inactive',
-            custom_fields: {
-              onboarding_step: 0,
-              ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
-            },
-          })
-          .returning();
+          };
 
-        // The Add-employee form's shift pick finally lands somewhere: without
-        // this row the attendance engine silently ran everyone on the tenant
-        // default shift, so lateness and worked hours were wrong for anyone
-        // hired onto another shift (founder round A).
-        if (dto.shiftTemplateId) {
-          await this.writeShiftAssignment(db, tenantId, employee.id, dto.shiftTemplateId, joiningDate!);
+          const employmentType =
+            (dto.employmentType as typeof employees.$inferInsert['employment_type']) ??
+            'full_time';
+
+          let employee: typeof employees.$inferSelect;
+          let seatAction: 'inserted' | 'reinvited' | 'linked' | 'kept' = 'kept';
+
+          if (plan.mode === 'create') {
+            const [created] = await db
+              .insert(employees)
+              .values({
+                tenant_id: tenantId,
+                user_id: currentUser.id,
+                employee_code: plan.employeeCode,
+                work_email: normalizedEmail,
+                ...orgFields,
+                employment_type: employmentType,
+                date_of_joining: joiningDate,
+                status: 'inactive',
+                custom_fields: {
+                  onboarding_step: 0,
+                  ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
+                },
+              })
+              .returning();
+            employee = created!;
+          } else {
+            // Re-invite (pending) or re-hire (archived): the SAME row, so the
+            // person's id, history and — for a re-hire — personal, bank and
+            // statutory columns all survive.
+            const existingCustom =
+              (plan.byEmail!.customFields as Record<string, unknown> | null) ?? {};
+            const [updated] = await db
+              .update(employees)
+              .set({
+                ...orgFields,
+                // A re-invite that omits these keeps what HR entered the
+                // first time; a re-hire is a new stint, so its joining date
+                // is the form's (or today — the same date the rehire history
+                // row and shift assignment use).
+                ...(dto.employmentType !== undefined ? { employment_type: employmentType } : {}),
+                ...(plan.mode === 'rehire' || dto.joiningDate
+                  ? { date_of_joining: joiningDate }
+                  : {}),
+                employee_code: plan.employeeCode,
+                user_id: currentUser.id,
+                status: 'inactive',
+                deleted_at: null,
+                updated_at: now,
+                custom_fields:
+                  plan.mode === 'rehire'
+                    ? {
+                        ...existingCustom,
+                        onboarding_step: 0,
+                        onboarding_submitted_for_review: false,
+                        onboarding_rejection_reason: null,
+                        onboarding_deferred_at: null,
+                        // The previous stint's wizard timestamps would
+                        // otherwise show as "submitted" on /me.
+                        onboarding_completed_at: null,
+                        onboarding_submitted_at: null,
+                        onboarding_rejected_at: null,
+                        ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
+                      }
+                    : {
+                        ...existingCustom,
+                        ...(dto.jobTitle ? { job_title: dto.jobTitle } : {}),
+                      },
+              })
+              .where(and(eq(employees.id, plan.byEmail!.id), eq(employees.tenant_id, tenantId)))
+              .returning();
+            employee = updated!;
+
+            if (plan.mode === 'rehire') {
+              await db.insert(employmentHistory).values({
+                tenant_id: tenantId,
+                employee_id: employee.id,
+                change_type: 'rehire',
+                effective_from: joiningDate,
+                previous_value: {
+                  status: plan.byEmail!.status,
+                  deletedAt: plan.byEmail!.deletedAt,
+                  employeeCode: plan.byEmail!.employeeCode,
+                },
+                new_value: { status: 'inactive', employeeCode: plan.employeeCode },
+                changed_by: adminId,
+              });
+            }
+          }
+
+          // The Add-employee form's shift pick finally lands somewhere: without
+          // this row the attendance engine silently ran everyone on the tenant
+          // default shift, so lateness and worked hours were wrong for anyone
+          // hired onto another shift (founder round A).
+          if (dto.shiftTemplateId) {
+            await this.writeShiftAssignment(db, tenantId, employee.id, dto.shiftTemplateId, joiningDate);
+          }
+
+          // ─── The seat ──────────────────────────────────────────────────
+          // Re-read by the user that now owns the row (the precheck looked it
+          // up by the same id; the re-read keeps this tx self-contained).
+          const [seat] = await db
+            .select()
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, tenantId),
+                eq(memberships.user_id, currentUser.id),
+              ),
+            )
+            .orderBy(asc(memberships.created_at))
+            .limit(1);
+
+          if (!seat) {
+            await db.insert(memberships).values({
+              tenant_id: tenantId,
+              user_id: currentUser.id,
+              employee_id: employee.id,
+              role: 'employee',
+              status: 'invited',
+              invited_by: adminId,
+              invited_at: now,
+            });
+            seatAction = 'inserted';
+          } else if (seat.status === 'deactivated') {
+            // Revoked by a prior removal (or from Settings → Members): this
+            // is a fresh hire, so the seat starts over as an invited
+            // employee and the magic link activates it (handleSuccessfulAuth).
+            await db
+              .update(memberships)
+              .set({
+                status: 'invited',
+                employee_id: employee.id,
+                role: 'employee',
+                invited_by: adminId,
+                invited_at: now,
+                accepted_at: null,
+              })
+              .where(and(eq(memberships.id, seat.id), eq(memberships.tenant_id, tenantId)));
+            seatAction = 'reinvited';
+          } else if (seat.employee_id !== employee.id) {
+            // Active or invited seat with no (or a stale) record behind it —
+            // keep role + status, just link it so every "me" surface works.
+            await db
+              .update(memberships)
+              .set({ employee_id: employee.id })
+              .where(and(eq(memberships.id, seat.id), eq(memberships.tenant_id, tenantId)));
+            seatAction = 'linked';
+          }
+
+          // Resolve tenant name for the email template.
+          const [tenantRow] = await db
+            .select({ name: tenants.name })
+            .from(tenants)
+            .where(eq(tenants.id, tenantId))
+            .limit(1);
+          const companyName = tenantRow?.name ?? 'Your Company';
+
+          return { employee, companyName, seatAction };
+        } catch (err) {
+          this.rethrowInviteWriteError(err, plan.employeeCode);
         }
+      },
+    );
 
-        // Create or update membership
-        const existingMembership = await db
-          .select()
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.user_id, currentUser.id),
-              eq(memberships.tenant_id, tenantId),
-            ),
-          )
-          .limit(1);
-
-        if (!existingMembership[0]) {
-          await db.insert(memberships).values({
-            tenant_id: tenantId,
-            user_id: currentUser.id,
-            employee_id: employee.id,
-            role: 'employee',
-            status: 'invited',
-            invited_by: adminId,
-            invited_at: new Date(),
-          });
-        }
-
-        // Resolve tenant name for the email template.
-        const [tenantRow] = await db
-          .select({ name: tenants.name })
-          .from(tenants)
-          .where(eq(tenants.id, tenantId))
-          .limit(1);
-        const companyName = tenantRow?.name ?? 'Your Company';
-
-        return { employee, companyName };
-      });
+    // A corrected name on a re-invite should show up in the directory (it
+    // reads users.full_name). Only while the person has never signed in —
+    // users is a platform row shared across workspaces.
+    if (plan.mode !== 'create' && dto.fullName.trim()) {
+      await this.dbAdmin
+        .update(users)
+        .set({ full_name: dto.fullName.trim(), updated_at: new Date() })
+        .where(and(eq(users.id, currentUser.id), isNull(users.last_login_at)));
+    }
 
     // Generate a 7-day magic link so the invitee can sign in with one click,
     // bypassing the OTP flow. The link routes through /verify → /auth/magic-link
     // which calls handleSuccessfulAuth — and that activates their 'invited'
-    // membership before issuing the session cookies.
-    const magicLinkUrl = await this.authService.issueInviteMagicLink(
-      currentUser.id,
-      normalizedEmail,
-    );
+    // membership before issuing the session cookies. Outside the tenant tx.
+    const link = await this.issueInviteLink(currentUser.id, normalizedEmail);
 
-    // Send welcome email with the magic link as the primary CTA.
-    await this.notificationsService.sendEmail(
-      'welcome-employee',
-      normalizedEmail,
-      {
+    const resentCount = await this.databaseService.withTenant(tenantId, async (db) => {
+      if (plan.mode === 'reinvite') {
+        // Same double-submit guard as resendInvite: the 60 s window was
+        // checked in the read-only precheck; re-check it under the lock
+        // before the ledger row goes in so two in-flight submits send once.
+        await db.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${`employee_invite:${employee.id}`}))`,
+        );
+        await this.assertResendWindow(db, tenantId, employee.id);
+      }
+      return this.writeInvitationLedger(db, {
+        tenantId,
+        employeeId: employee.id,
+        email: normalizedEmail,
+        tokenHash: link.tokenHash,
+        expiresAt: link.expiresAt,
+        invitedBy: adminId,
+      });
+    });
+
+    // Send welcome email with the magic link as the primary CTA. sendEmail
+    // never throws; a false is surfaced as emailSent so the UI can say so.
+    const emailSent =
+      (await this.notificationsService.sendEmail('welcome-employee', normalizedEmail, {
         employeeName: dto.fullName,
         companyName,
-        magicLinkUrl,
-      },
-    );
+        magicLinkUrl: link.url,
+        ...(plan.mode === 'reinvite' ? { isReminder: true } : {}),
+      })) !== false;
 
     await this.auditService.log({
       tenantId,
       actorUserId: adminId,
-      action: 'employee.invited',
+      action:
+        plan.mode === 'rehire'
+          ? 'employee.rehired'
+          : plan.mode === 'reinvite'
+            ? 'employee.invite_resent'
+            : 'employee.invited',
       resourceType: 'employee',
       resourceId: employee.id,
-      afterState: { email: normalizedEmail, employeeCode: dto.employeeCode },
+      afterState: {
+        email: normalizedEmail,
+        employeeCode: employee.employee_code,
+        seat: seatAction,
+        resentCount,
+        emailSent,
+      },
     });
 
-    this.logger.log(`Employee invited: ${normalizedEmail} (${employee.id})`);
+    if (plan.mode === 'rehire') {
+      // The restored row just reappeared in every directory.
+      this.eventEmitter.emit('employees.directory.changed', { tenantId });
+    }
+
+    this.logger.log(
+      `Employee ${plan.mode === 'create' ? 'invited' : plan.mode === 'reinvite' ? 're-invited' : 're-hired'}: ${normalizedEmail} (${employee.id})`,
+    );
 
     // Return safe response (no sensitive fields)
     return {
@@ -555,6 +1061,9 @@ export class EmployeesService {
       fullName: dto.fullName,
       status: employee.status,
       joiningDate: employee.date_of_joining,
+      ...(plan.mode === 'reinvite' ? { reinvited: true } : {}),
+      ...(plan.mode === 'rehire' ? { rehired: true } : {}),
+      emailSent,
     };
   }
 
@@ -594,6 +1103,9 @@ export class EmployeesService {
 
     let created = 0;
     const failed: Array<{ row: number; email: string; error: string }> = [];
+    // Round P (R1.2): rows that match someone still waiting on their invite
+    // are skipped, not re-mailed — a CSV re-upload must never mass-resend.
+    const skipped: Array<{ row: number; email: string; reason: string }> = [];
 
     for (let i = 0; i < dto.rows.length; i++) {
       const r = dto.rows[i];
@@ -621,9 +1133,14 @@ export class EmployeesService {
           },
           adminId,
           tenantId,
+          { onPendingInvitee: 'skip' },
         );
         created += 1;
       } catch (e) {
+        if (e instanceof PendingInviteeSkipped) {
+          skipped.push({ row: i + 1, email: r.email, reason: e.message });
+          continue;
+        }
         failed.push({
           row: i + 1,
           email: r.email,
@@ -638,10 +1155,309 @@ export class EmployeesService {
       action: 'employee.bulk_imported',
       resourceType: 'employee',
       resourceId: tenantId,
-      metadata: { total: dto.rows.length, created, failed: failed.length },
+      metadata: {
+        total: dto.rows.length,
+        created,
+        failed: failed.length,
+        skipped: skipped.length,
+      },
     });
 
-    return { total: dto.rows.length, created, failed };
+    return { total: dto.rows.length, created, failed, skipped };
+  }
+
+  // ─── Resend invite (Round P / R1.1) ──────────────────────────────────────
+
+  /**
+   * Who is still waiting on their invite: a live row, status 'inactive', not
+   * yet submitted for review, with a seat that is not deactivated (a missing
+   * seat is self-healed by resendInvite). Someone who opened the link but
+   * stopped mid-wizard (seat 'active', step > 0) is still eligible.
+   */
+  private async listResendEligible(db: Db, tenantId: string) {
+    return db
+      .select({ id: employees.id, email: employees.work_email })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenant_id, tenantId),
+          isNull(employees.deleted_at),
+          eq(employees.status, 'inactive'),
+          sql`${ONBOARDING_SUBMITTED_SQL} = false`,
+          sql`${MEMBERSHIP_STATUS_SQL} IS DISTINCT FROM 'deactivated'`,
+        ),
+      )
+      .orderBy(asc(employees.created_at));
+  }
+
+  /**
+   * Re-send the welcome email with a fresh 7-day link. Earlier links keep
+   * working (tokens are per user). tx1 checks eligibility + the 60 s window,
+   * the link is issued outside any tenant tx, tx2 writes the ledger row (and
+   * self-heals a missing seat / user link), then the email + audit.
+   */
+  async resendInvite(employeeId: string, tenantId: string, actorId: string) {
+    const ctx = await this.databaseService.withTenant(tenantId, async (db) => {
+      const [emp] = await db
+        .select({
+          id: employees.id,
+          userId: employees.user_id,
+          firstName: employees.first_name,
+          lastName: employees.last_name,
+          workEmail: employees.work_email,
+          status: employees.status,
+          deletedAt: employees.deleted_at,
+          customFields: employees.custom_fields,
+        })
+        .from(employees)
+        .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+        .limit(1);
+      if (!emp) throw new NotFoundException('Employee not found');
+
+      const name = `${emp.firstName} ${emp.lastName}`.trim() || emp.workEmail;
+      if (emp.deletedAt) {
+        throw new ConflictException({
+          code: 'EMPLOYEE_REMOVED',
+          message: 'This person was removed — restore them from People → Removed first',
+        });
+      }
+      const custom = (emp.customFields as Record<string, unknown> | null) ?? {};
+      if (emp.status !== 'inactive' || custom.onboarding_submitted_for_review === true) {
+        throw new ConflictException({
+          code: 'ALREADY_ONBOARDED',
+          message: `${name} has already accepted their invite and submitted onboarding`,
+        });
+      }
+
+      // The seat: by employee_id (how invites link it), else by user_id.
+      const [byEmployee] = await db
+        .select()
+        .from(memberships)
+        .where(
+          and(eq(memberships.tenant_id, tenantId), eq(memberships.employee_id, emp.id)),
+        )
+        .limit(1);
+      const [byUser] = !byEmployee && emp.userId
+        ? await db
+            .select()
+            .from(memberships)
+            .where(
+              and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, emp.userId)),
+            )
+            .orderBy(asc(memberships.created_at))
+            .limit(1)
+        : [];
+      const seat = byEmployee ?? byUser ?? null;
+      if (seat?.status === 'deactivated') {
+        throw new ConflictException({
+          code: 'SEAT_DEACTIVATED',
+          message:
+            'Their workspace seat is deactivated — reactivate them from Settings → Members first',
+        });
+      }
+      // A seat already behind ANOTHER live record is not stolen by a resend.
+      const seatHeldElsewhere = seat
+        ? await this.seatHeldByAnotherLiveRow(db, tenantId, seat, emp.id)
+        : false;
+
+      await this.assertResendWindow(db, tenantId, emp.id);
+
+      const [tenantRow] = await db
+        .select({ name: tenants.name })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+        .limit(1);
+
+      return {
+        emp,
+        name,
+        seat,
+        seatHeldElsewhere,
+        companyName: tenantRow?.name ?? 'Your Company',
+      };
+    });
+
+    // Self-heal a legacy row with no platform user behind it (service role —
+    // the person may exist in another workspace already).
+    const user = ctx.emp.userId
+      ? { id: ctx.emp.userId }
+      : await this.findOrCreateInviteUser(ctx.emp.workEmail, ctx.name);
+
+    // Outside the tenant tx (admin pool insert into auth_otps).
+    const link = await this.issueInviteLink(user.id, ctx.emp.workEmail);
+
+    const { resentCount, seatHealed } = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        // Serialise concurrent resends for one employee (double-click): the
+        // window is re-checked under the lock before the ledger row goes in.
+        await db.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${`employee_invite:${ctx.emp.id}`}))`,
+        );
+        await this.assertResendWindow(db, tenantId, ctx.emp.id);
+
+        if (!ctx.emp.userId) {
+          await db
+            .update(employees)
+            .set({ user_id: user.id, updated_at: new Date() })
+            .where(and(eq(employees.id, ctx.emp.id), eq(employees.tenant_id, tenantId)));
+        }
+
+        let seatHealed = false;
+        if (!ctx.seat) {
+          await db.insert(memberships).values({
+            tenant_id: tenantId,
+            user_id: user.id,
+            employee_id: ctx.emp.id,
+            role: 'employee',
+            status: 'invited',
+            invited_by: actorId,
+            invited_at: new Date(),
+          });
+          seatHealed = true;
+        } else if (ctx.seat.employee_id !== ctx.emp.id && !ctx.seatHeldElsewhere) {
+          await db
+            .update(memberships)
+            .set({ employee_id: ctx.emp.id })
+            .where(and(eq(memberships.id, ctx.seat.id), eq(memberships.tenant_id, tenantId)));
+          seatHealed = true;
+        }
+
+        const resentCount = await this.writeInvitationLedger(db, {
+          tenantId,
+          employeeId: ctx.emp.id,
+          email: ctx.emp.workEmail,
+          tokenHash: link.tokenHash,
+          expiresAt: link.expiresAt,
+          invitedBy: actorId,
+        });
+        return { resentCount, seatHealed };
+      },
+    );
+
+    const emailSent =
+      (await this.notificationsService.sendEmail('welcome-employee', ctx.emp.workEmail, {
+        employeeName: ctx.name,
+        companyName: ctx.companyName,
+        magicLinkUrl: link.url,
+        isReminder: true,
+      })) !== false;
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: actorId,
+      action: 'employee.invite_resent',
+      resourceType: 'employee',
+      resourceId: ctx.emp.id,
+      afterState: { email: ctx.emp.workEmail, resentCount, emailSent, seatHealed },
+    });
+
+    this.logger.log(`Invite re-sent: ${ctx.emp.workEmail} (${ctx.emp.id}) #${resentCount}`);
+
+    return {
+      data: {
+        employeeId: ctx.emp.id,
+        email: ctx.emp.workEmail,
+        resentCount,
+        emailSent,
+      },
+    };
+  }
+
+  /**
+   * Resend to a list of employees, or to everyone still waiting when the list
+   * is omitted. Per-row outcome, never fatal: throttled / ineligible / failed
+   * rows land in `skipped` with the API's own message as the reason.
+   */
+  async resendInvitesBulk(tenantId: string, actorId: string, employeeIds?: string[]) {
+    const targets = await this.databaseService.withTenant(tenantId, async (db) => {
+      // OMITTED = everyone still waiting. An explicit empty list (a bulk
+      // action with nothing selected) mails nobody — never a mass re-send
+      // by accident.
+      if (employeeIds === undefined) return this.listResendEligible(db, tenantId);
+      if (employeeIds.length === 0) return [];
+      const rows = await db
+        .select({ id: employees.id, email: employees.work_email })
+        .from(employees)
+        .where(and(eq(employees.tenant_id, tenantId), inArray(employees.id, employeeIds)));
+      const byId = new Map(rows.map((r) => [r.id, r.email]));
+      // Keep the caller's order; unknown ids are reported, not dropped.
+      return employeeIds.map((id) => ({ id, email: byId.get(id) ?? '' }));
+    });
+
+    let sent = 0;
+    const skipped: Array<{ employeeId: string; email: string; reason: string }> = [];
+    for (const t of targets) {
+      try {
+        const res = await this.resendInvite(t.id, tenantId, actorId);
+        if (res.data.emailSent) sent += 1;
+        else skipped.push({ employeeId: t.id, email: t.email, reason: 'Email could not be sent' });
+      } catch (e) {
+        if (e instanceof HttpException) {
+          skipped.push({ employeeId: t.id, email: t.email, reason: e.message });
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    return { data: { sent, skipped } };
+  }
+
+  // ─── Next employee code (Round P / R1.3) ─────────────────────────────────
+
+  /**
+   * The next free code in the workspace's OWN pattern: parse every code —
+   * REMOVED rows included, they still hold the unique index — as
+   * (prefix)(number), continue the dominant prefix at its digit width, and
+   * step past anything already taken.
+   */
+  async suggestNextEmployeeCode(tenantId: string) {
+    const codes = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({ code: employees.employee_code })
+        .from(employees)
+        .where(eq(employees.tenant_id, tenantId)),
+    );
+    const taken = new Set(codes.map((c) => c.code.trim().toUpperCase()));
+
+    const parsed = codes
+      .map((c) => /^(.*?)(\d+)$/.exec(c.code.trim()))
+      .filter((m): m is RegExpExecArray => m !== null);
+
+    let prefix = 'EMP';
+    let next = 1;
+    let width = 3;
+    if (parsed.length > 0) {
+      const byPrefix = new Map<string, { count: number; max: number; width: number }>();
+      for (const m of parsed) {
+        const p = m[1]!;
+        const num = parseInt(m[2]!, 10);
+        const entry = byPrefix.get(p) ?? { count: 0, max: 0, width: 3 };
+        entry.count += 1;
+        if (num >= entry.max) {
+          entry.max = num;
+          entry.width = m[2]!.length;
+        }
+        byPrefix.set(p, entry);
+      }
+      // Most-used prefix wins; ties break toward the highest sequence number
+      // (≈ most recently issued).
+      const [bestPrefix, info] = [...byPrefix.entries()].sort(
+        (a, b) => b[1].count - a[1].count || b[1].max - a[1].max,
+      )[0]!;
+      prefix = bestPrefix;
+      next = info.max + 1;
+      width = info.width;
+    }
+
+    let suggested = `${prefix}${String(next).padStart(width, '0')}`;
+    // Mixed schemes can leave the arithmetic next already in use — walk on.
+    for (let guard = 0; guard < 10_000 && taken.has(suggested.toUpperCase()); guard++) {
+      next += 1;
+      suggested = `${prefix}${String(next).padStart(width, '0')}`;
+    }
+    return { data: { suggested } };
   }
 
   async getEmployee(employeeId: string, tenantId: string) {
@@ -715,6 +1531,11 @@ export class EmployeesService {
           avatarUrl: sql<string | null>`COALESCE(${employees.avatar_url}, ${users.avatar_url})`,
           avatarKey: users.avatar_key,
           customFields: employees.custom_fields,
+          // Round P (R1.3): same three fields the directory list carries, so
+          // the 360 header shows the same pill as the row that opened it.
+          membershipStatus: MEMBERSHIP_STATUS_SQL,
+          onboardingStep: ONBOARDING_STEP_SQL,
+          onboardingSubmitted: ONBOARDING_SUBMITTED_SQL,
           createdAt: employees.created_at,
           updatedAt: employees.updated_at,
           // Linked user identity
@@ -1669,7 +2490,12 @@ export class EmployeesService {
         onboarding_completed_at: allStepsComplete ? new Date().toISOString() : null,
         onboarding_submitted_for_review: allStepsComplete,
         ...(allStepsComplete
-          ? { onboarding_submitted_at: new Date().toISOString() }
+          ? {
+              onboarding_submitted_at: new Date().toISOString(),
+              // Round P: an owner/admin who "skipped for now" and then
+              // finished the wizard is no longer deferred.
+              onboarding_deferred_at: null,
+            }
           : {}),
       };
     }
@@ -2314,21 +3140,100 @@ export class EmployeesService {
   }
 
   async getMyOnboardingStatus(userId: string, tenantId: string) {
-    const employeeId = await this.getEmployeeIdForUserOrNull(userId, tenantId);
+    const [seat] = await this.databaseService.withTenant(tenantId, (db) =>
+      db
+        .select({ employeeId: memberships.employee_id, role: memberships.role })
+        .from(memberships)
+        .where(
+          and(eq(memberships.user_id, userId), eq(memberships.tenant_id, tenantId)),
+        )
+        .limit(1),
+    );
+    const employeeId = seat?.employeeId ?? null;
+    // Round P: owners / HR admins may "Skip for now" (deferMyOnboarding);
+    // the (app) layout stops redirecting to the wizard while `deferred`.
+    const canDefer = !!employeeId && (seat?.role === 'owner' || seat?.role === 'admin');
     if (!employeeId) {
-      return { employeeId: null, onboardingStep: 0, submittedAt: null, submittedForReview: false };
+      return {
+        employeeId: null,
+        onboardingStep: 0,
+        submittedAt: null,
+        submittedForReview: false,
+        deferred: false,
+        canDefer: false,
+      };
     }
     const employee = await this.getEmployee(employeeId, tenantId);
     const custom =
       (employee.customFields as Record<string, unknown> | null) ?? {};
+    const submittedForReview = custom.onboarding_submitted_for_review === true;
     return {
       employeeId,
       onboardingStep:
         typeof custom.onboarding_step === 'number' ? custom.onboarding_step : 0,
       submittedAt: (custom.onboarding_completed_at as string | undefined) ?? null,
-      submittedForReview:
-        custom.onboarding_submitted_for_review === true,
+      submittedForReview,
+      deferred: !!custom.onboarding_deferred_at && !submittedForReview,
+      canDefer,
     };
+  }
+
+  /**
+   * "Skip for now" (Round P / R1.6): an owner or HR admin may postpone their
+   * own onboarding wizard. Stamps custom_fields.onboarding_deferred_at; the
+   * wizard's completion clears it (submitOnboardingStep). The role comes from
+   * the membership inside the tenant tx, never from the client.
+   */
+  async deferMyOnboarding(userId: string, tenantId: string) {
+    const employeeId = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [seat] = await db
+          .select({ employeeId: memberships.employee_id, role: memberships.role })
+          .from(memberships)
+          .where(
+            and(eq(memberships.user_id, userId), eq(memberships.tenant_id, tenantId)),
+          )
+          .limit(1);
+        if (seat?.role !== 'owner' && seat?.role !== 'admin') {
+          throw new ForbiddenException(
+            'Only an owner or HR admin can skip the onboarding wizard for now.',
+          );
+        }
+        if (!seat.employeeId) {
+          throw new NotFoundException('Employee record not found');
+        }
+        const [emp] = await db
+          .select({ customFields: employees.custom_fields })
+          .from(employees)
+          .where(and(eq(employees.id, seat.employeeId), eq(employees.tenant_id, tenantId)))
+          .limit(1);
+        if (!emp) throw new NotFoundException('Employee record not found');
+        const existing = (emp.customFields as Record<string, unknown> | null) ?? {};
+        await db
+          .update(employees)
+          .set({
+            custom_fields: {
+              ...existing,
+              onboarding_deferred_at: new Date().toISOString(),
+            },
+            updated_at: new Date(),
+          })
+          .where(and(eq(employees.id, seat.employeeId), eq(employees.tenant_id, tenantId)));
+        return seat.employeeId;
+      },
+      userId,
+    );
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: userId,
+      action: 'employee.onboarding_deferred',
+      resourceType: 'employee',
+      resourceId: employeeId,
+    });
+
+    return { data: { deferred: true } };
   }
 
   /** The caller's own employee row in this tenant (membership bridge), or null. */
@@ -2709,9 +3614,19 @@ export class EmployeesService {
     };
   }
 
-  /** Undo an archive. A hard-deleted employee has nothing to restore. */
+  /**
+   * Undo an archive. A hard-deleted employee has nothing to restore.
+   *
+   * Round P (R1.2): removal also revoked + unlinked the seat, and a restore
+   * that brings the record back without the login was a dead end (Members →
+   * Reactivate left employee_id null; login only activates `invited` seats).
+   * So the seat is relinked here: a deactivated seat becomes `active` when
+   * the person had accepted before, `invited` otherwise; a missing seat is
+   * inserted as `invited`. Someone who never accepted still needs Resend
+   * invite — the web toast says so.
+   */
   async restoreEmployee(employeeId: string, tenantId: string, actorId: string) {
-    const row = await this.databaseService.withTenant(
+    const { row, seat, seatHeldBy } = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
         const [emp] = await db
@@ -2720,13 +3635,57 @@ export class EmployeesService {
           .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
           .limit(1);
         if (!emp) throw new NotFoundException('Employee not found');
-        if (!emp.deleted_at) return emp;
+        if (!emp.deleted_at) {
+          return { row: emp, seat: 'unchanged' as const, seatHeldBy: null as string | null };
+        }
         const [updated] = await db
           .update(employees)
           .set({ deleted_at: null, updated_at: new Date() })
           .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
           .returning();
-        return updated!;
+
+        let seat: 'unchanged' | 'active' | 'invited' = 'unchanged';
+        let seatHeldBy: string | null = null;
+        if (emp.user_id) {
+          const [m] = await db
+            .select()
+            .from(memberships)
+            .where(
+              and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, emp.user_id)),
+            )
+            .orderBy(asc(memberships.created_at))
+            .limit(1);
+          if (!m) {
+            await db.insert(memberships).values({
+              tenant_id: tenantId,
+              user_id: emp.user_id,
+              employee_id: employeeId,
+              role: 'employee',
+              status: 'invited',
+              invited_by: actorId,
+              invited_at: new Date(),
+            });
+            seat = 'invited';
+          } else if (await this.seatHeldByAnotherLiveRow(db, tenantId, m, employeeId)) {
+            // The person was re-added under another work email meanwhile:
+            // that live record keeps the seat, this one comes back without.
+            seatHeldBy = m.employee_id;
+          } else if (m.status === 'deactivated') {
+            const status = m.accepted_at ? 'active' : 'invited';
+            await db
+              .update(memberships)
+              .set({ status, employee_id: employeeId })
+              .where(and(eq(memberships.id, m.id), eq(memberships.tenant_id, tenantId)));
+            seat = status;
+          } else if (m.employee_id !== employeeId) {
+            await db
+              .update(memberships)
+              .set({ employee_id: employeeId })
+              .where(and(eq(memberships.id, m.id), eq(memberships.tenant_id, tenantId)));
+            seat = m.status === 'active' ? 'active' : 'invited';
+          }
+        }
+        return { row: updated!, seat, seatHeldBy };
       },
       actorId,
     );
@@ -2736,12 +3695,14 @@ export class EmployeesService {
       action: 'employee.restored',
       resourceType: 'employee',
       resourceId: employeeId,
-      // The seat is NOT restored with the record: re-inviting them is a
-      // deliberate act, not a side effect of undoing a delete.
-      metadata: { name: `${row.first_name} ${row.last_name}`.trim() },
+      metadata: {
+        name: `${row.first_name} ${row.last_name}`.trim(),
+        seat,
+        ...(seatHeldBy ? { seatHeldByEmployeeId: seatHeldBy } : {}),
+      },
     });
     this.eventEmitter.emit('employees.directory.changed', { tenantId });
-    return { data: { id: employeeId, restored: true } };
+    return { data: { id: employeeId, restored: true, seat } };
   }
 
   async terminateEmployee(

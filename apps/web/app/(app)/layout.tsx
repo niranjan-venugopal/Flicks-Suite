@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { Skeleton } from '@/components/proto'
+import { Btn, Icon, Skeleton } from '@/components/proto'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
@@ -79,6 +79,65 @@ function AppShellSkeleton() {
   )
 }
 
+/**
+ * Round P (R1.6 polish): a settled NON-401 /me failure (API down, 5xx after
+ * the retries, network) used to leave the skeleton up forever. Say so and
+ * offer a retry instead; a 401 still goes to /login via the effect below.
+ */
+function WorkspaceLoadError({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  return (
+    <div
+      className="flex h-screen w-screen items-center justify-center bg-brand-bg"
+      style={{ padding: 24 }}
+    >
+      <div
+        className="card"
+        role="alert"
+        style={{
+          maxWidth: 400,
+          width: '100%',
+          padding: 28,
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'var(--surf-1)',
+            border: '1px solid var(--bord)',
+            color: 'var(--coral)',
+          }}
+        >
+          <Icon.warn size={18} />
+        </div>
+        <div className="t-h3">Couldn&apos;t load your workspace</div>
+        <p className="t-mute" style={{ margin: 0, fontSize: 13 }}>
+          We couldn&apos;t reach the server just now. Your session is still here — try again in
+          a moment.
+        </p>
+        <Btn
+          kind="primary"
+          icon={<Icon.refresh size={14} />}
+          onClick={onRetry}
+          disabled={retrying}
+          style={{ marginTop: 6 }}
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
+        </Btn>
+      </div>
+    </div>
+  )
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname() ?? '/'
@@ -127,10 +186,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const isJoiningEmployee =
     !!freshRole && !['auditor', 'guest', 'fam', 'super_admin'].includes(freshRole)
   const onboarding = useEmployeeOnboardingStatus()
+  // Round P (R1.6 / contract C7): an owner or HR admin who pressed "Skip for
+  // now" in the wizard is `deferred` — leave them on the dashboard (it shows
+  // a reminder card) instead of bouncing them back into the wizard.
   const needsOnboarding =
     isJoiningEmployee &&
     onboarding.data &&
     !onboarding.data.submittedForReview &&
+    !onboarding.data.deferred &&
     onboarding.data.employeeId !== null
 
   // ─── Revoked-current-tenant recovery (Invoicing v3 auditors) ──────────────
@@ -227,6 +290,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // data. Showing a spinner in every other state (loading, logged out, error)
   // means a logout never flashes the dashboard with cleared data before the
   // redirect lands.
+  // A settled non-401 failure with no data to fall back on: the query has
+  // already retried twice (use-auth). Everything else (401, logged out) is
+  // redirected by the effect above and keeps the skeleton until it lands.
+  if (isAuthenticated && isError && !authRejected && !meData) {
+    return <WorkspaceLoadError onRetry={() => void me.refetch()} retrying={me.isFetching} />
+  }
   if (!isAuthenticated || isLoading || !meData) {
     return <AppShellSkeleton />
   }

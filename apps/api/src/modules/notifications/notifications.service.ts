@@ -575,17 +575,26 @@ export class NotificationsService {
       }
 
       case 'welcome-employee': {
-        const { employeeName, companyName, magicLinkUrl } = props as {
+        // Round P (R1.1): `isReminder` is set by Resend invite — same link
+        // mechanics, but the subject must not read like a brand-new invite.
+        const { employeeName, companyName, magicLinkUrl, isReminder } = props as {
           employeeName: string;
           companyName: string;
           magicLinkUrl: string;
+          isReminder?: boolean;
         };
         return {
-          subject: `Welcome to ${String(companyName)} — Accept your invite`,
+          subject: isReminder
+            ? `Reminder: your invite to ${String(companyName)} is waiting`
+            : `Welcome to ${String(companyName)} — Accept your invite`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
               <h2 style="color: #1a1a2e;">Welcome, ${String(employeeName)}!</h2>
-              <p>You've been invited to join <strong>${String(companyName)}</strong> on ${appName}.</p>
+              <p>${
+                isReminder
+                  ? `This is a reminder that your invite to join <strong>${String(companyName)}</strong> on ${appName} is still waiting for you.`
+                  : `You've been invited to join <strong>${String(companyName)}</strong> on ${appName}.`
+              }</p>
               <p>Click the secure link below to accept your invite and finish setting up your profile. The link is valid for 7 days.</p>
               <p style="margin: 24px 0;">
                 <a href="${String(magicLinkUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Accept invite & set up profile</a>

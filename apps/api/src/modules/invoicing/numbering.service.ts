@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { and, eq, desc, sql } from 'drizzle-orm';
+import { and, eq, desc, ne, sql } from 'drizzle-orm';
 import { invoiceSequences, tenants } from '@flicks/db/schema';
 import { DatabaseService } from '../../core/database/database.service';
 import { AuditService } from '../audit/audit.service';
@@ -7,9 +7,11 @@ import type { Db } from '@flicks/db';
 import type { UpsertSequenceDto, PreviewNumberDto } from './dto/invoicing.dto';
 import {
   computeFiscalYear,
+  formatFyLabel,
   formatNumber,
   validateNumberFormat,
   DEFAULT_PREFIXES,
+  type FyInfo,
   type NumberFormatParts,
 } from './numbering.util';
 
@@ -25,9 +27,18 @@ interface SeqConfig {
   branch_code: string;
 }
 
+type SequenceRow = typeof invoiceSequences.$inferSelect;
+
 /**
  * Invoice numbering engine (PRD §6.4): per-doc-type sequences, live preview,
  * hard validation, April-1 FY reset, atomic reservation.
+ *
+ * Round P R1.4 — the current-FY row is keyed by `fy_start_date`, never by the
+ * label: `fy_label` is DERIVED from `fy_format` (26-27 / 2026-27 / …), so
+ * matching on it meant a saved non-default format was invisible to list()
+ * and upsert() wrote a parallel row at current_number 0. Where that bug has
+ * already left two rows for one FY, the row that issued numbers wins
+ * (current_number DESC) and the next upsert folds the twin away.
  */
 @Injectable()
 export class NumberingService {
@@ -45,24 +56,88 @@ export class NumberingService {
     return row?.m ?? 4;
   }
 
+  /**
+   * The sequence row for one FY window, format-independent. Falls back to a
+   * label match so a tenant that moved its fiscal-year start month (same
+   * label, different window) keeps its series instead of hitting the unique
+   * index. `forUpdate` takes the row lock for reserveNext.
+   */
+  private async findFyRow(
+    tx: Db,
+    tenantId: string,
+    documentType: string,
+    branch: string,
+    fy: FyInfo,
+    fyLabel: string,
+    opts: { forUpdate?: boolean } = {},
+  ): Promise<SequenceRow | undefined> {
+    const scope = and(
+      eq(invoiceSequences.tenant_id, tenantId),
+      eq(invoiceSequences.document_type, documentType),
+      eq(invoiceSequences.branch_code, branch),
+    );
+    const byWindow = tx
+      .select()
+      .from(invoiceSequences)
+      .where(and(scope, eq(invoiceSequences.fy_start_date, fy.startDate)))
+      .orderBy(desc(invoiceSequences.current_number), desc(invoiceSequences.updated_at))
+      .limit(1);
+    const [row] = opts.forUpdate ? await byWindow.for('update') : await byWindow;
+    if (row) return row;
+
+    const byLabel = tx
+      .select()
+      .from(invoiceSequences)
+      .where(and(scope, eq(invoiceSequences.fy_label, fyLabel)))
+      .limit(1);
+    const [legacy] = opts.forUpdate ? await byLabel.for('update') : await byLabel;
+    return legacy;
+  }
+
   /** Current-FY sequences for all four document types (merging defaults). */
   async list(tenantId: string) {
     const today = new Date().toISOString().slice(0, 10);
     return this.db.withTenant(tenantId, async (tx) => {
       const startMonth = await this.fyStartMonth(tx, tenantId);
-      const existing = await tx
+      const fy = computeFiscalYear(today, startMonth);
+      // One fetch, resolved per doc type exactly the way reserveNext() does:
+      // the current window first (highest counter wins, so a legacy duplicate
+      // pair resolves to the row that actually issued numbers), else the row
+      // carrying this FY's label under the latest format — the series a
+      // tenant that moved its FY start month is still issuing on.
+      const all = await tx
         .select()
         .from(invoiceSequences)
-        .where(eq(invoiceSequences.tenant_id, tenantId));
+        .where(
+          and(
+            eq(invoiceSequences.tenant_id, tenantId),
+            eq(invoiceSequences.branch_code, ''),
+          ),
+        )
+        .orderBy(
+          desc(invoiceSequences.fy_start_date),
+          desc(invoiceSequences.current_number),
+          desc(invoiceSequences.updated_at),
+        );
 
       const data = DOC_TYPES.map((docType) => {
-        const fy = computeFiscalYear(today, startMonth, '26-27');
-        const row = existing.find(
-          (r) =>
-            r.document_type === docType &&
-            r.fy_label === fy.label &&
-            r.branch_code === '',
-        );
+        const mine = all.filter((r) => r.document_type === docType);
+        const prior = mine[0]; // latest window, highest counter (reserveNext's `prior`)
+        const row =
+          mine
+            .filter((r) => r.fy_start_date === fy.startDate)
+            .sort(
+              (a, b) =>
+                b.current_number - a.current_number ||
+                (b.updated_at?.getTime() ?? 0) - (a.updated_at?.getTime() ?? 0),
+            )[0] ??
+          (prior
+            ? mine.find(
+                (r) =>
+                  r.fy_label ===
+                  formatFyLabel(prior.fy_format, fy.startYear, fy.endYear),
+              )
+            : undefined);
         const cfg: SeqConfig = row
           ? {
               prefix: row.prefix,
@@ -74,7 +149,7 @@ export class NumberingService {
               branch_code: row.branch_code,
             }
           : defaultConfig(docType);
-        const fyLabel = computeFiscalYear(today, startMonth, cfg.fy_format).label;
+        const fyLabel = formatFyLabel(cfg.fy_format, fy.startYear, fy.endYear);
         const nextNumber = Math.max(
           cfg.current_number + 1,
           cfg.starting_number,
@@ -113,7 +188,7 @@ export class NumberingService {
             eq(invoiceSequences.branch_code, dto.branch_code ?? ''),
           ),
         )
-        .orderBy(desc(invoiceSequences.fy_start_date))
+        .orderBy(desc(invoiceSequences.fy_start_date), desc(invoiceSequences.current_number))
         .limit(1);
 
       const cfg: SeqConfig = {
@@ -148,34 +223,42 @@ export class NumberingService {
     });
   }
 
-  /** Create/update a sequence config for the current FY (or a given fy_label). */
+  /**
+   * Create/update the current-FY sequence config. Updates the existing FY row
+   * in place (fy_label recomputed for the chosen format) — never a second row
+   * for the same FY. `dto.fy_label` is accepted for compatibility but the
+   * stored label is always derived from `fy_format`, which is what
+   * reserveNext() prints.
+   */
   async upsert(tenantId: string, dto: UpsertSequenceDto, userId: string) {
     const today = new Date().toISOString().slice(0, 10);
     return this.db.withTenant(tenantId, async (tx) => {
       const startMonth = await this.fyStartMonth(tx, tenantId);
       const base = defaultConfig(dto.document_type);
-      const fyFormat = dto.fy_format ?? base.fy_format;
-      const fy = computeFiscalYear(today, startMonth, fyFormat);
-      const fyLabel = dto.fy_label ?? fy.label;
       const branch = dto.branch_code ?? '';
+      const fy = computeFiscalYear(today, startMonth);
 
-      const [existing] = await tx
-        .select()
-        .from(invoiceSequences)
-        .where(
-          and(
-            eq(invoiceSequences.tenant_id, tenantId),
-            eq(invoiceSequences.document_type, dto.document_type),
-            eq(invoiceSequences.fy_label, fyLabel),
-            eq(invoiceSequences.branch_code, branch),
-          ),
-        )
-        .limit(1);
+      // Look the row up by FY window first; the label we'd store is only
+      // needed for the legacy fallback, so derive it from the requested (or
+      // default) format.
+      const probeLabel = formatFyLabel(
+        dto.fy_format ?? base.fy_format,
+        fy.startYear,
+        fy.endYear,
+      );
+      const existing = await this.findFyRow(
+        tx,
+        tenantId,
+        dto.document_type,
+        branch,
+        fy,
+        probeLabel,
+      );
 
       const cfg: SeqConfig = {
         prefix: dto.prefix ?? existing?.prefix ?? base.prefix,
         separator: dto.separator ?? existing?.separator ?? base.separator,
-        fy_format: fyFormat,
+        fy_format: dto.fy_format ?? existing?.fy_format ?? base.fy_format,
         zero_padding:
           dto.zero_padding ?? existing?.zero_padding ?? base.zero_padding,
         starting_number:
@@ -185,6 +268,7 @@ export class NumberingService {
         current_number: existing?.current_number ?? 0,
         branch_code: branch,
       };
+      const fyLabel = formatFyLabel(cfg.fy_format, fy.startYear, fy.endYear);
 
       // Hard validation (§6.4).
       const validation = validateNumberFormat({
@@ -211,15 +295,55 @@ export class NumberingService {
         : undefined;
 
       let saved;
+      let foldedTwins: Array<{
+        id: string;
+        fy_label: string;
+        fy_start_date: string;
+        current_number: number;
+      }> = [];
       if (existing) {
+        if (existing.fy_label !== fyLabel) {
+          // A twin row left by the old label-keyed upsert may already hold
+          // the label we're moving to (unique index). Fold it away rather
+          // than 409 at the user. Within the current window `existing` holds
+          // the highest counter, but a same-label twin from ANOTHER window
+          // (tenant moved its FY start month) may have issued numbers under
+          // this very label — adopt the highest counter so none can repeat.
+          foldedTwins = await tx
+            .delete(invoiceSequences)
+            .where(
+              and(
+                eq(invoiceSequences.tenant_id, tenantId),
+                eq(invoiceSequences.document_type, dto.document_type),
+                eq(invoiceSequences.branch_code, branch),
+                eq(invoiceSequences.fy_label, fyLabel),
+                ne(invoiceSequences.id, existing.id),
+              ),
+            )
+            .returning({
+              id: invoiceSequences.id,
+              fy_label: invoiceSequences.fy_label,
+              fy_start_date: invoiceSequences.fy_start_date,
+              current_number: invoiceSequences.current_number,
+            });
+        }
+        const twinCounter = Math.max(0, ...foldedTwins.map((t) => t.current_number));
         [saved] = await tx
           .update(invoiceSequences)
           .set({
+            fy_label: fyLabel,
+            fy_start_date: fy.startDate,
+            fy_end_date: fy.endDate,
             prefix: cfg.prefix,
             separator: cfg.separator,
             fy_format: cfg.fy_format,
             zero_padding: cfg.zero_padding,
             starting_number: cfg.starting_number,
+            // GREATEST in SQL, never a value read earlier: a concurrent
+            // reserveNext() must not lose its increment to this save.
+            ...(twinCounter > 0 && {
+              current_number: sql<number>`GREATEST(${invoiceSequences.current_number}, ${twinCounter})`,
+            }),
             updated_at: new Date(),
           })
           .where(eq(invoiceSequences.id, existing.id))
@@ -250,7 +374,11 @@ export class NumberingService {
         action: 'invoicing.sequence.upsert',
         resourceType: 'invoice_sequence',
         resourceId: saved!.id,
+        beforeState: existing as unknown as Record<string, unknown> | undefined,
         afterState: saved as unknown as Record<string, unknown>,
+        // Support can reconstruct a folded legacy twin from the audit row
+        // alone — the diagnostic query only shows rows that still exist.
+        ...(foldedTwins.length > 0 && { metadata: { folded_twins: foldedTwins } }),
       });
       return { data: saved, warning, sample: validation.sample };
     });
@@ -258,9 +386,12 @@ export class NumberingService {
 
   /**
    * Atomically reserve the next number for a document, inside the caller's
-   * transaction (SELECT … FOR UPDATE → increment). Creates the FY sequence row
-   * on first use (April-1 reset is implicit via the new fy_label). Returns the
-   * formatted number + fy_label. Consumed by invoice creation (Sprint 3).
+   * transaction. Serialised per (tenant, doc type) with a transaction-scoped
+   * advisory lock, so two first documents of a new FY can't race the unique
+   * index (SELECT … FOR UPDATE alone has nothing to lock when the FY row
+   * doesn't exist yet). Creates the FY row on first use (April-1 reset is
+   * implicit via the new fy_start_date). Returns the formatted number +
+   * fy_label. Consumed by invoice/note creation.
    */
   async reserveNext(
     tx: Db,
@@ -270,11 +401,19 @@ export class NumberingService {
     opts: { startMonth?: number } = {},
   ): Promise<{ number: number; formatted: string; fyLabel: string; sequenceId: string }> {
     const base = defaultConfig(documentType);
-    const startMonth =
-      opts.startMonth ?? (await this.fyStartMonth(tx, tenantId));
     const branch = '';
 
-    // Inherit config from the latest prior sequence for this doc type, if any.
+    // Released at commit/rollback; keyed per tenant + document type so the
+    // INVOICE and QUOTE series don't queue behind each other.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`${tenantId}:${documentType}`}))`,
+    );
+
+    const startMonth =
+      opts.startMonth ?? (await this.fyStartMonth(tx, tenantId));
+
+    // Inherit config from the latest sequence for this doc type, if any (the
+    // current FY's own row when it exists — highest counter first).
     const [prior] = await tx
       .select()
       .from(invoiceSequences)
@@ -285,30 +424,17 @@ export class NumberingService {
           eq(invoiceSequences.branch_code, branch),
         ),
       )
-      .orderBy(desc(invoiceSequences.fy_start_date))
+      .orderBy(desc(invoiceSequences.fy_start_date), desc(invoiceSequences.current_number))
       .limit(1);
 
     const fyFormat = prior?.fy_format ?? base.fy_format;
     const fy = computeFiscalYear(isoDate, startMonth, fyFormat);
 
-    // Lock the current-FY row if it exists.
-    const [locked] = await tx
-      .select()
-      .from(invoiceSequences)
-      .where(
-        and(
-          eq(invoiceSequences.tenant_id, tenantId),
-          eq(invoiceSequences.document_type, documentType),
-          eq(invoiceSequences.fy_label, fy.label),
-          eq(invoiceSequences.branch_code, branch),
-        ),
-      )
-      .for('update')
-      .limit(1);
-
-    let row = locked;
+    let row = await this.findFyRow(tx, tenantId, documentType, branch, fy, fy.label, {
+      forUpdate: true,
+    });
     if (!row) {
-      [row] = await tx
+      await tx
         .insert(invoiceSequences)
         .values({
           tenant_id: tenantId,
@@ -324,23 +450,35 @@ export class NumberingService {
           current_number: 0,
           branch_code: branch,
         })
-        .returning();
+        .onConflictDoNothing();
+      row = await this.findFyRow(tx, tenantId, documentType, branch, fy, fy.label, {
+        forUpdate: true,
+      });
+    }
+    if (!row) {
+      // Unreachable under the advisory lock; surfaced rather than deref'd.
+      throw new Error(
+        `Could not establish the ${documentType} numbering sequence for FY ${fy.label}`,
+      );
     }
 
-    const nextNumber = Math.max(row!.current_number + 1, row!.starting_number);
+    const nextNumber = Math.max(row.current_number + 1, row.starting_number);
     await tx
       .update(invoiceSequences)
       .set({ current_number: nextNumber, updated_at: new Date() })
-      .where(eq(invoiceSequences.id, row!.id));
+      .where(eq(invoiceSequences.id, row.id));
 
+    // Print with the row's own format — the row is the source of truth once
+    // it exists (a format change via upsert lands here, not on `prior`).
+    const fyLabel = formatFyLabel(row.fy_format, fy.startYear, fy.endYear);
     const formatted = formatNumber({
-      prefix: row!.prefix,
-      separator: row!.separator,
-      fyLabel: fy.label,
-      zeroPadding: row!.zero_padding,
+      prefix: row.prefix,
+      separator: row.separator,
+      fyLabel,
+      zeroPadding: row.zero_padding,
       number: nextNumber,
     });
-    return { number: nextNumber, formatted, fyLabel: fy.label, sequenceId: row!.id };
+    return { number: nextNumber, formatted, fyLabel, sequenceId: row.id };
   }
 }
 

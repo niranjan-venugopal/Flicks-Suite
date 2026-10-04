@@ -5,6 +5,7 @@ import {
   IsEmail,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsNumberString,
   IsIn,
   Matches,
@@ -250,6 +251,15 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() terms_and_conditions?: string;
   @IsOptional() @IsString() bank_account_id?: string;
   @IsOptional() @IsIn(['INVOICE', 'QUOTE']) document_type?: string;
+  // Quotes only (Round P R1.5): the acceptance deadline the hosted page and
+  // the expire-quotes sweep enforce. Defaults to due_date; ignored on invoices.
+  // Shape AND calendar validity — '2026-02-31' must be a 400 here, not a
+  // Postgres 22008 that the production filter renders as a bare 500.
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'valid_until must be YYYY-MM-DD' })
+  @IsDateString({ strict: true }, { message: 'valid_until must be a real calendar date' })
+  valid_until?: string;
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InvoiceLineDto)

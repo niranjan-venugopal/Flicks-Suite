@@ -33,7 +33,7 @@ import { DomainEventsService } from '../../core/events/domain-events.service';
 import { InvoicingPublicService } from '../invoicing/public';
 import { MediaService } from '../media/public';
 import { FxService } from './fx.service';
-import { ensureDefaultLostReasons } from './lost-reasons.seed';
+import { ensureDefaultPipeline as ensureDefaultPipelineShared } from './pipelines.service';
 import { signOwnerAvatars } from './owner-avatars';
 
 /** Query for the closed-deals list (Round I). `closed` = won + lost. */
@@ -80,47 +80,13 @@ export class DealsService {
   /**
    * Guarantee the tenant has a pipeline. Migration 0032 seeded one per
    * EXISTING tenant, but tenants created after it ran have none — every deal
-   * create then dies with "No pipeline available" and the board 404s. Seeds the
-   * same default "Sales" pipeline + stages + lost reasons as the migration
-   * (idempotent: no-op when any live pipeline exists).
+   * create then dies with "No pipeline available" and the board 404s.
+   * Round P R1: delegates to the single advisory-locked helper in
+   * pipelines.service.ts (shared with GET /crm/pipelines) so two concurrent
+   * first reads can no longer seed two "Sales" pipelines.
    */
   private async ensureDefaultPipeline(tx: Db, tenantId: string) {
-    // Round I: the lost reasons are healed independently of the pipeline —
-    // a tenant seeded by 0032's pipeline loop but created after its reasons
-    // loop (or with every reason archived) must still be able to mark a deal
-    // lost, so this runs BEFORE the pipeline early-return.
-    await ensureDefaultLostReasons(tx, tenantId);
-    const [existing] = await tx
-      .select({ id: pipelines.id })
-      .from(pipelines)
-      .where(and(eq(pipelines.tenant_id, tenantId), isNull(pipelines.deleted_at)))
-      .orderBy(asc(pipelines.display_order))
-      .limit(1);
-    if (existing) return;
-    const [pl] = await tx
-      .insert(pipelines)
-      .values({ tenant_id: tenantId, name: 'Sales', is_default: true, display_order: 0 })
-      .returning();
-    const defs: Array<[string, number, number | null, string]> = [
-      ['Qualified', 10, null, 'open'],
-      ['Contact Made', 25, null, 'open'],
-      ['Demo Scheduled', 40, 7, 'open'],
-      ['Proposal Sent', 60, 10, 'open'],
-      ['Negotiation', 80, 10, 'open'],
-      ['Won', 100, null, 'won'],
-      ['Lost', 0, null, 'lost'],
-    ];
-    await tx.insert(pipelineStages).values(
-      defs.map(([name, prob, rot, type], i) => ({
-        tenant_id: tenantId,
-        pipeline_id: pl!.id,
-        name,
-        display_order: i,
-        win_probability: prob,
-        rotting_days: rot,
-        stage_type: type,
-      })),
-    );
+    await ensureDefaultPipelineShared(tx, tenantId);
   }
 
   private async loadStage(tx: Db, tenantId: string, stageId: string) {

@@ -20,30 +20,47 @@ const PARKED_CRM_HREFS = new Set<string>([
   ...(FEATURES.crm_automation ? [] : ['/crm/automation']),
 ])
 
+// Round P polish: the HR document vault has no storage backend yet, so both
+// entries — People → Documents (admin) and the personal Documents page
+// (employee) — stay off the nav until FEATURES.hr_documents flips. Each
+// page itself still renders an honest "Coming soon" for a direct URL.
+const PARKED_HR_HREFS = new Set<string>(
+  FEATURES.hr_documents ? [] : ['/employees/documents', '/documents'],
+)
+
 /**
  * Drop parked sub-items from every section's item list. CRM sequences /
- * templates / automation disappear entirely; the PM "Settings" child is
- * repointed (it deep-links to the GitHub tab, which is parked) so Projects
- * settings still opens on a live tab.
+ * templates / automation and the HR Documents entries disappear entirely;
+ * the PM "Settings" child is repointed (it deep-links to the GitHub tab,
+ * which is parked) so Projects settings still opens on a live tab. A section
+ * left with no items is dropped so no empty group header renders.
  */
 function withoutParkedCrm(sections: NavSection[]): NavSection[] {
-  return sections.map((sec) => ({
-    ...sec,
-    items: sec.items.map((it) => {
-      if (it.id === 'crm' && it.children && PARKED_CRM_HREFS.size > 0) {
-        return { ...it, children: it.children.filter((c) => !PARKED_CRM_HREFS.has(c.href)) }
-      }
-      if (it.id === 'projects' && it.children && !FEATURES.pm_github) {
-        return {
-          ...it,
-          children: it.children.map((c) =>
-            c.href === '/pm/settings/github' ? { ...c, href: '/pm/settings/notifications' } : c,
-          ),
-        }
-      }
-      return it
-    }),
-  }))
+  return sections
+    .map((sec) => ({
+      ...sec,
+      items: sec.items
+        .filter((it) => !(it.href && PARKED_HR_HREFS.has(it.href)))
+        .map((it) => {
+          let next = it
+          if (next.children && PARKED_HR_HREFS.size > 0) {
+            next = { ...next, children: next.children.filter((c) => !PARKED_HR_HREFS.has(c.href)) }
+          }
+          if (next.id === 'crm' && next.children && PARKED_CRM_HREFS.size > 0) {
+            next = { ...next, children: next.children.filter((c) => !PARKED_CRM_HREFS.has(c.href)) }
+          }
+          if (next.id === 'projects' && next.children && !FEATURES.pm_github) {
+            next = {
+              ...next,
+              children: next.children.map((c) =>
+                c.href === '/pm/settings/github' ? { ...c, href: '/pm/settings/notifications' } : c,
+              ),
+            }
+          }
+          return next
+        }),
+    }))
+    .filter((sec) => sec.items.length > 0)
 }
 
 // ─── Nav model ─────────────────────────────────────────────────────────────

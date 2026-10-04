@@ -58,17 +58,21 @@ export class AuthController {
   @Public()
   @Post('request-otp')
   @HttpCode(HttpStatus.OK)
-  // Override the 'short' throttler for this route: 5 OTP requests / hour / IP.
+  // Override the 'short' throttler for this route: 30 OTP requests / hour / IP.
   // (The throttler is named — the previous `default` key matched nothing.)
-  @Throttle({ short: { limit: 5, ttl: 3600000 } })
+  // Round P: raised from 5 — a whole office signs in from one NAT address on
+  // go-live morning. The per-EMAIL limiter in AuthService (1/min, 5/hour)
+  // stays as the brute-force / mailbox-bombing guard.
+  @Throttle({ short: { limit: 30, ttl: 3600000 } })
   @ApiOperation({
     summary: 'Request OTP',
     description:
-      'Send a 6-digit OTP and magic link to the given email. Rate limited to 5/hour per email.',
+      'Send a 6-digit OTP and magic link to the given email. Rate limited to 5/hour per email and 30/hour per IP.',
   })
   @ApiResponse({ status: 200, description: 'OTP sent' })
   @ApiResponse({ status: 404, description: 'NOT_REGISTERED — signin intent with an unknown email (no OTP sent)' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({ status: 503, description: 'EMAIL_DELIVERY_FAILED — the email provider rejected the send' })
   async requestOtp(
     @Body() dto: RequestOtpDto,
     @Req() req: Request,

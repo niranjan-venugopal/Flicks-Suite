@@ -7,13 +7,18 @@ import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
+  UI_STATUS_LABELS,
+  deriveUiStatus,
+  isPendingInvite,
   useEmployee,
   useEmployees,
   useRemovalPreview,
   useRemoveEmployee,
+  useResendInvite,
   useTerminateEmployee,
   useUpdateEmployee,
   type EmployeeDetail,
+  type EmployeeUiStatus,
 } from '@/lib/api/queries/use-employees'
 import { useDepartments, useDesignations, useLocations, useShifts } from '@/lib/api/queries/use-settings'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -47,9 +52,15 @@ function parseTab(raw: string | null): Tab | null {
   return raw && (TABS as readonly string[]).includes(raw) ? (raw as Tab) : null
 }
 
-function statusTone(s: EmployeeDetail['status']): PillTone {
+// Round P (R1.3): the header pill uses the same derived status as the
+// directory row that opened it (Invited / Onboarding / Awaiting approval /
+// No access instead of a bare "Inactive"), via the C5 fields on the detail.
+function statusTone(s: EmployeeUiStatus): PillTone {
   switch (s) {
     case 'active':         return 'green'
+    case 'invited':        return 'yellow'
+    case 'onboarding':     return 'blue'
+    case 'submitted':      return 'purple'
     case 'on_leave':       return 'yellow'
     case 'notice_period':  return 'coral'
     case 'separated':
@@ -58,16 +69,8 @@ function statusTone(s: EmployeeDetail['status']): PillTone {
   }
 }
 
-function statusLabel(s: EmployeeDetail['status']): string {
-  switch (s) {
-    case 'active':         return 'Active'
-    case 'on_leave':       return 'On leave'
-    case 'notice_period':  return 'Notice period'
-    case 'separated':      return 'Separated'
-    case 'absconded':      return 'Absconded'
-    case 'inactive':       return 'Inactive'
-    default:               return s
-  }
+function statusLabel(s: EmployeeUiStatus): string {
+  return UI_STATUS_LABELS[s] ?? s
 }
 
 function employmentTypeLabel(t: EmployeeDetail['employmentType']): string {
@@ -174,11 +177,42 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   const [editing, setEditing] = useState(false)
   const [editingDetails, setEditingDetails] = useState(false)
   const contactEmail = e.workEmail || e.userEmail || e.personalEmail || undefined
+  const uiStatus = deriveUiStatus(e)
+  const router = useRouter()
+  const { toast } = useToast()
+
+  // ── Resend invite (round P, R1.1 / contract C1) ──────────────────────────
+  // Same rule as the directory row (Invited / Onboarding only): a submitted
+  // or deactivated-seat row gets no button here either, so the two surfaces
+  // never disagree about who can be re-invited.
+  const resend = useResendInvite()
+  const canResend = isPendingInvite(uiStatus)
+  const handleResend = async () => {
+    try {
+      const r = await resend.mutateAsync(e.id)
+      if (!r.emailSent) {
+        toast({
+          title: 'Invite saved but the email could not be sent — try Resend in a minute',
+          description: r.email,
+          variant: 'destructive',
+        })
+        return
+      }
+      toast({
+        title: `Invite re-sent to ${name}`,
+        description: `${r.email} · reminder #${r.resentCount}. Earlier links still work.`,
+      })
+    } catch (err) {
+      toast({
+        title: 'Could not resend invite',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
 
   // ── Offboard + Remove (founder round 21: "We had an option to delete the
   //    employee right?. Why it is not showing?") ─────────────────────────────
-  const router = useRouter()
-  const { toast } = useToast()
   const [offboarding, setOffboarding] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   // The preview decides the confirm copy: a mistake with no history is
@@ -230,8 +264,8 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
       <Avatar name={name} size="lg" src={e.avatarUrl ?? undefined} />
       <div style={{ flex: 1, minWidth: 240 }}>
         <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-          <Pill tone={statusTone(e.status)} dot>
-            {statusLabel(e.status)}
+          <Pill tone={statusTone(uiStatus)} dot>
+            {statusLabel(uiStatus)}
           </Pill>
           <Pill>{e.employeeCode}</Pill>
           <Pill>{employmentTypeLabel(e.employmentType)}</Pill>
@@ -280,6 +314,17 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
         )}
         {canEdit && (
           <>
+            {canResend && (
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.send size={13} />}
+                onClick={handleResend}
+                disabled={resend.isPending}
+              >
+                {resend.isPending ? 'Sending…' : 'Resend invite'}
+              </Btn>
+            )}
             <Btn
               kind="secondary"
               size="sm"
@@ -474,8 +519,9 @@ function EditProfileDialog({
   const designations = useDesignations()
   const locations = useLocations()
   const shifts = useShifts()
-  // Reporting-manager pool: everyone on the books except this person.
-  const directory = useEmployees({ limit: 500 })
+  // Reporting-manager pool: everyone on the books except this person. The
+  // API caps a page at 100 (contract C4) — asking for 500 silently got 100.
+  const directory = useEmployees({ limit: 100 })
   const initialName =
     [e.firstName, e.lastName].filter(Boolean).join(' ') || e.userFullName || ''
   const [fullName, setFullName] = useState(initialName)

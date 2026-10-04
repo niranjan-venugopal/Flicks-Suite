@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
@@ -51,6 +52,8 @@ import { DomainEventsService } from '../../core/events/domain-events.service';
  */
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
@@ -101,6 +104,7 @@ export class InvoicesService {
           status: invoices.status,
           invoice_date: invoices.invoice_date,
           due_date: invoices.due_date,
+          valid_until: invoices.valid_until,
           currency: invoices.currency,
           total_amount: invoices.total_amount,
           tds_amount: invoices.tds_amount,
@@ -181,12 +185,16 @@ export class InvoicesService {
       throw new BadRequestException('At least one line item is required');
     }
     this.assertDates(dto.invoice_date, dto.due_date);
+    if (dto.document_type === 'QUOTE') {
+      this.assertValidUntil(dto.invoice_date, dto.valid_until);
+    }
 
     const created = await this.db.withTenant(tenantId, async (tx) => {
       const customer = await this.fetchCustomer(tx, dto.customer_id);
       const [tenant] = await tx
         .select({
           state_code: tenants.state_code,
+          country_code: tenants.country_code,
           currency: tenants.currency,
         })
         .from(tenants)
@@ -194,6 +202,7 @@ export class InvoicesService {
         .limit(1);
 
       const currency = dto.currency ?? customer.default_currency ?? tenant?.currency ?? 'INR';
+      if (!dto.tax_treatment) this.assertSupplierStateKnown(tenant, customer);
       const treatment = (dto.tax_treatment as TaxTreatment | undefined) ??
         deriveTaxTreatment({
           supplierStateCode: tenant?.state_code,
@@ -259,6 +268,11 @@ export class InvoicesService {
           status: 'DRAFT',
           invoice_date: dto.invoice_date,
           due_date: dto.due_date,
+          // Round P R1.5: a quote's acceptance deadline (hosted page + the
+          // expire-quotes sweep). Defaults to the due date so no quote is
+          // open forever; meaningless on an invoice.
+          valid_until:
+            docType === 'QUOTE' ? (dto.valid_until ?? dto.due_date) : null,
           reference: dto.reference,
           fy_label: reserved.fyLabel,
           currency,
@@ -352,7 +366,10 @@ export class InvoicesService {
       const customerId = dto.customer_id ?? existing.customer_id;
       const customer = await this.fetchCustomer(tx, customerId);
       const [tenant] = await tx
-        .select({ state_code: tenants.state_code })
+        .select({
+          state_code: tenants.state_code,
+          country_code: tenants.country_code,
+        })
         .from(tenants)
         .where(eq(tenants.id, tenantId))
         .limit(1);
@@ -360,6 +377,17 @@ export class InvoicesService {
       const invoiceDate = dto.invoice_date ?? existing.invoice_date;
       const dueDate = dto.due_date ?? existing.due_date;
       this.assertDates(invoiceDate, dueDate);
+      if (existing.document_type === 'QUOTE') {
+        this.assertValidUntil(invoiceDate, dto.valid_until);
+      }
+      // Quote validity: explicit value wins; otherwise it follows a changed
+      // due date (the quote editor labels that field "Valid until"); a quote
+      // that predates the column gets its due date.
+      const validUntil =
+        existing.document_type === 'QUOTE'
+          ? (dto.valid_until ??
+            (dto.due_date ? dueDate : (existing.valid_until ?? dueDate)))
+          : existing.valid_until;
 
       // Recompute everything from the (possibly replaced) lines.
       const lines =
@@ -373,6 +401,7 @@ export class InvoicesService {
         throw new BadRequestException('At least one line item is required');
       }
 
+      if (!dto.tax_treatment) this.assertSupplierStateKnown(tenant, customer);
       const treatment = (dto.tax_treatment as TaxTreatment | undefined) ??
         deriveTaxTreatment({
           supplierStateCode: tenant?.state_code,
@@ -420,6 +449,7 @@ export class InvoicesService {
           customer_id: customer.id,
           invoice_date: invoiceDate,
           due_date: dueDate,
+          valid_until: validUntil,
           reference: dto.reference ?? existing.reference,
           currency: newCurrency,
           bank_account_id: bankAccountId,
@@ -749,6 +779,9 @@ export class InvoicesService {
           fy_label: reserved.fyLabel,
           status: 'DRAFT',
           quote_number: existing.invoice_number, // keep the original quote ref
+          // An INVOICE never carries an acceptance deadline — the quote's
+          // valid_until must not survive the promotion (hosted page copy).
+          valid_until: null,
           updated_by: userId,
           updated_at: new Date(),
         })
@@ -812,7 +845,12 @@ export class InvoicesService {
         })
         .where(eq(invoices.id, id))
         .returning();
-      return { invoice: updated!, customer, tenant };
+      return {
+        invoice: updated!,
+        customer,
+        tenant,
+        priorEmailSentAt: existing.email_sent_at,
+      };
     });
 
     const base = this.config.get<string>(
@@ -821,14 +859,41 @@ export class InvoicesService {
     );
     const viewUrl = `${base}/inv/${result.invoice.public_view_token}`;
 
-    await this.notifications.sendEmail('invoice-sent', result.customer.email!, {
-      invoiceNumber: result.invoice.invoice_number,
-      tenantName: result.tenant?.name,
-      customerName: result.customer.display_name,
-      amount: `${result.invoice.currency} ${result.invoice.total_amount}`,
-      dueDate: result.invoice.due_date,
-      viewUrl,
-    });
+    // sendEmail never throws — a provider failure comes back as `false`. The
+    // status flip above stands either way; the caller is told so it can
+    // offer the hosted link instead (Round P R1.6).
+    const emailSent = Boolean(
+      await this.notifications.sendEmail('invoice-sent', result.customer.email!, {
+        invoiceNumber: result.invoice.invoice_number,
+        tenantName: result.tenant?.name,
+        customerName: result.customer.display_name,
+        amount: `${result.invoice.currency} ${result.invoice.total_amount}`,
+        dueDate: result.invoice.due_date,
+        viewUrl,
+      }),
+    );
+
+    if (!emailSent) {
+      // The ledger must not claim an email went out at this moment when the
+      // provider refused it: put back whatever it said before (null on a first
+      // send, the earlier timestamp on a re-send). Best-effort — the status
+      // flip and the response above stand regardless.
+      result.invoice.email_sent_at = result.priorEmailSentAt;
+      await this.db
+        .withTenant(tenantId, (tx) =>
+          tx
+            .update(invoices)
+            .set({ email_sent_at: result.priorEmailSentAt })
+            .where(and(eq(invoices.id, id), eq(invoices.tenant_id, tenantId))),
+        )
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `Could not clear email_sent_at on ${id} after a failed send: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
+    }
 
     await this.audit.log({
       tenantId,
@@ -836,7 +901,7 @@ export class InvoicesService {
       action: 'invoicing.invoice.send',
       resourceType: 'invoice',
       resourceId: id,
-      metadata: { to: result.customer.email, viewUrl },
+      metadata: { to: result.customer.email, viewUrl, emailSent },
     });
     await this.domainEvents.publish({
       name: 'invoice.sent',
@@ -848,7 +913,11 @@ export class InvoicesService {
         total_amount: result.invoice.total_amount,
       },
     });
-    return { data: result.invoice, meta: { public_url: viewUrl } };
+    return {
+      data: result.invoice,
+      meta: { public_url: viewUrl, emailSent },
+      emailSent,
+    };
   }
 
   // ─── payments (§6.6) ─────────────────────────────────────────────────────
@@ -1072,9 +1141,46 @@ export class InvoicesService {
     return customer;
   }
 
+  /**
+   * Round P R1.6 — IGST-by-default guard. deriveTaxTreatment() falls back to
+   * INTER_STATE when the supplier's state is unknown, which silently charged
+   * IGST on every domestic invoice of a workspace that skipped Settings →
+   * General. Only applies when the treatment is being derived (no explicit
+   * tax_treatment), the customer is Indian and the workspace is Indian — a
+   * non-Indian workspace has no Indian state to set and GST never applies.
+   */
+  private assertSupplierStateKnown(
+    tenant: { state_code: string | null; country_code: string | null } | undefined,
+    customer: { country_code: string | null },
+  ): void {
+    const customerCountry =
+      (customer.country_code ?? '').trim().toUpperCase() || 'IN';
+    const tenantCountry =
+      (tenant?.country_code ?? '').trim().toUpperCase() || 'IN';
+    if (customerCountry !== 'IN' || tenantCountry !== 'IN') return;
+    if ((tenant?.state_code ?? '').trim()) return;
+    throw new BadRequestException({
+      code: 'SUPPLIER_STATE_UNKNOWN',
+      message:
+        'Set your business state or GSTIN in Settings → General so GST is split correctly.',
+    });
+  }
+
   private assertDates(invoiceDate: string, dueDate: string) {
     if (dueDate < invoiceDate) {
       throw new BadRequestException('Due date cannot be before the invoice date');
+    }
+  }
+
+  /**
+   * An explicitly supplied quote deadline must not predate the quote itself —
+   * otherwise the expire-quotes sweep flips it to EXPIRED before anyone can
+   * accept it. Only the explicit value is checked; the derived default (the
+   * due date) is already ordered by assertDates().
+   */
+  private assertValidUntil(invoiceDate: string, validUntil: string | undefined) {
+    if (validUntil && validUntil < invoiceDate) {
+      throw new BadRequestException('Valid until cannot be before the quote date');
     }
   }
 

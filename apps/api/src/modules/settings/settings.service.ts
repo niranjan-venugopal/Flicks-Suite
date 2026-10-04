@@ -1492,9 +1492,34 @@ export class SettingsService {
       }
     }
 
+    // Round P (R1.2): removing an employee revokes the seat AND unlinks it
+    // (employee_id → null). Reactivating from Settings → Members used to bring
+    // the login back with no employee record behind it — every "me" surface
+    // then 404'd. Relink the live employee row for the same person, if any.
+    // dbAdmin: tenant predicate on every row touched.
+    let relinkEmployeeId: string | null = null;
+    if (status === 'active' && !before.employee_id) {
+      const [live] = await this.dbAdmin
+        .select({ id: employees.id })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenant_id, tenantId),
+            eq(employees.user_id, before.user_id),
+            isNull(employees.deleted_at),
+          ),
+        )
+        .orderBy(asc(employees.created_at))
+        .limit(1);
+      relinkEmployeeId = live?.id ?? null;
+    }
+
     const [after] = await this.dbAdmin
       .update(memberships)
-      .set({ status })
+      .set({
+        status,
+        ...(relinkEmployeeId ? { employee_id: relinkEmployeeId } : {}),
+      })
       .where(
         and(
           eq(memberships.id, membershipId),
@@ -1509,8 +1534,8 @@ export class SettingsService {
       action: status === 'deactivated' ? 'membership.deactivated' : 'membership.reactivated',
       resourceType: 'membership',
       resourceId: membershipId,
-      beforeState: { status: before.status },
-      afterState: { status: after.status },
+      beforeState: { status: before.status, employeeId: before.employee_id },
+      afterState: { status: after.status, employeeId: after.employee_id },
     });
 
     if (status === 'deactivated') {

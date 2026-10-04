@@ -247,6 +247,13 @@ export interface InvoiceInput {
   terms_and_conditions?: string
   bank_account_id?: string
   document_type?: 'INVOICE' | 'QUOTE'
+  /**
+   * Round P (contract C10) — QUOTE only: the date the estimate expires
+   * (YYYY-MM-DD). The API stores it for quotes and defaults it to due_date;
+   * it is ignored on invoices. The editor sends due_date alongside it so an
+   * API build that predates the field keeps working unchanged.
+   */
+  valid_until?: string
   line_items: InvoiceLineInput[]
 }
 
@@ -257,6 +264,8 @@ export interface InvoiceRow {
   status: string
   invoice_date: string
   due_date: string
+  /** QUOTE only. Optional: list rows may omit it — fall back to due_date. */
+  valid_until?: string | null
   currency: string
   total_amount: string
   tds_amount: string
@@ -448,11 +457,32 @@ export function useDeleteCustomer() {
   })
 }
 
+/**
+ * Round P (contract C9): the send response carries `emailSent`. The status
+ * still flips to SENT when the provider could not deliver the email, so the
+ * caller must offer the hosted link instead of pretending it went. Optional
+ * on the type so an API build that predates the field reads as "unknown"
+ * (treated as sent), never as "failed".
+ */
+export interface SendInvoiceResponse {
+  data: InvoiceDetail
+  meta: { public_url: string; emailSent?: boolean }
+  emailSent?: boolean
+}
+
+/** true only when the API explicitly reported a delivery failure. */
+export const sendEmailFailed = (res: SendInvoiceResponse): boolean =>
+  res.emailSent === false || res.meta?.emailSent === false
+
+/** One copy for every send surface (editor, invoices list, quotes list). */
+export const SEND_EMAIL_FAILED_COPY =
+  'Marked as sent, but the email could not be delivered — share the link instead'
+
 export function useSendInvoice() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) =>
-      api.post<{ data: InvoiceDetail; meta: { public_url: string } }>(`/api/v1/invoices/${id}/send`),
+      api.post<SendInvoiceResponse>(`/api/v1/invoices/${id}/send`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoicing'] }),
   })
 }

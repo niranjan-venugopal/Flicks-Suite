@@ -11,6 +11,14 @@ export interface EmployeeOnboardingStatus {
   onboardingStep: number
   submittedAt: string | null
   submittedForReview: boolean
+  /**
+   * Round P (contract C7) — the owner / HR admin pressed "Skip for now".
+   * While true the (app) layout must NOT redirect to the wizard. Optional so
+   * an API that predates the field still types (reads as false).
+   */
+  deferred?: boolean
+  /** true for owner/admin memberships that have an employee row. */
+  canDefer?: boolean
 }
 
 export function useEmployeeOnboardingStatus() {
@@ -19,6 +27,29 @@ export function useEmployeeOnboardingStatus() {
     queryFn: () =>
       api.get<EmployeeOnboardingStatus>('/api/v1/employees/me/onboarding-status'),
     staleTime: 30_000,
+  })
+}
+
+/**
+ * POST /employees/me/onboarding/defer (contract C7). 403 unless the caller's
+ * membership role is owner or admin. Writes `deferred: true` into the cached
+ * status synchronously: the (app) layout reads that cache the instant we
+ * land on /dashboard, and a stale `deferred: false` would bounce the user
+ * straight back into the wizard.
+ */
+export function useDeferOnboarding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ data: { deferred: true } }>('/api/v1/employees/me/onboarding/defer', {}),
+    onSuccess: () => {
+      qc.setQueryData<EmployeeOnboardingStatus>(['employee', 'onboarding-status'], (prev) =>
+        prev ? { ...prev, deferred: true } : prev,
+      )
+      qc.invalidateQueries({ queryKey: ['employee', 'onboarding-status'] })
+      qc.invalidateQueries({ queryKey: ['employees', 'me'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
   })
 }
 
@@ -113,6 +144,9 @@ export function useSubmitOnboardingStep() {
             onboardingStep: data.onboardingStep,
             submittedAt: prev?.submittedAt ?? new Date().toISOString(),
             submittedForReview: true,
+            // Finishing the wizard ends any earlier "Skip for now".
+            deferred: false,
+            canDefer: prev?.canDefer ?? false,
           }),
         )
       } else {

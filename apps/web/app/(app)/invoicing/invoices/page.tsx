@@ -10,6 +10,8 @@ import {
   useDownloadInvoicePdf,
   useRecordPayment,
   useDeleteInvoice,
+  sendEmailFailed,
+  SEND_EMAIL_FAILED_COPY,
   type InvoiceRow,
 } from '@/lib/api/queries/use-invoicing'
 import { useInvoicingAccess } from '@/lib/api/queries/use-members'
@@ -146,7 +148,13 @@ export default function InvoicesPage() {
   const onSend = async (inv: InvoiceRow) => {
     try {
       const res = await send.mutateAsync(inv.id)
-      toast({ title: `Invoice ${inv.invoice_number} sent`, description: res.meta.public_url })
+      // Contract C9: the status flips to SENT even when the email bounced —
+      // say so and hand over the hosted link to share by hand.
+      if (sendEmailFailed(res)) {
+        toast({ title: SEND_EMAIL_FAILED_COPY, description: res.meta.public_url, variant: 'destructive' })
+      } else {
+        toast({ title: `Invoice ${inv.invoice_number} sent`, description: res.meta.public_url })
+      }
     } catch (err) {
       toast({
         title: 'Could not send',

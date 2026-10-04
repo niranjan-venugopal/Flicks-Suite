@@ -4,6 +4,77 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../client'
 import { track, EVENTS } from '@/lib/analytics/posthog'
 
+/** The `employees.status` enum exactly as the API stores it. */
+export type EmployeeRawStatus =
+  | 'active'
+  | 'inactive'
+  | 'on_leave'
+  | 'notice_period'
+  | 'separated'
+  | 'absconded'
+
+/** Workspace seat state (memberships.status) — null when no seat exists. */
+export type MembershipStatus = 'invited' | 'active' | 'deactivated' | null
+
+/**
+ * Round P (R1.3) — what the directory actually shows. `inactive` on its own
+ * says nothing useful: it covers "never opened the invite", "stopped halfway
+ * through the wizard", "submitted and waiting on HR" and "seat deactivated".
+ * Derived on the client from the three fields the API now carries
+ * (membershipStatus / onboardingStep / onboardingSubmitted) so the list, the
+ * 360 header and the filters all agree.
+ */
+export type EmployeeUiStatus =
+  | 'invited'
+  | 'onboarding'
+  | 'submitted'
+  | 'active'
+  | 'on_leave'
+  | 'notice_period'
+  | 'separated'
+  | 'absconded'
+  | 'no_access'
+
+export const UI_STATUS_LABELS: Record<EmployeeUiStatus, string> = {
+  invited: 'Invited',
+  onboarding: 'Onboarding',
+  submitted: 'Awaiting approval',
+  active: 'Active',
+  on_leave: 'On leave',
+  notice_period: 'Notice period',
+  separated: 'Separated',
+  absconded: 'Absconded',
+  no_access: 'No access',
+}
+
+/** Rows that still owe us an accepted invite — the only ones Resend applies to. */
+export function isPendingInvite(uiStatus: EmployeeUiStatus): boolean {
+  return uiStatus === 'invited' || uiStatus === 'onboarding'
+}
+
+/**
+ * Plan R1.3 order, exactly: inactive + submitted → Awaiting approval;
+ * inactive + (seat active OR step > 0) → Onboarding; inactive + seat
+ * deactivated → No access; inactive otherwise → Invited; every other enum
+ * value maps 1:1. Tolerates an older API that doesn't send the three fields
+ * yet (they read as null/0/false → Invited), so nothing breaks mid-deploy.
+ */
+export function deriveUiStatus(row: {
+  status: string | null | undefined
+  membershipStatus?: MembershipStatus | undefined
+  onboardingStep?: number | null | undefined
+  onboardingSubmitted?: boolean | null | undefined
+}): EmployeeUiStatus {
+  const raw = (row.status ?? 'active') as EmployeeRawStatus
+  if (raw !== 'inactive') {
+    return (raw in UI_STATUS_LABELS ? raw : 'active') as EmployeeUiStatus
+  }
+  if (row.onboardingSubmitted) return 'submitted'
+  if (row.membershipStatus === 'active' || (row.onboardingStep ?? 0) > 0) return 'onboarding'
+  if (row.membershipStatus === 'deactivated') return 'no_access'
+  return 'invited'
+}
+
 export interface Employee {
   id: string
   name: string
@@ -12,7 +83,14 @@ export interface Employee {
   designation?: string
   department?: string
   location?: string
-  status: 'active' | 'inactive' | 'on_leave' | 'invited' | 'on_notice'
+  /** The API's own enum (same as `rawStatus`) — kept for existing callers. */
+  status: EmployeeRawStatus
+  rawStatus: EmployeeRawStatus
+  /** What the directory shows — see deriveUiStatus. */
+  uiStatus: EmployeeUiStatus
+  membershipStatus: MembershipStatus
+  onboardingStep: number
+  onboardingSubmitted: boolean
   avatarUrl?: string
   userId?: string | null
   employeeCode?: string
@@ -42,14 +120,25 @@ interface ApiEmployeeRow {
   email: string | null
   avatarUrl: string | null
   createdAt: string
+  // Round P (R1.3 / contract C4) — optional only so an API that predates the
+  // fields still adapts cleanly.
+  membershipStatus?: MembershipStatus
+  onboardingStep?: number | null
+  onboardingSubmitted?: boolean | null
 }
 
 function adaptEmployee(row: ApiEmployeeRow): Employee {
+  const rawStatus = (row.status as EmployeeRawStatus) ?? 'active'
   return {
     id: row.id,
     name: row.fullName ?? row.email ?? row.employeeCode ?? 'Unknown',
     email: row.email ?? '',
-    status: (row.status as Employee['status']) ?? 'active',
+    status: rawStatus,
+    rawStatus,
+    uiStatus: deriveUiStatus(row),
+    membershipStatus: row.membershipStatus ?? null,
+    onboardingStep: row.onboardingStep ?? 0,
+    onboardingSubmitted: row.onboardingSubmitted ?? false,
     avatarUrl: row.avatarUrl ?? undefined,
     userId: row.userId,
     employeeCode: row.employeeCode ?? undefined,
@@ -90,12 +179,22 @@ interface EmployeesFilters {
   /** true = the directory's Removed view (round 21). */
   removed?: boolean
   page?: number
+  /** Defaults to 100 — the API's hard cap (contract C4). */
   limit?: number
 }
 
-export function useEmployees(filters?: EmployeesFilters) {
+/** The API caps page size here; asking for more silently returns 100. */
+export const EMPLOYEES_PAGE_MAX = 100
+
+/**
+ * GET /employees is manager-or-above; a page that only needs the roster to
+ * power an admin-only action passes `enabled: false` for other viewers so
+ * they don't collect a 403 (and an authz.denied audit row) just for opening it.
+ */
+export function useEmployees(filters?: EmployeesFilters, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['employees', filters],
+    enabled: options?.enabled ?? true,
     queryFn: async () => {
       const params = new URLSearchParams()
       if (filters?.department) params.set('departmentId', filters.department)
@@ -103,16 +202,96 @@ export function useEmployees(filters?: EmployeesFilters) {
       if (filters?.status) params.set('status', filters.status)
       if (filters?.removed) params.set('removed', 'true')
       if (filters?.page) params.set('page', String(filters.page))
-      if (filters?.limit) params.set('limit', String(filters.limit))
+      params.set('limit', String(Math.min(filters?.limit ?? EMPLOYEES_PAGE_MAX, EMPLOYEES_PAGE_MAX)))
       const res = await api.get<{
         data: ApiEmployeeRow[]
         pagination: { page: number; limit: number; total: number }
-      }>(`/api/v1/employees${params.toString() ? `?${params.toString()}` : ''}`)
+      }>(`/api/v1/employees?${params.toString()}`)
       return {
         employees: res.data.map(adaptEmployee),
+        /** A real count across every page (contract C4), not `rows.length`. */
         total: res.pagination.total,
+        pagination: res.pagination,
       }
     },
+  })
+}
+
+// ─── Round P (R1.1): resend invites ──────────────────────────────────────────
+
+export interface ResendInviteResult {
+  employeeId: string
+  email: string
+  resentCount: number
+  /** false = the ledger row was written but the provider refused the email. */
+  emailSent: boolean
+}
+
+export interface ResendInvitesBulkResult {
+  sent: number
+  skipped: Array<{ employeeId: string; email: string; reason: string }>
+}
+
+/** Both resend paths touch the directory pills AND the Settings → Members seats. */
+function invalidateInviteScopes(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['employees'] })
+  queryClient.invalidateQueries({ queryKey: ['settings', 'members'] })
+}
+
+/**
+ * POST /employees/:id/resend-invite (contract C1). Throws APIError with the
+ * server's own copy on 409 (ALREADY_ONBOARDED / SEAT_DEACTIVATED /
+ * EMPLOYEE_REMOVED) and 429 (RESEND_TOO_SOON) — show `err.message` as-is.
+ */
+export function useResendInvite() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.post<{ data: ResendInviteResult }>(
+        `/api/v1/employees/${id}/resend-invite`,
+        {},
+      )
+      return res.data
+    },
+    onSuccess: () => invalidateInviteScopes(queryClient),
+  })
+}
+
+/**
+ * POST /employees/resend-invites (contract C2). `ids` omitted = every
+ * employee still waiting on their invite; the server decides eligibility
+ * per row and never fails the whole call.
+ */
+export function useResendAllInvites() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (ids?: string[]) => {
+      const res = await api.post<{ data: ResendInvitesBulkResult }>(
+        '/api/v1/employees/resend-invites',
+        ids && ids.length > 0 ? { employeeIds: ids } : {},
+      )
+      return res.data
+    },
+    onSuccess: () => invalidateInviteScopes(queryClient),
+  })
+}
+
+/**
+ * GET /employees/next-code (contract C6) — the next free code over EVERY row,
+ * removed ones included (they still hold the unique index). Always fresh:
+ * the add page is the only reader and a stale suggestion is a 409 waiting
+ * to happen.
+ */
+export function useNextEmployeeCode() {
+  return useQuery({
+    queryKey: ['employees', 'next-code'],
+    queryFn: async () => {
+      const res = await api.get<{ data: { suggested: string } }>('/api/v1/employees/next-code')
+      return res.data
+    },
+    staleTime: 0,
+    gcTime: 0,
+    retry: 1,
   })
 }
 
@@ -199,6 +378,12 @@ export interface EmployeeDetail {
   hasBankAccount: boolean
   // Status + identity
   status: 'active' | 'inactive' | 'on_leave' | 'notice_period' | 'separated' | 'absconded'
+  // Round P (contract C5) — same three fields as the list rows, so the 360
+  // header shows the same pill as the row that opened it. Optional so an
+  // API that predates them still types.
+  membershipStatus?: MembershipStatus
+  onboardingStep?: number | null
+  onboardingSubmitted?: boolean | null
   avatarUrl: string | null
   userFullName: string | null
   userEmail: string | null
@@ -280,14 +465,38 @@ export function useSelfUpdateEmployee() {
   })
 }
 
+/**
+ * POST /employees/invite (contract C3). A live, not-yet-submitted employee
+ * with the same work email is UPDATED and re-invited (`reinvited: true`); an
+ * archived one is re-hired in place. 409 codes ALREADY_EMPLOYEE /
+ * EXTERNAL_SEAT / DUPLICATE (and the employee-code ones) carry a message
+ * meant for the user — show it as-is.
+ */
+export interface InviteEmployeeResponse {
+  id: string
+  employeeCode: string | null
+  designationId: string | null
+  userId: string | null
+  email: string
+  fullName: string
+  status: string
+  joiningDate: string | null
+  reinvited?: boolean
+  rehired?: boolean
+  /** false = the row was saved but the welcome email could not be delivered. */
+  emailSent: boolean
+}
+
 export function useInviteEmployee() {
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: (payload: InviteEmployeePayload) =>
-      api.post<Employee>('/api/v1/employees/invite', payload),
+      api.post<InviteEmployeeResponse>('/api/v1/employees/invite', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['employees'] })
+      // A re-invite / re-hire also moves a seat, so Settings → Members must
+      // refetch too.
+      invalidateInviteScopes(queryClient)
       track(EVENTS.EMPLOYEE_INVITED)
     },
   })
@@ -406,6 +615,12 @@ export interface ImportResult {
   total: number
   created: number
   failed: Array<{ row: number; email: string; error: string }>
+  /**
+   * Round P (contract C3): rows matching someone already invited are skipped
+   * ("already invited — use Resend invite") rather than re-mailed. Optional
+   * for an API that predates it.
+   */
+  skipped?: Array<{ row: number; email: string; reason: string }>
 }
 
 export function useImportEmployees() {

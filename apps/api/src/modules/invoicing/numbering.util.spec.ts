@@ -28,6 +28,23 @@ describe('Invoice numbering utilities (PRD §6.4)', () => {
     });
   });
 
+  describe('computeFiscalYear — window vs label (Round P R1.4)', () => {
+    it('the FY window is format-independent; only the label changes', () => {
+      // numbering.service keys the sequence row on fy_start_date for exactly
+      // this reason: a saved '2026-27' format must find the same row as
+      // '26-27', and the printed label is derived from the format.
+      const short = computeFiscalYear('2026-10-04', 4, '26-27');
+      const long = computeFiscalYear('2026-10-04', 4, '2026-27');
+      expect(long.startDate).toBe(short.startDate);
+      expect(long.endDate).toBe(short.endDate);
+      expect(short.label).toBe('26-27');
+      expect(long.label).toBe('2026-27');
+      // The label is purely a function of (format, startYear, endYear).
+      expect(formatFyLabel('2026-27', long.startYear, long.endYear)).toBe(long.label);
+      expect(formatFyLabel('26-27', short.startYear, short.endYear)).toBe(short.label);
+    });
+  });
+
   describe('formatFyLabel', () => {
     it('supports the documented formats', () => {
       expect(formatFyLabel('26-27', 2026, 2027)).toBe('26-27');

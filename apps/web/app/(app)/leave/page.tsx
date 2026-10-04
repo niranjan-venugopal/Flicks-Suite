@@ -90,6 +90,11 @@ function fmtRange(start: string, end: string): string {
   return `${s} – ${e}`
 }
 
+/** 5 → "5", 2.5 → "2.5" — the same shape the API's balance message uses. */
+function fmtDays(n: number): string {
+  return n % 1 === 0 ? String(n) : n.toFixed(1)
+}
+
 function extractCode(typeName: string | null): string {
   if (!typeName) return ''
   const m = typeName.match(/^([A-Z]{2,4})\b/)
@@ -380,6 +385,8 @@ function ApplyLeaveDialog({
 }) {
   const types = useLeaveTypes()
   const balances = useMyLeaveBalances()
+  // Same query key as the page's calendar — react-query dedupes the fetch.
+  const holidays = useHolidays()
   const apply = useApplyLeave()
   const { toast } = useToast()
 
@@ -404,8 +411,55 @@ function ApplyLeaveDialog({
     return Math.round((e - s) / 86_400_000) + 1 - (isHalfDay ? 0.5 : 0)
   }, [startDate, endDate, isHalfDay])
 
+  // The API deducts BUSINESS days (the employee's shift working days minus
+  // tenant holidays), not calendar days. Estimate that the same way for the
+  // preview: Mon–Fri minus the holidays we know about. Advisory only — a
+  // shift can differ from Mon–Fri, so this is never used to hard-block.
+  const holidayDates = useMemo(
+    () => new Set((holidays.data?.holidays ?? []).map((h) => h.date.slice(0, 10))),
+    [holidays.data],
+  )
+  const estDays = useMemo(() => {
+    if (!startDate || !endDate) return 0
+    if (isHalfDay) return 0.5
+    const s = new Date(`${startDate}T00:00:00`)
+    const e = new Date(`${endDate}T00:00:00`)
+    if (e.getTime() < s.getTime()) return 0
+    let n = 0
+    for (const d = new Date(s); d.getTime() <= e.getTime(); d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay()
+      if (dow === 0 || dow === 6) continue
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      if (holidayDates.has(iso)) continue
+      n++
+    }
+    return n
+  }, [startDate, endDate, isHalfDay, holidayDates])
+
   const selectedType = allTypes.find((t) => t.id === leaveTypeId)
   const selectedBalance = leaveTypeId ? balanceByType.get(leaveTypeId) : undefined
+
+  // Round P (contract C8) — mirror of the API's balance guard. Paid types
+  // with an entitlement are capped at `available` (the balances endpoint
+  // already nets out pending requests); unpaid / LOP / untracked types are
+  // exempt. The server counts business days per the employee's shift and
+  // keys the ledger by the START date's year, neither of which the client
+  // can reproduce exactly, so Submit is disabled only when the request is
+  // CERTAIN to bounce: the balance for this ledger year cannot cover even
+  // one business day (any accepted request is at least a half/full day).
+  // Everything else is a coral hint; the API's 400 is authoritative and its
+  // message is shown verbatim.
+  const entitlement = selectedBalance ? selectedBalance.opening + selectedBalance.accrued : 0
+  const unpaidType = !!selectedType && (selectedType.isPaid === false || selectedType.code === 'LOP')
+  const tracksBalance = !!selectedType && !unpaidType && !!selectedBalance && entitlement > 0
+  const daysLeft = selectedBalance ? Math.max(0, selectedBalance.available) : null
+  const sameLedgerYear =
+    !!balances.data && Number(startDate.slice(0, 4)) === balances.data.leaveYear
+  const minRequested = isHalfDay ? 0.5 : 1
+  const certainlyOver =
+    tracksBalance && sameLedgerYear && daysLeft !== null && daysLeft + 1e-6 < minRequested
+  const mayExceed =
+    tracksBalance && !certainlyOver && daysLeft !== null && estDays > daysLeft + 1e-6
 
   const reset = () => {
     setLeaveTypeId(null)
@@ -422,6 +476,13 @@ function ApplyLeaveDialog({
     }
     if (reason.trim().length < 5) {
       toast({ title: 'Reason is required', description: 'At least 5 characters.', variant: 'destructive' })
+      return
+    }
+    if (certainlyOver) {
+      toast({
+        title: `You have ${fmtDays(daysLeft ?? 0)} day(s) of ${selectedType?.name ?? 'this type'} left for this year`,
+        variant: 'destructive',
+      })
       return
     }
     const payload: ApplyLeavePayload = { leaveTypeId, startDate, endDate, isHalfDay, reason }
@@ -505,11 +566,32 @@ function ApplyLeaveDialog({
           >
             <span>{totalDays} {totalDays === 1 ? 'day' : 'days'}</span>
             <span style={{ color: 'var(--text-faint)' }}>·</span>
-            <span>
-              {selectedBalance
-                ? `${selectedBalance.available} ${selectedType?.code} → ${Math.max(0, selectedBalance.available - totalDays)} ${selectedType?.code} after`
-                : 'Pick a leave type to preview balance'}
+            <span data-testid="leave-days-left">
+              {!selectedBalance || daysLeft === null
+                ? 'Pick a leave type to preview balance'
+                : !tracksBalance
+                  ? unpaidType
+                    ? 'Unpaid — no balance limit'
+                    : 'Not tracked'
+                  : `${fmtDays(daysLeft)} ${daysLeft === 1 ? 'day' : 'days'} left`}
             </span>
+            {selectedBalance && tracksBalance && daysLeft !== null && (
+              <>
+                <span style={{ color: 'var(--text-faint)' }}>·</span>
+                <span
+                  data-testid="leave-balance-after"
+                  style={{ color: certainlyOver || mayExceed ? 'var(--coral)' : 'var(--text-mute)' }}
+                >
+                  {certainlyOver
+                    ? daysLeft <= 0
+                      ? `No ${selectedType?.code} left this year — pick another type`
+                      : `Only ${fmtDays(daysLeft)} ${selectedType?.code} left — not enough for a full day`
+                    : mayExceed
+                      ? `Only ${fmtDays(daysLeft)} ${selectedType?.code} left for ~${fmtDays(estDays)} working ${estDays === 1 ? 'day' : 'days'} — checked on submit`
+                      : `~${fmtDays(Math.max(0, daysLeft - estDays))} ${selectedType?.code} after`}
+                </span>
+              </>
+            )}
             <div style={{ flex: 1 }} />
             {(selectedType?.allowHalfDay ?? true) && totalDays <= 1 && (
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--text-2)' }}>
@@ -545,7 +627,8 @@ function ApplyLeaveDialog({
             kind="primary"
             icon={<Icon.send size={14} />}
             onClick={handleSubmit}
-            disabled={apply.isPending || !leaveTypeId || totalDays <= 0}
+            disabled={apply.isPending || !leaveTypeId || totalDays <= 0 || certainlyOver}
+            title={certainlyOver ? `Only ${fmtDays(daysLeft ?? 0)} day(s) of ${selectedType?.code} left` : undefined}
           >
             {apply.isPending ? 'Submitting…' : 'Submit request'}
           </Btn>

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
+import { ToastAction } from '@/components/ui/toast'
+import { APIError } from '@/lib/api/client'
 import { CustomerModal } from '@/components/invoicing/CustomerModal'
 import { useOrganization } from '@/lib/api/queries/use-settings'
 import { useInvSettings } from '@/lib/api/queries/use-inv-settings'
@@ -12,6 +14,8 @@ import {
   useSaveInvoice,
   useSendInvoice,
   useBankAccounts,
+  sendEmailFailed,
+  SEND_EMAIL_FAILED_COPY,
   type InvoiceDetail,
   type InvoiceInput,
   type InvoiceLineInput,
@@ -42,6 +46,13 @@ const plusDays = (iso: string, days: number) => {
   return d.toISOString().slice(0, 10)
 }
 const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : `${c} `)
+
+/** Machine-readable `code` off an APIError's parsed JSON body (if any). */
+const errorCode = (err: unknown): string | undefined => {
+  if (!(err instanceof APIError)) return undefined
+  const body = err.data as { code?: unknown } | null | undefined
+  return typeof body?.code === 'string' ? body.code : undefined
+}
 
 // Line-items grid (INR): Description | HSN/SAC | Qty | Rate | GST% | Amount | ✕
 const LINE_GRID = '1fr 110px 64px 110px 64px 110px 32px'
@@ -76,7 +87,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
 
   const [customerId, setCustomerId] = useState(invoice?.customer_id ?? '')
   const [invoiceDate, setInvoiceDate] = useState(invoice?.invoice_date ?? today())
-  const [dueDate, setDueDate] = useState(invoice?.due_date ?? plusDays(today(), 30))
+  // Round P (R1.5): in quote mode this field IS the stored validity, so seed
+  // it from valid_until (falling back to due_date for rows saved before it).
+  const [dueDate, setDueDate] = useState(
+    invoice
+      ? isQuote
+        ? (invoice.valid_until ?? invoice.due_date)
+        : invoice.due_date
+      : plusDays(today(), 30),
+  )
   const [currency, setCurrency] = useState(invoice?.currency ?? 'INR')
   const [reference, setReference] = useState(invoice?.reference ?? '')
   const [discountType, setDiscountType] = useState<'percent' | 'fixed' | ''>(
@@ -253,10 +272,38 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       terms_and_conditions: terms || undefined,
       bank_account_id: bankAccountId || undefined,
       document_type: isQuote ? 'QUOTE' : undefined,
+      // Round P (R1.5): a quote's date field IS its validity. due_date is
+      // still sent (it is required, and older API builds only know that).
+      ...(isQuote ? { valid_until: dueDate } : {}),
       line_items: valid,
     }
     const res = await save.mutateAsync({ id: invoice?.id, ...payload })
     return { id: res.data.id, invoice_number: res.data.invoice_number }
+  }
+
+  // Round P (contract C10): a tenant with neither a state nor a GSTIN cannot
+  // have its GST split, so the API refuses the save with
+  // SUPPLIER_STATE_UNKNOWN. Send the user straight to Settings → General
+  // instead of leaving them with a bare 400 and nowhere to go.
+  const toastSaveError = (title: string, err: unknown) => {
+    if (errorCode(err) === 'SUPPLIER_STATE_UNKNOWN') {
+      toast({
+        title: 'Set your business state first',
+        description: err instanceof Error ? err.message : undefined,
+        variant: 'destructive',
+        action: (
+          <ToastAction altText="Open Settings → General" onClick={() => router.push('/settings')}>
+            Open Settings
+          </ToastAction>
+        ),
+      })
+      return
+    }
+    toast({
+      title,
+      description: err instanceof Error ? err.message : undefined,
+      variant: 'destructive',
+    })
   }
 
   const onSave = async (thenSend = false) => {
@@ -265,17 +312,19 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       saved = await persist()
       if (!saved) return
     } catch (err) {
-      toast({
-        title: 'Could not save invoice',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      })
+      toastSaveError(isQuote ? 'Could not save quote' : 'Could not save invoice', err)
       return
     }
     if (thenSend) {
       try {
         const sent = await send.mutateAsync(saved.id)
-        toast({ title: `Invoice ${saved.invoice_number} sent`, description: sent.meta.public_url })
+        // Contract C9: SENT either way — when the provider could not
+        // deliver, say so and hand over the hosted link to share by hand.
+        if (sendEmailFailed(sent)) {
+          toast({ title: SEND_EMAIL_FAILED_COPY, description: sent.meta.public_url, variant: 'destructive' })
+        } else {
+          toast({ title: `${isQuote ? 'Quote' : 'Invoice'} ${saved.invoice_number} sent`, description: sent.meta.public_url })
+        }
       } catch (err) {
         // The draft persisted — say so, or the user retypes everything.
         toast({
@@ -300,11 +349,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       if (!saved) return
       router.push(`/invoicing/${saved.id}/preview`)
     } catch (err) {
-      toast({
-        title: 'Could not open preview',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      })
+      toastSaveError('Could not open preview', err)
     }
   }
 
@@ -364,7 +409,9 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 <DateField value={invoiceDate} onChange={setInvoiceDate} style={invoField()} />
               </div>
               <div>
-                <label style={invoLabel}>Due date</label>
+                {/* Round P (R1.5): a quote has no due date — the same field
+                    is its validity and is stored as valid_until. */}
+                <label style={invoLabel}>{isQuote ? 'Valid until' : 'Due date'}</label>
                 <DateField value={dueDate} onChange={setDueDate} style={invoField()} />
               </div>
               <div>
@@ -706,7 +753,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 onClick={() => onSave(true)}
                 disabled={save.isPending || send.isPending}
               >
-                {send.isPending ? 'Sending…' : 'Send invoice'}
+                {send.isPending ? 'Sending…' : isQuote ? 'Send quote' : 'Send invoice'}
               </InvoBtn>
               <InvoBtn kind="outline" full height={52} onClick={() => onSave(false)} disabled={save.isPending}>
                 {save.isPending ? 'Saving…' : invoice ? 'Save changes' : 'Save as draft'}

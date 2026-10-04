@@ -1,10 +1,12 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/lib/stores/auth.store'
+import { useToast } from '@/components/ui/use-toast'
+import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
 import { useAdminOverview, useAdminActivity } from '@/lib/api/queries/use-dashboard'
 import type { AdminOverview } from '@/lib/api/queries/use-dashboard'
 import { useReviewLeave, useMyLeaveBalances, useHolidays } from '@/lib/api/queries/use-leave'
@@ -98,6 +100,7 @@ function AdminDashboard() {
   const qc = useQueryClient()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
+  const { toast } = useToast()
 
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
@@ -105,6 +108,9 @@ function AdminDashboard() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
 
+  // Round P polish: a failed review used to vanish silently — the row stayed
+  // put and the admin clicked again. The API message (409 already reviewed,
+  // 403 not yours, …) is the explanation, so it is shown as-is.
   const handleApprove = async (item: PendingItem) => {
     try {
       if (item.kind === 'leave') {
@@ -113,8 +119,13 @@ function AdminDashboard() {
         await reviewReg.mutateAsync({ id: item.id, action: 'approve' })
       }
       refresh()
-    } catch {
-      // swallow; toast can be wired in later
+      toast({ title: `Approved · ${item.who}` })
+    } catch (e) {
+      toast({
+        title: 'Could not approve',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
     }
   }
   const handleReject = async (item: PendingItem) => {
@@ -125,8 +136,13 @@ function AdminDashboard() {
         await reviewReg.mutateAsync({ id: item.id, action: 'reject' })
       }
       refresh()
-    } catch {
-      // swallow
+      toast({ title: `Rejected · ${item.who}` })
+    } catch (e) {
+      toast({
+        title: 'Could not reject',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -156,9 +172,8 @@ function AdminDashboard() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <Btn kind="secondary" size="sm" icon={<Icon.download size={14} />}>
-              Export
-            </Btn>
+            {/* Round P polish: the dead "Export" button is gone — nothing
+                exported. Reports → each report has its own CSV download. */}
             <Link href="/employees/add" style={{ textDecoration: 'none' }}>
               <Btn kind="primary" icon={<Icon.plus size={14} />}>
                 Invite employee
@@ -166,6 +181,8 @@ function AdminDashboard() {
             </Link>
           </div>
         </div>
+
+        <DeferredProfileCard />
 
         {/* KPI strip */}
         <div
@@ -558,6 +575,100 @@ function AdminDashboard() {
   )
 }
 
+// ─── Round P (contract C7): owner/admin skipped the personal wizard ────────
+
+const PROFILE_REMINDER_DISMISSED_KEY = 'fs:profile-reminder-dismissed'
+
+/**
+ * Shown to an owner / HR admin who pressed "Skip for now" on their own
+ * onboarding wizard. The (app) layout no longer redirects them while
+ * `deferred` is true, so this card is the way back in. Dismiss hides it for
+ * the browser session only — the founder's call is that the reminder stays
+ * until the profile is actually submitted.
+ */
+function DeferredProfileCard() {
+  const onboarding = useEmployeeOnboardingStatus()
+  const { currentUser } = useAuthStore()
+  // Scoped to the signed-in user + workspace so one person's dismiss never
+  // hides another's reminder in the same tab session.
+  const dismissKey = `${PROFILE_REMINDER_DISMISSED_KEY}:${currentUser?.id ?? ''}:${currentUser?.tenantId ?? ''}`
+  // Starts hidden so the card never flashes before sessionStorage is read.
+  const [dismissed, setDismissed] = useState(true)
+  useEffect(() => {
+    try {
+      setDismissed(sessionStorage.getItem(dismissKey) === '1')
+    } catch {
+      setDismissed(false)
+    }
+  }, [dismissKey])
+
+  const status = onboarding.data
+  if (!status?.deferred || status.submittedForReview || dismissed) return null
+
+  const dismiss = () => {
+    setDismissed(true)
+    try {
+      sessionStorage.setItem(dismissKey, '1')
+    } catch {
+      /* private mode — in-memory dismiss is enough */
+    }
+  }
+
+  return (
+    <div
+      className="card"
+      data-testid="profile-deferred-card"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '14px 18px',
+        marginBottom: 24,
+        background: 'rgb(var(--blue-rgb) / .06)',
+        borderColor: 'rgb(var(--blue-rgb) / .3)',
+      }}
+    >
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          flexShrink: 0,
+          background: 'rgb(var(--blue-rgb) / .14)',
+          color: 'var(--blue)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Icon.user size={17} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: '-0.01em' }}>
+          Finish setting up your profile
+        </div>
+        <div className="t-mute" style={{ fontSize: 12, marginTop: 2 }}>
+          You skipped the personal onboarding wizard. Your statutory and bank details are
+          still missing — it takes about five minutes.
+        </div>
+      </div>
+      <Link href="/onboarding/employee" style={{ textDecoration: 'none' }}>
+        <Btn kind="primary" size="sm" iconRight={<Icon.arrow size={13} />}>
+          Complete profile
+        </Btn>
+      </Link>
+      <Btn
+        kind="ghost"
+        size="sm"
+        icon={<Icon.x size={13} />}
+        onClick={dismiss}
+        aria-label="Dismiss for now"
+        title="Dismiss for now"
+      />
+    </div>
+  )
+}
+
 // ─── Sub-rows ──────────────────────────────────────────────────────────────
 
 function GreetingSummary({ o }: { o: AdminOverview }) {
@@ -822,6 +933,7 @@ function ManagerDashboard() {
   const qc = useQueryClient()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
+  const { toast } = useToast()
 
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
@@ -849,8 +961,14 @@ function ManagerDashboard() {
         await reviewReg.mutateAsync({ id: item.id, action: 'approve' })
       }
       refresh()
-    } catch {
-      /* swallow */
+      toast({ title: `Approved · ${item.who}` })
+    } catch (e) {
+      // Round P polish: never swallow — the API message says why.
+      toast({
+        title: 'Could not approve',
+        description: e instanceof Error ? e.message : 'Try again',
+        variant: 'destructive',
+      })
     }
   }
 

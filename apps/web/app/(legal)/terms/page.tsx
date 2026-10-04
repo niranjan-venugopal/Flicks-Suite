@@ -85,7 +85,11 @@ export default function TermsPage() {
 
       <Section title="9. Availability & support">
         We target commercially reasonable uptime during beta; scheduled maintenance and factors
-        beyond our control excepted. Support via in-app feedback and support@specflicks.com.
+        beyond our control excepted. Support via in-app feedback and{' '}
+        <a href="mailto:support@flickssuite.com" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+          support@flickssuite.com
+        </a>
+        .
       </Section>
 
       <Section title="10. Disclaimers">

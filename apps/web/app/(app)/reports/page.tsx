@@ -78,15 +78,9 @@ export default function ReportsHubPage() {
   return (
     <div className="relative min-h-full">
       <div className="relative z-10 p-8 max-w-6xl mx-auto">
-        <SectionHead
-          title="Reports"
-          sub="Pre-built reports and saved views"
-          right={
-            <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
-              New report
-            </Btn>
-          }
-        />
+        {/* Round P polish: the dead "New report" button is gone — there is
+            no custom report builder; the tiles below are the catalogue. */}
+        <SectionHead title="Reports" sub="Pre-built reports and saved views" />
 
         <div
           style={{

@@ -86,7 +86,7 @@ describe('Role matrix — who can do what in Invoicing (Sprint 10 sign-off)', ()
   const RECORD: GrantRequirement = { module: 'invoicing', level: 'edit', capability: 'record_payment' };
 
   beforeAll(async () => {
-    const [t] = await dbAdmin.insert(tenants).values({ name: `Matrix${rid()}`, slug: `mx-${rid()}-${Date.now()}`, status: 'active' }).returning();
+    const [t] = await dbAdmin.insert(tenants).values({ name: `Matrix${rid()}`, slug: `mx-${rid()}-${Date.now()}`, status: 'active', state_code: 'KA' }).returning();
     tenantId = t!.id;
     const [o] = await dbAdmin.insert(users).values({ email: `own-${rid()}@t.test`, full_name: 'Owner', status: 'active' }).returning();
     ownerId = o!.id;

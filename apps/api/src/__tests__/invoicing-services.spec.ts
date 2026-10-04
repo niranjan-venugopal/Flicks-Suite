@@ -33,7 +33,7 @@ describe('Invoicing services (Sprint 2 integration)', () => {
   beforeAll(async () => {
     const [t] = await dbAdmin
       .insert(tenants)
-      .values({ name: `SvcCo${rid()}`, slug: `svc-${rid()}-${Date.now()}`, status: 'trialing' })
+      .values({ name: `SvcCo${rid()}`, slug: `svc-${rid()}-${Date.now()}`, status: 'trialing', state_code: 'KA' })
       .returning();
     tenantId = t!.id;
     const [u] = await dbAdmin
@@ -1980,7 +1980,7 @@ describe('Reports — per-currency totals + India gate (Sprint 11 §3)', () => {
   beforeAll(async () => {
     const [t] = await dbAdmin
       .insert(tenantsTable)
-      .values({ name: `RepCo${rid()}`, slug: `rep-${rid()}-${Date.now()}`, status: 'active', country_code: 'IN' })
+      .values({ name: `RepCo${rid()}`, slug: `rep-${rid()}-${Date.now()}`, status: 'active', country_code: 'IN', state_code: 'KA' })
       .returning();
     tenantId = t!.id;
     const [u] = await dbAdmin

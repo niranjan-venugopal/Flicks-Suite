@@ -88,6 +88,12 @@ function* eachDay(startISO: string, endISO: string): Generator<string> {
 /** Mon–Fri — the literal fallback when an employee has no shift at all. */
 const DEFAULT_WORKING_DAYS: ReadonlySet<number> = new Set([1, 2, 3, 4, 5]);
 
+/** "3", "0", or "2.5" — one decimal only when the count is fractional. */
+export function formatLeaveDays(days: number): string {
+  const rounded = Math.round(days * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
 /**
  * Counts business days between two YYYY-MM-DD dates inclusive: the shift's
  * working days (Round L — was hard-coded Mon–Fri, so a Saturday-working
@@ -532,6 +538,14 @@ export class LeaveService {
     const result = await this.databaseService.withTenant(
       tenantId,
       async (tx) => {
+        // Round P R1.6 (C8): serialise concurrent applies by the same
+        // employee (double-submit, two tabs) so two requests can't both read
+        // the same overlap state / balance and both get written. Transaction
+        // scoped — released on commit or rollback (lost-reasons seed pattern).
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtext(${`leave-apply:${tenantId}:${employeeId}`}))`,
+        );
+
         // Reject overlapping pending or approved requests for the same employee.
         const overlapping = await tx
           .select({ id: leaveRequests.id })
@@ -575,6 +589,12 @@ export class LeaveService {
           );
         }
 
+        // Round P R1.6 (C8): never let a request exceed what's left. The
+        // ledger row is keyed by the start date's year (same key the
+        // pending/used bookkeeping below and in review/cancel uses).
+        const leaveYear = new Date(dto.startDate).getFullYear();
+        await this.assertWithinBalance(tx, tenantId, employeeId, type, leaveYear, totalDays);
+
         // Round L (item 2): where the request is born — level 0 with the
         // reporting manager snapshotted; straight to the manager's manager
         // when the manager is on approved full-day leave today; straight to
@@ -602,7 +622,6 @@ export class LeaveService {
           .returning();
 
         // Increment the employee's pending balance for that leave type/year.
-        const leaveYear = new Date(dto.startDate).getFullYear();
         await tx
           .insert(leaveBalances)
           .values({
@@ -668,6 +687,87 @@ export class LeaveService {
       // "With HR"), never the reason or a reviewer's name.
       ...authorRoutingView(result.state.level),
     };
+  }
+
+  /**
+   * Round P R1.6 (C8) — block a request that exceeds the days left.
+   *
+   * `available` is the SAME number `getMyBalances` shows the employee: the
+   * ledger row's generated column (opening + accrued + carry-in − used −
+   * pending − encashed − carry-out) when a row exists for the type/year, else
+   * the type's default quota. Days already sitting in pending requests are
+   * excluded through the ledger's `pending`, which apply/review/cancel keep
+   * in step with the requests table.
+   *
+   * Exempt — nothing to count against:
+   *  - unpaid types: `leave_types.is_paid = false` or `is_lop = true`
+   *    (Loss of Pay). There is no separate "unlimited" flag in the schema.
+   *  - paid types with ZERO entitlement for the year — i.e. untracked: no
+   *    ledger row and `default_quota_days = 0` (Work From Home, Comp Off), or
+   *    a ledger row whose opening + accrued + carry-in is 0. Enforcing a zero
+   *    quota would make them un-appliable (house rule 8). A ledger row that
+   *    credits days (opening/accrued > 0) makes the rule apply; today the only
+   *    writers of `leave_balances` are apply/review/cancel in this file, so
+   *    such a credit comes from a direct ledger adjustment, not an HR screen.
+   *    Known limit (balance model, not this guard): the ledger `opening` is a
+   *    snapshot of the quota at the first apply — a quota raised later in
+   *    the year is not reflected in that year's row (`getMyBalances` shows
+   *    the same snapshot).
+   *
+   * Every apply goes through here — there is no separate on-behalf path. The
+   * caller holds the per-employee advisory lock taken at the top of the
+   * apply transaction, so the read below and the pending upsert after it
+   * can't interleave with a concurrent apply.
+   */
+  private async assertWithinBalance(
+    tx: Db,
+    tenantId: string,
+    employeeId: string,
+    type: {
+      id: string;
+      name: string;
+      is_paid: boolean;
+      is_lop: boolean;
+      default_quota_days: number;
+    },
+    leaveYear: number,
+    requestedDays: number,
+  ): Promise<void> {
+    if (!type.is_paid || type.is_lop) return;
+
+    const [row] = await tx
+      .select({
+        opening: leaveBalances.opening_balance,
+        accrued: leaveBalances.accrued,
+        carryIn: leaveBalances.carry_forward_in,
+        available: leaveBalances.available,
+      })
+      .from(leaveBalances)
+      .where(
+        and(
+          eq(leaveBalances.tenant_id, tenantId),
+          eq(leaveBalances.employee_id, employeeId),
+          eq(leaveBalances.leave_type_id, type.id),
+          eq(leaveBalances.leave_year, leaveYear),
+        ),
+      )
+      .limit(1);
+
+    const entitlement = row
+      ? Number(row.opening) + Number(row.accrued) + Number(row.carryIn)
+      : Number(type.default_quota_days);
+    if (entitlement <= 0) return; // untracked / unlimited
+
+    const available = row ? Number(row.available ?? 0) : Number(type.default_quota_days);
+    // `real` columns: compare with a hair of tolerance so 0.5-day arithmetic
+    // never trips on float noise.
+    if (requestedDays > available + 1e-6) {
+      const left = Math.max(0, available);
+      throw new BadRequestException({
+        code: 'LEAVE_BALANCE_EXCEEDED',
+        message: `You have ${formatLeaveDays(left)} day(s) of ${type.name} left for this year`,
+      });
+    }
   }
 
   private async notifyOnApply(

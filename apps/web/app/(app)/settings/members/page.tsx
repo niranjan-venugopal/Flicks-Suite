@@ -14,6 +14,7 @@ import {
   type MembershipRole,
 } from '@/lib/api/queries/use-settings'
 import { useSeats } from '@/lib/api/queries/use-members'
+import { useEmployees, useResendInvite } from '@/lib/api/queries/use-employees'
 import { InviteAuditorModal } from '@/components/invoicing/InviteAuditorModal'
 import { MemberAccessModal } from '@/components/invoicing/MemberAccessModal'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -98,9 +99,62 @@ export default function MembersSettingsPage() {
   const updateRole = useUpdateMemberRole()
   const deactivate = useDeactivateMember()
   const reactivate = useReactivateMember()
+  const resend = useResendInvite()
   const { toast } = useToast()
   const [inviteAuditorOpen, setInviteAuditorOpen] = useState(false)
   const [accessFor, setAccessFor] = useState<Member | null>(null)
+  // Which row's Resend is in flight — only that button shows "Sending…".
+  const [resendingId, setResendingId] = useState<string | null>(null)
+
+  // ─── Resend invite (round P, R1.1 / contract C1) ─────────────────────────
+  // Only `invited` seats that are linked to an employee row qualify — the
+  // employee endpoint owns the ledger + throttle. Older seats can carry a
+  // null employee_id (pre-R1.2 reactivate / restore), so fall back to the
+  // directory row with the same user. The API's 409/429 copy is shown as-is;
+  // a 200 with emailSent:false must read as a failure.
+  // Resend is admin-only (contract C1) and GET /employees is manager-or-above,
+  // so the lookup only runs — and the button only renders — for owner/HR
+  // viewers; employee/finance users open this page from Settings too and must
+  // not collect a 403 (+ authz.denied audit row) for it.
+  const isAdminViewer = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
+  const directory = useEmployees({ limit: 100 }, { enabled: isAdminViewer })
+  const employeeIdByUser = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const e of directory.data?.employees ?? []) {
+      if (e.userId) map.set(e.userId, e.id)
+    }
+    return map
+  }, [directory.data])
+  const employeeIdFor = (m: Member): string | null =>
+    m.employeeId ?? employeeIdByUser.get(m.userId) ?? null
+  const handleResend = async (m: Member) => {
+    const employeeId = employeeIdFor(m)
+    if (!employeeId) return
+    setResendingId(m.id)
+    try {
+      const r = await resend.mutateAsync(employeeId)
+      if (!r.emailSent) {
+        toast({
+          title: 'Invite saved but the email could not be sent — try Resend in a minute',
+          description: r.email,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: `Invite re-sent to ${displayName(m)}`,
+          description: `${r.email} · reminder #${r.resentCount}. Earlier links still work.`,
+        })
+      }
+    } catch (err) {
+      toast({
+        title: 'Could not resend invite',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    } finally {
+      setResendingId(null)
+    }
+  }
 
   const allItems = data?.data ?? []
   const auditors = useMemo(() => allItems.filter((m) => m.role === 'auditor'), [allItems])
@@ -383,6 +437,17 @@ export default function MembersSettingsPage() {
                     <td style={{ padding: '12px 14px' }}>{statusPill(m.status)}</td>
                     <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6 }}>
+                        {isAdminViewer && canEdit && m.status === 'invited' && employeeIdFor(m) && (
+                          <Btn
+                            kind="secondary"
+                            size="sm"
+                            icon={<Icon.send size={12} />}
+                            onClick={() => handleResend(m)}
+                            disabled={resendingId === m.id}
+                          >
+                            {resendingId === m.id ? 'Sending…' : 'Resend invite'}
+                          </Btn>
+                        )}
                         {canEdit && (m.role === 'manager' || m.role === 'employee') && (
                           <Btn kind="ghost" size="sm" onClick={() => setAccessFor(m)}>
                             Invoicing access

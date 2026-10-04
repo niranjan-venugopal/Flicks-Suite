@@ -20,6 +20,7 @@ import {
   IsNotEmptyObject,
   IsIn,
   IsDateString,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -259,6 +260,21 @@ export class ImportEmployeesDto {
   @ValidateNested({ each: true })
   @Type(() => ImportEmployeeRowDto)
   rows: ImportEmployeeRowDto[];
+}
+
+// ─── Resend invite (Round P / R1.1) ──────────────────────────────────────────
+
+export class ResendInvitesDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Employee ids to re-invite (max 500 per request). Omitted = every employee still waiting on their invite (invited / mid-wizard, not yet submitted); an explicit empty list sends to nobody.',
+  })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  employeeIds?: string[];
 }
 
 export class RejectOnboardingDto {

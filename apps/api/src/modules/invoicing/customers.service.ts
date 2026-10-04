@@ -302,7 +302,12 @@ export class CustomersService {
         .from(invoices)
         .where(
           and(
+            eq(invoices.tenant_id, tenantId),
             eq(invoices.customer_id, id),
+            // Round P R1.5: a quote is not a receivable — the ledger is
+            // invoices only, and a deleted invoice is no longer owed.
+            eq(invoices.document_type, 'INVOICE'),
+            isNull(invoices.deleted_at),
             notInArray(invoices.status, ['DRAFT', 'CANCELLED', 'VOIDED']),
           ),
         );

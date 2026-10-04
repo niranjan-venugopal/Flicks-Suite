@@ -5,6 +5,7 @@ import {
   ConflictException,
   NotFoundException,
   ForbiddenException,
+  ServiceUnavailableException,
   Logger,
   Inject,
   Optional,
@@ -130,6 +131,20 @@ export class AuthService {
     }
   }
 
+  /** Best-effort undo of one hourly OTP tick (provider failed to send). */
+  private async refundEmailOtpHourlyQuota(email: string): Promise<void> {
+    if (!this.redis) return;
+    const hourly = `auth:otp:hr:${sha256(email)}`;
+    try {
+      const left = await this.redis.decr(hourly);
+      // Never leave a negative, TTL-less counter behind if the increment
+      // itself had degraded.
+      if (left < 0) await this.redis.del(hourly);
+    } catch (err) {
+      this.logger.warn(`OTP quota refund degraded (redis): ${(err as Error).message}`);
+    }
+  }
+
   async requestOtp(
     email: string,
     ip?: string,
@@ -224,12 +239,39 @@ export class AuthService {
     // Existing accounts keep the one-click link.
     const isNewAccount = !existingUser[0];
 
-    // Send email
-    await this.notificationsService.sendEmail('login-otp', normalizedEmail, {
+    // DEV ONLY: surface plaintext OTP + magic link in server logs so a
+    // developer can complete the login flow without an email account.
+    // This must NOT run in production — guard on NODE_ENV. Logged BEFORE the
+    // send so a failed provider call (503 below) still leaves the code in the
+    // local logs.
+    if (this.configService.get<string>('NODE_ENV') !== 'production') {
+      this.logger.warn(
+        `[DEV] OTP for ${normalizedEmail}: ${otpCode}  |  Magic link: ${magicLinkUrl}`,
+      );
+    }
+
+    // Send email. sendEmail never throws; it returns false when the provider
+    // rejected the send (Round P / R1.6). A silent "we sent a code" with no
+    // email behind it is a dead end for the person at the login screen, so
+    // say so. Provider-failure branch only: registration status was already
+    // settled above, so this reveals nothing about the account.
+    const sent = await this.notificationsService.sendEmail('login-otp', normalizedEmail, {
       otpCode,
       ...(isNewAccount ? {} : { magicLinkUrl }),
       expiryMinutes,
     });
+    if (sent === false) {
+      this.logger.error(`OTP email delivery failed for ${normalizedEmail}`);
+      // No email went out, so this try must not count toward the hourly
+      // brute-force quota — otherwise a short provider outage leaves the
+      // person on the misleading "a code was just sent" 400 for an hour.
+      // The 60 s burst key stays: it IS the "try again in a minute".
+      await this.refundEmailOtpHourlyQuota(normalizedEmail);
+      throw new ServiceUnavailableException({
+        code: 'EMAIL_DELIVERY_FAILED',
+        message: "We couldn't send the code right now. Please try again in a minute.",
+      });
+    }
 
     await this.writeAuthEvent({
       email: normalizedEmail,
@@ -240,15 +282,6 @@ export class AuthService {
     });
 
     this.logger.log(`OTP requested for: ${normalizedEmail}`);
-
-    // DEV ONLY: surface plaintext OTP + magic link in server logs so a
-    // developer can complete the login flow without an email account.
-    // This must NOT run in production — guard on NODE_ENV.
-    if (this.configService.get<string>('NODE_ENV') !== 'production') {
-      this.logger.warn(
-        `[DEV] OTP for ${normalizedEmail}: ${otpCode}  |  Magic link: ${magicLinkUrl}`,
-      );
-    }
 
     return {
       success: true,
@@ -1617,6 +1650,21 @@ export class AuthService {
     userId: string,
     email: string,
   ): Promise<string> {
+    const { url } = await this.issueInviteMagicLinkDetailed(userId, email);
+    return url;
+  }
+
+  /**
+   * Round P (R1.1): the same 7-day invite link, plus the token hash and
+   * expiry so the caller can write an `employee_invitations` ledger row for
+   * it (resend throttling + audit). `issueInviteMagicLink` delegates here;
+   * every earlier link stays valid — invite tokens are per user, not per
+   * tenant, and handleSuccessfulAuth activates every `invited` membership.
+   */
+  async issueInviteMagicLinkDetailed(
+    userId: string,
+    email: string,
+  ): Promise<{ url: string; tokenHash: string; expiresAt: Date }> {
     const normalizedEmail = email.toLowerCase().trim();
     const magicLinkRawToken = generateSecureToken();
     const magicLinkHash = sha256(magicLinkRawToken);
@@ -1643,7 +1691,7 @@ export class AuthService {
       this.logger.warn(`[DEV] Invite magic link for ${normalizedEmail}: ${url}`);
     }
 
-    return url;
+    return { url, tokenHash: magicLinkHash, expiresAt };
   }
 
   /**

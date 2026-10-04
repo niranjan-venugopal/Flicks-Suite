@@ -2,6 +2,9 @@
 
 import { LogoMark } from '@/components/proto'
 
+/** One support address everywhere (help page, terms, contact, auth frame). */
+const SUPPORT_EMAIL = 'support@flickssuite.com'
+
 interface AuthLayoutProps {
   /** Optional 1-indexed step counter to render the segmented progress pill. */
   step?: number
@@ -115,8 +118,9 @@ export function AuthLayout({
         )}
 
         {!hideHelp && (
-          <button
-            type="button"
+          // Round P polish: a real mailto — this was a button that did nothing.
+          <a
+            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Flicks Suite — help signing in')}`}
             style={{
               padding: '8px 14px',
               borderRadius: 99,
@@ -126,10 +130,11 @@ export function AuthLayout({
               fontSize: 11.5,
               fontWeight: 700,
               cursor: 'pointer',
+              textDecoration: 'none',
             }}
           >
             Need help?
-          </button>
+          </a>
         )}
       </header>
 

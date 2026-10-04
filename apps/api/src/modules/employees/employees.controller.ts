@@ -41,6 +41,7 @@ import {
   RejectOnboardingDto,
   ImportEmployeesDto,
   RejectChangeRequestDto,
+  ResendInvitesDto,
 } from './employees.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -103,7 +104,7 @@ export class EmployeesController {
   @ApiOperation({
     summary: 'Bulk-import employees from parsed CSV rows',
     description:
-      'Each row reuses the single-invite path. Department/designation/location are matched by name. Returns per-row success/failure.',
+      'Each row reuses the single-invite path. Department/designation/location are matched by name. Returns per-row success/failure; rows matching someone still waiting on their invite are listed under `skipped` (never re-mailed).',
   })
   @ApiResponse({ status: 201, description: 'Import result' })
   async importEmployees(
@@ -111,6 +112,36 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.employeesService.importEmployees(dto, user.sub, user.tenantId);
+  }
+
+  // ─── Round P (R1.1 / R1.3): non-:id routes, declared ABOVE the :id ones ──
+
+  @Post('resend-invites')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend pending invites in bulk',
+    description:
+      'Body { employeeIds?: uuid[] }; omitted = every employee still waiting on their invite. Per-row outcome: { sent, skipped: [{ employeeId, email, reason }] }. Never fatal.',
+  })
+  @ApiResponse({ status: 200, description: '{ data: { sent, skipped } }' })
+  async resendInvites(
+    @Body() dto: ResendInvitesDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.employeesService.resendInvitesBulk(user.tenantId, user.sub, dto.employeeIds);
+  }
+
+  @Get('next-code')
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Suggest the next free employee code',
+    description:
+      'Continues the workspace’s dominant (prefix)(number) pattern at its digit width, considering EVERY row including removed employees (they still hold the unique index).',
+  })
+  @ApiResponse({ status: 200, description: '{ data: { suggested } }' })
+  async nextEmployeeCode(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.suggestNextEmployeeCode(user.tenantId);
   }
 
   @Get('org-chart')
@@ -164,6 +195,21 @@ export class EmployeesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.employeesService.selfUpdateEmployee(user.sub, dto, user.tenantId);
+  }
+
+  // Declared ABOVE me/onboarding/:step — that route's ParseIntPipe would
+  // otherwise swallow "defer" as a bad step number.
+  @Post('me/onboarding/defer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Skip the onboarding wizard for now (owner / HR admin only)',
+    description:
+      'Stamps custom_fields.onboarding_deferred_at on the caller’s own employee row so the app stops redirecting them to the wizard; finishing the wizard later clears it. 403 unless the caller’s membership role is owner or admin.',
+  })
+  @ApiResponse({ status: 200, description: '{ data: { deferred: true } }' })
+  @ApiResponse({ status: 403, description: 'Not an owner / HR admin' })
+  async deferMyOnboarding(@CurrentUser() user: JwtPayload) {
+    return this.employeesService.deferMyOnboarding(user.sub, user.tenantId);
   }
 
   @Post('me/onboarding/:step')
@@ -294,11 +340,26 @@ export class EmployeesController {
   @ApiOperation({
     summary: 'Get the current user\'s onboarding progress',
     description:
-      'Returns { employeeId, onboardingStep, submittedAt, submittedForReview }. The web wizard reads this on mount to resume the user on the last completed step.',
+      'Returns { employeeId, onboardingStep, submittedAt, submittedForReview, deferred, canDefer }. The web wizard reads this on mount to resume the user on the last completed step; the (app) layout skips the wizard redirect while `deferred`.',
   })
   @ApiResponse({ status: 200, description: 'Onboarding status' })
   async getMyOnboardingStatus(@CurrentUser() user: JwtPayload) {
     return this.employeesService.getMyOnboardingStatus(user.sub, user.tenantId);
+  }
+
+  @Post(':id/resend-invite')
+  @Roles('admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend an employee’s invite email',
+    description:
+      'Issues a fresh 7-day link (earlier links stay valid), writes an employee_invitations ledger row and re-sends the welcome email as a reminder. 409 ALREADY_ONBOARDED / SEAT_DEACTIVATED / EMPLOYEE_REMOVED; 429 RESEND_TOO_SOON inside 60 s.',
+  })
+  @ApiResponse({ status: 200, description: '{ data: { employeeId, email, resentCount, emailSent } }' })
+  @ApiResponse({ status: 409, description: 'Not eligible (see code)' })
+  @ApiResponse({ status: 429, description: 'RESEND_TOO_SOON' })
+  async resendInvite(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeesService.resendInvite(id, user.tenantId, user.sub);
   }
 
   @Get(':id')
@@ -390,7 +451,7 @@ export class EmployeesController {
   @ApiOperation({
     summary: 'Restore a removed employee',
     description:
-      'Clears deleted_at. The workspace seat is NOT restored — re-invite them if they need access again.',
+      'Clears deleted_at and relinks the workspace seat (active if they had accepted their invite, invited otherwise). Returns { id, restored, seat }. Someone who never accepted still needs Resend invite.',
   })
   @ApiResponse({ status: 200, description: 'Restored' })
   async restoreEmployee(@Param('id') id: string, @CurrentUser() user: JwtPayload) {

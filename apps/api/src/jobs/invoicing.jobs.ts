@@ -113,6 +113,9 @@ export class InvoicingJobs {
       .where(
         and(
           inArray(invoices.status, ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE']),
+          // Round P R1.5: a SENT/VIEWED quote is not a receivable — never
+          // send it payment reminders.
+          eq(invoices.document_type, 'INVOICE'),
           // Never chase a customer about an invoice its supplier deleted.
           isNull(invoices.deleted_at),
         ),

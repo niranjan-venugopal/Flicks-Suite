@@ -55,7 +55,7 @@ export default function ContactPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
-        <ContactCard title="Product support" lines={['support@flickssuite.com', 'In-app: Help → Contact support']} />
+        <ContactCard title="Product support" lines={['support@flickssuite.com', 'In-app: Help → Email support']} />
         <ContactCard title="Security disclosures" lines={['security@flickssuite.com', 'Responsible disclosure welcomed']} />
       </div>
 
@@ -113,7 +113,14 @@ function ContactCard({ title, lines }: { title: string; lines: string[] }) {
       <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>{title}</div>
       {lines.map((l, i) => (
         <div key={i} style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 2 }}>
-          {l}
+          {/* An address is a real mailto, not copy to retype. */}
+          {/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l) ? (
+            <a href={`mailto:${l}`} style={{ color: 'var(--blue)', fontWeight: 700 }}>
+              {l}
+            </a>
+          ) : (
+            l
+          )}
         </div>
       ))}
     </div>

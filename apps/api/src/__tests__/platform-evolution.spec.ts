@@ -55,7 +55,7 @@ let userId: string;
 beforeAll(async () => {
   const [t] = await dbAdmin
     .insert(tenants)
-    .values({ name: `EvoCo${rid()}`, slug: `evo-${rid()}-${Date.now()}`, status: 'active' })
+    .values({ name: `EvoCo${rid()}`, slug: `evo-${rid()}-${Date.now()}`, status: 'active', state_code: 'KA' })
     .returning();
   tenantId = t!.id;
   const [u] = await dbAdmin

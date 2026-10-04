@@ -1,28 +1,50 @@
 'use client'
 
+import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { BookOpen, LifeBuoy, MessageCircle, Mail } from 'lucide-react'
+import { LifeBuoy, Mail, MessageCircle, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { PageGlows } from '@/components/layout/PageGlows'
 import { Button } from '@/components/ui/button'
 
-const RESOURCES = [
-  {
-    icon: BookOpen,
-    title: 'Documentation',
-    description: 'Guides and how-tos for every part of Flicks.',
-    cta: 'Browse docs',
-  },
-  {
-    icon: MessageCircle,
-    title: 'Community',
-    description: 'Chat with other admins and the Flicks team.',
-    cta: 'Open Slack',
-  },
+/** One support address everywhere (terms, contact, auth frame, here). */
+const SUPPORT_EMAIL = 'support@flickssuite.com'
+const mailto = (subject: string) => `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}`
+
+// Round P polish: every CTA here is a real link now. The old "Browse docs" /
+// "Open Slack" buttons pointed at a documentation site and a community that
+// do not exist yet — dead buttons on the one page people open when stuck.
+interface Resource {
+  icon: LucideIcon
+  title: string
+  description: string
+  cta: string
+  href: string
+  external?: boolean
+}
+
+const RESOURCES: Resource[] = [
   {
     icon: Mail,
     title: 'Email support',
-    description: 'Get a response within one business day.',
-    cta: 'support@flicks.app',
+    description: 'Questions, how-tos, billing — we reply within one business day.',
+    cta: SUPPORT_EMAIL,
+    href: mailto('Flicks Suite — support request'),
+    external: true,
+  },
+  {
+    icon: MessageCircle,
+    title: 'Report a problem',
+    description: 'Something not working? Tell us what you expected and what happened instead.',
+    cta: 'Report an issue',
+    href: mailto('Flicks Suite — problem report'),
+    external: true,
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Contact & grievance',
+    description: 'Data-protection requests, security disclosures and the live status page.',
+    cta: 'Open contact page',
+    href: '/contact',
   },
 ]
 
@@ -38,7 +60,7 @@ export default function HelpPage() {
         >
           <h1 className="text-3xl font-bold text-ink font-gilroy">Help & support</h1>
           <p className="text-brand-muted mt-1">
-            Find answers, learn the product, or talk to our team
+            Talk to our team — every button here reaches a real person
           </p>
         </motion.div>
 
@@ -58,8 +80,14 @@ export default function HelpPage() {
                 {r.title}
               </h2>
               <p className="text-sm text-brand-muted mb-4">{r.description}</p>
-              <Button variant="outline" size="sm">
-                {r.cta}
+              {/* asChild: the Button styles land on the anchor itself — no
+                  button-inside-link nesting. */}
+              <Button variant="outline" size="sm" asChild>
+                {r.external ? (
+                  <a href={r.href} data-testid={`help-cta-${i}`}>{r.cta}</a>
+                ) : (
+                  <Link href={r.href} data-testid={`help-cta-${i}`}>{r.cta}</Link>
+                )}
               </Button>
             </motion.div>
           ))}
@@ -74,8 +102,14 @@ export default function HelpPage() {
               Need urgent help?
             </h3>
             <p className="text-sm text-brand-muted mt-1">
-              For payroll or account-blocking issues, reach out to your customer success
-              manager — they’ll prioritise your ticket.
+              For payroll or account-blocking issues, email{' '}
+              <a
+                href={mailto('URGENT — Flicks Suite account issue')}
+                className="font-bold text-brand-blue hover:underline"
+              >
+                {SUPPORT_EMAIL}
+              </a>{' '}
+              with &ldquo;Urgent&rdquo; in the subject — those go to the front of the queue.
             </p>
           </div>
         </div>

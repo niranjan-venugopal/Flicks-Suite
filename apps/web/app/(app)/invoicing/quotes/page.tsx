@@ -32,6 +32,11 @@ export default function QuotesPage() {
   const action = useInvoiceAction()
   const rows = data?.data ?? []
 
+  // No one-click Send here (yet): POST /invoices/:id/send always emails the
+  // `invoice-sent` template ("Invoice QT-… · View & Pay"), which is the wrong
+  // wording for a quote. Sending stays on the editor / preview until the API
+  // gains a quote variant of that email — then add the chip back.
+
   const onConvert = async (id: string) => {
     try {
       const res = await action.mutateAsync({ id, action: 'convert-to-invoice' })
@@ -88,7 +93,8 @@ export default function QuotesPage() {
             <td style={{ ...invoTd, color: INVO.muted60 }}>{q.invoice_number}</td>
             <td style={invoTd}>{q.customer_name ?? '—'}</td>
             <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(q.invoice_date)}</td>
-            <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(q.due_date)}</td>
+            {/* Round P (R1.5): quotes store valid_until (defaults to due_date). */}
+            <td style={{ ...invoTd, color: INVO.muted60 }}>{dateFmt(q.valid_until ?? q.due_date)}</td>
             <td style={invoTd}>{fmt(q.total_amount, q.currency)}</td>
             <td style={invoTd}><StatusChip status={q.status} /></td>
             <td style={invoTd}>

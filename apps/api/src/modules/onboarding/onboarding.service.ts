@@ -33,6 +33,9 @@ import type {
   UpdateTenantDetailsDto,
   CreateDepartmentsDto,
 } from './onboarding.dto';
+// Pure data (no services) — the same curated list Settings → Holiday calendar
+// "Import from country list" offers, so a new tenant starts with it.
+import { getHolidayPresets, type HolidayPresetType } from '../leave/holiday-presets';
 
 // 11 standard Indian leave types
 const INDIAN_LEAVE_TYPES = [
@@ -157,7 +160,8 @@ const INDIAN_LEAVE_TYPES = [
   },
 ];
 
-// Indian national holidays for the current year
+// Indian national holidays for the current year — the fixed-date fallback
+// for a signup year the curated presets don't cover yet.
 function getIndianNationalHolidays(year: number) {
   return [
     { date: `${year}-01-26`, name: 'Republic Day', type: 'national' as const },
@@ -167,6 +171,73 @@ function getIndianNationalHolidays(year: number) {
     { date: `${year}-05-01`, name: 'Labour Day', type: 'national' as const },
     { date: `${year}-12-25`, name: 'Christmas', type: 'national' as const },
   ];
+}
+
+export interface SignupHoliday {
+  date: string; // YYYY-MM-DD
+  name: string;
+  type: HolidayPresetType;
+  description?: string;
+  /** Fixed-date holidays recur yearly; festival dates (Diwali, Eid, …) move. */
+  is_recurring: boolean;
+}
+
+/** Holidays whose calendar date is the same every year. */
+const FIXED_DATE_HOLIDAY_NAMES: ReadonlySet<string> = new Set([
+  "New Year's Day",
+  'New Year',
+  'Republic Day',
+  'Labour Day',
+  'Independence Day',
+  'Gandhi Jayanti',
+  'Christmas Day',
+  'Christmas',
+]);
+
+/**
+ * The legacy list and the curated preset spell the same day differently;
+ * these pairs are ONE holiday, not two rows on the same date.
+ */
+const LEGACY_NAME_ALIASES: Readonly<Record<string, string>> = {
+  'New Year': "New Year's Day",
+  Christmas: 'Christmas Day',
+};
+const holidayKey = (h: { date: string; name: string }) =>
+  `${h.date}|${(LEGACY_NAME_ALIASES[h.name] ?? h.name).toLowerCase()}`;
+
+/**
+ * Round P R1.6 — holidays a brand-new tenant is seeded with: the curated
+ * India preset for the signup year (Holi, Eid, Good Friday, Dussehra, Diwali …
+ * from `leave/holiday-presets.ts`), topped up with every fixed-date day from
+ * the legacy list the preset doesn't already carry, so no tenant starts with
+ * fewer holidays than before. Rows are keyed by date + name (the same key
+ * `importHolidays` uses), not date alone: a legacy day that shares its date
+ * with a different preset festival is kept as its own row — 2026 gets both
+ * Buddha Purnima and Labour Day on 1 May (the holiday calculation reads a
+ * set of dates, so one day off either way) — while "New Year"/"Christmas"
+ * collapse into the preset's "New Year's Day"/"Christmas Day". A year without
+ * a preset falls back to the legacy fixed-date list exactly as it was.
+ */
+export function getSignupYearHolidays(year: number): SignupHoliday[] {
+  const fallback: SignupHoliday[] = getIndianNationalHolidays(year).map((h) => ({
+    ...h,
+    is_recurring: true,
+  }));
+  const preset = getHolidayPresets('IN', year);
+  if (preset.length === 0) return fallback;
+
+  const rows: SignupHoliday[] = preset.map((h) => ({
+    date: h.date,
+    name: h.name,
+    type: h.type,
+    ...(h.description ? { description: h.description } : {}),
+    is_recurring: FIXED_DATE_HOLIDAY_NAMES.has(h.name),
+  }));
+  const taken = new Set(rows.map(holidayKey));
+  for (const h of fallback) {
+    if (!taken.has(holidayKey(h))) rows.push(h);
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 }
 
 @Injectable()
@@ -286,11 +357,16 @@ export class OnboardingService {
     // value looks like a placeholder (matches the email prefix); otherwise
     // respect whatever they've already set elsewhere.
     const emailPrefix = foundingUser.email.split('@')[0]!;
+    // The name the welcome email greets by — the row we loaded above is
+    // stale once we rename, so carry the new value forward (R1 polish:
+    // "Hi asha.verma" → "Hi Asha Verma").
+    let ownerDisplayName = foundingUser.full_name;
     if (foundingUser.full_name === emailPrefix || !foundingUser.full_name) {
       await this.db
         .update(users)
         .set({ full_name: trimmedName, updated_at: new Date() })
         .where(eq(users.id, userId));
+      ownerDisplayName = trimmedName;
     }
 
     // Create the primary location FIRST so we can attach the founder
@@ -361,9 +437,11 @@ export class OnboardingService {
     // Seed 11 Indian leave types
     await this.seedDefaultLeaveTypes(tenant.id);
 
-    // Seed Indian national holidays for current year
+    // Seed the signup year's Indian holidays (curated preset with the
+    // festivals; fixed-date fallback for years without one). Every row stays
+    // editable in Settings → Holiday calendar.
     const currentYear = new Date().getFullYear();
-    const nationalHolidays = getIndianNationalHolidays(currentYear);
+    const nationalHolidays = getSignupYearHolidays(currentYear);
 
     if (nationalHolidays.length > 0) {
       await this.db.insert(holidays).values(
@@ -372,7 +450,8 @@ export class OnboardingService {
           holiday_date: h.date,
           name: h.name,
           type: h.type,
-          is_recurring: true,
+          description: h.description ?? null,
+          is_recurring: h.is_recurring,
         })),
       );
     }
@@ -414,7 +493,7 @@ export class OnboardingService {
     const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000');
     await this.notificationsService
       .sendEmail('welcome-tenant', foundingUser.email, {
-        ownerName: foundingUser.full_name || foundingUser.email,
+        ownerName: ownerDisplayName || foundingUser.email,
         tenantName: tenant.name,
         dashboardUrl: `${appUrl}/dashboard`,
       })

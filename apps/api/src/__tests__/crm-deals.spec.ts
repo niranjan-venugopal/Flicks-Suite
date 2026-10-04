@@ -67,7 +67,7 @@ let pipelineId: string;
 async function seedTenant(base: string): Promise<string> {
   const [t] = await dbAdmin
     .insert(tenants)
-    .values({ name: `Deal${rid()}`, slug: `deal-${rid()}-${Date.now()}`, status: 'active', currency: base })
+    .values({ name: `Deal${rid()}`, slug: `deal-${rid()}-${Date.now()}`, status: 'active', currency: base, state_code: 'KA' })
     .returning();
   // Seed a Sales pipeline (mirrors the migration seed) so the board exists.
   const [pl] = await dbAdmin.insert(pipelines).values({ tenant_id: t!.id, name: 'Sales', is_default: true }).returning();

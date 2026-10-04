@@ -23,6 +23,10 @@ import type { GenerateGstr1Dto } from './dto/invoicing.dto';
 
 const OPEN_STATUSES = ['SENT', 'VIEWED', 'PARTIALLY_PAID', 'OVERDUE', 'DISPUTED'];
 const NON_REVENUE = ['DRAFT', 'CANCELLED', 'VOIDED'];
+// Round P R1.5: quotes share the invoices table (document_type = 'QUOTE') and
+// a SENT quote is not revenue, not a receivable and never a GSTR-1 supply.
+// Every aggregate below carries this predicate; lists/detail keep both types.
+const INVOICES_ONLY = eq(invoices.document_type, 'INVOICE');
 // B2C large threshold (inter-state, unregistered customer) — prevailing ₹2.5L.
 const B2CL_THRESHOLD_CENTS = 250000 * 100;
 
@@ -66,7 +70,13 @@ export class InvReportsService {
       const present = await tx
         .selectDistinct({ currency: invoices.currency })
         .from(invoices)
-        .where(and(eq(invoices.tenant_id, tenantId), isNull(invoices.deleted_at)));
+        .where(
+          and(
+            eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
+            isNull(invoices.deleted_at),
+          ),
+        );
 
       const baseCurrency = settings?.defaultCurrency ?? tenant?.currency ?? 'INR';
       const currencies = Array.from(
@@ -131,6 +141,7 @@ export class InvReportsService {
         .where(
           and(
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             eq(invoices.currency, cur),
             isNull(invoices.deleted_at),
           ),
@@ -154,6 +165,7 @@ export class InvReportsService {
           and(
             isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             eq(invoices.currency, cur),
             inArray(invoices.status, OPEN_STATUSES),
           ),
@@ -200,6 +212,7 @@ export class InvReportsService {
           and(
             isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             eq(invoices.currency, cur),
             notInArray(invoices.status, NON_REVENUE),
           ),
@@ -232,6 +245,7 @@ export class InvReportsService {
           and(
             isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             notInArray(invoices.status, NON_REVENUE),
             sql`${invoices.tds_amount} > 0`,
           ),
@@ -277,6 +291,7 @@ export class InvReportsService {
           and(
             isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             notInArray(invoices.status, NON_REVENUE),
             gte(invoices.invoice_date, from),
             lte(invoices.invoice_date, to),
@@ -460,7 +475,9 @@ export class InvReportsService {
         .leftJoin(customers, eq(invoices.customer_id, customers.id))
         .where(
           and(
+            isNull(invoices.deleted_at),
             eq(invoices.tenant_id, tenantId),
+            INVOICES_ONLY,
             notInArray(invoices.status, NON_REVENUE),
             sql`${invoices.tds_amount} > 0`,
           ),
