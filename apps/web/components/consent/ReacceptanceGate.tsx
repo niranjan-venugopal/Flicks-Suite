@@ -53,7 +53,7 @@ export function ReacceptanceGate() {
         // Radix modals set pointer-events: none on <body>; this gate is not a
         // Radix layer, so it must re-arm its own subtree or every click dies.
         pointerEvents: 'auto',
-        background: 'rgba(1,1,13,.72)',
+        background: 'rgba(var(--scrim-rgb), .72)',
         backdropFilter: 'blur(4px)',
         display: 'flex',
         alignItems: 'center',
@@ -65,11 +65,11 @@ export function ReacceptanceGate() {
         style={{
           width: '100%',
           maxWidth: 440,
-          background: 'rgba(18,18,30,.98)',
+          background: 'var(--surf-pop)',
           border: '1px solid var(--bord-2)',
           borderRadius: 16,
           padding: '26px 26px 22px',
-          boxShadow: '0 32px 80px rgba(0,0,0,.6)',
+          boxShadow: 'var(--e3)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>

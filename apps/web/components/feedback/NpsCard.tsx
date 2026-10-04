@@ -67,10 +67,10 @@ export function NpsCard() {
       <div
         style={{
           width: 352,
-          background: 'rgba(18,18,30,.98)',
+          background: 'var(--surf-pop)',
           border: '1px solid var(--bord-2)',
           borderRadius: 14,
-          boxShadow: '0 28px 70px rgba(0,0,0,.6)',
+          boxShadow: 'var(--e3)',
           padding: 16,
         }}
       >
@@ -135,7 +135,7 @@ export function NpsCard() {
         {step === 'comment' && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--blue)', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
+              <span style={{ width: 30, height: 30, borderRadius: 8, background: 'var(--blue)', color: 'var(--on-accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
                 {score ?? 0}
               </span>
               <span className="t-mute" style={{ fontSize: 11.5, fontWeight: 700 }}>

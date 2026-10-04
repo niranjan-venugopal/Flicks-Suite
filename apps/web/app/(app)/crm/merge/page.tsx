@@ -122,7 +122,7 @@ function MergeView({ cand, onClose }: { cand: MergeCandidate; onClose: () => voi
               style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 15px', borderRadius: 12, background: active ? 'rgba(62,123,250,.1)' : 'var(--surf-1)', border: `1px solid ${active ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
               <OwnerAv name={r.name ?? '?'} size={30} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{r.name ?? '—'}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{r.name ?? '—'}</div>
                 <div className="t-mute" style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)' }}>{r.email ?? r.domain ?? ''}</div>
               </div>
               {active && <Pill tone="blue">survivor ✓</Pill>}
@@ -133,7 +133,7 @@ function MergeView({ cand, onClose }: { cand: MergeCandidate; onClose: () => voi
       <div style={{ display: 'flex', gap: 9, padding: '11px 14px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)', marginBottom: 14 }}>
         <Icon.info size={14} style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)', lineHeight: 1.55 }}>
-          <b style={{ color: '#fff' }}>Will move to the survivor:</b> {movingLine}. The other record is soft-deleted with a tombstone; everything is audit-logged.
+          <b style={{ color: 'var(--text)' }}>Will move to the survivor:</b> {movingLine}. The other record is soft-deleted with a tombstone; everything is audit-logged.
         </span>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

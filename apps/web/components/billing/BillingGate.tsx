@@ -205,7 +205,7 @@ export function BillingWall() {
         // Radix modals set pointer-events: none on <body>; this wall is not a
         // Radix layer, so it must re-arm its own subtree or every click dies.
         pointerEvents: 'auto',
-        background: 'rgba(1,1,13,.78)',
+        background: 'rgba(var(--scrim-rgb), .78)',
         backdropFilter: 'blur(6px)',
         display: 'flex',
         alignItems: 'center',
@@ -217,10 +217,10 @@ export function BillingWall() {
         style={{
           width: '100%',
           maxWidth: 440,
-          background: 'rgba(18,18,30,.98)',
+          background: 'var(--surf-pop)',
           border: '1px solid var(--bord-2)',
           borderRadius: 16,
-          boxShadow: '0 32px 80px rgba(0,0,0,.6)',
+          boxShadow: 'var(--e3)',
           padding: '30px 28px',
           textAlign: 'center',
         }}

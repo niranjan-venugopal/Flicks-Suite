@@ -793,7 +793,7 @@ function RailMenu({ children, wide }: { children: React.ReactNode; wide?: boolea
   return (
     <div
       onClick={(e) => e.stopPropagation()}
-      style={{ margin: wide ? '2px 0 6px 0' : '2px 0 6px 88px', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: wide ? 340 : 220, overflowY: 'auto' }}
+      style={{ margin: wide ? '2px 0 6px 0' : '2px 0 6px 88px', background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, maxHeight: wide ? 340 : 220, overflowY: 'auto' }}
     >
       {children}
     </div>
@@ -804,6 +804,6 @@ function railMenuRow(active: boolean): React.CSSProperties {
   return {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
     borderRadius: 7, background: active ? 'var(--surf-2)' : 'transparent', border: 'none',
-    cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 700, textAlign: 'left',
+    cursor: 'pointer', color: active ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 700, textAlign: 'left',
   }
 }

@@ -145,7 +145,7 @@ export default function OrgFinancialPage() {
                   <tr key={a.id} className={a.is_active ? '' : 'opacity-50'}>
                     <td>
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white">{a.bank_name}</span>
+                        <span className="font-semibold text-ink">{a.bank_name}</span>
                         <span className="t-mute text-xs">{a.account_type}</span>
                         {a.is_default && (
                           <Pill tone="blue">

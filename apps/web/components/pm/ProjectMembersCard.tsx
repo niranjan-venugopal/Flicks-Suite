@@ -115,7 +115,7 @@ export function ProjectMembersCard({
       {mayManage && (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0 10px', borderBottom: '1px solid var(--bord)', marginBottom: 8 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: '#fff' }}>Private project</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text)' }}>Private project</div>
             <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', lineHeight: 1.45 }}>
               {isPrivate
                 ? 'Only members, the lead and owners/admins can see it.'
@@ -159,7 +159,7 @@ export function ProjectMembersCard({
           <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
             <PmAv name={m.name ?? m.email} src={m.avatar_url} size={18} />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {m.name ?? m.email}
               </div>
               <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)' }}>{m.email}</div>

@@ -1,7 +1,12 @@
 import type { Config } from 'tailwindcss'
 
+// Round O: dark/light are driven by <html data-theme> (lib/theme/theme.ts), so
+// every colour below resolves through the CSS tokens in app/globals.css.
+// Brand colours use the SPACE-separated --x-rgb triplets so the /NN alpha
+// modifiers (bg-brand-blue/10 …) keep working; alpha tokens (surface*, border*,
+// text2, muted, faint) are plain var() — nothing applies a /NN to those.
 const config: Config = {
-  darkMode: 'class',
+  darkMode: ['selector', '[data-theme="dark"]'],
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -11,25 +16,34 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          bg: '#01010D',
-          bg2: '#0A0A18',
-          blue: '#3E7BFA',
-          blue2: '#5A95FF',
-          yellow: '#FED800',
-          coral: '#F8786B',
-          green: '#27D280',
-          purple: '#9B7BFA',
-          surface: 'rgba(255,255,255,0.04)',
-          surface2: 'rgba(255,255,255,0.06)',
-          surface3: 'rgba(255,255,255,0.10)',
-          border: 'rgba(255,255,255,0.08)',
-          border2: 'rgba(255,255,255,0.14)',
-          border3: 'rgba(255,255,255,0.22)',
-          text: '#FFFFFF',
-          text2: 'rgba(255,255,255,0.7)',
-          muted: 'rgba(255,255,255,0.5)',
-          faint: 'rgba(255,255,255,0.32)',
+          bg: 'rgb(var(--bg-rgb) / <alpha-value>)',
+          bg2: 'rgb(var(--bg-2-rgb) / <alpha-value>)',
+          blue: 'rgb(var(--blue-rgb) / <alpha-value>)',
+          blue2: 'var(--blue-2)',
+          yellow: 'rgb(var(--yellow-rgb) / <alpha-value>)',
+          coral: 'rgb(var(--coral-rgb) / <alpha-value>)',
+          green: 'rgb(var(--green-rgb) / <alpha-value>)',
+          purple: 'rgb(var(--purple-rgb) / <alpha-value>)',
+          surface: 'var(--surf-1)',
+          surface2: 'var(--surf-2)',
+          surface3: 'var(--surf-3)',
+          border: 'var(--bord)',
+          border2: 'var(--bord-2)',
+          border3: 'var(--bord-3)',
+          text: 'rgb(var(--text-rgb) / <alpha-value>)',
+          text2: 'var(--text-2)',
+          muted: 'var(--text-mute)',
+          faint: 'var(--text-faint)',
         },
+        // Theme ink (white in dark, #101828 in light) — replaces the
+        // dark-assuming *-white/NN utilities; `white` itself stays honest.
+        ink: 'rgb(var(--text-rgb) / <alpha-value>)',
+        // Text on a solid accent fill (blue/coral/green buttons).
+        'on-accent': 'var(--on-accent)',
+        // Overlay scrim (was bg-black/60).
+        scrim: 'var(--scrim)',
+        // Opaque popover / menu face.
+        pop: 'var(--surf-pop)',
       },
       fontFamily: {
         gilroy: ['Gilroy', 'sans-serif'],
@@ -51,14 +65,14 @@ const config: Config = {
         'gradient-purple': 'linear-gradient(135deg, #9B7BFA, #B89BFF)',
       },
       boxShadow: {
-        'e1': '0 1px 0 rgba(255,255,255,0.04) inset, 0 4px 14px rgba(0,0,0,0.3)',
-        'e2': '0 1px 0 rgba(255,255,255,0.06) inset, 0 12px 28px rgba(0,0,0,0.4)',
-        'e3': '0 1px 0 rgba(255,255,255,0.08) inset, 0 24px 60px rgba(0,0,0,0.5)',
-        'glow-blue':   '0 0 0 1px rgba(62,123,250,0.3), 0 12px 30px rgba(62,123,250,0.4)',
-        'glow-green':  '0 0 20px rgba(39,210,128,0.3)',
-        'glow-coral':  '0 0 20px rgba(248,120,107,0.3)',
-        'glow-yellow': '0 0 20px rgba(254,216,0,0.3)',
-        'glow-purple': '0 0 20px rgba(155,123,250,0.3)',
+        'e1': 'var(--e1)',
+        'e2': 'var(--e2)',
+        'e3': 'var(--e3)',
+        'glow-blue':   'var(--glow-blue)',
+        'glow-green':  '0 0 20px rgb(var(--green-rgb) / .3)',
+        'glow-coral':  '0 0 20px rgb(var(--coral-rgb) / .3)',
+        'glow-yellow': '0 0 20px rgb(var(--yellow-rgb) / .3)',
+        'glow-purple': '0 0 20px rgb(var(--purple-rgb) / .3)',
       },
       animation: {
         'float-slow': 'floatSlow 8s ease-in-out infinite',

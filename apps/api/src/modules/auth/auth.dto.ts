@@ -154,3 +154,17 @@ export class TotpVerifyDto {
   @IsOptional()
   deviceId?: string;
 }
+
+// ─── Round O — per-user appearance preference (users.theme) ──────────────────
+// Mirrors THEME_OPTIONS in apps/web/lib/theme/theme.ts (the API cannot import
+// the web package); the 0065 CHECK constraint enforces the same three values.
+export const THEME_OPTIONS = ['system', 'light', 'dark'] as const;
+export type ThemePreference = (typeof THEME_OPTIONS)[number];
+
+/** PATCH /auth/me/preferences — every field optional; `{}` is a no-op. */
+export class UpdateMePreferencesDto {
+  @ApiPropertyOptional({ enum: THEME_OPTIONS, description: 'Appearance: system | light | dark' })
+  @IsOptional()
+  @IsIn(THEME_OPTIONS as unknown as string[])
+  theme?: ThemePreference;
+}

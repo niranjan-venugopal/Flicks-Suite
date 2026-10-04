@@ -215,7 +215,7 @@ export const ProjectMilestones = observer(function ProjectMilestones({
           <DiamondGlyph size={11} />
           <input autoFocus placeholder="Milestone name…" value={msName} onChange={(e) => setMsName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') addMilestone(); if (e.key === 'Escape') setAddMs(false) }}
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }} />
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }} />
           <DateField value={msDate} onChange={setMsDate} style={{ height: 26, width: 130, fontSize: 10.5 }} />
           <Kbd>⏎</Kbd>
         </div>
@@ -357,7 +357,7 @@ function MilestoneRow({ m, stats, canEdit, rich, last, onPatch, onDelete }: {
         if (e.key === 'Enter') commitRename()
         if (e.key === 'Escape') cancelRename()
       }}
-      style={{ flex: '0 1 auto', minWidth: 140, height: 26, padding: '0 6px', background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 6, outline: 'none', color: '#fff', fontSize: 13, fontWeight: 750, fontFamily: 'inherit' }}
+      style={{ flex: '0 1 auto', minWidth: 140, height: 26, padding: '0 6px', background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 6, outline: 'none', color: 'var(--text)', fontSize: 13, fontWeight: 750, fontFamily: 'inherit' }}
     />
   ) : (
     <span
@@ -370,7 +370,7 @@ function MilestoneRow({ m, stats, canEdit, rich, last, onPatch, onDelete }: {
       // Hover: a dotted underline says "editable" without the name looking like a field.
       onMouseEnter={(e) => { if (canEdit) { e.currentTarget.style.textDecoration = 'underline dotted'; e.currentTarget.style.textUnderlineOffset = '3px' } }}
       onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
-      style={{ fontWeight: 750, color: complete ? 'var(--text-mute)' : '#fff', cursor: canEdit ? 'text' : 'default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, outline: 'none' }}
+      style={{ fontWeight: 750, color: complete ? 'var(--text-mute)' : 'var(--text)', cursor: canEdit ? 'text' : 'default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, outline: 'none' }}
     >
       {name}
     </span>
@@ -492,7 +492,7 @@ function MilestoneRow({ m, stats, canEdit, rich, last, onPatch, onDelete }: {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
                 <Btn kind="ghost" size="sm" onClick={cancelDesc}>Cancel</Btn>
                 <Btn kind="primary" size="sm" onClick={() => void saveDesc()} disabled={saving}>
-                  Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>{mod}↵</Kbd>
+                  Save <Kbd style={{ marginLeft: 5, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>{mod}↵</Kbd>
                 </Btn>
               </div>
             </>

@@ -373,21 +373,21 @@ function AdminDashboard() {
                   // Round L: the API's `present` INCLUDES the late arrivals,
                   // so the on-time slice is present − late (a late person
                   // used to be drawn twice).
-                  { value: onTimeCount(data), color: '#27D280' },
-                  { value: data?.attendanceToday.yetToClockIn ?? 0, color: '#FED800' },
-                  { value: data?.attendanceToday.late ?? 0, color: '#F8786B' },
-                  { value: data?.attendanceToday.onLeave ?? 0, color: '#3E7BFA' },
-                  { value: data?.attendanceToday.pendingLeave ?? 0, color: '#9B7BFA' },
+                  { value: onTimeCount(data), color: 'var(--green)' },
+                  { value: data?.attendanceToday.yetToClockIn ?? 0, color: 'var(--yellow)' },
+                  { value: data?.attendanceToday.late ?? 0, color: 'var(--coral)' },
+                  { value: data?.attendanceToday.onLeave ?? 0, color: 'var(--blue)' },
+                  { value: data?.attendanceToday.pendingLeave ?? 0, color: 'var(--purple)' },
                 ]}
                 label={`${onTimePct(data)}%`}
                 sub="On time"
               />
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <Legend color="#27D280" label="On time" value={onTimeCount(data)} />
-                <Legend color="#FED800" label="Yet to clock in" value={data?.attendanceToday.yetToClockIn ?? 0} />
-                <Legend color="#F8786B" label="Late > 15min" value={data?.attendanceToday.late ?? 0} />
-                <Legend color="#3E7BFA" label="On leave" value={data?.attendanceToday.onLeave ?? 0} />
-                <Legend color="#9B7BFA" label="Leave pending" value={data?.attendanceToday.pendingLeave ?? 0} />
+                <Legend color="var(--green)" label="On time" value={onTimeCount(data)} />
+                <Legend color="var(--yellow)" label="Yet to clock in" value={data?.attendanceToday.yetToClockIn ?? 0} />
+                <Legend color="var(--coral)" label="Late > 15min" value={data?.attendanceToday.late ?? 0} />
+                <Legend color="var(--blue)" label="On leave" value={data?.attendanceToday.onLeave ?? 0} />
+                <Legend color="var(--purple)" label="Leave pending" value={data?.attendanceToday.pendingLeave ?? 0} />
               </div>
             </div>
 
@@ -436,21 +436,21 @@ function AdminDashboard() {
             title="Headcount trend"
             sub={data ? `${data.trends.headcountDelta.joiners} joined · ${data.trends.headcountDelta.exits} left` : 'Loading…'}
             big={data?.stats.totalEmployees ?? '—'}
-            color="#3E7BFA"
+            color="var(--blue)"
             data={fakeSeriesAround(data?.stats.totalEmployees ?? 0, 12, 0.04)}
           />
           <TrendCard
             title="Attendance compliance"
             sub="30-day average"
             big={data?.trends.attendanceCompliancePct != null ? `${data.trends.attendanceCompliancePct}%` : '—'}
-            color="#27D280"
+            color="var(--green)"
             data={fakeSeriesAround(data?.trends.attendanceCompliancePct ?? 0, 30, 0.04)}
           />
           <TrendCard
             title="Leave consumption"
             sub={`${new Date().toLocaleDateString('en-IN', { month: 'short' })} so far`}
             big={data ? `${data.trends.leaveDaysConsumed}d` : '—'}
-            color="#F8786B"
+            color="var(--coral)"
             data={fakeSeriesAround(data?.trends.leaveDaysConsumed ?? 0, 12, 0.2)}
           />
         </div>
@@ -582,11 +582,11 @@ function Legend({ color, label, value }: { color: string; label: string; value: 
           height: 8,
           borderRadius: '50%',
           background: color,
-          boxShadow: `0 0 0 3px ${color}22`,
+          boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 13%, transparent)`,
         }}
       />
       <span style={{ flex: 1, color: 'var(--text-2)' }}>{label}</span>
-      <span style={{ color: '#fff', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+      <span style={{ color: 'var(--text)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
         {value}
       </span>
     </div>
@@ -657,8 +657,8 @@ function ActivityRow({
       <Avatar name={who} size="sm" src={avatarUrl ?? undefined} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
-          <span style={{ color: '#fff', fontWeight: 800 }}>{who}</span> {verb}{' '}
-          <span style={{ color: '#fff', fontWeight: 700 }}>{target}</span>
+          <span style={{ color: 'var(--text)', fontWeight: 800 }}>{who}</span> {verb}{' '}
+          <span style={{ color: 'var(--text)', fontWeight: 700 }}>{target}</span>
         </div>
         <div
           style={{
@@ -1232,7 +1232,7 @@ function EmployeeHome() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 800 }}>{b.leaveTypeName}</div>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', fontVariantNumeric: 'tabular-nums' }}>
-                          <strong style={{ color: '#fff', fontSize: 14 }}>{b.available.toFixed(b.available % 1 === 0 ? 0 : 1)}</strong>
+                          <strong style={{ color: 'var(--text)', fontSize: 14 }}>{b.available.toFixed(b.available % 1 === 0 ? 0 : 1)}</strong>
                           /{total.toFixed(total % 1 === 0 ? 0 : 1)} days
                         </div>
                       </div>

@@ -10,13 +10,13 @@ import { DateField } from '@/components/ui/date-picker'
 const FIELD: React.CSSProperties = {
   width: '100%',
   height: 44,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1.5px solid rgba(255,255,255,0.10)',
+  background: 'var(--surf-2)',
+  border: '1.5px solid var(--surf-3)',
   borderRadius: 10,
   padding: '0 14px',
   fontWeight: 600,
   fontSize: 14,
-  color: '#fff',
+  color: 'var(--text)',
   outline: 'none',
   letterSpacing: '-0.02em',
 }
@@ -24,7 +24,7 @@ const LABEL: React.CSSProperties = {
   display: 'block',
   fontWeight: 700,
   fontSize: 13,
-  color: 'rgba(255,255,255,0.6)',
+  color: 'var(--text-2)',
   marginBottom: 6,
   letterSpacing: '-0.02em',
 }
@@ -122,7 +122,7 @@ export function PaymentModal({
               }}
               title="Razorpay auto-capture arrives with auto-debit — status updates itself; manual entry is disabled for captured payments"
             >
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 2 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', marginBottom: 2 }}>
                 Razorpay <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--yellow)', marginLeft: 4 }}>COMING SOON</span>
               </div>
               <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.45 }}>
@@ -135,7 +135,7 @@ export function PaymentModal({
                 background: 'rgba(62,123,250,.08)', border: '1px solid rgba(62,123,250,.45)',
               }}
             >
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginBottom: 2 }}>Manual entry</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', marginBottom: 2 }}>Manual entry</div>
               <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.45 }}>
                 bank transfer / UPI / cheque — reference no., audit-logged
               </div>

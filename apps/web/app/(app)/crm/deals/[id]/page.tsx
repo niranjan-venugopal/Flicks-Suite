@@ -156,7 +156,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 24px 64px' }}>
-      <Link href="/crm/deals" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 9, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: '#fff', textDecoration: 'none', fontSize: 12, fontWeight: 800, marginBottom: 16 }}>
+      <Link href="/crm/deals" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 9, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text)', textDecoration: 'none', fontSize: 12, fontWeight: 800, marginBottom: 16 }}>
         <Icon.arrowL size={14} /> Board
       </Link>
 
@@ -304,7 +304,7 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 16, width: 'fit-content' }}>
         {TABS.map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
+          <button key={k} onClick={() => setTab(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
             {l}
             {k === 'products' && d.products.length > 0 && <span style={{ marginLeft: 5, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>{d.products.length}</span>}
             {k === 'people' && d.people.length > 0 && <span style={{ marginLeft: 5, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>{d.people.length}</span>}
@@ -411,7 +411,7 @@ function EnrollInSequence({ deal }: { deal: DealDetail }) {
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', textAlign: 'left' }}>
                   <Icon.send size={14} style={{ color: 'var(--blue)', flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{s.name}</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text)' }}>{s.name}</div>
                     <div className="t-mute" style={{ fontSize: 10.5 }}>{s.steps.length} step{s.steps.length === 1 ? '' : 's'} · sends {s.send_window_start}–{s.send_window_end}</div>
                   </div>
                   <Icon.chevR size={14} style={{ color: 'var(--text-faint)' }} />
@@ -443,7 +443,7 @@ function DealTags({ deal }: { deal: DealDetail }) {
         <Icon.tag size={10} /> tag
       </button>
       {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 70, width: 220, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 8, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 70, width: 220, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 8, boxShadow: 'var(--e2)' }}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
             <input autoFocus className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="New tag…" style={{ height: 28, fontSize: 11, flex: 1 }}
               onKeyDown={async (e) => {
@@ -540,7 +540,7 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
             const due = dueLabel(a)
             return (
               <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 20px', borderBottom: i < open.length - 1 ? '1px solid var(--bord)' : 'none' }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: `${M.color}20`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={14} /></div>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: `color-mix(in srgb, ${M.color} 13%, transparent)`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={14} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{a.subject}</div>
                   <div style={{ fontSize: 10.5, fontWeight: 700, color: due.overdue ? 'var(--coral)' : 'var(--text-mute)', marginTop: 2 }}>
@@ -576,7 +576,7 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
               <Icon.edit size={14} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: 7 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 7 }}>
                 {n.text}
                 <PendingDot />
               </div>
@@ -589,11 +589,11 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
           const Ic = Icon[t.icon]
           return (
             <div key={i} style={{ display: 'flex', gap: 13, padding: '13px 20px', borderBottom: i < entries.length - 1 ? '1px solid var(--bord)' : 'none' }}>
-              <div style={{ width: 30, height: 30, borderRadius: 9, background: t.suite ? 'rgba(39,210,128,.13)' : t.act ? `${t.color}20` : 'var(--surf-2)', color: t.suite ? 'var(--green)' : t.act ? t.color : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: t.suite ? 'rgba(39,210,128,.13)' : t.act ? `color-mix(in srgb, ${t.color} 13%, transparent)` : 'var(--surf-2)', color: t.suite ? 'var(--green)' : t.act ? t.color : 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Ic size={14} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
                   {t.title}{t.suite && <Pill tone="green" style={{ marginLeft: 8 }}>suite event</Pill>}
                 </div>
                 {t.meta && <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginTop: 2 }}>{t.meta}</div>}
@@ -715,7 +715,7 @@ function PeopleTab({ deal }: { deal: DealDetail }) {
                   onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surf-2)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
                   <OwnerAv name={c.display_name} size={22} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>{c.display_name ?? c.email}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{c.display_name ?? c.email}</span>
                   <span className="t-mute" style={{ fontSize: 10.5 }}>{c.email}</span>
                 </button>
               ))}

@@ -143,12 +143,12 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
             right: 12,
             top: 'calc(100% + 4px)',
             zIndex: 120,
-            background: 'rgba(18,18,30,.98)',
+            background: 'var(--surf-pop)',
             backdropFilter: 'blur(16px)',
             border: '1px solid var(--bord-2)',
             borderRadius: 12,
             padding: 6,
-            boxShadow: '0 24px 60px rgba(0,0,0,.6)',
+            boxShadow: 'var(--e3)',
           }}
         >
           <div className="t-caption" style={{ padding: '6px 8px 4px' }}>
@@ -217,7 +217,7 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
                     style={{
                       fontSize: 12,
                       fontWeight: 800,
-                      color: '#fff',
+                      color: 'var(--text)',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',

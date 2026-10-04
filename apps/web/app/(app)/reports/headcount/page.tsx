@@ -42,7 +42,7 @@ export default function HeadcountReportPage() {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/reports"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to reports
@@ -318,7 +318,7 @@ function HeadcountLineChart({
           y1={padY + (1 - f) * innerH}
           x2={W - padX}
           y2={padY + (1 - f) * innerH}
-          stroke="rgba(255,255,255,.05)"
+          stroke="var(--surf-2)"
           strokeWidth={1}
         />
       ))}
@@ -326,7 +326,7 @@ function HeadcountLineChart({
       <polyline
         points={points}
         fill="none"
-        stroke="#3E7BFA"
+        stroke="var(--blue)"
         strokeWidth={2.5}
         strokeLinejoin="round"
         strokeLinecap="round"
@@ -341,8 +341,8 @@ function HeadcountLineChart({
             cx={x}
             cy={y}
             r={3}
-            fill="#3E7BFA"
-            stroke="var(--surf-0, #0b0e16)"
+            fill="var(--blue)"
+            stroke="var(--bg-2)"
             strokeWidth={2}
           >
             <title>{`${fmtMonth(m.month)}: ${m.headcount}`}</title>

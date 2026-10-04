@@ -224,7 +224,7 @@ function TeamLeaveInner() {
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 14, width: 'fit-content' }} data-testid="team-leave-tabs">
           {([['pending', 'Pending'], ['upcoming', 'Upcoming'], ['history', 'History']] as Array<[Tab, string]>).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setTab(k)} data-testid={`team-leave-tab-${k}`} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
+            <button key={k} type="button" onClick={() => setTab(k)} data-testid={`team-leave-tab-${k}`} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
               {l}
               {k === 'pending' && pendingRows.length > 0 && <span style={{ marginLeft: 6, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--yellow)' }}>{pendingRows.length}</span>}
             </button>
@@ -242,7 +242,7 @@ function TeamLeaveInner() {
         ) : rows.length === 0 ? (
           <div className="card" style={{ padding: 60, textAlign: 'center', color: 'var(--text-mute)', fontSize: 13, fontWeight: 600 }} data-testid="team-leave-empty">
             <Icon.cal size={28} style={{ color: 'var(--text-faint)', marginBottom: 12 }} />
-            <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', marginBottom: 6 }}>{empty[0]}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>{empty[0]}</div>
             <div>{empty[1]}</div>
           </div>
         ) : (

@@ -319,7 +319,7 @@ function LoginPageInner() {
           </div>
           <div className="t-h2" style={{ marginBottom: 8 }}>Check your email</div>
           <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            We sent a 6-digit code to <strong style={{ color: '#fff' }}>{email}</strong>. The code expires in 10 minutes.
+            We sent a 6-digit code to <strong style={{ color: 'var(--text)' }}>{email}</strong>. The code expires in 10 minutes.
           </div>
         </div>
 
@@ -335,7 +335,7 @@ function LoginPageInner() {
               onKeyDown={(e) => handleOtpKeyDown(i, e)}
               style={{
                 width: 48, height: 60, textAlign: 'center', fontSize: 24, fontWeight: 800,
-                letterSpacing: '-0.02em', color: '#fff', background: 'var(--surf-2)',
+                letterSpacing: '-0.02em', color: 'var(--text)', background: 'var(--surf-2)',
                 border: `1.5px solid ${digit ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
                 borderRadius: 12, outline: 'none', transition: 'border-color .2s',
               }}
@@ -371,7 +371,7 @@ function LoginPageInner() {
         >
           <Icon.info size={16} style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }} />
           <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            You can also <strong style={{ color: '#fff' }}>tap the magic link</strong> in the email to sign in instantly.
+            You can also <strong style={{ color: 'var(--text)' }}>tap the magic link</strong> in the email to sign in instantly.
           </div>
         </div>
       </AuthCard>

@@ -13,6 +13,7 @@ import { useHotkeys } from '@/lib/pm/hotkeys'
 import { currentPmPath, issueHref } from '@/lib/pm/nav'
 import { cancelIssuePrefetch, prefetchIssueDetail } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
+import { useTheme } from '@/lib/theme/theme'
 
 // ─────────────────────────────────────────────────────────
 // P8 — Triage conveyor (§8), faithful to scr-issue-inbox.jsx: 250px queue
@@ -50,6 +51,10 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
   const [menu, setMenu] = useState<'assignee' | 'labels' | 'snooze' | 'merge' | 'decline' | null>(null)
   const [mergeQ, setMergeQ] = useState('')
   const [declineReason, setDeclineReason] = useState('')
+  // Label chips: the label's own colour as 10.5px text is unreadable on white
+  // for yellow / green picks, so light sets the name in --text-2 (the dot
+  // still carries the colour). Dark keeps today's coloured name.
+  const light = useTheme().resolved === 'light'
 
   const rows = store.triageIssuesForTeam(teamId)
   const focus = rows[Math.min(idx, Math.max(0, rows.length - 1))] ?? null
@@ -132,7 +137,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
         <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8, width: 'fit-content', marginBottom: 12 }}>
           {teams.map((t) => (
             <button key={t.id} onClick={() => { setTeamId(t.id); setIdx(0); setMenu(null) }}
-              style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: teamId === t.id ? 'var(--surf-3)' : 'transparent', color: teamId === t.id ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
+              style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: teamId === t.id ? 'var(--surf-3)' : 'transparent', color: teamId === t.id ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
               {t.key}
             </button>
           ))}
@@ -162,7 +167,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                 <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-faint)' }}>
                   {team.key}-{i.number} · {new Date(i.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                 </span>
-                <span style={{ fontSize: 12.5, fontWeight: 750, color: '#fff', lineHeight: 1.35, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '100%' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 750, color: 'var(--text)', lineHeight: 1.35, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '100%' }}>
                   <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{i.title}</span>{i._pending && <PendingDot />}
                 </span>
               </button>
@@ -193,7 +198,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                 {focusLabels.map((lid) => {
                   const l = store.labels.get(lid)
                   return l ? (
-                    <span key={lid} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', height: 18, borderRadius: 99, border: `1px solid ${l.color ?? '#5C6477'}55`, color: l.color ?? 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
+                    <span key={lid} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 7px', height: 18, borderRadius: 99, border: `1px solid color-mix(in srgb, ${l.color ?? '#5C6477'} 33%, transparent)`, color: light ? 'var(--text-2)' : (l.color ?? 'var(--text-2)'), fontSize: 10.5, fontWeight: 800 }}>
                       <span style={{ width: 5, height: 5, borderRadius: '50%', background: l.color ?? '#5C6477' }} />{l.name}
                     </span>
                   ) : null
@@ -264,7 +269,7 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                   <Kbd style={{ background: 'rgba(248,120,107,.15)', borderColor: 'rgba(248,120,107,.4)', color: 'var(--coral)' }}>⇧⌫</Kbd> Decline
                 </button>
                 {menu === 'decline' && (
-                  <div style={{ position: 'absolute', bottom: 'calc(100% + 5px)', right: 0, zIndex: 40, width: 230, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 7, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
+                  <div style={{ position: 'absolute', bottom: 'calc(100% + 5px)', right: 0, zIndex: 40, width: 230, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 7, boxShadow: 'var(--e2)' }}>
                     <input autoFocus className="input" placeholder="Reason (optional) — ⏎ declines" value={declineReason}
                       onChange={(e) => setDeclineReason(e.target.value)}
                       onKeyDown={(e) => {
@@ -277,8 +282,8 @@ const TriageBody = observer(function TriageBody({ engine }: { engine: PmSyncEngi
                 )}
               </div>
               <button onClick={() => act((id) => engine.triageAccept(id))}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderRadius: 9, background: 'var(--blue)', border: 'none', color: '#fff', fontSize: 11.5, fontWeight: 800, cursor: 'pointer', boxShadow: '0 6px 18px rgba(62,123,250,.35)' }}>
-                <Kbd style={{ background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff' }}>⇧⏎</Kbd> Accept → Backlog
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderRadius: 9, background: 'var(--blue)', border: 'none', color: 'var(--on-accent)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer', boxShadow: '0 6px 18px rgba(62,123,250,.35)' }}>
+                <Kbd style={{ background: 'color-mix(in srgb, var(--on-accent) 20%, transparent)', border: 'none', color: 'var(--on-accent)' }}>⇧⏎</Kbd> Accept → Backlog
               </button>
             </div>
             <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', marginTop: 8 }}>
@@ -309,7 +314,7 @@ function ToolDrop({ label, k, open, onToggle, width = 170, children }: {
         <Kbd>{k}</Kbd> {label}
       </button>
       {open && (
-        <div style={{ position: 'absolute', bottom: 'calc(100% + 5px)', left: 0, zIndex: 40, width, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 9, padding: 4, boxShadow: '0 16px 40px rgba(0,0,0,.5)', maxHeight: 260, overflowY: 'auto' }}>
+        <div style={{ position: 'absolute', bottom: 'calc(100% + 5px)', left: 0, zIndex: 40, width, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 9, padding: 4, boxShadow: 'var(--e2)', maxHeight: 260, overflowY: 'auto' }}>
           {children}
         </div>
       )}
@@ -320,7 +325,7 @@ function ToolDrop({ label, k, open, onToggle, width = 170, children }: {
 function DropBtn({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button onClick={(e) => { e.stopPropagation(); onClick() }}
-      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, textAlign: 'left', padding: '6px 9px', borderRadius: 6, background: 'transparent', border: 'none', color: '#fff', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, textAlign: 'left', padding: '6px 9px', borderRadius: 6, background: 'transparent', border: 'none', color: 'var(--text)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-1)' }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}>
       {children}

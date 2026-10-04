@@ -64,7 +64,7 @@ function NodeCard({
           Pending
         </Pill>
       )}
-      <RowPresenceAvatar name={nodeName(node)} size={big ? 38 : 28} src={node.avatarUrl ?? undefined} userId={node.userId} ring={big ? '#0b1428' : 'var(--surf-2)'} />
+      <RowPresenceAvatar name={nodeName(node)} size={big ? 38 : 28} src={node.avatarUrl ?? undefined} userId={node.userId} ring={big ? 'color-mix(in srgb, var(--blue) 12%, var(--bg))' : 'var(--surf-2)'} />
       <div style={{ minWidth: 0, maxWidth: big ? 200 : 150 }}>
         <div style={{ fontSize: big ? 13 : 11.5, fontWeight: 800, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {nodeName(node)}

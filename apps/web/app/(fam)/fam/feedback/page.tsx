@@ -253,7 +253,7 @@ export default function FamFeedbackPage() {
                         cursor: update.isPending ? 'default' : 'pointer',
                         opacity: update.isPending ? 0.55 : 1,
                         background: selected.status === s ? 'var(--surf-3)' : 'transparent',
-                        color: selected.status === s ? '#fff' : 'var(--text-2)',
+                        color: selected.status === s ? 'var(--text)' : 'var(--text-2)',
                         fontSize: 11,
                         fontWeight: 800,
                       }}

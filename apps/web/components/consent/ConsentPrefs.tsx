@@ -155,13 +155,13 @@ export function ConsentPrefsPanel({
   return (
     <div
       style={{
-        background: 'rgba(18,18,30,.98)',
+        background: 'var(--surf-pop)',
         border: '1px solid var(--bord-2)',
         borderRadius: 16,
         padding: 22,
         width: '100%',
         maxWidth: 480,
-        boxShadow: '0 32px 80px rgba(0,0,0,.6)',
+        boxShadow: 'var(--e3)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>

@@ -186,7 +186,7 @@ export default function FamTenantDetailPage() {
               display: 'flex',
               padding: '0 22px',
               borderTop: '1px solid var(--bord)',
-              background: 'rgba(0,0,0,.2)',
+              background: 'var(--bg-2)',
               overflowX: 'auto',
             }}
           >
@@ -203,7 +203,7 @@ export default function FamTenantDetailPage() {
                     padding: '13px 14px',
                     fontSize: 12.5,
                     fontWeight: active ? 800 : 700,
-                    color: active ? '#fff' : 'var(--text-mute)',
+                    color: active ? 'var(--text)' : 'var(--text-mute)',
                     borderBottom: active ? '2px solid var(--blue)' : '2px solid transparent',
                     marginBottom: -1,
                     cursor: 'pointer',
@@ -339,12 +339,12 @@ function OverviewTab({
 
       {t.health && (() => {
         const score = t.health.score != null ? Math.round(t.health.score) : null
-        const ringHex =
-          signalTone(t.health.signal) === 'green' ? '#27D280'
-          : signalTone(t.health.signal) === 'blue' ? '#3E7BFA'
-          : signalTone(t.health.signal) === 'coral' ? '#F8786B'
-          : signalTone(t.health.signal) === 'yellow' ? '#FED800'
-          : '#3E7BFA'
+        const ringColor =
+          signalTone(t.health.signal) === 'green' ? 'var(--green)'
+          : signalTone(t.health.signal) === 'blue' ? 'var(--blue)'
+          : signalTone(t.health.signal) === 'coral' ? 'var(--coral)'
+          : signalTone(t.health.signal) === 'yellow' ? 'var(--yellow)'
+          : 'var(--blue)'
         const pct = (n: number | null) =>
           n == null ? null : Math.max(0, Math.min(100, Math.round(n)))
         const rate = (active: number) =>
@@ -375,7 +375,7 @@ function OverviewTab({
                 <svg viewBox="0 0 120 120" style={{ width: '100%', height: '100%' }}>
                   <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surf-2)" strokeWidth="10" />
                   <circle
-                    cx="60" cy="60" r="50" fill="none" stroke={ringHex} strokeWidth="10"
+                    cx="60" cy="60" r="50" fill="none" stroke={ringColor} strokeWidth="10"
                     strokeDasharray={`${(score ?? 0) * 3.14} 314`}
                     strokeLinecap="round" transform="rotate(-90 60 60)"
                   />
@@ -960,7 +960,7 @@ function AuditTab({ tenantId }: { tenantId: string }) {
             justifyContent: 'space-between',
             padding: '10px 14px',
             borderTop: '1px solid var(--bord)',
-            background: 'var(--surf-0)',
+            background: 'var(--bg-2)',
           }}
         >
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>

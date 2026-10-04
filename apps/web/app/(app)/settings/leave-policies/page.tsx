@@ -487,7 +487,7 @@ function PolicyForm({
                   height: 28,
                   borderRadius: 8,
                   background: hex,
-                  border: form.color === hex ? '2px solid white' : '2px solid transparent',
+                  border: form.color === hex ? '2px solid var(--inverse)' : '2px solid transparent',
                   cursor: 'pointer',
                 }}
                 aria-label={hex}

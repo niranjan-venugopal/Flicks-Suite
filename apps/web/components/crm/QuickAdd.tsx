@@ -189,7 +189,7 @@ function QuickAddModal({ initialTab, onClose }: { initialTab: QuickAddKind; onCl
             {TABS.map(([k, l, ic]) => {
               const Ic = Icon[ic]
               return (
-                <button key={k} onClick={() => setTab(k)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 800, position: 'relative' }}>
+                <button key={k} onClick={() => setTab(k)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 0', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 800, position: 'relative' }}>
                   <Ic size={13} />{l}
                   {sectionDone[k] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', marginLeft: 2 }} />}
                 </button>
@@ -332,14 +332,14 @@ function LinkSearchView({ label, placeholder, value, onChange, q, setQ, rows, ic
         <input className="input" value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 120)}
           placeholder={placeholder} style={{ width: '100%' }} />
         {focus && (shown.length > 0 || !!q.trim()) && (
-          <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 80, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 4, boxShadow: '0 16px 40px rgba(0,0,0,.5)', maxHeight: 210, overflowY: 'auto' }}>
+          <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 80, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 4, boxShadow: 'var(--e2)', maxHeight: 210, overflowY: 'auto' }}>
             {shown.map((r) => (
               <button key={r.id} onMouseDown={(e) => { e.preventDefault(); onChange(r); setQ('') }}
                 style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 9px', borderRadius: 7, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surf-2)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
                 {icon}
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: '#fff' }}>{r.label}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>{r.label}</span>
                 {r.sub && <span className="t-mute" style={{ fontSize: 10.5 }}>{r.sub}</span>}
               </button>
             ))}

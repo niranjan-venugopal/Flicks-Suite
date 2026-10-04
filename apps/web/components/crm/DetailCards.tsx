@@ -60,7 +60,7 @@ export function ActivityCard({ activities, loading }: { activities: RefActivity[
           const done = !!a.completed_at
           return (
             <div key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '12px 18px', borderBottom: i < activities.length - 1 ? '1px solid var(--bord)' : 'none' }}>
-              <div style={{ width: 26, height: 26, borderRadius: 8, background: `${M.color}1e`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
+              <div style={{ width: 26, height: 26, borderRadius: 8, background: `color-mix(in srgb, ${M.color} 12%, transparent)`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 800 }}>{a.subject}</div>
                 <div className="t-mute" style={{ fontSize: 10.5 }}>

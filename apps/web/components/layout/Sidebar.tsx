@@ -655,8 +655,8 @@ export function Sidebar({ variant = 'tenant' }: { variant?: SidebarVariant } = {
         // Match the prototype's FAM sidebar: a darker purple-tinted
         // gradient that distinguishes platform admin from tenant chrome.
         background: isFam
-          ? 'linear-gradient(180deg, #0d0a18 0%, #01010D 100%)'
-          : 'linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,0) 100%)',
+          ? 'var(--fam-rail)'
+          : 'linear-gradient(180deg, color-mix(in srgb, var(--text) 2.5%, transparent) 0%, transparent 100%)',
         borderRight: '1px solid var(--bord)',
         display: 'flex',
         flexDirection: 'column',
@@ -833,7 +833,7 @@ function NavRow({
     borderRadius: 9,
     background: active ? 'var(--surf-2)' : 'transparent',
     border: active ? '1px solid var(--bord-2)' : '1px solid transparent',
-    color: active || parentActive ? '#fff' : 'var(--text-2)',
+    color: active || parentActive ? 'var(--text)' : 'var(--text-2)',
     transition: 'all .15s',
     marginBottom: 1,
     fontSize: 13,
@@ -872,7 +872,7 @@ function NavRow({
             padding: '0 5px',
             borderRadius: 99,
             background: 'var(--blue)',
-            color: '#fff',
+            color: 'var(--on-accent)',
             fontSize: 10,
             fontWeight: 800,
             display: 'inline-flex',
@@ -948,7 +948,7 @@ function NavRow({
                   borderRadius: 7,
                   background: cActive ? 'var(--surf-2)' : 'transparent',
                   border: cActive ? '1px solid var(--bord-2)' : '1px solid transparent',
-                  color: cActive ? '#fff' : 'var(--text-2)',
+                  color: cActive ? 'var(--text)' : 'var(--text-2)',
                   fontSize: 12,
                   fontWeight: cActive ? 800 : 600,
                   letterSpacing: '-0.01em',
@@ -965,7 +965,7 @@ function NavRow({
                       padding: '0 4px',
                       borderRadius: 99,
                       background: 'var(--coral)',
-                      color: '#fff',
+                      color: 'var(--on-accent)',
                       fontSize: 9.5,
                       fontWeight: 800,
                       display: 'inline-flex',

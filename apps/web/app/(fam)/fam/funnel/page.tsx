@@ -79,7 +79,8 @@ function FunnelBlock({
                   padding: '0 12px',
                   fontSize: 12,
                   fontWeight: 800,
-                  color: '#fff',
+                  // Right-aligned over the track: only sits on the gradient fill when the bar is near full width.
+                  color: width > 85 ? 'var(--on-accent)' : 'var(--text)',
                   fontFamily: 'var(--font-mono)',
                 }}
               >

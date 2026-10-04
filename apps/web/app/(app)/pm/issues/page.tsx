@@ -248,13 +248,13 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
             <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
               {(['list', 'board'] as const).map((m) => (
                 <button key={m} onClick={() => setViewMode(m)}
-                  style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: viewMode === m ? 'var(--surf-3)' : 'transparent', color: viewMode === m ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, textTransform: 'capitalize' }}>
+                  style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: viewMode === m ? 'var(--surf-3)' : 'transparent', color: viewMode === m ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, textTransform: 'capitalize' }}>
                   {m}
                 </button>
               ))}
             </div>
             <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={() => setComposerOpen(true)}>
-              New issue <Kbd style={{ marginLeft: 6, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>C</Kbd>
+              New issue <Kbd style={{ marginLeft: 6, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>C</Kbd>
             </Btn>
             <Pill tone={store.online ? 'blue' : 'yellow'} dot>{store.online ? 'sync' : 'offline'}</Pill>
           </div>
@@ -301,7 +301,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
           <option value="unassigned">Unassigned</option>
         </select>
         <button onClick={() => setFilters((f) => ({ ...f, showClosed: !f.showClosed }))}
-          style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--bord)', background: filters.showClosed ? 'var(--surf-2)' : 'transparent', color: filters.showClosed ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}>
+          style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid var(--bord)', background: filters.showClosed ? 'var(--surf-2)' : 'transparent', color: filters.showClosed ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, cursor: 'pointer' }}>
           {filters.showClosed ? 'All states' : '+ Done'}
         </button>
         {viewMode === 'list' && (
@@ -393,7 +393,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
               </div>
               {allIssues.length === 0 && (
                 <Btn kind="primary" size="sm" onClick={() => setComposerOpen(true)}>
-                  Create your first issue <Kbd style={{ marginLeft: 7, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>C</Kbd>
+                  Create your first issue <Kbd style={{ marginLeft: 7, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>C</Kbd>
                 </Btn>
               )}
             </div>
@@ -405,7 +405,7 @@ const SyncIssueList = observer(function SyncIssueList({ engine, teamId, initialV
       {sel.size > 0 && (
         <div style={{ position: 'sticky', bottom: 14, zIndex: 60, display: 'flex', justifyContent: 'center', marginTop: 10, pointerEvents: 'none' }}>
           <div className="card-glass" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 11, padding: '9px 14px', borderRadius: 12, flexWrap: 'wrap', maxWidth: '94%', position: 'relative' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 800, color: '#fff' }}>{sel.size} selected</span>
+            <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text)' }}>{sel.size} selected</span>
             <span style={{ width: 1, height: 16, background: 'var(--bord-2)' }} />
             {[['0–4', 'priority'], ['S', 'status'], ['A', 'assignee'], ['I', 'assign me']].map(([k, l]) => (
               <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
@@ -457,7 +457,7 @@ function viewTabStyle(active: boolean): React.CSSProperties {
     display: 'inline-flex', alignItems: 'center', padding: '5px 11px', borderRadius: 7,
     border: `1px solid ${active ? 'var(--bord-2)' : 'var(--bord)'}`,
     background: active ? 'var(--surf-2)' : 'transparent',
-    color: active ? '#fff' : 'var(--text-2)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
+    color: active ? 'var(--text)' : 'var(--text-2)', fontSize: 11, fontWeight: 800, cursor: 'pointer',
   }
 }
 
@@ -485,7 +485,7 @@ function BulkMenu({ children, onClose }: { children: React.ReactNode; onClose: (
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 70 }} />
-      <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)', zIndex: 80, width: 220, maxHeight: 260, overflow: 'auto', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
+      <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)', zIndex: 80, width: 220, maxHeight: 260, overflow: 'auto', background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: 'var(--e2)' }}>
         {children}
       </div>
     </>
@@ -543,7 +543,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
         onClick={(e) => { e.stopPropagation(); onToggleSel(e.shiftKey) }}
         style={{ width: 13, height: 13, borderRadius: 4, border: `1.5px solid ${selected ? 'var(--blue)' : 'var(--bord-2)'}`, background: selected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' }}
       >
-        {selected && <Icon.check size={9} style={{ color: '#fff' }} />}
+        {selected && <Icon.check size={9} style={{ color: 'var(--on-accent)' }} />}
       </span>
       <button onClick={(e) => { e.stopPropagation(); onFocus(); openMenu('state') }} title={state.name}
         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}>
@@ -555,7 +555,7 @@ const IssueRow = observer(function IssueRow({ issue, state, teamKey, engine, las
       <span title={PM_PRIORITY_LABEL[issue.priority]} style={{ display: 'flex', flexShrink: 0 }}>
         <PriorityGlyph p={issue.priority} size={13} />
       </span>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{issue.title}</span>
         {issue._pending && <PendingDot />}
       </span>
@@ -618,7 +618,7 @@ function menuRowStyle(active: boolean): React.CSSProperties {
   return {
     width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
     borderRadius: 7, background: active ? 'var(--surf-2)' : 'transparent', border: 'none',
-    cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
+    cursor: 'pointer', color: active ? 'var(--text)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
   }
 }
 
@@ -626,7 +626,7 @@ function RowMenu({ children, onClose }: { children: React.ReactNode; onClose: ()
   return (
     <>
       <div onClick={(e) => { e.stopPropagation(); onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 70 }} />
-      <div style={{ position: 'absolute', right: 8, top: 32, zIndex: 80, width: 210, maxHeight: 260, overflow: 'auto', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
+      <div style={{ position: 'absolute', right: 8, top: 32, zIndex: 80, width: 210, maxHeight: 260, overflow: 'auto', background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: 'var(--e2)' }}>
         {children}
       </div>
     </>

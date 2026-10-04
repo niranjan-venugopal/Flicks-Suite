@@ -72,7 +72,7 @@ export const FirstRunChecklist = observer(function FirstRunChecklist({
               background: it.done ? 'rgba(39,210,128,.08)' : 'var(--surf-1)',
               border: `1px solid ${it.done ? 'rgba(39,210,128,.35)' : 'var(--bord)'}`,
               fontSize: 10.5, fontWeight: 800,
-              color: it.done ? 'var(--text-mute)' : '#fff',
+              color: it.done ? 'var(--text-mute)' : 'var(--text)',
               textDecoration: it.done ? 'line-through' : 'none',
             }}
           >

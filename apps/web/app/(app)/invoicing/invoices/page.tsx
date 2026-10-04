@@ -59,13 +59,13 @@ function DraftCard({ inv, onOpen }: { inv: InvoiceRow; onOpen: () => void }) {
       <div style={{ fontWeight: 700, fontSize: 12, color: INVO.muted30, marginBottom: 8, letterSpacing: '-0.02em' }}>
         Amount
       </div>
-      <div style={{ fontWeight: 700, fontSize: 32, color: '#fff', letterSpacing: '-0.04em', lineHeight: 1, marginBottom: 24 }}>
+      <div style={{ fontWeight: 700, fontSize: 32, color: 'var(--text)', letterSpacing: '-0.04em', lineHeight: 1, marginBottom: 24 }}>
         {fmt(inv.total_amount, inv.currency)}
       </div>
       <div style={{ fontWeight: 700, fontSize: 11, color: INVO.muted40, marginBottom: 4, letterSpacing: '-0.01em' }}>
         Billed to
       </div>
-      <div style={{ fontWeight: 700, fontSize: 16, color: '#fff', letterSpacing: '-0.02em' }}>
+      <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', letterSpacing: '-0.02em' }}>
         {inv.customer_name ?? '—'}
       </div>
       <div
@@ -76,7 +76,7 @@ function DraftCard({ inv, onOpen }: { inv: InvoiceRow; onOpen: () => void }) {
           right: 0,
           width: 48,
           height: 48,
-          background: 'rgba(255,255,255,0.06)',
+          background: 'var(--surf-2)',
           borderRadius: '20px 0 0 0',
           display: 'flex',
           alignItems: 'center',

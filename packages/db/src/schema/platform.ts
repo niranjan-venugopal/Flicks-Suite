@@ -140,6 +140,12 @@ export const users = pgTable(
     // PM Inbox (0045): email cadence for inbox-style notifications —
     // 'urgent' (5-min unread mention/assignment emails only) | 'hourly' | 'daily'.
     notification_email_digest: text('notification_email_digest').notNull().default('daily'),
+    // Round O (0065): appearance preference — 'system' | 'light' | 'dark'.
+    // The migration ADDs the column DEFAULT 'dark' (backfilling every existing
+    // user dark) and THEN flips the default to 'light', so this mirror shows the
+    // live default: new accounts are light, existing users keep dark until they
+    // switch. Drizzle never sends defaults — the insert sites inherit it.
+    theme: text('theme').notNull().default('light'),
     is_platform_admin: boolean('is_platform_admin').notNull().default(false),
     // FAM (platform-admin) second factor. Base32 TOTP secret, set at enrolment.
     // FAM logins are gated on this being non-null (PRD §11.6).

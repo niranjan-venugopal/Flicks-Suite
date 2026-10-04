@@ -98,7 +98,7 @@ export default function ModuleAccessPage() {
               border: 'none',
               cursor: 'pointer',
               background: tab === k ? 'var(--surf-3)' : 'transparent',
-              color: tab === k ? '#fff' : 'var(--text-2)',
+              color: tab === k ? 'var(--text)' : 'var(--text-2)',
               fontSize: 12,
               fontWeight: 800,
             }}

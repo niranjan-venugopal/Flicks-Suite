@@ -22,7 +22,7 @@ export default function LeaveReportPage() {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/reports"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to reports

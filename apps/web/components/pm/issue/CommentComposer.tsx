@@ -202,11 +202,11 @@ export function CommentComposer({
         left: 12,
         width: 240,
         zIndex: 60,
-        background: 'rgba(18,18,30,.98)',
+        background: 'var(--surf-pop)',
         border: '1px solid var(--bord-2)',
         borderRadius: 10,
         padding: 4,
-        boxShadow: '0 16px 40px rgba(0,0,0,.55)',
+        boxShadow: 'var(--e2)',
       }}
       data-testid="mention-menu"
     >
@@ -226,7 +226,7 @@ export function CommentComposer({
             border: 'none',
             cursor: 'pointer',
             background: i === mentionIdx ? 'var(--surf-2)' : 'transparent',
-            color: '#fff',
+            color: 'var(--text)',
           }}
         >
           <PmAv name={u.name} src={u.avatar_url} size={18} />

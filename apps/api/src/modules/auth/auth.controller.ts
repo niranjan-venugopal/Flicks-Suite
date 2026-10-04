@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Delete,
   Body,
   Query,
@@ -12,6 +13,7 @@ import {
   HttpStatus,
   UseGuards,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -34,6 +36,7 @@ import {
   SelectTenantDto,
   LogoutDto,
   MagicLinkVerifyDto,
+  UpdateMePreferencesDto,
 } from './auth.dto';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
@@ -389,6 +392,28 @@ export class AuthController {
       impersonatorUserId: user.impersonatorUserId,
       impersonation: session,
     };
+  }
+
+  @Patch('me/preferences')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update my preferences',
+    description:
+      'Round O — persists the appearance preference (system | light | dark) on the user so it follows them to every device and the admin console.',
+  })
+  @ApiResponse({ status: 200, description: 'Preferences saved' })
+  @ApiResponse({ status: 403, description: 'Refused during a FAM impersonation session' })
+  async updateMyPreferences(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateMePreferencesDto,
+  ) {
+    // A platform admin impersonating someone must not rewrite that person's
+    // preferences. The JWT carries impersonatorUserId (fam.service) and no
+    // other self-write guards it, so the check lives here.
+    if (user.impersonatorUserId) {
+      throw new ForbiddenException('Preferences cannot be changed while impersonating a user');
+    }
+    return this.authService.updatePreferences(user.sub, dto);
   }
 
   // ─── DPDP self-service ────────────────────────────────────────────────────

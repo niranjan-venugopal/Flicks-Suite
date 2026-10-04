@@ -192,7 +192,7 @@ export default function MyTeamPage() {
               style={{
                 fontSize: 14,
                 fontWeight: 800,
-                color: '#fff',
+                color: 'var(--text)',
                 marginBottom: 6,
               }}
             >

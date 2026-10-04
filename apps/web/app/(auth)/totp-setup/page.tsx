@@ -132,7 +132,7 @@ export default function TotpSetupPage() {
               display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8,
               background: 'var(--surf-2)', border: '1px solid var(--bord)',
               borderRadius: 'var(--r-sm)', padding: 14, marginBottom: 14,
-              fontFamily: 'var(--font-mono)', fontSize: 13, color: '#fff',
+              fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text)',
             }}
           >
             {backupCodes.map((c) => (
@@ -209,7 +209,7 @@ export default function TotpSetupPage() {
                 <code
                   style={{
                     flex: 1, background: 'var(--surf-2)', border: '1px solid var(--bord)',
-                    borderRadius: 'var(--r-sm)', padding: '12px 14px', color: '#fff',
+                    borderRadius: 'var(--r-sm)', padding: '12px 14px', color: 'var(--text)',
                     fontFamily: 'var(--font-mono)', fontSize: 13, wordBreak: 'break-all',
                   }}
                 >

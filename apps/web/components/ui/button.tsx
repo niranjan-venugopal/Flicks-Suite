@@ -9,21 +9,21 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          'bg-brand-blue text-white hover:bg-blue-600 shadow-glow-blue hover:shadow-lg',
+          'bg-brand-blue text-on-accent hover:bg-brand-blue2 dark:hover:bg-blue-600 shadow-glow-blue hover:shadow-lg',
         destructive:
-          'bg-brand-coral text-white hover:bg-red-600 shadow-glow-coral',
+          'bg-brand-coral text-on-accent hover:bg-red-600 shadow-glow-coral',
         outline:
-          'border border-white/10 bg-white/5 text-white hover:bg-white/10 hover:border-white/20',
+          'border border-ink/10 bg-ink/5 text-ink hover:bg-ink/10 hover:border-ink/20',
         secondary:
-          'bg-white/10 text-white hover:bg-white/15',
+          'bg-ink/10 text-ink hover:bg-ink/15',
         ghost:
-          'text-white/70 hover:text-white hover:bg-white/5',
+          'text-ink/70 hover:text-ink hover:bg-ink/5',
         link:
           'text-brand-blue underline-offset-4 hover:underline',
         success:
-          'bg-brand-green text-white hover:bg-emerald-600 shadow-glow-green',
+          'bg-brand-green text-on-accent hover:bg-emerald-600 shadow-glow-green',
         warning:
-          'bg-brand-yellow text-gray-900 hover:bg-yellow-400 shadow-glow-yellow',
+          'bg-brand-yellow text-on-accent dark:text-gray-900 hover:bg-brand-yellow/90 dark:hover:bg-yellow-400 shadow-glow-yellow',
       },
       size: {
         default: 'h-10 px-5 py-2',

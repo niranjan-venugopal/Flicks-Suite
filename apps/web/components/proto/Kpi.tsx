@@ -4,11 +4,11 @@ import type { ReactNode } from 'react'
 
 type Accent = 'blue' | 'green' | 'yellow' | 'coral' | 'purple'
 const ACCENT_MAP: Record<Accent, string> = {
-  blue: '#3E7BFA',
-  green: '#27D280',
-  yellow: '#FED800',
-  coral: '#F8786B',
-  purple: '#9B7BFA',
+  blue: 'var(--blue)',
+  green: 'var(--green)',
+  yellow: 'var(--yellow)',
+  coral: 'var(--coral)',
+  purple: 'var(--purple)',
 }
 
 interface KpiProps {
@@ -23,7 +23,7 @@ interface KpiProps {
 export function Kpi({ label, value, delta, trend, icon, accent = 'blue' }: KpiProps) {
   const c = ACCENT_MAP[accent]
   const trendColor =
-    trend === 'up' ? '#27D280' : trend === 'down' ? '#F8786B' : 'rgba(255,255,255,.5)'
+    trend === 'up' ? 'var(--green)' : trend === 'down' ? 'var(--coral)' : 'var(--text-mute)'
   const trendArrow = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '·'
 
   return (
@@ -47,7 +47,7 @@ export function Kpi({ label, value, delta, trend, icon, accent = 'blue' }: KpiPr
               width: 30,
               height: 30,
               borderRadius: 8,
-              background: `${c}22`,
+              background: `color-mix(in srgb, ${c} 13%, transparent)`,
               color: c,
               display: 'flex',
               alignItems: 'center',
@@ -63,7 +63,7 @@ export function Kpi({ label, value, delta, trend, icon, accent = 'blue' }: KpiPr
           fontSize: 30,
           fontWeight: 800,
           letterSpacing: '-0.04em',
-          color: '#fff',
+          color: 'var(--text)',
           fontVariantNumeric: 'tabular-nums',
           lineHeight: 1,
         }}

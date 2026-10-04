@@ -160,7 +160,7 @@ export function IssuePicker({
           }}
           placeholder={placeholder}
           aria-label={placeholder}
-          style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', outline: 'none', color: '#fff', fontSize: 12, fontWeight: 600, height: 26 }}
+          style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 12, fontWeight: 600, height: 26 }}
         />
         {searching && <Icon.refresh size={12} className="animate-spin" style={{ color: 'var(--text-faint)', flexShrink: 0 }} />}
       </div>
@@ -177,7 +177,7 @@ export function IssuePicker({
             style={{
               width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7,
               background: i === idx ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer',
-              color: i === idx ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
+              color: i === idx ? 'var(--text)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 700, textAlign: 'left',
             }}
           >
             <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)', flexShrink: 0, minWidth: 48 }}>

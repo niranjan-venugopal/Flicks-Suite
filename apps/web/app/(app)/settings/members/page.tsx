@@ -244,7 +244,7 @@ export default function MembersSettingsPage() {
                     <div className="flex items-center gap-3">
                       <Avatar name={displayName(m)} size="sm" src={m.avatarUrl ?? undefined} />
                       <div>
-                        <div className="font-semibold text-white text-sm">{displayName(m)}</div>
+                        <div className="font-semibold text-ink text-sm">{displayName(m)}</div>
                         <div className="text-xs text-brand-muted">{m.email ?? '—'}</div>
                       </div>
                     </div>
@@ -349,7 +349,7 @@ export default function MembersSettingsPage() {
                       <div className="flex items-center gap-3">
                         <Avatar name={name} size="sm" src={m.avatarUrl ?? undefined} />
                         <div>
-                          <div className="font-semibold text-white text-sm">
+                          <div className="font-semibold text-ink text-sm">
                             {name}{' '}
                             {isMe && <span className="text-brand-muted text-xs">(you)</span>}
                           </div>

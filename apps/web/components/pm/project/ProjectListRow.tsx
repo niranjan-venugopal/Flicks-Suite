@@ -64,7 +64,7 @@ export function ProjectListRow({ p, progress, milestones, teamIds, teams, leadNa
   // ── Cells (built once; composed as one line on desktop, two on a phone) ──
   const nameCell = (
     <span style={{ flex: '1 1 160px', minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 13.5, fontWeight: 800, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+      <span style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
       {p.is_private && (
         <span title="Private project" aria-label="Private project" style={{ display: 'inline-flex', flexShrink: 0 }}>
           <Icon.lock size={11} style={{ color: 'var(--text-faint)' }} />

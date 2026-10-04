@@ -218,7 +218,7 @@ export default function FamSystemHealthPage() {
                     height: 8,
                     borderRadius: '50%',
                     background: 'var(--text-faint)',
-                    boxShadow: '0 0 0 3px rgba(255,255,255,.04)',
+                    boxShadow: '0 0 0 3px var(--surf-1)',
                     flexShrink: 0,
                   }}
                 />

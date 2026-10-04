@@ -74,7 +74,7 @@ export function Overlay({
           position: 'fixed',
           inset: 0,
           zIndex,
-          background: `rgba(0,0,0,${dim})`,
+          background: `rgba(var(--scrim-rgb),${dim})`,
           WebkitBackdropFilter: filter,
           backdropFilter: filter,
         }}

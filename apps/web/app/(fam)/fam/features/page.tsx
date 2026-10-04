@@ -248,6 +248,7 @@ export default function FamFeatureFlagsPage() {
                         height: 16,
                         borderRadius: '50%',
                         background: '#fff',
+                        boxShadow: '0 1px 4px rgba(0,0,0,.3)',
                         transition: 'left .15s',
                       }}
                     />
@@ -338,7 +339,7 @@ export default function FamFeatureFlagsPage() {
                   }}
                 >
                   <Icon.shield size={12} style={{ display: 'inline', marginRight: 5, color: 'var(--blue)' }} />
-                  Last changed <strong style={{ color: '#fff' }}>{timeAgo(selected.updatedAt)}</strong>.
+                  Last changed <strong style={{ color: 'var(--text)' }}>{timeAgo(selected.updatedAt)}</strong>.
                   All flag mutations are logged in{' '}
                   <code style={{ fontFamily: 'var(--font-mono)' }}>audit_log_platform</code>.
                 </div>

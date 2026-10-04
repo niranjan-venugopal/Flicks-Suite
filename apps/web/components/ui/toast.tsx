@@ -30,11 +30,11 @@ ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
 const toastVariants = cva(
   // Pill, bottom-center, slide-up 160ms ease-out (pmtoast) — no bounce.
-  'group pointer-events-auto relative flex w-auto max-w-full items-center gap-2.5 overflow-hidden rounded-full border py-2.5 pl-3.5 pr-3.5 shadow-[0_12px_28px_rgba(0,0,0,.4)] data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-[pmtoastup_.16s_ease-out] data-[state=closed]:animate-out data-[state=closed]:fade-out-80 font-gilroy',
+  'group pointer-events-auto relative flex w-auto max-w-full items-center gap-2.5 overflow-hidden rounded-full border py-2.5 pl-3.5 pr-3.5 shadow-e2 data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-[pmtoastup_.16s_ease-out] data-[state=closed]:animate-out data-[state=closed]:fade-out-80 font-gilroy',
   {
     variants: {
       variant: {
-        default: 'glass border-white/10 text-white',
+        default: 'glass border-ink/10 text-ink',
         destructive: 'border-brand-coral/30 bg-brand-coral/10 text-brand-coral',
         success: 'border-brand-green/30 bg-brand-green/10 text-brand-green',
       },
@@ -67,7 +67,7 @@ const ToastAction = React.forwardRef<
   <ToastPrimitives.Action
     ref={ref}
     className={cn(
-      'inline-flex h-8 shrink-0 items-center justify-center rounded border border-white/20 bg-transparent px-3 text-sm font-medium transition-colors hover:bg-white/10 focus:outline-none focus:ring-1 focus:ring-brand-blue disabled:pointer-events-none disabled:opacity-50',
+      'inline-flex h-8 shrink-0 items-center justify-center rounded border border-ink/20 bg-transparent px-3 text-sm font-medium transition-colors hover:bg-ink/10 focus:outline-none focus:ring-1 focus:ring-brand-blue disabled:pointer-events-none disabled:opacity-50',
       className
     )}
     {...props}
@@ -82,7 +82,7 @@ const ToastClose = React.forwardRef<
   <ToastPrimitives.Close
     ref={ref}
     className={cn(
-      'absolute right-2 top-2 rounded-md p-1 text-white/40 opacity-0 transition-opacity hover:text-white focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100',
+      'absolute right-2 top-2 rounded-md p-1 text-ink/40 opacity-0 transition-opacity hover:text-ink focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100',
       className
     )}
     toast-close=""

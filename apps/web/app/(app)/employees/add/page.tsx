@@ -240,7 +240,7 @@ export default function InviteEmployeePage() {
       <div className="relative z-10 p-8" style={{ maxWidth: 760, margin: '0 auto' }}>
         <Link
           href="/employees"
-          className="inline-flex items-center gap-1.5 text-xs text-brand-muted hover:text-white font-semibold"
+          className="inline-flex items-center gap-1.5 text-xs text-brand-muted hover:text-ink font-semibold"
           style={{ marginBottom: 18 }}
         >
           <Icon.arrowL size={14} /> Back to Employees
@@ -623,7 +623,7 @@ function SectionHeader({
           height: 28,
           borderRadius: '50%',
           background: 'var(--blue)',
-          color: '#fff',
+          color: 'var(--on-accent)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

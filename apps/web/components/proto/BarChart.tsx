@@ -14,7 +14,7 @@ interface BarChartProps {
   gap?: number
 }
 
-export function BarChart({ data, color = '#3E7BFA', h = 120, gap = 4 }: BarChartProps) {
+export function BarChart({ data, color = 'var(--blue)', h = 120, gap = 4 }: BarChartProps) {
   const max = Math.max(...data.map((d) => d.value), 1)
 
   return (
@@ -47,7 +47,7 @@ export function BarChart({ data, color = '#3E7BFA', h = 120, gap = 4 }: BarChart
             style={{
               fontSize: 10.5,
               fontWeight: 700,
-              color: 'rgba(255,255,255,.5)',
+              color: 'var(--text-mute)',
               letterSpacing: '-0.01em',
             }}
           >

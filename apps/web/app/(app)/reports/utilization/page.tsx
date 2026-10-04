@@ -44,7 +44,7 @@ export default function UtilizationReportPage() {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/reports"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to reports
@@ -186,7 +186,7 @@ function Kpi({ label, value, color }: { label: string; value: string; color?: st
 
 function UtilBar({ value }: { value: number }) {
   const p = Math.max(0, Math.min(1, value))
-  const color = p >= 0.7 ? '#27D280' : p >= 0.4 ? '#FED800' : '#F8786B'
+  const color = p >= 0.7 ? 'var(--green)' : p >= 0.4 ? 'var(--yellow)' : 'var(--coral)'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 110 }}>
       <div

@@ -37,7 +37,7 @@ export function WonDialog({ open, onClose, deal, onCreateInvoice, onCreateQuote,
         <div style={{ display: 'flex', gap: 10, padding: '11px 13px', borderRadius: 10, background: 'rgba(39,210,128,.07)', border: '1px solid rgba(39,210,128,.3)' }}>
           <Icon.receipt size={15} style={{ color: 'var(--green)', flexShrink: 0, marginTop: 1 }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', lineHeight: 1.5 }}>
-            One click creates a <b style={{ color: '#fff' }}>draft invoice</b> from {deal.productCount > 0 ? `the ${deal.productCount} product${deal.productCount === 1 ? '' : 's'} on this deal` : 'the deal value'} — customer, currency and lines carry over; the invoice editor opens for review.
+            One click creates a <b style={{ color: 'var(--text)' }}>draft invoice</b> from {deal.productCount > 0 ? `the ${deal.productCount} product${deal.productCount === 1 ? '' : 's'} on this deal` : 'the deal value'} — customer, currency and lines carry over; the invoice editor opens for review.
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 8, fontSize: 12 }}>

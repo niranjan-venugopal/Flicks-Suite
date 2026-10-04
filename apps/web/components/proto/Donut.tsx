@@ -29,7 +29,7 @@ export function Donut({ segments, size = 120, thickness = 14, label, sub }: Donu
           cy={size / 2}
           r={r}
           fill="none"
-          stroke="rgba(255,255,255,.06)"
+          stroke="var(--surf-2)"
           strokeWidth={thickness}
         />
         {segments.map((s, i) => {
@@ -72,7 +72,7 @@ export function Donut({ segments, size = 120, thickness = 14, label, sub }: Donu
               style={{
                 fontSize: 10.5,
                 fontWeight: 700,
-                color: 'rgba(255,255,255,.5)',
+                color: 'var(--text-mute)',
                 letterSpacing: '.04em',
                 textTransform: 'uppercase',
                 marginTop: 2,

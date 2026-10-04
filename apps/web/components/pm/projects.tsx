@@ -6,6 +6,7 @@ import { DateField } from '@/components/ui/date-picker'
 import { PM_PRIORITY_LABEL, PriorityGlyph } from '@/components/pm/glyphs'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
+import { useTheme } from '@/lib/theme/theme'
 
 // ─────────────────────────────────────────────────────────
 // Projects layer shared pieces (P11/P14): create modals + avatar.
@@ -36,7 +37,7 @@ export function PmAv({ name, src, size = 18 }: { name: string; src?: string | nu
     )
   }
   return (
-    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
+    <span style={{ ...box, background: avBg(name), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--on-accent)', fontWeight: 800, fontSize: Math.max(7, size * 0.36), letterSpacing: '-0.02em' }}>
       {initials(name)}
     </span>
   )
@@ -181,7 +182,7 @@ export function ProjectCreateModal({
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {teams.map((t) => (
           <button key={t.id} onClick={() => tog(t.id)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, cursor: 'pointer', background: teamIds.includes(t.id) ? `${t.color ?? '#3E7BFA'}18` : 'var(--surf-1)', border: `1px solid ${teamIds.includes(t.id) ? (t.color ?? '#3E7BFA') + '55' : 'var(--bord)'}`, color: teamIds.includes(t.id) ? '#fff' : 'var(--text-2)', fontSize: 11, fontWeight: 800 }}>
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 11px', borderRadius: 99, cursor: 'pointer', background: teamIds.includes(t.id) ? `color-mix(in srgb, ${t.color ?? '#3E7BFA'} 9%, transparent)` : 'var(--surf-1)', border: `1px solid ${teamIds.includes(t.id) ? `color-mix(in srgb, ${t.color ?? '#3E7BFA'} 33%, transparent)` : 'var(--bord)'}`, color: teamIds.includes(t.id) ? 'var(--text)' : 'var(--text-2)', fontSize: 11, fontWeight: 800 }}>
             <span style={{ width: 7, height: 7, borderRadius: 2, background: t.color ?? '#3E7BFA' }} />{t.key}
           </button>
         ))}
@@ -234,13 +235,19 @@ export function InitiativeCreateModal({
 
 /** Team key chips rendered on project rows (P11). */
 export function TeamKeyChips({ teamIds, teams }: { teamIds: string[]; teams: Map<string, PmTeamRow> }) {
+  // Light theme: 8.5px text in the team's own colour is unreadable on white
+  // for the yellow / green / grey swatches (1.4–2.2:1), so the colour moves to
+  // a dot and the key is set in --text-2. Dark keeps today's coloured key.
+  const light = useTheme().resolved === 'light'
   return (
     <span style={{ display: 'flex', gap: 4 }}>
       {teamIds.map((tid) => {
         const t = teams.get(tid)
         if (!t) return null
+        const c = t.color ?? '#3E7BFA'
         return (
-          <span key={tid} style={{ fontSize: 8.5, fontWeight: 900, fontFamily: 'var(--font-mono)', color: t.color ?? '#3E7BFA', border: `1px solid ${t.color ?? '#3E7BFA'}55`, borderRadius: 5, padding: '1px 5px' }}>
+          <span key={tid} style={{ fontSize: 8.5, fontWeight: 900, fontFamily: 'var(--font-mono)', color: light ? 'var(--text-2)' : c, border: `1px solid color-mix(in srgb, ${c} 33%, transparent)`, borderRadius: 5, padding: '1px 5px' }}>
+            {light && <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: 2, background: c, marginRight: 4, verticalAlign: 'middle' }} />}
             {t.key}
           </span>
         )

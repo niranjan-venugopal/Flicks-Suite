@@ -69,7 +69,7 @@ export function OrgDataLegal() {
                 <Icon.mail size={14} style={{ color: 'var(--green)', flexShrink: 0, marginTop: 1 }} />
                 <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>
                   Export running — the download link will be emailed to{' '}
-                  <b style={{ color: '#fff' }}>owners &amp; admins</b>. Expires in 7 days.
+                  <b style={{ color: 'var(--text)' }}>owners &amp; admins</b>. Expires in 7 days.
                 </span>
               </div>
             )}

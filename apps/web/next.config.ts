@@ -3,6 +3,17 @@ import { withSentryConfig } from '@sentry/nextjs'
 
 const isProd = process.env.NODE_ENV === 'production'
 
+// Local live-verification ONLY (Round O): a production build driven by
+// Playwright against the API on :4000 and the s3-mock on :9000 needs those
+// plain-http origins in the CSP. CSP_ALLOW_LOCALHOST is read at BUILD time and
+// is never set in Vercel, so real production is inert — without it the CSP
+// below is byte-identical to before.
+const allowLocalhost = !!process.env.CSP_ALLOW_LOCALHOST
+const localConnect = allowLocalhost
+  ? ' http://localhost:4000 ws://localhost:4000 http://127.0.0.1:9000'
+  : ''
+const localImg = allowLocalhost ? ' http://127.0.0.1:9000 http://localhost:9000' : ''
+
 // Defence-in-depth response headers. The CSP is only enforced in production —
 // in dev it would block http://localhost API/websocket calls and Next's HMR.
 // script/style allow 'unsafe-inline' (the app uses inline styles throughout and
@@ -13,9 +24,9 @@ const PROD_CSP = [
   // checkout.razorpay.com hosts the Razorpay Checkout script (hosted invoice page).
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
+  `img-src 'self' data: blob: https:${localImg}`,
   "font-src 'self' data:",
-  "connect-src 'self' https: wss:",
+  `connect-src 'self' https: wss:${localConnect}`,
   // Razorpay Checkout renders its payment UI in an iframe/popup.
   "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com",
   "frame-ancestors 'self'",

@@ -186,7 +186,7 @@ export default function InvoicingSettingsPage() {
             style={{
               padding: '8px 13px', borderRadius: 7, border: 'none', cursor: 'pointer',
               background: tab === t ? 'var(--surf-3)' : 'transparent',
-              color: tab === t ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800,
+              color: tab === t ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800,
             }}
           >
             {t}
@@ -214,7 +214,7 @@ export default function InvoicingSettingsPage() {
                       aria-label={c}
                       style={{
                         width: 26, height: 26, borderRadius: 7, background: c, cursor: 'pointer',
-                        border: draft.brand_color_override === c ? '2px solid #fff' : '2px solid transparent',
+                        border: draft.brand_color_override === c ? '2px solid var(--inverse)' : '2px solid transparent',
                       }}
                     />
                   ))}

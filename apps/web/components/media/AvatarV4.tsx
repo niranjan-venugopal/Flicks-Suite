@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { avBg, initials } from '@/components/proto'
+import { avBg, avFg, initials } from '@/components/proto'
 import { PresenceDot, type PresenceStatus } from '@/components/presence/PresenceDot'
 
 /**
@@ -77,7 +77,7 @@ export function AvatarV4({
           alignItems: 'center',
           justifyContent: 'center',
           background: avBg(name),
-          color: '#fff',
+          color: avFg(name),
           fontWeight: 800,
           fontSize: Math.max(9, size * 0.36),
           letterSpacing: '-0.02em',

@@ -40,7 +40,7 @@ function SettingsTabs({ active }: { active: string }) {
       {tabs.map(([href, label]) => (
         <Link key={href} href={href} style={{
           padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none',
-          color: href.includes(active) ? '#fff' : 'var(--text-mute)',
+          color: href.includes(active) ? 'var(--text)' : 'var(--text-mute)',
           background: href.includes(active) ? 'var(--surf-2)' : 'transparent',
           border: href.includes(active) ? '1px solid var(--bord-2)' : '1px solid transparent',
         }}>{label}</Link>

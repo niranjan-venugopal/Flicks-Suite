@@ -701,7 +701,7 @@ function OtpStep(props: {
           }}
         >
           We sent a 6-digit code to{' '}
-          <strong style={{ color: '#fff' }}>{props.email}</strong>. The code
+          <strong style={{ color: 'var(--text)' }}>{props.email}</strong>. The code
           expires in 10 minutes.
         </div>
       </div>
@@ -739,7 +739,7 @@ function OtpStep(props: {
                 border: `1.5px solid ${v ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`,
                 borderRadius: 12,
                 outline: 'none',
-                color: 'white',
+                color: 'var(--text)',
                 fontFamily: 'var(--font-mono)',
               }}
             />
@@ -871,7 +871,7 @@ function ExistingWorkspacesStep(props: {
             lineHeight: 1.6,
           }}
         >
-          You already own {owned ? <strong style={{ color: '#fff' }}>{owned.name}</strong> : 'a workspace'} —
+          You already own {owned ? <strong style={{ color: 'var(--text)' }}>{owned.name}</strong> : 'a workspace'} —
           open it instead. One account owns one workspace.
         </div>
       )}
@@ -946,7 +946,7 @@ function WorkspaceStep(props: {
           >
             <span>
               Workspace ID:{' '}
-              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>
+              <span style={{ color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
                 {props.slug || 'your-workspace'}
               </span>
               <span style={{ color: 'var(--text-faint)' }}>
@@ -1040,7 +1040,7 @@ function WorkspaceStep(props: {
             }}
           >
             Your data is hosted in{' '}
-            <strong style={{ color: '#fff' }}>Mumbai (ap-south-1)</strong>. DPDP
+            <strong style={{ color: 'var(--text)' }}>Mumbai (ap-south-1)</strong>. DPDP
             2023 compliant by default.
           </div>
         </div>

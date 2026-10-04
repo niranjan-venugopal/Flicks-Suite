@@ -12,11 +12,14 @@ import { useCreateActivity, useCompleteActivity, useReps, type Activity } from '
 // doctrine 4c) + the complete→schedule-next loop + row bits
 // ─────────────────────────────────────────────────────────
 
+// Colours are the accent tokens (not the brand hexes) so the icon chips follow
+// the theme: every consumer paints `color: M.color` or
+// `color-mix(in srgb, ${M.color} N%, transparent)`, both of which take var().
 export const ACT_META: Record<Activity['type'], { icon: keyof typeof Icon; color: string; label: string }> = {
-  task: { icon: 'check', color: '#3E7BFA', label: 'Task' },
-  call: { icon: 'phone', color: '#27D280', label: 'Call' },
-  meeting: { icon: 'cal', color: '#9B7BFA', label: 'Meeting' },
-  note: { icon: 'msg', color: '#FED800', label: 'Note' },
+  task: { icon: 'check', color: 'var(--blue)', label: 'Task' },
+  call: { icon: 'phone', color: 'var(--green)', label: 'Call' },
+  meeting: { icon: 'cal', color: 'var(--purple)', label: 'Meeting' },
+  note: { icon: 'msg', color: 'var(--yellow)', label: 'Note' },
 }
 
 const CALL_OUTCOMES = ['connected', 'no_answer', 'busy', 'voicemail', 'wrong_number'] as const
@@ -95,7 +98,7 @@ export function ScheduleActivityModal({ open, onClose, dealId, title = 'Schedule
           const M = ACT_META[k]
           const Ic = Icon[M.icon]
           return (
-            <button key={k} onClick={() => setType(k)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 0', borderRadius: 9, background: type === k ? 'var(--surf-3)' : 'var(--surf-1)', border: `1px solid ${type === k ? 'var(--bord-2)' : 'var(--bord)'}`, color: type === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+            <button key={k} onClick={() => setType(k)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 0', borderRadius: 9, background: type === k ? 'var(--surf-3)' : 'var(--surf-1)', border: `1px solid ${type === k ? 'var(--bord-2)' : 'var(--bord)'}`, color: type === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
               <Ic size={13} />{M.label}
             </button>
           )

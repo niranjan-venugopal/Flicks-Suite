@@ -15,12 +15,26 @@ const AV_BG: Array<[string, string]> = [
   ['#7CB342', '#A2D45A'],
 ]
 
-/** Deterministic gradient seeded by name (or any string). */
-export function avBg(seed: string | undefined | null): string {
+// Initials colour per gradient (same index as AV_BG): ink on the three light
+// gradients — yellow, cyan, lime — where white initials were 1.4–2.4:1.
+// Literal on purpose: the avatar paints the same in both themes.
+const AV_FG = ['#fff', '#fff', '#101828', '#fff', '#fff', '#fff', '#101828', '#fff', '#101828']
+
+function avIdx(seed: string | undefined | null): number {
   let h = 0
   for (const c of seed || '?') h = (h * 31 + c.charCodeAt(0)) | 0
-  const i = Math.abs(h) % AV_BG.length
+  return Math.abs(h) % AV_BG.length
+}
+
+/** Deterministic gradient seeded by name (or any string). */
+export function avBg(seed: string | undefined | null): string {
+  const i = avIdx(seed)
   return `linear-gradient(135deg, ${AV_BG[i]![0]} 0%, ${AV_BG[i]![1]} 100%)`
+}
+
+/** Initials colour that pairs with avBg(seed) — use it wherever avBg is painted by hand. */
+export function avFg(seed: string | undefined | null): string {
+  return AV_FG[avIdx(seed)]!
 }
 
 export function initials(name: string | undefined | null): string {
@@ -64,7 +78,7 @@ export function Avatar({ name = '', size = 'md', src, className = '', style }: A
     )
   }
   return (
-    <div className={cls} style={{ background: avBg(name), ...style }}>
+    <div className={cls} style={{ background: avBg(name), color: avFg(name), ...style }}>
       {initials(name)}
     </div>
   )
@@ -94,7 +108,7 @@ export function AvatarStack({ people, max = 4, size = 'sm' }: AvatarStackProps) 
       {people.length > max && (
         <div
           className="avatar sm"
-          style={{ marginLeft: -8, background: '#1a1a28', color: '#fff', fontSize: 9 }}
+          style={{ marginLeft: -8, background: 'var(--surf-3)', color: 'var(--text)', fontSize: 9 }}
         >
           +{people.length - max}
         </div>

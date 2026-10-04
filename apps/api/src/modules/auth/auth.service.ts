@@ -42,6 +42,7 @@ import { AuditService } from '../audit/audit.service';
 import { ConsentService, type ConsentInput } from '../consent/consent.service';
 import { TotpService } from './totp.service';
 import { resolveSwitchMembership } from './switch-membership.util';
+import type { ThemePreference } from './auth.dto';
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -667,6 +668,7 @@ export class AuthService {
           email: currentUser.email,
           fullName: currentUser.full_name,
           avatarUrl: currentUser.avatar_url,
+          theme: currentUser.theme,
         },
       };
     }
@@ -701,6 +703,7 @@ export class AuthService {
             email: currentUser.email,
             fullName: currentUser.full_name,
             avatarUrl: currentUser.avatar_url,
+            theme: currentUser.theme,
           },
         };
       }
@@ -727,6 +730,7 @@ export class AuthService {
           email: currentUser.email,
           fullName: currentUser.full_name,
           avatarUrl: currentUser.avatar_url,
+          theme: currentUser.theme,
         },
       };
     }
@@ -755,6 +759,7 @@ export class AuthService {
         email: currentUser.email,
         fullName: currentUser.full_name,
         avatarUrl: currentUser.avatar_url,
+        theme: currentUser.theme,
       },
     };
   }
@@ -1082,7 +1087,21 @@ export class AuthService {
       metadata: { tenantId, ...(activated ? { invite_accepted: true } : {}) },
     });
 
-    return { accessToken, refreshToken, refreshTtlMs, expiresIn: 900 };
+    return {
+      accessToken,
+      refreshToken,
+      refreshTtlMs,
+      expiresIn: 900,
+      // Round O — a workspace switch is a full reload on the web; carrying the
+      // preference lets the client write its device mirror before that paint.
+      user: {
+        id: user[0].id,
+        email: user[0].email,
+        fullName: user[0].full_name,
+        avatarUrl: user[0].avatar_url,
+        theme: user[0].theme,
+      },
+    };
   }
 
   /**
@@ -1417,6 +1436,9 @@ export class AuthService {
       status: user[0].status,
       locale: user[0].locale,
       timezone: user[0].timezone,
+      // Round O — appearance preference; the web reconciles its device
+      // mirror with this after every /me (server wins).
+      theme: user[0].theme,
       // Profile → Security "Last sign-in" (round K) — stamped on OTP /
       // magic-link verification, so this is the real last login.
       lastLoginAt: user[0].last_login_at,
@@ -1446,6 +1468,31 @@ export class AuthService {
         status: m.status,
       })),
     };
+  }
+
+  /**
+   * Round O — PATCH /auth/me/preferences. users carries RLS, so the self-write
+   * goes through dbAdmin scoped to the caller's own id (the
+   * setEmailDigestFreq pattern). `{}` is a no-op; the stored value is
+   * returned either way.
+   */
+  async updatePreferences(
+    userId: string,
+    dto: { theme?: ThemePreference },
+  ): Promise<{ theme: ThemePreference }> {
+    if (dto.theme !== undefined) {
+      await this.dbAdmin
+        .update(users)
+        .set({ theme: dto.theme, updated_at: new Date() })
+        .where(eq(users.id, userId));
+    }
+    const [row] = await this.dbAdmin
+      .select({ theme: users.theme })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!row) throw new UnauthorizedException('User not found');
+    return { theme: row.theme as ThemePreference };
   }
 
   async getSessions(userId: string) {
@@ -1971,6 +2018,7 @@ export class AuthService {
         email: user.email,
         fullName: user.full_name,
         avatarUrl: user.avatar_url,
+        theme: user.theme,
       },
     };
   }

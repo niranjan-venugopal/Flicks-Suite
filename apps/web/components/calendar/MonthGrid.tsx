@@ -79,7 +79,7 @@ export function MonthGrid({
                 title="Open day"
                 style={{
                   alignSelf: 'flex-start', minWidth: 24, height: 24, padding: '0 6px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  background: isToday ? 'var(--blue)' : 'transparent', color: isToday ? '#fff' : 'var(--text)', fontSize: 12.5, fontWeight: 800, marginBottom: 2,
+                  background: isToday ? 'var(--blue)' : 'transparent', color: isToday ? 'var(--on-accent)' : 'var(--text)', fontSize: 12.5, fontWeight: 800, marginBottom: 2,
                 }}
               >
                 {d.getDate()}

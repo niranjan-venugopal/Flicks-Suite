@@ -216,7 +216,7 @@ function AttendanceInner() {
                         border: 'none',
                         cursor: 'pointer',
                         background: view === key ? 'var(--surf-3)' : 'transparent',
-                        color: view === key ? '#fff' : 'var(--text-2)',
+                        color: view === key ? 'var(--text)' : 'var(--text-2)',
                         fontSize: 11.5,
                         fontWeight: 800,
                       }}
@@ -410,7 +410,7 @@ function TimelineCard({ data }: { data: TodayAttendance | undefined }) {
                   borderRadius: '50%',
                   background: 'var(--bg-2)',
                   border: `2px solid ${it.c}`,
-                  boxShadow: it.pulse ? `0 0 0 4px ${it.c}33` : 'none',
+                  boxShadow: it.pulse ? `0 0 0 4px color-mix(in srgb, ${it.c} 20%, transparent)` : 'none',
                 }}
               />
               <div
@@ -567,7 +567,7 @@ function DailyLogTable({
             <td style={{ color: 'var(--text-mute)' }}>{fmtDay(r.attendanceDate)}</td>
             <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtClock(r.firstPunchInAt)}</td>
             <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtClock(r.lastPunchOutAt)}</td>
-            <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: r.totalWorkedMinutes > 540 ? 'var(--purple)' : '#fff' }}>
+            <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: r.totalWorkedMinutes > 540 ? 'var(--purple)' : 'var(--text)' }}>
               {fmtHM(r.totalWorkedMinutes)}
             </td>
             <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{fmtHM(r.totalBreakMinutes)}</td>
@@ -804,7 +804,7 @@ function RegularizationDialog({
           )}
           <div className="space-y-2">
             <Label htmlFor="reg-reason">
-              Reason <span className="text-white/40 text-xs">(min 10 characters)</span>
+              Reason <span className="text-ink/40 text-xs">(min 10 characters)</span>
             </Label>
             <Textarea
               id="reg-reason"

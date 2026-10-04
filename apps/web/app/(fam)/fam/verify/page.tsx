@@ -379,7 +379,7 @@ function FilterChip({
         borderRadius: 7,
         fontSize: 11,
         fontWeight: active ? 800 : 700,
-        color: active ? '#fff' : 'var(--text-2)',
+        color: active ? 'var(--text)' : 'var(--text-2)',
         cursor: 'pointer',
       }}
     >

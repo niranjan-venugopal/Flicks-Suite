@@ -20,7 +20,7 @@ export function TagChip({ tag, small, onRemove }: { tag: TagRef; small?: boolean
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, padding: small ? '1px 7px' : '2px 9px',
-      borderRadius: 99, background: `${color}1c`, border: `1px solid ${color}45`, color,
+      borderRadius: 99, background: `color-mix(in srgb, ${color} 11%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 27%, transparent)`, color,
       fontSize: small ? 9.5 : 10.5, fontWeight: 800, letterSpacing: '.02em', whiteSpace: 'nowrap',
     }}>
       <span style={{ width: 5, height: 5, borderRadius: '50%', background: color }} />
@@ -97,7 +97,7 @@ export function SavedViewTabs({ views, active, onChange, onSave }: {
       {views.map((v) => (
         <button key={v.id} onClick={() => onChange(v.id)} style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
-          background: active === v.id ? 'var(--surf-3)' : 'transparent', color: active === v.id ? '#fff' : 'var(--text-2)',
+          background: active === v.id ? 'var(--surf-3)' : 'transparent', color: active === v.id ? 'var(--text)' : 'var(--text-2)',
           fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap',
         }}>
           {v.label}
@@ -148,7 +148,7 @@ export function FilterBar({ search, onSearch, searchPlaceholder = 'Search…', c
           />
         </div>
         {(chips ?? []).map((c) => (
-          <span key={c.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 11px', borderRadius: 8, background: 'rgba(62,123,250,.1)', border: '1px solid rgba(62,123,250,.3)', fontSize: 11.5, fontWeight: 700, color: '#fff' }}>
+          <span key={c.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 11px', borderRadius: 8, background: 'rgba(62,123,250,.1)', border: '1px solid rgba(62,123,250,.3)', fontSize: 11.5, fontWeight: 700, color: 'var(--text)' }}>
             <span style={{ color: 'var(--text-mute)' }}>{c.label}</span> {c.value}
             <span onClick={() => onRemoveChip?.(c.key)} style={{ display: 'inline-flex', cursor: 'pointer' }}><Icon.x size={11} style={{ color: 'var(--text-mute)' }} /></span>
           </span>
@@ -162,7 +162,7 @@ export function FilterBar({ search, onSearch, searchPlaceholder = 'Search…', c
         {right}
       </div>
       {open && addFilter && (
-        <div style={{ marginTop: 10, padding: 14, borderRadius: 12, background: 'rgba(18,18,30,.9)', border: '1px solid var(--bord-2)' }}>
+        <div style={{ marginTop: 10, padding: 14, borderRadius: 12, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)' }}>
           {addFilter}
           <div className="t-caption" style={{ marginTop: 8 }}>Filters combine with AND · works on standard + custom fields</div>
         </div>
@@ -183,7 +183,7 @@ export function BulkBar({ count, onClear, actions }: { count: number; onClear: (
   return (
     <div style={{ position: 'sticky', bottom: 14, zIndex: 40, display: 'flex', justifyContent: 'center', pointerEvents: 'none', marginTop: 10 }}>
       <div className="card-glass" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 13, boxShadow: 'var(--e2)' }}>
-        <span style={{ fontSize: 12, fontWeight: 800, color: '#fff' }}>{count} selected</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>{count} selected</span>
         <div style={{ width: 1, height: 18, background: 'var(--bord-2)' }} />
         {actions.map((a) => (
           <button key={a.label} onClick={a.onClick} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 8, background: 'transparent', border: 'none', color: a.danger ? 'var(--coral)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}
@@ -201,7 +201,7 @@ export function BulkBar({ count, onClear, actions }: { count: number; onClear: (
 
 // ── Keymap overlay (?) ──
 function Kbd({ children }: { children: ReactNode }) {
-  return <kbd style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, padding: '0 6px', borderRadius: 6, background: 'var(--surf-2)', border: '1px solid var(--bord-2)', fontSize: 11, fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#fff' }}>{children}</kbd>
+  return <kbd style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, height: 22, padding: '0 6px', borderRadius: 6, background: 'var(--surf-2)', border: '1px solid var(--bord-2)', fontSize: 11, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text)' }}>{children}</kbd>
 }
 export function KeymapOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const rows: Array<[ReactNode, string]> = [

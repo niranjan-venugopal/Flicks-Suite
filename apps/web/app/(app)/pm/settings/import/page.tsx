@@ -61,7 +61,7 @@ function SettingsTabs({ active }: { active: string }) {
       {tabs.map(([href, label]) => (
         <Link key={href} href={href} style={{
           padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none',
-          color: href.includes(active) ? '#fff' : 'var(--text-mute)',
+          color: href.includes(active) ? 'var(--text)' : 'var(--text-mute)',
           background: href.includes(active) ? 'var(--surf-2)' : 'transparent',
           border: href.includes(active) ? '1px solid var(--bord-2)' : '1px solid transparent',
         }}>{label}</Link>
@@ -143,7 +143,7 @@ export default function PmImportPage() {
         <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
           {STEPS.map((label, i) => (
             <div key={label} style={{ flex: 1 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: i <= step ? '#fff' : 'var(--text-faint)', marginBottom: 5 }}>{label}</div>
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: i <= step ? 'var(--text)' : 'var(--text-faint)', marginBottom: 5 }}>{label}</div>
               <div style={{ height: 3.5, borderRadius: 99, background: i <= step ? 'var(--blue)' : 'var(--surf-2)' }} />
             </div>
           ))}
@@ -158,7 +158,7 @@ export default function PmImportPage() {
                   background: preset === src.id ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
                   border: `1px solid ${preset === src.id ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`,
                 }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: preset === src.id ? '#fff' : 'var(--text-1)' }}>{src.label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>{src.label}</div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 3 }}>{src.sub}</div>
                 </button>
               ))}
@@ -226,7 +226,7 @@ export default function PmImportPage() {
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
               {[
-                [`${dry.rows_read.toLocaleString()} rows`, 'var(--text-1)'],
+                [`${dry.rows_read.toLocaleString()} rows`, 'var(--text)'],
                 [`${dry.will_create.toLocaleString()} will create`, 'var(--green)'],
                 [`${dry.will_update.toLocaleString()} will update`, 'var(--blue)'],
                 [`${dry.errors.toLocaleString()} errors`, 'var(--coral)'],

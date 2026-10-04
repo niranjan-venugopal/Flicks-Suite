@@ -91,7 +91,7 @@ export function ProjectGuestsCard({ projectId, leadUserId }: { projectId: string
                 style={{
                   fontSize: 11.5,
                   fontWeight: 700,
-                  color: '#fff',
+                  color: 'var(--text)',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',

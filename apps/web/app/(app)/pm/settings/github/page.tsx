@@ -59,7 +59,7 @@ function SettingsTabs({ active }: { active: 'github' | 'notifications' }) {
       href={href}
       style={{
         padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none',
-        color: on ? '#fff' : 'var(--text-mute)', background: on ? 'var(--surf-2)' : 'transparent',
+        color: on ? 'var(--text)' : 'var(--text-mute)', background: on ? 'var(--surf-2)' : 'transparent',
         border: on ? '1px solid var(--bord-2)' : '1px solid transparent',
       }}
     >{label}</Link>
@@ -342,7 +342,7 @@ function PmGithubSettingsPageInner() {
                 <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 14px', borderBottom: '1px solid var(--bord)' }}>
                   <Icon.gitBranch size={12} style={{ color: 'var(--text-mute)' }} />
                   <span style={{ flex: 1, fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.repo_full_name}</span>
-                  <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#3E7BFA', border: '1px solid rgba(62,123,250,.4)', borderRadius: 6, padding: '1px 7px' }}>{r.team_key}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--blue)', border: '1px solid rgba(62,123,250,.4)', borderRadius: 6, padding: '1px 7px' }}>{r.team_key}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 800, color: 'var(--green)' }}>
                     <Icon.check size={10} /> autolink
                   </span>

@@ -54,7 +54,7 @@ export function StateEmpty({
           <Btn kind="primary" size="sm" onClick={onCta}>
             {cta}
             {kbd && (
-              <Kbd style={{ marginLeft: 6, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>
+              <Kbd style={{ marginLeft: 6, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>
                 {kbd}
               </Kbd>
             )}
@@ -143,8 +143,8 @@ export function StateChip({
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
         padding: '2px 9px', borderRadius: 99,
-        background: `${color}14`,
-        border: `1px ${dashed ? 'dashed' : 'solid'} ${color}45`,
+        background: `color-mix(in srgb, ${color} 8%, transparent)`,
+        border: `1px ${dashed ? 'dashed' : 'solid'} color-mix(in srgb, ${color} 27%, transparent)`,
         color, fontSize: 10.5, fontWeight: 800, whiteSpace: 'nowrap',
         ...style,
       }}

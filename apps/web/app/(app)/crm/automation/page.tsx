@@ -138,7 +138,7 @@ function AutomationLive() {
       />
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 16, width: 'fit-content' }}>
         {([['list', 'Workflows'], ['runs', 'Run history']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setMode(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: mode === k ? 'var(--surf-3)' : 'transparent', color: mode === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
+          <button key={k} onClick={() => setMode(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: mode === k ? 'var(--surf-3)' : 'transparent', color: mode === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
         ))}
       </div>
 
@@ -220,7 +220,7 @@ function RunHistory() {
                 ? <Icon.info size={15} style={{ color: 'var(--yellow)', flexShrink: 0 }} />
                 : <Icon.warn size={15} style={{ color: 'var(--coral)', flexShrink: 0 }} />}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{r.workflow_name}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text)' }}>{r.workflow_name}</div>
               <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{new Date(r.created_at).toLocaleString()} · {r.steps.length} steps</div>
             </div>
             {r.status === 'error' && <Pill tone="coral">{r.steps.filter((s) => s.status === 'error').length} step failed</Pill>}

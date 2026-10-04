@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Camera } from 'lucide-react'
-import { Btn, Pill, SectionHead, Skeleton, SkeletonCard, avBg, initials, type PillTone } from '@/components/proto'
+import { Btn, Pill, SectionHead, Skeleton, SkeletonCard, avBg, avFg, initials, type PillTone } from '@/components/proto'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import dynamic from 'next/dynamic'
 // react-easy-crop is modal-only weight — load it when the modal first opens,
@@ -352,8 +352,8 @@ export default function OrganizationSettingsPage() {
           {/* D7 (PRD v4 §4.1) — org logo, circular in-app; camera badge opens the crop modal */}
           <div className="relative shrink-0">
             <div
-              className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-white font-extrabold text-xl"
-              style={{ background: org.logoUrl ? 'var(--surf-2)' : avBg(org.name) }}
+              className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center font-extrabold text-xl"
+              style={{ background: org.logoUrl ? 'var(--surf-2)' : avBg(org.name), color: avFg(org.name) }}
             >
               {org.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -366,7 +366,7 @@ export default function OrganizationSettingsPage() {
               type="button"
               title="Change logo"
               onClick={() => setLogoModalOpen(true)}
-              className="absolute -bottom-0.5 -right-0.5 w-[26px] h-[26px] rounded-full flex items-center justify-center text-white cursor-pointer"
+              className="absolute -bottom-0.5 -right-0.5 w-[26px] h-[26px] rounded-full flex items-center justify-center text-on-accent cursor-pointer"
               style={{ background: 'var(--blue)', border: '2.5px solid var(--surf-1)' }}
             >
               <Camera className="w-[13px] h-[13px]" />
@@ -375,7 +375,7 @@ export default function OrganizationSettingsPage() {
           <div className="flex-1 min-w-[240px]">
             <div className="t-h2">{org.name}</div>
             <div className="t-mute mt-1">
-              <code className="px-1.5 py-0.5 rounded bg-white/5">{org.slug}</code>
+              <code className="px-1.5 py-0.5 rounded bg-ink/5">{org.slug}</code>
               <span className="mx-2 opacity-40">•</span>
               {org.industry || '—'}
               <span className="mx-2 opacity-40">•</span>
@@ -384,17 +384,17 @@ export default function OrganizationSettingsPage() {
             <div className="t-caption mt-2">Created {created} · {planLabel} plan</div>
           </div>
           <div className="flex gap-3">
-            <div className="px-4 py-3 rounded-lg bg-white/5 border border-white/8 min-w-[100px]">
+            <div className="px-4 py-3 rounded-lg bg-ink/5 border border-ink/8 min-w-[100px]">
               <div className="t-caption">Members</div>
-              <div className="text-xl font-semibold text-white mt-0.5">{org.counts.activeMembers}</div>
+              <div className="text-xl font-semibold text-ink mt-0.5">{org.counts.activeMembers}</div>
             </div>
-            <div className="px-4 py-3 rounded-lg bg-white/5 border border-white/8 min-w-[100px]">
+            <div className="px-4 py-3 rounded-lg bg-ink/5 border border-ink/8 min-w-[100px]">
               <div className="t-caption">Locations</div>
-              <div className="text-xl font-semibold text-white mt-0.5">{org.counts.locations}</div>
+              <div className="text-xl font-semibold text-ink mt-0.5">{org.counts.locations}</div>
             </div>
-            <div className="px-4 py-3 rounded-lg bg-white/5 border border-white/8 min-w-[100px]">
+            <div className="px-4 py-3 rounded-lg bg-ink/5 border border-ink/8 min-w-[100px]">
               <div className="t-caption">Departments</div>
-              <div className="text-xl font-semibold text-white mt-0.5">{org.counts.departments}</div>
+              <div className="text-xl font-semibold text-ink mt-0.5">{org.counts.departments}</div>
             </div>
           </div>
         </div>

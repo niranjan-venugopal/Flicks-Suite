@@ -206,15 +206,15 @@ export default function LocationsSettingsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <div className="card p-4">
             <div className="t-caption">Total locations</div>
-            <div className="text-2xl font-bold text-white mt-1">{items.length}</div>
+            <div className="text-2xl font-bold text-ink mt-1">{items.length}</div>
           </div>
           <div className="card p-4">
             <div className="t-caption">Active</div>
-            <div className="text-2xl font-bold text-white mt-1">{activeCount}</div>
+            <div className="text-2xl font-bold text-ink mt-1">{activeCount}</div>
           </div>
           <div className="card p-4">
             <div className="t-caption">Headcount placed</div>
-            <div className="text-2xl font-bold text-white mt-1">{totalHeadcount}</div>
+            <div className="text-2xl font-bold text-ink mt-1">{totalHeadcount}</div>
           </div>
         </div>
 
@@ -255,7 +255,7 @@ export default function LocationsSettingsPage() {
                           <MapPin className="w-3.5 h-3.5 text-brand-blue" />
                         </div>
                         <div>
-                          <div className="font-semibold text-white">{l.name}</div>
+                          <div className="font-semibold text-ink">{l.name}</div>
                           {l.geofenceRadiusM ? (
                             <Pill tone="blue">Geofence · {l.geofenceRadiusM}m</Pill>
                           ) : null}

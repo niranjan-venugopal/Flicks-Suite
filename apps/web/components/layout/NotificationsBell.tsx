@@ -91,7 +91,7 @@ export function NotificationsBell() {
                 padding: '0 4px',
                 borderRadius: 7,
                 background: 'var(--coral)',
-                color: '#fff',
+                color: 'var(--on-accent)',
                 fontSize: 9,
                 fontWeight: 800,
                 lineHeight: '14px',
@@ -256,7 +256,7 @@ export function NotificationsBell() {
             justifyContent: 'space-between',
             padding: '10px 14px',
             borderTop: '1px solid var(--bord)',
-            background: 'var(--surf-0)',
+            background: 'var(--bg-2)',
           }}
         >
           <Btn

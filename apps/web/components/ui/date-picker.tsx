@@ -38,7 +38,7 @@ function RoundNav({ dir, onClick }: { dir: 'prev' | 'next'; onClick: () => void 
       onClick={onClick}
       style={{
         width: 32, height: 32, borderRadius: '50%', cursor: 'pointer',
-        background: '#fff', border: 'none', color: '#01010D',
+        background: 'var(--inverse)', border: 'none', color: 'var(--on-inverse)',
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}
     >
@@ -82,9 +82,9 @@ export function MonthYearPanel({ cursor, onPick }: { cursor: Date; onPick: (d: D
                 style={{
                   height: 40, border: 'none', cursor: 'pointer', borderRadius: 999,
                   background: isSel ? 'var(--blue)' : 'transparent',
-                  color: isSel ? '#fff' : 'var(--text)',
+                  color: isSel ? 'var(--on-accent)' : 'var(--text)',
                   fontSize: 12.5, fontWeight: isSel ? 800 : 600,
-                  boxShadow: isSel ? '0 0 14px rgba(62,123,250,.35)' : 'none',
+                  boxShadow: isSel ? '0 0 14px color-mix(in srgb, var(--blue) 35%, transparent)' : 'none',
                 }}
               >
                 {y}
@@ -124,9 +124,9 @@ export function MonthYearPanel({ cursor, onPick }: { cursor: Date; onPick: (d: D
               style={{
                 height: 40, border: 'none', cursor: 'pointer', borderRadius: 999,
                 background: isSel ? 'var(--blue)' : 'transparent',
-                color: isSel ? '#fff' : 'var(--text)',
+                color: isSel ? 'var(--on-accent)' : 'var(--text)',
                 fontSize: 12.5, fontWeight: isSel ? 800 : 600,
-                boxShadow: isSel ? '0 0 14px rgba(62,123,250,.35)' : 'none',
+                boxShadow: isSel ? '0 0 14px color-mix(in srgb, var(--blue) 35%, transparent)' : 'none',
               }}
             >
               {m.slice(0, 3)}
@@ -220,9 +220,9 @@ export function CalendarPanel({
                 height: 38, border: 'none', cursor: off ? 'default' : 'pointer',
                 background: isSel ? 'var(--blue)' : 'transparent',
                 borderRadius,
-                color: off ? 'var(--text-faint)' : isSel ? '#fff' : inMonth ? 'var(--text)' : 'var(--text-faint)',
+                color: off ? 'var(--text-faint)' : isSel ? 'var(--on-accent)' : inMonth ? 'var(--text)' : 'var(--text-faint)',
                 fontSize: 13.5, fontWeight: isSel ? 800 : 600,
-                boxShadow: isSel ? '0 0 14px rgba(62,123,250,.35)' : 'none',
+                boxShadow: isSel ? '0 0 14px color-mix(in srgb, var(--blue) 35%, transparent)' : 'none',
                 opacity: off ? 0.5 : 1,
               }}
             >
@@ -359,7 +359,7 @@ export function DateTimeField({
             onClick={() => setOpen(false)}
             style={{
               marginLeft: 'auto', height: 34, padding: '0 14px', borderRadius: 999,
-              background: 'var(--blue)', border: 'none', color: '#fff',
+              background: 'var(--blue)', border: 'none', color: 'var(--on-accent)',
               fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
             }}
           >

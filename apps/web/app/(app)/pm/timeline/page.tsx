@@ -73,7 +73,7 @@ const Timeline = observer(function Timeline({ engine }: { engine: PmSyncEngine }
         <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
           {([['team', 'By team'], ['initiative', 'By initiative']] as const).map(([k, l]) => (
             <button key={k} onClick={() => setGroup(k)}
-              style={{ padding: '5px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', background: group === k ? 'var(--surf-3)' : 'transparent', color: group === k ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
+              style={{ padding: '5px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', background: group === k ? 'var(--surf-3)' : 'transparent', color: group === k ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
               {l}
             </button>
           ))}

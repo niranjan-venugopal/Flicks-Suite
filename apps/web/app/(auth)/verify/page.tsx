@@ -237,7 +237,7 @@ function VerifyMagicLinkInner() {
         {iconWrap('var(--blue)', 'rgba(62,123,250,.12)', <Icon.mail size={26} />)}
         <div className="t-h2" style={{ marginBottom: 8 }}>Accept your invite</div>
         <div style={subtle}>
-          Continue as <strong style={{ color: '#fff' }}>{email}</strong>
+          Continue as <strong style={{ color: 'var(--text)' }}>{email}</strong>
         </div>
         <Btn
           kind="primary"

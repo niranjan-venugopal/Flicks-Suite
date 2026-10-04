@@ -105,10 +105,10 @@ export default function CrmOverviewPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 8 }}>
             {steps.map((s) => (
               <button key={s.label} onClick={s.onClick} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', borderRadius: 9, background: s.done ? 'rgba(39,210,128,.07)' : 'var(--surf-1)', border: `1px solid ${s.done ? 'rgba(39,210,128,.3)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
-                <span style={{ width: 17, height: 17, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: s.done ? 'var(--green)' : 'transparent', border: s.done ? 'none' : '1.5px solid var(--bord-2)', color: '#01010D' }}>
+                <span style={{ width: 17, height: 17, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: s.done ? 'var(--green)' : 'transparent', border: s.done ? 'none' : '1.5px solid var(--bord-2)', color: 'var(--bg)' }}>
                   {s.done && <Icon.check size={11} />}
                 </span>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: s.done ? 'var(--text-mute)' : '#fff', textDecoration: s.done ? 'line-through' : 'none' }}>{s.label}</span>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: s.done ? 'var(--text-mute)' : 'var(--text)', textDecoration: s.done ? 'line-through' : 'none' }}>{s.label}</span>
               </button>
             ))}
           </div>
@@ -138,7 +138,7 @@ export default function CrmOverviewPage() {
               return (
                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--bord)' }}>
                   <button title="Complete" onClick={() => completeLoop.start(a)} style={{ width: 20, height: 20, borderRadius: '50%', border: '1.5px solid var(--bord-2)', background: 'transparent', cursor: 'pointer', flexShrink: 0 }} />
-                  <div style={{ width: 26, height: 26, borderRadius: 7, background: `${M.color}1e`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
+                  <div style={{ width: 26, height: 26, borderRadius: 7, background: `color-mix(in srgb, ${M.color} 12%, transparent)`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.subject}</div>
                     {a.deal_id && a.deal_title && (
@@ -162,9 +162,9 @@ export default function CrmOverviewPage() {
               const Ic = Icon[M.icon]
               return (
                 <div key={a.id} style={{ display: 'flex', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--bord)' }}>
-                  <div style={{ width: 26, height: 26, borderRadius: 7, background: `${M.color}1e`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
+                  <div style={{ width: 26, height: 26, borderRadius: 7, background: `color-mix(in srgb, ${M.color} 12%, transparent)`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Ic size={13} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.subject}</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.subject}</div>
                     <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)', marginTop: 1 }}>
                       {[
                         a.assignee_user_id && a.assignee_user_id !== currentUser?.id && a.assignee_name ? `for ${a.assignee_name}` : null,
@@ -194,7 +194,7 @@ export default function CrmOverviewPage() {
               <Link key={d.id} href={`/crm/deals/${d.id}`} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 18px', borderBottom: '1px solid var(--bord)', textDecoration: 'none', color: 'inherit' }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: d.rot_state === 'red' ? 'var(--coral)' : 'var(--yellow)' }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</div>
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>Idle {d.idle_days}d in stage</div>
                 </div>
                 <span className="t-num" style={{ fontSize: 12, fontWeight: 800 }}>{fmtCur(parseFloat(d.value_amount), d.currency)}</span>

@@ -225,7 +225,7 @@ function TeamTimesheetsInner() {
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 14, width: 'fit-content' }} data-testid="team-timesheets-tabs">
           {([['pending', 'Pending review'], ['all', 'All periods']] as Array<[Tab, string]>).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setTab(k)} data-testid={`team-timesheets-tab-${k}`} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
+            <button key={k} type="button" onClick={() => setTab(k)} data-testid={`team-timesheets-tab-${k}`} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
               {l}
               {k === 'pending' && mine.length > 0 && <span style={{ marginLeft: 6, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--blue)' }}>{mine.length}</span>}
             </button>

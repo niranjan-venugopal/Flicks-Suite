@@ -245,7 +245,7 @@ export function ZoomToggle({ zoom, setZoom }: { zoom: 'month' | 'quarter'; setZo
     <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8 }}>
       {(['month', 'quarter'] as const).map((k) => (
         <button key={k} onClick={() => setZoom(k)}
-          style={{ padding: '5px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', background: zoom === k ? 'var(--surf-3)' : 'transparent', color: zoom === k ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, textTransform: 'capitalize' }}>
+          style={{ padding: '5px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', background: zoom === k ? 'var(--surf-3)' : 'transparent', color: zoom === k ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800, textTransform: 'capitalize' }}>
           {k}
         </button>
       ))}

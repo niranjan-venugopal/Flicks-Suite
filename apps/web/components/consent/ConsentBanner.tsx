@@ -88,10 +88,10 @@ export function ConsentBanner() {
             gap: 16,
             padding: '14px 18px',
             borderRadius: 13,
-            background: 'rgba(18,18,30,.97)',
+            background: 'var(--surf-pop)',
             backdropFilter: 'blur(16px)',
             border: '1px solid var(--bord-2)',
-            boxShadow: '0 18px 48px rgba(0,0,0,.55)',
+            boxShadow: 'var(--e3)',
             maxWidth: 1100,
             margin: '0 auto',
             flexWrap: 'wrap',
@@ -148,7 +148,7 @@ export function ConsentBanner() {
             inset: 0,
             zIndex: 1360, // gates band 1300–1399 — see globals.css layering scale
             pointerEvents: 'auto', // re-arm under a Radix body pointer-events lock
-            background: 'rgba(1,1,13,.6)',
+            background: 'var(--scrim)',
             backdropFilter: 'blur(3px)',
             display: 'flex',
             alignItems: 'center',

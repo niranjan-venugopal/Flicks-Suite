@@ -12,6 +12,7 @@ import { STATUS_META } from '@/components/presence/PresenceDot'
 import { useUserPresence, usePresence } from '@/lib/api/queries/use-presence'
 import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NotificationsBell } from './NotificationsBell'
+import { ThemeMenuItems } from './ThemeMenuItems'
 import type { SidebarVariant } from './Sidebar'
 import {
   DropdownMenu,
@@ -45,7 +46,7 @@ export function Topbar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}
         display: 'flex',
         alignItems: 'center',
         gap: 20,
-        background: 'rgba(1,1,13,.6)',
+        background: 'var(--chrome)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         position: 'sticky',
@@ -188,6 +189,12 @@ export function Topbar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}
                 </span>
               </DropdownMenuItem>
             )}
+            {/* Round O — Appearance (System / Light / Dark). On both consoles: the
+                platform console has no /profile, so this is its only entry. The
+                separator above it is skipped on FAM, where none of the tenant
+                rows render. */}
+            {!isFam && <DropdownMenuSeparator />}
+            <ThemeMenuItems />
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => logoutMutation.mutate()}

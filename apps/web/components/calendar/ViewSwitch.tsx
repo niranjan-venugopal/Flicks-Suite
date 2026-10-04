@@ -38,7 +38,7 @@ export function ViewSwitch({
             border: 'none',
             cursor: 'pointer',
             background: view === key ? 'var(--surf-3)' : 'transparent',
-            color: view === key ? '#fff' : 'var(--text-2)',
+            color: view === key ? 'var(--text)' : 'var(--text-2)',
             fontSize: 11.5,
             fontWeight: 800,
             fontFamily: 'inherit',

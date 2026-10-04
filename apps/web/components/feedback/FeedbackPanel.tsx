@@ -73,11 +73,11 @@ export function FeedbackPanel() {
       <div
         style={{
           width: 330,
-          background: 'rgba(18,18,30,.98)',
+          background: 'var(--surf-pop)',
           backdropFilter: 'blur(16px)',
           border: '1px solid var(--bord-2)',
           borderRadius: 14,
-          boxShadow: '0 28px 70px rgba(0,0,0,.6)',
+          boxShadow: 'var(--e3)',
           overflow: 'hidden',
         }}
       >
@@ -125,7 +125,7 @@ export function FeedbackPanel() {
                     border: 'none',
                     cursor: 'pointer',
                     background: cat === k ? 'var(--surf-3)' : 'transparent',
-                    color: cat === k ? '#fff' : 'var(--text-2)',
+                    color: cat === k ? 'var(--text)' : 'var(--text-2)',
                     fontSize: 11.5,
                     fontWeight: 800,
                   }}

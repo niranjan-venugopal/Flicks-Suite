@@ -437,7 +437,7 @@ function ShiftForm({
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
                 style={{
                   background: on ? 'var(--blue)' : 'var(--surf-1)',
-                  color: on ? '#fff' : 'var(--text-2)',
+                  color: on ? 'var(--on-accent)' : 'var(--text-2)',
                   border: '1px solid ' + (on ? 'var(--blue)' : 'var(--bord)'),
                 }}
               >

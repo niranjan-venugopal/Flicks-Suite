@@ -175,7 +175,7 @@ export function EventDetail({
                   <PmAv name={a.name} src={a.avatarUrl} size={20} />
                   <span
                     title={responseLabel(a.response)}
-                    style={{ position: 'absolute', right: -2, bottom: -2, width: 8, height: 8, borderRadius: '50%', background: RESPONSE_DOT[a.response], border: '1.5px solid #101020' }}
+                    style={{ position: 'absolute', right: -2, bottom: -2, width: 8, height: 8, borderRadius: '50%', background: RESPONSE_DOT[a.response], border: '1.5px solid var(--surf-pop)' }}
                   />
                 </span>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: a.userId === currentUser?.id ? 'var(--text)' : 'var(--text-2)' }}>

@@ -3,6 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, APIError } from '../client'
 import { resetAnalytics } from '@/lib/analytics/posthog'
+import { useToast } from '@/components/ui/use-toast'
+import {
+  applyPreference,
+  readMirror,
+  syncThemeFromServer,
+  type ThemePreference,
+} from '@/lib/theme/theme'
 import {
   useAuthStore,
   type CurrentUser,
@@ -40,6 +47,10 @@ interface ApiUser {
   email: string
   fullName: string
   avatarUrl?: string | null
+  // Round O — users.theme. Carried by /me AND the login / tenant-switch
+  // payloads so the device mirror is right before the post-login reload
+  // paints. Absent on a pre-0065 API (→ the theme helpers no-op).
+  theme?: ThemePreference
 }
 
 interface ApiMembership {
@@ -85,6 +96,8 @@ interface MeResponse extends ApiUser {
   deviceTrusted?: boolean
   // users.last_login_at — the profile's Security card shows it (round K).
   lastLoginAt?: string | null
+  locale?: string
+  timezone?: string
   currentMembership: ApiMembership | null
   memberships: ApiMembership[]
   // PRD v6 — effective runtime flags for the current tenant (e.g.
@@ -160,6 +173,16 @@ function adaptTenant(
   }
 }
 
+/**
+ * Round O — the login responses carry users.theme. Pre-login the page follows
+ * the device, so a returning dark user on a light OS would otherwise flip
+ * only after /me; writing the mirror here (before the full reload the login
+ * pages do) makes the post-login paint right from the first frame.
+ */
+function applyLoginTheme(data: { user?: { theme?: ThemePreference } }): void {
+  if (data.user?.theme) applyPreference(data.user.theme)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 export function useCurrentUser() {
@@ -173,6 +196,9 @@ export function useCurrentUser() {
       setUser(adaptUser(data, membership))
       const tenant = adaptTenant(membership)
       if (tenant) setTenant(tenant)
+      // Round O — reconcile the device mirror with the server (server wins;
+      // no-op when the API doesn't send theme yet or it already matches).
+      syncThemeFromServer(data.theme)
       return data
     },
     // Intentionally NOT gated on isAuthenticated: the persisted auth store
@@ -238,6 +264,7 @@ export function useVerifyOtp() {
       // the persisted store has a name & email for first paint. /me fills in
       // role + tenant after the layout mounts.
       setUser(adaptUser(data.user, null))
+      applyLoginTheme(data)
     },
   })
 }
@@ -278,6 +305,7 @@ export function useConsumeMagicLink() {
       api.post<VerifyAuthResponse>('/api/v1/auth/magic-link/consume', payload),
     onSuccess: (data) => {
       setUser(adaptUser(data.user, null))
+      applyLoginTheme(data)
     },
   })
 }
@@ -300,6 +328,42 @@ export function useTrustDevice() {
         {},
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
+  })
+}
+
+/**
+ * Round O — Appearance (System / Light / Dark). Optimistic: the theme flips
+ * the moment the person clicks (applyPreference writes the mirror + <html
+ * data-theme>), the /me cache is patched so every reader agrees, and a failed
+ * PATCH reverts both and says so. onSettled re-fetches /me, whose queryFn
+ * reconciles with the server either way (the useTrustDevice pattern).
+ */
+export function useUpdateTheme() {
+  const qc = useQueryClient()
+  const { toast } = useToast()
+  return useMutation({
+    mutationFn: (theme: ThemePreference) =>
+      api.patch<{ theme: ThemePreference }>('/api/v1/auth/me/preferences', { theme }),
+    onMutate: async (theme) => {
+      await qc.cancelQueries({ queryKey: ['auth', 'me'] })
+      const previous = qc.getQueryData<MeResponse>(['auth', 'me'])
+      const previousPref: ThemePreference = readMirror() ?? previous?.theme ?? 'system'
+      applyPreference(theme)
+      qc.setQueryData<MeResponse>(['auth', 'me'], (old) => (old ? { ...old, theme } : old))
+      return { previous, previousPref }
+    },
+    onError: (err, _theme, ctx) => {
+      if (ctx) {
+        applyPreference(ctx.previousPref)
+        if (ctx.previous) qc.setQueryData(['auth', 'me'], ctx.previous)
+      }
+      toast({
+        title: 'Could not save appearance',
+        description: err instanceof Error ? err.message : 'Please try again in a moment.',
+        variant: 'destructive',
+      })
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['auth', 'me'] }),
   })
 }
 
@@ -353,6 +417,7 @@ export function useCompleteTotp() {
       api.post<VerifyAuthResponse>('/api/v1/auth/totp/verify', payload),
     onSuccess: (data) => {
       setUser(adaptUser(data.user, null))
+      applyLoginTheme(data)
     },
   })
 }

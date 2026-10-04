@@ -22,13 +22,13 @@ import { stateName } from '@flicks/shared/constants'
 const FIELD: React.CSSProperties = {
   width: '100%',
   height: 44,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1.5px solid rgba(255,255,255,0.10)',
+  background: 'var(--surf-2)',
+  border: '1.5px solid var(--surf-3)',
   borderRadius: 10,
   padding: '0 14px',
   fontWeight: 600,
   fontSize: 14,
-  color: '#fff',
+  color: 'var(--text)',
   outline: 'none',
   letterSpacing: '-0.02em',
 }
@@ -36,14 +36,14 @@ const LABEL: React.CSSProperties = {
   display: 'block',
   fontWeight: 700,
   fontSize: 13,
-  color: 'rgba(255,255,255,0.6)',
+  color: 'var(--text-2)',
   marginBottom: 6,
   letterSpacing: '-0.02em',
 }
 const HINT: React.CSSProperties = {
   fontSize: 11.5,
   fontWeight: 600,
-  color: 'rgba(255,255,255,0.42)',
+  color: 'var(--text-mute)',
   marginTop: 5,
   lineHeight: 1.45,
 }
@@ -209,7 +209,7 @@ export function CustomerModal({
               ))}
             </select>
             {!isIndia && (
-              <div style={{ ...HINT, color: 'rgba(120,190,255,0.85)' }}>
+              <div style={{ ...HINT, color: 'var(--blue-2)' }}>
                 Export client — no GST is charged. The invoice prints the
                 export declaration instead. Set your LUT number in
                 Invoicing → Settings → Compliance.

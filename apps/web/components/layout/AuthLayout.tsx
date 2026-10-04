@@ -96,7 +96,7 @@ export function AuthLayout({
                     height: 3,
                     borderRadius: 99,
                     background:
-                      i < step ? 'var(--blue)' : 'rgba(255,255,255,.12)',
+                      i < step ? 'var(--blue)' : 'var(--surf-3)',
                   }}
                 />
               ))}

@@ -47,7 +47,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div style={{ maxWidth: 1060, margin: '0 auto', padding: '24px 24px 64px' }}>
-      <Link href="/crm/companies" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 9, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: '#fff', textDecoration: 'none', fontSize: 12, fontWeight: 800, marginBottom: 16 }}>
+      <Link href="/crm/companies" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 12px', borderRadius: 9, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text)', textDecoration: 'none', fontSize: 12, fontWeight: 800, marginBottom: 16 }}>
         <Icon.arrowL size={14} /> Companies
       </Link>
 

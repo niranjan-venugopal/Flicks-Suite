@@ -23,7 +23,7 @@ const PopoverContent = React.forwardRef<
         // panel reads opaque against the Topbar's backdrop-filter.
         // z = --z-float (globals.css): popovers open from inside modals whose
         // scrims sit at 1000–1200, so anything lower paints behind the glass.
-        'card-glass z-[1500] rounded-xl border border-white/10 text-white shadow-2xl outline-none',
+        'card-glass z-[1500] rounded-xl border border-ink/10 text-ink shadow-2xl outline-none',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',

@@ -118,7 +118,7 @@ const Roadmap = observer(function Roadmap({ engine }: { engine: PmSyncEngine }) 
                 const cur = store.initiativeProjects.get(assignFor) ?? []
                 engine.setInitiativeProjects(assignFor, inLane ? cur.filter((x) => x !== p.id) : [...cur, p.id])
               }}
-              style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 10px', borderRadius: 8, background: inLane ? 'rgba(62,123,250,.08)' : 'transparent', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 700, textAlign: 'left' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 10px', borderRadius: 8, background: inLane ? 'rgba(62,123,250,.08)' : 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', fontSize: 12, fontWeight: 700, textAlign: 'left' }}>
               <span>{p.icon ?? '🎯'}</span>
               <span style={{ flex: 1 }}>{p.name}</span>
               {inLane && <Icon.check size={13} style={{ color: 'var(--blue)' }} />}

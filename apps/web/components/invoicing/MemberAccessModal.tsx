@@ -80,7 +80,7 @@ export function MemberAccessModal({
       style={{
         flex: 1, padding: '9px 0', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, fontWeight: 800,
         background: level === val ? 'var(--surf-3)' : 'var(--surf-1)',
-        color: level === val ? '#fff' : 'var(--text-2)',
+        color: level === val ? 'var(--text)' : 'var(--text-2)',
         border: `1px solid ${level === val ? 'var(--bord-2)' : 'var(--bord)'}`,
       }}
     >

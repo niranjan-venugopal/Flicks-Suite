@@ -141,7 +141,7 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
             : ([['all', 'All projects'], ['mine', 'Led by me']] as const)
           ).map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
-              style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
+              style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
               {l}
             </button>
           ))}

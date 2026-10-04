@@ -27,7 +27,7 @@ const SRC_TONE = (s: string) => (s.startsWith('form:') ? 'blue' : s === 'api' ? 
 
 function ScoreBadge({ v }: { v: number }) {
   const c = v >= 30 ? 'var(--green)' : v >= 15 ? 'var(--yellow)' : 'var(--text-faint)'
-  const bg = v >= 30 ? 'rgba(39,210,128,.14)' : v >= 15 ? 'rgba(254,216,0,.12)' : 'rgba(255,255,255,.06)'
+  const bg = v >= 30 ? 'rgba(39,210,128,.14)' : v >= 15 ? 'rgba(254,216,0,.12)' : 'var(--surf-2)'
   return (
     <span title="Lead score — calculated from the lead’s details and activity" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 30, height: 20, padding: '0 7px', borderRadius: 99, background: bg, color: c, fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>
       {v}
@@ -71,7 +71,7 @@ export default function LeadsPage() {
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 9 }}>
           {TABS.map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ padding: '7px 13px', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
+            <button key={k} onClick={() => setTab(k)} style={{ padding: '7px 13px', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>
               {l}
               {(counts[k] ?? 0) > 0 && <span style={{ marginLeft: 6, fontSize: 9.5, fontFamily: 'var(--font-mono)', color: k === 'new' ? 'var(--coral)' : 'var(--text-mute)' }}>{counts[k]}</span>}
             </button>
@@ -267,19 +267,19 @@ function ConvertModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
               <div style={{ display: 'flex', gap: 9, marginBottom: 10 }}>
                 <Icon.warn size={14} style={{ color: 'var(--yellow)', flexShrink: 0, marginTop: 1 }} />
                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>
-                  Looks like <b style={{ color: '#fff' }}>{lead.dupe_person.display_name ?? lead.dupe_person.email}</b> already exists in your directory — link instead of creating a duplicate?
+                  Looks like <b style={{ color: 'var(--text)' }}>{lead.dupe_person.display_name ?? lead.dupe_person.email}</b> already exists in your directory — link instead of creating a duplicate?
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => setLinkExisting(true)} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', borderRadius: 9, background: linkExisting ? 'rgba(62,123,250,.1)' : 'var(--surf-1)', border: `1px solid ${linkExisting ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
                   <OwnerAv name={lead.dupe_person.display_name ?? '?'} size={26} />
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: '#fff' }}>Link to {lead.dupe_person.display_name ?? lead.dupe_person.email}</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)' }}>Link to {lead.dupe_person.display_name ?? lead.dupe_person.email}</div>
                     <div style={{ fontSize: 10, color: 'var(--text-mute)', fontWeight: 600 }}>{lead.dupe_person.email} · exact email match</div>
                   </div>
                   {linkExisting && <Icon.check size={14} style={{ marginLeft: 'auto', color: 'var(--blue)' }} />}
                 </button>
-                <button onClick={() => setLinkExisting(false)} style={{ padding: '9px 13px', borderRadius: 9, background: !linkExisting ? 'rgba(62,123,250,.1)' : 'var(--surf-1)', border: `1px solid ${!linkExisting ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 800, color: !linkExisting ? '#fff' : 'var(--text-2)' }}>
+                <button onClick={() => setLinkExisting(false)} style={{ padding: '9px 13px', borderRadius: 9, background: !linkExisting ? 'rgba(62,123,250,.1)' : 'var(--surf-1)', border: `1px solid ${!linkExisting ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 800, color: !linkExisting ? 'var(--text)' : 'var(--text-2)' }}>
                   Create new
                 </button>
               </div>

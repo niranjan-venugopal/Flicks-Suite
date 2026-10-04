@@ -240,7 +240,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
 
   return (
     <PmPage>
-      <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 800, marginBottom: 12 }}>
+      <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: 'var(--surf-2)', border: '1px solid var(--bord)', color: 'var(--text)', cursor: 'pointer', fontSize: 11, fontWeight: 800, marginBottom: 12 }}>
         <Icon.chevL size={13} /> Projects
       </button>
 

@@ -76,7 +76,7 @@ export function SettingsLayout({ children }: SettingsLayoutProps) {
                     borderRadius: 8,
                     background: active ? 'var(--surf-2)' : 'transparent',
                     border: active ? '1px solid var(--bord-2)' : '1px solid transparent',
-                    color: active ? '#fff' : 'var(--text-2)',
+                    color: active ? 'var(--text)' : 'var(--text-2)',
                     cursor: 'pointer',
                     fontSize: 12.5,
                     fontWeight: active ? 800 : 600,

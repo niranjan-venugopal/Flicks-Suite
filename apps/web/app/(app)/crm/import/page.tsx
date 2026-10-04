@@ -130,7 +130,7 @@ function ImportWizard() {
         {STEPS.map((s, i) => (
           <div key={s} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ height: 4, borderRadius: 99, width: '100%', background: i + 1 <= step ? 'var(--blue)' : 'var(--surf-2)' }} />
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: i + 1 === step ? '#fff' : 'var(--text-faint)', letterSpacing: '.03em' }}>{i + 1} · {s}</span>
+            <span style={{ fontSize: 10.5, fontWeight: 800, color: i + 1 === step ? 'var(--text)' : 'var(--text-faint)', letterSpacing: '.03em' }}>{i + 1} · {s}</span>
           </div>
         ))}
       </div>
@@ -219,7 +219,7 @@ function ImportWizard() {
           {([['skip', 'Skip the row', 'safest — nothing is overwritten'], ['update', 'Update existing', 'fills blanks + overwrites mapped fields'], ['create', 'Create anyway', 'allowed — flagged later by the dedupe finder']] as const).map(([k, l, s]) => (
             <button key={k} onClick={() => setStrategy(k)} style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, marginBottom: 8, background: strategy === k ? 'rgba(62,123,250,.08)' : 'var(--surf-1)', border: `1px solid ${strategy === k ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ width: 15, height: 15, borderRadius: '50%', flexShrink: 0, marginTop: 1, border: `4.5px solid ${strategy === k ? 'var(--blue)' : 'var(--bord-2)'}` }} />
-              <div><div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
+              <div><div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text)' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
             </button>
           ))}
           <div className="t-caption" style={{ marginBottom: 14 }}>Match on: person email · company domain/name · lead email. Duplicate rows inside the file are skipped.</div>
@@ -230,7 +230,7 @@ function ImportWizard() {
                 {([['contact', 'Contacts', 'saved people, linked to their company'], ['lead', 'Leads', 'raw prospects for the leads queue']] as const).map(([k, l, s]) => (
                   <button key={k} onClick={() => setFallbackType(k)} style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 13px', borderRadius: 10, background: fallbackType === k ? 'rgba(62,123,250,.08)' : 'var(--surf-1)', border: `1px solid ${fallbackType === k ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`, cursor: 'pointer', textAlign: 'left' }}>
                     <span style={{ width: 15, height: 15, borderRadius: '50%', flexShrink: 0, marginTop: 1, border: `4.5px solid ${fallbackType === k ? 'var(--blue)' : 'var(--bord-2)'}` }} />
-                    <div><div style={{ fontSize: 12.5, fontWeight: 800, color: '#fff' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
+                    <div><div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--text)' }}>{l}</div><div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{s}</div></div>
                   </button>
                 ))}
               </div>
@@ -248,7 +248,7 @@ function ImportWizard() {
           <div style={{ display: 'flex', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
             {([[plan.rows_read, 'rows read', ''], [plan.will_create, 'will create', 'green'], [plan.will_update, 'will update', 'blue'], [plan.will_skip, 'will skip', 'yellow'], [plan.errors, 'errors', 'coral']] as const).map(([n, l, c]) => (
               <div key={l} style={{ flex: 1, minWidth: 110, padding: '12px 14px', borderRadius: 11, background: 'var(--surf-1)', border: '1px solid var(--bord)' }}>
-                <div className="t-num" style={{ fontSize: 19, fontWeight: 800, color: c ? `var(--${c})` : '#fff' }}>{n.toLocaleString()}</div>
+                <div className="t-num" style={{ fontSize: 19, fontWeight: 800, color: c ? `var(--${c})` : 'var(--text)' }}>{n.toLocaleString()}</div>
                 <div className="t-caption">{l}</div>
               </div>
             ))}

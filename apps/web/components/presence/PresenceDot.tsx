@@ -66,7 +66,7 @@ export function PresenceDot({
         style={{
           ...base,
           background: 'transparent',
-          border: `${Math.max(1.5, size * 0.16)}px solid #5C6477`,
+          border: `${Math.max(1.5, size * 0.16)}px solid var(--text-faint)`,
           boxSizing: 'border-box',
         }}
       />
@@ -95,7 +95,7 @@ export function PresenceDot({
             top: '50%',
             height: Math.max(1.5, size * 0.18),
             transform: 'translateY(-50%)',
-            background: '#fff',
+            background: 'var(--on-accent)',
             borderRadius: 99,
           }}
         />

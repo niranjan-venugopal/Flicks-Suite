@@ -12,6 +12,7 @@ import { usePm } from '@/lib/pm/PmProvider'
 import { currentPmPath, issueHref } from '@/lib/pm/nav'
 import { issuePrefetchProps } from '@/lib/pm/prefetch'
 import type { PmSyncEngine } from '@/lib/pm/engine'
+import { useTheme } from '@/lib/theme/theme'
 
 // ─────────────────────────────────────────────────────────
 // P13 — Cycle page: header strip (progress · velocity · creep), cooldown
@@ -59,6 +60,9 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
   const teams = store.teamList()
   const [teamId, setTeamId] = useState(() => teams.find((t) => t.cycles_enabled)?.id ?? teams[0]?.id ?? '')
   const team = store.teams.get(teamId)
+  // Burndown "scope" segment: today's 7% white keeps dark identical, but 7%
+  // ink vanishes on white, so light paints the 22% border tone instead.
+  const scopeBar = useTheme().resolved === 'light' ? 'var(--bord-3)' : 'rgb(var(--text-rgb) / .07)'
 
   const statsQ = useQuery({
     queryKey: ['pm', 'cycles', teamId],
@@ -229,7 +233,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
         <div className="card" style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12.5, fontWeight: 800, flex: 1, minWidth: 0 }}>Scope · started · completed — daily snapshots</span>
-            {[['var(--text-faint)', 'scope'], ['rgba(254,216,0,.8)', 'started'], ['var(--green)', 'completed']].map(([col, l]) => (
+            {[['var(--text-faint)', 'scope'], ['rgb(var(--yellow-rgb) / .8)', 'started'], ['var(--green)', 'completed']].map(([col, l]) => (
               <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)' }}>
                 <span style={{ width: 7, height: 7, borderRadius: 2, background: col }} />{l}
               </span>
@@ -249,8 +253,8 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
                   return (
                     <div key={s.snapshot_date} title={`${s.snapshot_date} — scope ${scope} · started ${started} · done ${done}`}
                       style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1, height: '100%' }}>
-                      <div style={{ height: `${((scope - started - done) / maxPts) * 100}%`, background: 'rgba(255,255,255,.07)', borderRadius: '3px 3px 0 0' }} />
-                      <div style={{ height: `${(started / maxPts) * 100}%`, background: 'rgba(254,216,0,.5)' }} />
+                      <div style={{ height: `${((scope - started - done) / maxPts) * 100}%`, background: scopeBar, borderRadius: '3px 3px 0 0' }} />
+                      <div style={{ height: `${(started / maxPts) * 100}%`, background: 'rgb(var(--yellow-rgb) / .5)' }} />
                       <div style={{ height: `${(done / maxPts) * 100}%`, background: 'var(--green)', borderRadius: '0 0 2px 2px' }} />
                     </div>
                   )
@@ -310,7 +314,7 @@ const CycleBody = observer(function CycleBody({ engine }: { engine: PmSyncEngine
                 {team.key}-{i.number}
               </span>
               <PriorityGlyph p={i.priority} size={13} />
-              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>{i._pending && <PendingDot />}
               </span>
               {i.estimate != null && (
@@ -337,7 +341,7 @@ function TeamPicker({ teams, teamId, setTeamId }: { teams: Array<{ id: string; k
     <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8, width: 'fit-content' }}>
       {teams.map((t) => (
         <button key={t.id} onClick={() => setTeamId(t.id)}
-          style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: teamId === t.id ? 'var(--surf-3)' : 'transparent', color: teamId === t.id ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
+          style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: teamId === t.id ? 'var(--surf-3)' : 'transparent', color: teamId === t.id ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>
           {t.key}
         </button>
       ))}

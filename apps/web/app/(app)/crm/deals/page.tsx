@@ -294,7 +294,7 @@ export default function DealsBoardPage() {
 
       {/* Won / Lost drop zones — fixed bottom bar while dragging */}
       {drag && !closedView && (
-        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 60, display: 'flex', gap: 12, padding: '14px 24px', background: 'rgba(1,1,13,.9)', backdropFilter: 'blur(10px)', borderTop: '1px solid var(--bord-2)' }}>
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 60, display: 'flex', gap: 12, padding: '14px 24px', background: 'var(--chrome-2)', backdropFilter: 'blur(10px)', borderTop: '1px solid var(--bord-2)' }}>
           <div onDragOver={(e) => e.preventDefault()} onDrop={dropWon}
             style={{ flex: 1, padding: 16, borderRadius: 12, border: '1.5px dashed rgba(39,210,128,.5)', background: 'rgba(39,210,128,.07)', textAlign: 'center', fontSize: 13, fontWeight: 800, color: 'var(--green)' }}>
             🏆 Drop to mark WON
@@ -318,7 +318,7 @@ export default function DealsBoardPage() {
         <div onClick={() => setBulkStagePick(false)} style={{ position: 'fixed', inset: 0, zIndex: 80 }}>
           <div onClick={(e) => e.stopPropagation()} className="card-glass" style={{ position: 'fixed', bottom: 84, left: '50%', transform: 'translateX(-50%)', borderRadius: 12, padding: 6, display: 'flex', gap: 4, zIndex: 90 }}>
             {(pl?.stages ?? []).filter((s) => s.stage_type === 'open').map((s) => (
-              <button key={s.id} onClick={() => void bulk.moveStage(s.id)} style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: '#fff', fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}>
+              <button key={s.id} onClick={() => void bulk.moveStage(s.id)} style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--surf-1)', border: '1px solid var(--bord)', color: 'var(--text)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}>
                 {s.name}
               </button>
             ))}
@@ -438,7 +438,7 @@ function Column({ col, base, over, onDragOver, onDragLeave, onDrop, selected, on
       onDragOver={(e) => { e.preventDefault(); onDragOver() }}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      style={{ borderRadius: 13, padding: '10px 10px 12px', background: over ? 'rgba(62,123,250,.06)' : 'rgba(255,255,255,.015)', border: `1px dashed ${over ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`, transition: 'all .15s', minHeight: 220 }}
+      style={{ borderRadius: 13, padding: '10px 10px 12px', background: over ? 'rgba(62,123,250,.06)' : 'rgb(var(--text-rgb) / .015)', border: `1px dashed ${over ? 'rgba(62,123,250,.5)' : 'var(--bord)'}`, transition: 'all .15s', minHeight: 220 }}
     >
       <div style={{ padding: '2px 4px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
@@ -547,11 +547,11 @@ function DealCardView({ d, base, selected, dragging, onSelect, onOpen, onDragSta
             <OwnerAv name={d.owner_name ?? null} src={d.owner_avatar_url} size={20} />
           </span>
           {pickOwner && (
-            <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 60, width: 172, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: '0 16px 40px rgba(0,0,0,.5)' }}>
+            <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 60, width: 172, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 5, boxShadow: 'var(--e2)' }}>
               {reps.map((r) => (
                 <button key={r.user_id} onClick={(e) => { e.stopPropagation(); setPickOwner(false); onInlineEdit({ owner_user_id: r.user_id }) }}
                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 7px', borderRadius: 7, background: r.user_id === d.owner_user_id ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer' }}>
-                  <OwnerAv name={r.name} src={r.avatar_url} size={18} /><span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{r.name}</span>
+                  <OwnerAv name={r.name} src={r.avatar_url} size={18} /><span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)' }}>{r.name}</span>
                 </button>
               ))}
             </div>
@@ -663,7 +663,7 @@ function MobileSwimlane({ columns, base, onOpen, onQuickAdd, quickAddCol, pipeli
   const total = columns.reduce((a, c) => a + c.sum_base, 0)
   return (
     <div style={{ fontSize: 13, minHeight: '100vh' }}>
-      <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'rgba(1,1,13,.92)', backdropFilter: 'blur(10px)', padding: '14px 14px 8px', borderBottom: '1px solid var(--bord)' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 20, background: 'var(--chrome-2)', backdropFilter: 'blur(10px)', padding: '14px 14px 8px', borderBottom: '1px solid var(--bord)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>Deals</span>
           <Pill tone="blue">{fmtCur(total, base)}</Pill>
@@ -673,7 +673,7 @@ function MobileSwimlane({ columns, base, onOpen, onQuickAdd, quickAddCol, pipeli
         if (!col.cards.length) return null
         return (
           <div key={col.stage.id}>
-            <div style={{ position: 'sticky', top: 52, zIndex: 10, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', background: 'rgba(10,10,20,.96)', borderBottom: '1px solid var(--bord)' }}>
+            <div style={{ position: 'sticky', top: 52, zIndex: 10, display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', background: 'rgb(var(--bg-2-rgb) / .96)', borderBottom: '1px solid var(--bord)' }}>
               <span style={{ fontSize: 11.5, fontWeight: 800 }}>{col.stage.name}</span>
               <span className="t-caption" style={{ fontSize: 9.5 }}>{col.stage.win_probability}%</span>
               <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>
@@ -698,12 +698,12 @@ function MobileSwimlane({ columns, base, onOpen, onQuickAdd, quickAddCol, pipeli
         )
       })}
       <div style={{ height: 76 }} />
-      <div style={{ position: 'sticky', bottom: 0, display: 'flex', gap: 8, padding: '10px 14px 16px', background: 'linear-gradient(180deg,transparent,rgba(1,1,13,.95) 30%)' }}>
+      <div style={{ position: 'sticky', bottom: 0, display: 'flex', gap: 8, padding: '10px 14px 16px', background: 'linear-gradient(180deg,transparent,var(--chrome-2) 30%)' }}>
         <Btn kind="primary" style={{ flex: 1, justifyContent: 'center', height: 44 }} icon={<Icon.plus size={15} />} onClick={onQuickAdd}>Deal</Btn>
       </div>
       {quickAddCol && (
         <Overlay open onClose={onCloseQuickAdd} align="end" padding={0} blur={0} label="New deal">
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', background: 'rgba(18,18,30,.99)', borderTop: '1px solid var(--bord-2)', borderRadius: '18px 18px 0 0', padding: '18px 16px 22px' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', background: 'var(--surf-pop)', borderTop: '1px solid var(--bord-2)', borderRadius: '18px 18px 0 0', padding: '18px 16px 22px' }}>
             <div style={{ width: 36, height: 4, borderRadius: 99, background: 'var(--bord-2)', margin: '0 auto 14px' }} />
             <InlineQuickAdd stageId={quickAddCol} pipelineId={pipelineId} base={base} onClose={onCloseQuickAdd} />
           </div>

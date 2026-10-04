@@ -256,7 +256,7 @@ export const RelationsCard = observer(function RelationsCard({
                 tabIndex={-1}
                 data-testid="relation-adder"
                 onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setAdding(null) } }}
-                style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 80, width: 340, background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 6, boxShadow: '0 16px 40px rgba(0,0,0,.5)', outline: 'none' }}
+                style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 80, width: 340, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 6, boxShadow: 'var(--e2)', outline: 'none' }}
               >
                 {adding.choice === null ? (
                   <>
@@ -272,7 +272,7 @@ export const RelationsCard = observer(function RelationsCard({
                         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                       >
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: toneFor(c.id === 'blocked_by' ? 'blocks' : c.id), flexShrink: 0 }} />
-                        <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', width: 92, flexShrink: 0 }}>{c.label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text)', width: 92, flexShrink: 0 }}>{c.label}</span>
                         <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>{c.hint}</span>
                       </button>
                     ))}
@@ -321,7 +321,7 @@ export const RelationsCard = observer(function RelationsCard({
               }}
             >
               <span style={{ color: toneFor(r.stored.type), flexShrink: 0 }}>{verbFor(r.stored.type, r.forward)}</span>
-              <span style={{ fontFamily: 'var(--font-mono)', color: '#fff', flexShrink: 0 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text)', flexShrink: 0 }}>
                 {r.other!.team_key}-{r.other!.number}
               </span>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: r.other!.closed ? 'line-through' : 'none', opacity: r.other!.closed ? 0.6 : 1 }}>

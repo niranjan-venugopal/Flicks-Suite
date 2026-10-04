@@ -218,7 +218,7 @@ export default function FamFeatureUsagePage() {
                                 textAlign: 'center',
                                 fontWeight: 800,
                                 background: `rgba(62,123,250,${(v / 100) * 0.7 + 0.05})`,
-                                color: v > 60 ? '#fff' : 'rgba(255,255,255,.85)',
+                                color: 'var(--text)',
                               }}
                             >
                               {v}

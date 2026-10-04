@@ -175,7 +175,7 @@ export function NotificationsTab() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             {key && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{key}</span>}
             <span style={{
-              fontSize: 12, fontWeight: unread ? 800 : 600, color: unread ? '#fff' : 'var(--text-2)',
+              fontSize: 12, fontWeight: unread ? 800 : 600, color: unread ? 'var(--text)' : 'var(--text-2)',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>{line}</span>
             {more > 0 && (
@@ -207,11 +207,11 @@ export function NotificationsTab() {
           <div onClick={(e) => e.stopPropagation()} style={{
             position: 'absolute', right: 40, top: '100%', zIndex: 40, marginTop: -4,
             background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 9, padding: 5,
-            display: 'flex', flexDirection: 'column', gap: 2, minWidth: 120, boxShadow: '0 8px 24px rgba(0,0,0,.45)',
+            display: 'flex', flexDirection: 'column', gap: 2, minWidth: 120, boxShadow: 'var(--e2)',
           }}>
             {[{ l: '1 day', d: 1 }, { l: '3 days', d: 3 }, { l: '1 week', d: 7 }].map((o) => (
               <button key={o.d} onClick={() => doSnooze(n, o.d)} style={{
-                textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-1)',
+                textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text)',
                 background: 'none', border: 'none', borderRadius: 6, padding: '6px 9px', cursor: 'pointer',
               }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surf-2)' }}

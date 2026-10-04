@@ -50,7 +50,7 @@ const LINE_GRID = '1fr 110px 64px 110px 64px 110px 32px'
 const LINE_GRID_INTL = '1fr 64px 110px 64px 110px 32px'
 
 const sumRowLabel: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: INVO.muted50, letterSpacing: '-0.02em' }
-const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em' }
+const sumRowValue: React.CSSProperties = { fontWeight: 700, fontSize: 14, color: 'var(--text)', letterSpacing: '-0.02em' }
 
 /**
  * Single-column-flow invoice editor in the Invo prototype layout (CreateInvoice
@@ -432,7 +432,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                         borderRadius: 9,
                         maxHeight: 220,
                         overflowY: 'auto',
-                        border: '1px solid var(--line)',
+                        border: '1px solid var(--bord)',
                       }}
                     >
                       {itemResults.slice(0, 8).map((it) => (
@@ -456,7 +456,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                           }}
                         >
                           <strong>{it.name}</strong>{' '}
-                          <span style={{ color: 'var(--muted)' }}>
+                          <span style={{ color: 'var(--text-mute)' }}>
                             · {symbol(it.currency)}{it.default_rate}
                             {it.hsn_sac_code ? ` · ${it.hsn_sac_code}` : ''}
                           </span>
@@ -496,7 +496,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   onChange={(e) => setLine(i, { gst_rate: e.target.value })}
                   onKeyDown={onLineKeyDown}
                 />
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', letterSpacing: '-0.02em', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', letterSpacing: '-0.02em', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                   {symbol(currency)}
                   {lineAmount(l).toLocaleString('en-IN')}
                 </div>
@@ -597,7 +597,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               <div style={{ paddingTop: 24, fontWeight: 600, fontSize: 12, color: INVO.muted40, lineHeight: 1.5 }}>
                 {resolvedBank ? (
                   <>
-                    Will render: <span style={{ color: '#fff' }}>{resolvedBank.bank_name}</span> ·{' '}
+                    Will render: <span style={{ color: 'var(--text)' }}>{resolvedBank.bank_name}</span> ·{' '}
                     {currency === 'INR'
                       ? `IFSC ${resolvedBank.ifsc ?? '—'}`
                       : `SWIFT ${resolvedBank.swift_bic ?? '—'}`}
@@ -608,7 +608,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
               </div>
             </div>
             {swiftWarning && (
-              <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(254,216,0,0.08)', border: '1px solid rgba(254,216,0,0.25)', fontWeight: 600, fontSize: 12, color: '#FED800' }}>
+              <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(254,216,0,0.08)', border: '1px solid rgba(254,216,0,0.25)', fontWeight: 600, fontSize: 12, color: 'var(--yellow)' }}>
                 {swiftWarning}
               </div>
             )}
@@ -637,7 +637,7 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
         {/* ── Right: sticky summary ────────────────────────────────────────── */}
         <div>
           <InvoCard strong style={{ position: 'sticky', top: 20 }}>
-            <div style={{ fontWeight: 700, fontSize: 18, color: '#fff', letterSpacing: '-0.02em', marginBottom: 24 }}>Summary</div>
+            <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)', letterSpacing: '-0.02em', marginBottom: 24 }}>Summary</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={sumRowLabel}>Subtotal</span>
@@ -678,10 +678,10 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                   <span style={sumRowValue}>{money(totals.cess_amount)}</span>
                 </div>
               )}
-              <div style={{ height: 1, background: 'rgba(255,255,255,0.1)' }} />
+              <div style={{ height: 1, background: 'var(--surf-3)' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontWeight: 700, fontSize: 16, color: '#fff', letterSpacing: '-0.02em' }}>Total</span>
-                <span style={{ fontWeight: 700, fontSize: 24, color: '#fff', letterSpacing: '-0.04em' }}>
+                <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', letterSpacing: '-0.02em' }}>Total</span>
+                <span style={{ fontWeight: 700, fontSize: 24, color: 'var(--text)', letterSpacing: '-0.04em' }}>
                   {money(totals.total_amount)}
                 </span>
               </div>

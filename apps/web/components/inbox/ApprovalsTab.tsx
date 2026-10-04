@@ -397,7 +397,7 @@ export function ApprovalsTab({
               borderRadius: 99,
               border: '1px solid ' + (filter === t.k ? 'var(--bord-3)' : 'var(--bord)'),
               background: filter === t.k ? 'var(--surf-3)' : 'var(--surf-1)',
-              color: filter === t.k ? '#fff' : 'var(--text-2)',
+              color: filter === t.k ? 'var(--text)' : 'var(--text-2)',
               fontSize: 12,
               fontWeight: 800,
               cursor: 'pointer',
@@ -661,7 +661,7 @@ function ApprovalDetail({
                   lineHeight: 1.5,
                 }}
               >
-                <strong style={{ color: '#fff' }}>{item.who}</strong> finished
+                <strong style={{ color: 'var(--text)' }}>{item.who}</strong> finished
                 self-onboarding and is waiting for approval. Approving activates
                 their profile; &ldquo;Send back&rdquo; returns it for changes
                 (your comment becomes the reason they see).
@@ -714,7 +714,7 @@ function ApprovalDetail({
                   }}
                 >
                   {r.requestType.replaceAll('_', ' ')} request for{' '}
-                  <strong style={{ color: '#fff' }}>{r.attendanceDate}</strong>
+                  <strong style={{ color: 'var(--text)' }}>{r.attendanceDate}</strong>
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -762,7 +762,7 @@ function ApprovalDetail({
               >
                 <Icon.sheet size={16} style={{ color: 'var(--purple)', marginTop: 1, flexShrink: 0 }} />
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
-                  Week of <strong style={{ color: '#fff' }}>{t.periodStart}</strong> submitted for review.
+                  Week of <strong style={{ color: 'var(--text)' }}>{t.periodStart}</strong> submitted for review.
                   Approving confirms the hours; &ldquo;Rework&rdquo; reopens the week as a draft
                   (your note tells them what to change); rejecting closes it.
                 </div>
@@ -839,7 +839,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="t-caption" style={{ marginBottom: 5 }}>
         {label}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{value}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{value}</div>
     </div>
   )
 }

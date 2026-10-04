@@ -16,8 +16,25 @@ export const PM_CAT_COLOR: Record<string, string> = {
   canceled: '#5C6477',
 }
 
+// Render-time colours for the glyphs: the greys are theme tokens so they
+// re-tint on a light page (#A8B0C2 ≈ --text-2, #5C6477 ≈ --text-faint in
+// dark). PM_CAT_COLOR itself stays literal — teams/[id]/settings persists it
+// as a state's `color` (the API caps that at 16 chars) and the insights
+// charts read it as data.
+const GLYPH_COLOR: Record<string, string> = {
+  ...PM_CAT_COLOR,
+  backlog: 'var(--text-faint)',
+  unstarted: 'var(--text-2)',
+  canceled: 'var(--text-faint)',
+}
+
+// Cut-outs drawn over a literal brand fill (completed green, urgent orange)
+// stay literal too: the fill does not re-tint, so a page-coloured knockout
+// would go white-on-green in light.
+const CUTOUT = '#01010D'
+
 export function StateGlyph({ cat, size = 14, color }: { cat: string; size?: number; color?: string }) {
-  const c = color || PM_CAT_COLOR[cat] || '#A8B0C2'
+  const c = color || GLYPH_COLOR[cat] || 'var(--text-2)'
   const r = size / 2 - 1.5
   const cx = size / 2
   const cy = size / 2
@@ -41,7 +58,7 @@ export function StateGlyph({ cat, size = 14, color }: { cat: string; size?: numb
           <circle cx={cx} cy={cy} r={r + 0.4} fill={c} />
           <path
             d={`M ${cx - r * 0.48} ${cy} l ${r * 0.34} ${r * 0.36} l ${r * 0.62} -${r * 0.72}`}
-            stroke="#01010D" strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"
+            stroke={CUTOUT} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"
           />
         </>
       )}
@@ -61,13 +78,13 @@ export function PriorityGlyph({ p = 0, size = 14 }: { p?: number; size?: number 
     return (
       <svg width={s} height={s} viewBox="0 0 14 14" style={{ flexShrink: 0, display: 'block' }}>
         <rect x="1" y="1" width="12" height="12" rx="3" fill="#FF9933" />
-        <path d="M7 3.6v4.2M7 10.4v.01" stroke="#01010D" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M7 3.6v4.2M7 10.4v.01" stroke={CUTOUT} strokeWidth="1.8" strokeLinecap="round" />
       </svg>
     )
   if (p === 0)
     return (
       <svg width={s} height={s} viewBox="0 0 14 14" style={{ flexShrink: 0, display: 'block' }}>
-        <path d="M3.5 7h7" stroke="#3A4055" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M3.5 7h7" stroke="var(--text-faint)" strokeWidth="1.8" strokeLinecap="round" />
       </svg>
     )
   const bars = ({ 2: 3, 3: 2, 4: 1 } as Record<number, number>)[p] ?? 1
@@ -81,7 +98,7 @@ export function PriorityGlyph({ p = 0, size = 14 }: { p?: number; size?: number 
           width="3"
           height={[4, 7, 10][i]}
           rx="1"
-          fill={i < bars ? '#A8B0C2' : 'rgba(168,176,194,.22)'}
+          fill={i < bars ? 'var(--text-2)' : 'var(--bord-2)'}
         />
       ))}
     </svg>
@@ -177,7 +194,7 @@ export interface GitLink {
 }
 
 export function PrChip({ g }: { g: GitLink }) {
-  const c = g.state === 'merged' ? '#9B7BFA' : g.state === 'closed' ? '#F8786B' : '#27D280'
+  const c = g.state === 'merged' ? 'var(--purple)' : g.state === 'closed' ? 'var(--coral)' : 'var(--green)'
   const Ic = g.t === 'branch' ? Icon.gitBranch : g.t === 'pr' ? Icon.gitPr : Icon.gitCommit
   const inner = (
     <>

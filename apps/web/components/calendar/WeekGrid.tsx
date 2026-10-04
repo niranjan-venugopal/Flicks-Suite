@@ -104,7 +104,7 @@ export function WeekGrid({
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     minWidth: 28, height: 28, padding: '0 6px', borderRadius: 999, marginTop: 2,
                     background: isToday ? 'var(--blue)' : 'transparent',
-                    color: isToday ? '#fff' : 'var(--text)', fontSize: 15, fontWeight: 800,
+                    color: isToday ? 'var(--on-accent)' : 'var(--text)', fontSize: 15, fontWeight: 800,
                     boxShadow: isToday ? '0 0 14px rgba(62,123,250,.35)' : 'none',
                   }}
                 >
@@ -166,14 +166,14 @@ export function WeekGrid({
                 ))}
                 {/* Half-hour ticks */}
                 {Array.from({ length: 24 }, (_, h) => (
-                  <div key={`half-${h}`} style={{ position: 'absolute', left: 0, right: 0, top: h * HOUR_PX + HOUR_PX / 2, borderTop: '1px dashed rgba(255,255,255,.04)', pointerEvents: 'none' }} />
+                  <div key={`half-${h}`} style={{ position: 'absolute', left: 0, right: 0, top: h * HOUR_PX + HOUR_PX / 2, borderTop: '1px dashed var(--surf-1)', pointerEvents: 'none' }} />
                 ))}
                 {/* Working hours tint */}
                 {working && workEnd > workStart && (
                   <div
                     style={{
                       position: 'absolute', left: 0, right: 0, top: (workStart / 60) * HOUR_PX, height: ((workEnd - workStart) / 60) * HOUR_PX,
-                      background: 'rgba(255,255,255,.025)', pointerEvents: 'none',
+                      background: 'var(--surf-1)', pointerEvents: 'none',
                     }}
                   />
                 )}

@@ -84,7 +84,7 @@ function Bucket({ label, tone, items, onComplete, onDelete, muted, meId }: {
           const due = dueLabel(a)
           return (
             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: i < items.length - 1 ? '1px solid var(--bord)' : 'none', opacity: muted ? 0.7 : 1 }}>
-              <div style={{ width: 30, height: 30, borderRadius: 9, background: `${M.color}20`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: `color-mix(in srgb, ${M.color} 13%, transparent)`, color: M.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Ic size={14} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>

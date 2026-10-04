@@ -201,7 +201,7 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
                     cursor: 'pointer',
                     background: sel ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
                     border: `1px solid ${sel ? 'rgba(62,123,250,.4)' : 'var(--bord)'}`,
-                    color: sel ? '#fff' : 'var(--text-2)',
+                    color: sel ? 'var(--text)' : 'var(--text-2)',
                     fontSize: 12.5,
                     fontWeight: 800,
                     textTransform: 'capitalize',
@@ -248,7 +248,7 @@ function SubscriptionModal({ open, onClose }: { open: boolean; onClose: () => vo
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 800, color: sel ? '#fff' : 'var(--text-2)' }}>{label}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, color: sel ? 'var(--text)' : 'var(--text-2)' }}>{label}</span>
                     {soon && <Pill tone="yellow">Soon</Pill>}
                   </div>
                   <div className="t-mute" style={{ fontSize: 10.5, marginTop: 2 }}>{hint}</div>
@@ -491,10 +491,10 @@ function MandateDrawer({ sub, onClose }: { sub: SubscriptionRow; onClose: () => 
 
   return createPortal(
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(1,1,13,.6)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'flex-end' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 900, background: 'var(--scrim)', backdropFilter: 'blur(3px)', display: 'flex', justifyContent: 'flex-end' }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div style={{ width: 380, maxWidth: '100vw', height: '100%', background: 'rgba(18,18,30,.99)', borderLeft: '1px solid var(--bord-2)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: 380, maxWidth: '100vw', height: '100%', background: 'var(--surf-pop)', borderLeft: '1px solid var(--bord-2)', display: 'flex', flexDirection: 'column' }}>
         {/* Pinned header — stays put so the close control can never scroll out of reach */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 20, borderBottom: '1px solid var(--bord)', flexShrink: 0 }}>
           <div style={{ flex: 1, minWidth: 0 }}>

@@ -446,7 +446,7 @@ export default function TimesheetsPage() {
                         <div
                           style={{
                             fontSize: 13,
-                            color: isToday ? '#fff' : 'var(--text-2)',
+                            color: isToday ? 'var(--text)' : 'var(--text-2)',
                             marginTop: 2,
                             fontWeight: 800,
                           }}
@@ -539,7 +539,7 @@ export default function TimesheetsPage() {
                               fontSize: 12.5,
                               fontWeight: 800,
                               background: h ? 'var(--surf-2)' : 'var(--surf-1)',
-                              color: h ? '#fff' : 'var(--text-faint)',
+                              color: h ? 'var(--text)' : 'var(--text-faint)',
                             }}
                           />
                         </td>
@@ -597,7 +597,7 @@ export default function TimesheetsPage() {
                         fontFamily: 'var(--font-mono)',
                         fontWeight: 800,
                         fontSize: 13,
-                        color: t >= 8 ? 'var(--green)' : t > 0 ? '#fff' : 'var(--text-faint)',
+                        color: t >= 8 ? 'var(--green)' : t > 0 ? 'var(--text)' : 'var(--text-faint)',
                       }}
                     >
                       {t > 0 ? t.toFixed(1) : '—'}
@@ -688,7 +688,7 @@ function ReviewBanner({
     >
       <Icon.warn size={18} style={{ color: palette.accent, flexShrink: 0, marginTop: 2 }} />
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text-1)' }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)' }}>
           {title}
           {whenLabel && (
             <span style={{ fontWeight: 600, color: 'var(--text-mute)', marginLeft: 8 }}>

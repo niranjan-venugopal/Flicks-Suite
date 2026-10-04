@@ -53,7 +53,7 @@ export function AgendaList({
             <span
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 26, height: 26, padding: '0 6px', borderRadius: 999,
-                background: iso === today ? 'var(--blue)' : 'var(--surf-2)', color: iso === today ? '#fff' : 'var(--text)', fontSize: 12.5, fontWeight: 800,
+                background: iso === today ? 'var(--blue)' : 'var(--surf-2)', color: iso === today ? 'var(--on-accent)' : 'var(--text)', fontSize: 12.5, fontWeight: 800,
               }}
             >
               {d.getDate()}

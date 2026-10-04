@@ -96,7 +96,7 @@ export function ProjectUpdateComposer({
           <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
           <Btn kind="primary" data-testid="update-submit" onClick={() => void post()} disabled={!canPost}>
             {posting ? 'Posting…' : 'Post update'}
-            <Kbd style={{ marginLeft: 6, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>{mod}↵</Kbd>
+            <Kbd style={{ marginLeft: 6, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>{mod}↵</Kbd>
           </Btn>
         </>
       }

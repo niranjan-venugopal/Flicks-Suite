@@ -30,9 +30,9 @@ export function RoundNav({ dir, onClick, disabled }: { dir: 'prev' | 'next'; onC
       aria-label={dir === 'prev' ? 'Previous month' : 'Next month'}
       style={{
         width: 34, height: 34, borderRadius: '50%', cursor: disabled ? 'default' : 'pointer',
-        background: dir === 'next' ? '#fff' : 'transparent',
+        background: dir === 'next' ? 'var(--inverse)' : 'transparent',
         border: dir === 'next' ? 'none' : '1px solid var(--bord-2)',
-        color: dir === 'next' ? '#01010D' : 'var(--text)',
+        color: dir === 'next' ? 'var(--on-inverse)' : 'var(--text)',
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         opacity: disabled ? 0.35 : 1,
       }}

@@ -119,17 +119,17 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
       ref={rootRef}
       style={{
         width: 308,
-        background: 'rgba(18,18,30,.98)',
+        background: 'var(--surf-pop)',
         backdropFilter: 'blur(16px)',
         border: '1px solid var(--bord-2)',
         borderRadius: 14,
-        boxShadow: '0 28px 70px rgba(0,0,0,.6)',
+        boxShadow: 'var(--e3)',
         overflow: 'hidden',
       }}
     >
       {/* Resolved header */}
       <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 11 }}>
-        <AvatarV4 name={currentUser?.name ?? ''} size={38} src={currentUser?.avatarUrl} presence={resolved} ring="rgba(18,18,30,1)" />
+        <AvatarV4 name={currentUser?.name ?? ''} size={38} src={currentUser?.avatarUrl} presence={resolved} ring="var(--surf-pop)" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 800 }}>{currentUser?.name}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
@@ -176,7 +176,7 @@ export function StatusPicker({ onClose }: { onClose: () => void }) {
               }}
             >
               <PresenceDot status={k} size={11} ring="transparent" />
-              <span style={{ flex: 1, fontSize: 12.5, fontWeight: sel ? 800 : 600, color: sel ? '#fff' : 'var(--text-2)' }}>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: sel ? 800 : 600, color: sel ? 'var(--text)' : 'var(--text-2)' }}>
                 {m.label}
               </span>
               {sel && <Icon.check size={14} style={{ color: 'var(--blue)' }} />}

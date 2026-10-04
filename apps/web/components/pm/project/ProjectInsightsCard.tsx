@@ -145,10 +145,10 @@ function clearLocal(projectId: string) {
 
 // ─── Colours ─────────────────────────────────────────────────────────────────
 
-/** The "nothing here" bucket (No priority / Unassigned / No label …): PM's
- *  backlog grey — solid enough to read as a bar; --surf-3 (10 % white) all
+/** The "nothing here" bucket (No priority / Unassigned / No label …): the
+ *  faint text grey — solid enough to read as a bar; --surf-3 (10 % white) all
  *  but vanished on the card. */
-const NEUTRAL = '#5C6477'
+const NEUTRAL = 'var(--text-faint)'
 const PRIORITY_COLOR: Record<string, string> = {
   '1': 'var(--coral)',
   '2': 'var(--yellow)',
@@ -400,7 +400,7 @@ export const ProjectInsightsCard = observer(function ProjectInsightsCard({
                               height: `${(c.value / axisMax) * 100}%`,
                               background: insightColor(cfg.segment, c.key, c.color),
                               borderRadius: ci === 0 ? '3px 3px 0 0' : 0,
-                              borderBottom: ci < arr.length - 1 ? '1px solid rgba(1,1,13,.6)' : 'none',
+                              borderBottom: ci < arr.length - 1 ? '1px solid var(--chrome)' : 'none',
                               minHeight: 1,
                             }}
                           />
@@ -458,7 +458,7 @@ export const ProjectInsightsCard = observer(function ProjectInsightsCard({
                       </span>
                     </td>
                     {segmented && r.cells.map((c) => (
-                      <td key={c.key} style={{ padding: '7px 8px', fontSize: 12, textAlign: 'right', fontFamily: 'var(--font-mono)', color: c.value ? '#fff' : 'var(--text-faint)' }}>
+                      <td key={c.key} style={{ padding: '7px 8px', fontSize: 12, textAlign: 'right', fontFamily: 'var(--font-mono)', color: c.value ? 'var(--text)' : 'var(--text-faint)' }}>
                         {c.value ? fmt(c.value) : '–'}
                       </td>
                     ))}

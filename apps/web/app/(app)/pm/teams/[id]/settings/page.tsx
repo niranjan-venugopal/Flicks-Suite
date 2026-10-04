@@ -129,7 +129,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
         {/* Header strip */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
           <Btn kind="ghost" size="sm" icon={<Icon.chevL size={13} />} onClick={() => router.push('/pm/teams')}>Teams</Btn>
-          <span style={{ width: 22, height: 22, borderRadius: 6, background: team.color ?? '#3E7BFA', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800 }}>{team.key[0]}</span>
+          <span style={{ width: 22, height: 22, borderRadius: 6, background: team.color ?? '#3E7BFA', color: 'var(--on-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800 }}>{team.key[0]}</span>
           <span style={{ fontSize: 14, fontWeight: 800 }}>{team.name}</span>
           <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{team.key} · {members.length} members</span>
           {team.is_private && <Pill tone="coral"><Icon.lock size={9} /> Private</Pill>}
@@ -146,7 +146,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
           {TABS.map((t) => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '5px 11px', borderRadius: 8, fontSize: 11, fontWeight: 800, cursor: 'pointer',
-              color: tab === t ? (t === 'Danger zone' ? 'var(--coral)' : '#fff') : 'var(--text-mute)',
+              color: tab === t ? (t === 'Danger zone' ? 'var(--coral)' : 'var(--text)') : 'var(--text-mute)',
               background: tab === t ? 'var(--surf-2)' : 'transparent',
               border: tab === t ? '1px solid var(--bord-2)' : '1px solid transparent',
             }}>{t}</button>
@@ -179,7 +179,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
                 <div style={{ display: 'flex', gap: 6, paddingTop: 6 }}>
                   {SWATCHES.map((c) => (
                     <button key={c} disabled={!canCfg} onClick={() => patch.mutate({ color: c })}
-                      style={{ width: 22, height: 22, borderRadius: 6, background: c, border: team.color === c ? '2px solid #fff' : '1px solid var(--bord)', cursor: 'pointer' }} />
+                      style={{ width: 22, height: 22, borderRadius: 6, background: c, border: team.color === c ? '2px solid var(--inverse)' : '1px solid var(--bord)', cursor: 'pointer' }} />
                   ))}
                 </div>
               </div>
@@ -258,7 +258,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
                       )}
                       {canCfg && SWATCHES.map((c) => (
                         <button key={c} onClick={() => upsertState.mutate({ id: s.id, name: s.name, color: c })}
-                          style={{ width: 12, height: 12, borderRadius: 4, background: c, border: s.color === c ? '1.5px solid #fff' : '1px solid var(--bord)', cursor: 'pointer', padding: 0 }} />
+                          style={{ width: 12, height: 12, borderRadius: 4, background: c, border: s.color === c ? '1.5px solid var(--inverse)' : '1px solid var(--bord)', cursor: 'pointer', padding: 0 }} />
                       ))}
                       {canCfg && (
                         <button title="Rename" onClick={() => { const name = window.prompt('Rename state', s.name); if (name?.trim() && name !== s.name) upsertState.mutate({ id: s.id, name: name.trim(), color: s.color }) }}
@@ -315,7 +315,7 @@ export default function TeamSettingsPage({ params }: { params: Promise<{ id: str
                 <button key={t.id} onClick={() => setTmplSel(t.id)} style={{
                   width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 2,
                   background: (tmpl?.id === t.id) ? 'var(--surf-2)' : 'transparent', border: '1px solid transparent',
-                  color: '#fff', fontSize: 11.5, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6,
+                  color: 'var(--text)', fontSize: 11.5, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6,
                 }}>
                   <span style={{ flex: 1 }}>{t.name}</span>
                   {t.is_team_default && <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--blue)' }}>default</span>}

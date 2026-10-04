@@ -281,7 +281,7 @@ export default function FamTenantsPage() {
                 justifyContent: 'space-between',
                 padding: '10px 14px',
                 borderTop: '1px solid var(--bord)',
-                background: 'var(--surf-0)',
+                background: 'var(--bg-2)',
               }}
             >
               <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
@@ -355,7 +355,7 @@ function FilterPill({
       onClick={onClick}
       style={{
         background: active ? 'var(--blue)' : 'var(--surf-1)',
-        color: active ? '#fff' : 'var(--text-2)',
+        color: active ? 'var(--on-accent)' : 'var(--text-2)',
         border: `1px solid ${active ? 'var(--blue)' : 'var(--bord)'}`,
         borderRadius: 999,
         padding: '4px 10px',

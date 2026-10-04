@@ -255,7 +255,7 @@ export function IssueDescription({
             <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
               <Btn kind="ghost" size="sm" onClick={cancel}>Cancel</Btn>
               <Btn kind="primary" size="sm" onClick={() => void save()} disabled={saving}>
-                Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>{mod}↵</Kbd>
+                Save <Kbd style={{ marginLeft: 5, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>{mod}↵</Kbd>
               </Btn>
             </div>
           </>
@@ -305,7 +305,7 @@ export function IssueDescription({
               <span style={{ flex: 1 }} />
               <Btn kind="ghost" size="sm" onClick={cancel}>Cancel</Btn>
               <Btn kind="primary" size="sm" onClick={() => void save()} disabled={saving}>
-                Save <Kbd style={{ marginLeft: 5, background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff' }}>{mod}↵</Kbd>
+                Save <Kbd style={{ marginLeft: 5, background: 'color-mix(in srgb, var(--on-accent) 18%, transparent)', border: 'none', color: 'var(--on-accent)' }}>{mod}↵</Kbd>
               </Btn>
             </div>
           </>

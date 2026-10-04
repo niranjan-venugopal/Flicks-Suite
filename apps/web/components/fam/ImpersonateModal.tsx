@@ -90,7 +90,7 @@ export function ImpersonateModal({
               lineHeight: 1.55,
             }}
           >
-            You're about to log in as <strong style={{ color: '#fff' }}>{targetEmail}</strong>.
+            You're about to log in as <strong style={{ color: 'var(--text)' }}>{targetEmail}</strong>.
             Writes to both <code style={{ fontFamily: 'var(--font-mono)' }}>audit_log_platform</code>{' '}
             and the tenant's <code style={{ fontFamily: 'var(--font-mono)' }}>audit_log</code>.
           </div>
@@ -161,7 +161,7 @@ export function ImpersonateModal({
           >
             <Icon.shield size={14} style={{ color: 'var(--text-mute)', marginTop: 2, flexShrink: 0 }} />
             <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.55 }}>
-              Session expires in <strong style={{ color: '#fff' }}>15 minutes</strong>.
+              Session expires in <strong style={{ color: 'var(--text)' }}>15 minutes</strong>.
               The user will be visible to the customer's admins in their audit log.
               Exit anytime via the banner at the top of the app.
             </div>

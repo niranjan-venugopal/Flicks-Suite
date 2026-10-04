@@ -164,7 +164,7 @@ export default function FamRevenuePage() {
                   x2="740"
                   y1={20 + i * 40}
                   y2={20 + i * 40}
-                  stroke="rgba(255,255,255,.06)"
+                  stroke="var(--surf-2)"
                   strokeWidth="1"
                 />
               ))}
@@ -173,7 +173,7 @@ export default function FamRevenuePage() {
                   key={i}
                   x="32"
                   y={24 + i * 40}
-                  fill="rgba(255,255,255,.4)"
+                  fill="var(--text-mute)"
                   fontSize="10"
                   textAnchor="end"
                   fontFamily="var(--font-mono)"
@@ -202,7 +202,7 @@ export default function FamRevenuePage() {
                     <text
                       x={x + w / 2}
                       y="216"
-                      fill="rgba(255,255,255,.5)"
+                      fill="var(--text-mute)"
                       fontSize="10"
                       textAnchor="middle"
                       fontWeight="700"
@@ -213,7 +213,7 @@ export default function FamRevenuePage() {
                       <text
                         x={x + w / 2}
                         y={200 - total * scale - 6}
-                        fill="rgba(255,255,255,.85)"
+                        fill="var(--text)"
                         fontSize="10"
                         textAnchor="middle"
                         fontWeight="800"

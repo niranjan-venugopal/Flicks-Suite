@@ -83,7 +83,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 9, width: 'fit-content', marginBottom: 14 }}>
         {TABS.map((t) => (
           <button key={t} onClick={() => { setTab(t); setFocusIdx(-1) }}
-            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === t ? 'var(--surf-3)' : 'transparent', color: tab === t ? '#fff' : 'var(--text-2)', fontSize: 11.5, fontWeight: 800, textTransform: 'capitalize' }}>
+            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', background: tab === t ? 'var(--surf-3)' : 'transparent', color: tab === t ? 'var(--text)' : 'var(--text-2)', fontSize: 11.5, fontWeight: 800, textTransform: 'capitalize' }}>
             {t}
           </button>
         ))}
@@ -117,7 +117,7 @@ const MyIssues = observer(function MyIssues({ engine }: { engine: PmSyncEngine }
                   {team?.key}-{issue.number}
                 </span>
                 <PriorityGlyph p={issue.priority} size={13} />
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{issue.title}</span>
                   {issue._pending && <PendingDot />}
                 </span>

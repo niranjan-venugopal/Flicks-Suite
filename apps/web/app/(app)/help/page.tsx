@@ -36,7 +36,7 @@ export default function HelpPage() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h1 className="text-3xl font-bold text-white font-gilroy">Help & support</h1>
+          <h1 className="text-3xl font-bold text-ink font-gilroy">Help & support</h1>
           <p className="text-brand-muted mt-1">
             Find answers, learn the product, or talk to our team
           </p>
@@ -54,7 +54,7 @@ export default function HelpPage() {
               <div className="w-10 h-10 rounded-lg bg-brand-blue/10 flex items-center justify-center mb-4">
                 <r.icon className="w-5 h-5 text-brand-blue" />
               </div>
-              <h2 className="text-base font-bold text-white font-gilroy mb-1">
+              <h2 className="text-base font-bold text-ink font-gilroy mb-1">
                 {r.title}
               </h2>
               <p className="text-sm text-brand-muted mb-4">{r.description}</p>
@@ -70,7 +70,7 @@ export default function HelpPage() {
             <LifeBuoy className="w-5 h-5 text-brand-yellow" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white font-gilroy">
+            <h3 className="text-base font-bold text-ink font-gilroy">
               Need urgent help?
             </h3>
             <p className="text-sm text-brand-muted mt-1">

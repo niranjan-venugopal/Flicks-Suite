@@ -131,7 +131,7 @@ export default function PrivacySettingsPage() {
           >
             <Icon.mail size={14} style={{ color: 'var(--green)', flexShrink: 0, marginTop: 1 }} />
             <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text-2)' }}>
-              Link will be emailed to <b style={{ color: '#fff' }}>{currentUser?.email}</b> — expires in
+              Link will be emailed to <b style={{ color: 'var(--text)' }}>{currentUser?.email}</b> — expires in
               7 days. Limit: 1 export per day.
             </span>
           </div>

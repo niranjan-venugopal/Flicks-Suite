@@ -226,7 +226,7 @@ function KpiTile({
           fontSize: 18,
           fontWeight: 800,
           fontVariantNumeric: 'tabular-nums',
-          color: tone ? `var(--${tone})` : '#fff',
+          color: tone ? `var(--${tone})` : 'var(--text)',
         }}
       >
         {value}

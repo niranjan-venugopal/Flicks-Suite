@@ -47,11 +47,11 @@ export default function AttendanceReportPage() {
   const donutData = useMemo(() => {
     if (!data) return []
     return [
-      { label: 'Present',  value: data.totals.present,      color: '#27D280' },
-      { label: 'Late',     value: data.totals.late,         color: '#FED800' },
-      { label: 'WFH',      value: data.totals.workFromHome, color: '#3E7BFA' },
-      { label: 'On leave', value: data.totals.onLeave,      color: '#9B7BFA' },
-      { label: 'Absent',   value: data.totals.absent,       color: '#F8786B' },
+      { label: 'Present',  value: data.totals.present,      color: 'var(--green)' },
+      { label: 'Late',     value: data.totals.late,         color: 'var(--yellow)' },
+      { label: 'WFH',      value: data.totals.workFromHome, color: 'var(--blue)' },
+      { label: 'On leave', value: data.totals.onLeave,      color: 'var(--purple)' },
+      { label: 'Absent',   value: data.totals.absent,       color: 'var(--coral)' },
     ].filter((s) => s.value > 0)
   }, [data])
 
@@ -71,7 +71,7 @@ export default function AttendanceReportPage() {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/reports"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to reports
@@ -210,19 +210,19 @@ export default function AttendanceReportPage() {
                             }}
                           >
                             {d.present > 0 && (
-                              <div style={{ height: `${(d.present / total) * 100}%`, background: '#27D280' }} />
+                              <div style={{ height: `${(d.present / total) * 100}%`, background: 'var(--green)' }} />
                             )}
                             {d.late > 0 && (
-                              <div style={{ height: `${(d.late / total) * 100}%`, background: '#FED800' }} />
+                              <div style={{ height: `${(d.late / total) * 100}%`, background: 'var(--yellow)' }} />
                             )}
                             {d.wfh > 0 && (
-                              <div style={{ height: `${(d.wfh / total) * 100}%`, background: '#3E7BFA' }} />
+                              <div style={{ height: `${(d.wfh / total) * 100}%`, background: 'var(--blue)' }} />
                             )}
                             {d.onLeave > 0 && (
-                              <div style={{ height: `${(d.onLeave / total) * 100}%`, background: '#9B7BFA' }} />
+                              <div style={{ height: `${(d.onLeave / total) * 100}%`, background: 'var(--purple)' }} />
                             )}
                             {d.absent > 0 && (
-                              <div style={{ height: `${(d.absent / total) * 100}%`, background: '#F8786B' }} />
+                              <div style={{ height: `${(d.absent / total) * 100}%`, background: 'var(--coral)' }} />
                             )}
                           </div>
                           <div
@@ -346,7 +346,7 @@ function Kpi({ label, value, color }: { label: string; value: string; color?: st
 
 function ComplianceBar({ value }: { value: number }) {
   const p = Math.max(0, Math.min(1, value))
-  const color = p >= 0.9 ? '#27D280' : p >= 0.7 ? '#FED800' : '#F8786B'
+  const color = p >= 0.9 ? 'var(--green)' : p >= 0.7 ? 'var(--yellow)' : 'var(--coral)'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 110 }}>
       <div

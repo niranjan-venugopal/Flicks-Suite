@@ -80,7 +80,7 @@ export const PmBoard = observer(function PmBoard({ engine, teamId, issues, state
             onDrop={(e) => { e.preventDefault(); drop(state.id) }}
             style={{
               minWidth: 0, borderRadius: 12, padding: '10px 8px 8px',
-              background: overCol === state.id && dragId ? 'rgba(62,123,250,.06)' : 'var(--surf-0, rgba(255,255,255,.02))',
+              background: overCol === state.id && dragId ? 'rgba(62,123,250,.06)' : 'rgb(var(--text-rgb) / .02)',
               border: `1px solid ${overCol === state.id && dragId ? 'rgba(62,123,250,.35)' : 'var(--bord)'}`,
               transition: 'border-color .12s ease-out',
             }}
@@ -182,7 +182,7 @@ const BoardCard = observer(function BoardCard({ issue, engine, dragging, isOver,
         <span style={{ flex: 1 }} />
         <PriorityGlyph p={issue.priority} size={12} />
       </div>
-      <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', lineHeight: 1.35, marginBottom: 6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', lineHeight: 1.35, marginBottom: 6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflowWrap: 'anywhere' }}>
         {issue.title}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

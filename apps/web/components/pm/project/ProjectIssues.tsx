@@ -70,7 +70,7 @@ export const ProjectIssues = observer(function ProjectIssues({
               {team?.key ?? ''}-{i.number}
             </span>
             <PriorityGlyph p={i.priority} size={13} />
-            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.title}</span>
           </Link>
         )
       })}

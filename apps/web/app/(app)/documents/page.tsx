@@ -27,7 +27,7 @@ export default function MyDocumentsPage() {
           }}
         >
           <Icon.doc size={28} style={{ color: 'var(--text-faint)', marginBottom: 12 }} />
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', marginBottom: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>
             No documents yet
           </div>
           <div>Personal documents will appear here once HR uploads them or you submit your own.</div>

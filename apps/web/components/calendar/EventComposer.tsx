@@ -275,7 +275,7 @@ export function EventComposer({
                 onClick={() => setKind(k)}
                 style={{
                   padding: '3px 9px', borderRadius: 5, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  background: kind === k ? 'var(--surf-3)' : 'transparent', color: kind === k ? '#fff' : 'var(--text-2)', fontSize: 11, fontWeight: 800,
+                  background: kind === k ? 'var(--surf-3)' : 'transparent', color: kind === k ? 'var(--text)' : 'var(--text-2)', fontSize: 11, fontWeight: 800,
                 }}
               >
                 {label}
@@ -298,7 +298,7 @@ export function EventComposer({
           data-calendar-title
           style={{
             width: '100%', background: 'transparent', border: 'none', outline: 'none',
-            fontSize: 17, fontWeight: 700, color: '#fff', padding: '2px 0', letterSpacing: '-0.01em',
+            fontSize: 17, fontWeight: 700, color: 'var(--text)', padding: '2px 0', letterSpacing: '-0.01em',
           }}
         />
         <textarea
@@ -439,7 +439,7 @@ export function EventComposer({
                   onClick={() => setProvider(p.key)}
                   style={{
                     padding: '3px 9px', borderRadius: 5, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    background: provider === p.key ? 'var(--surf-3)' : 'transparent', color: provider === p.key ? '#fff' : 'var(--text-2)', fontSize: 11, fontWeight: 800,
+                    background: provider === p.key ? 'var(--surf-3)' : 'transparent', color: provider === p.key ? 'var(--text)' : 'var(--text-2)', fontSize: 11, fontWeight: 800,
                   }}
                 >
                   {p.label}

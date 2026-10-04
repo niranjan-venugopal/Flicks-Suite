@@ -18,29 +18,47 @@
  *    pending #FED800, overdue #F8786B
  *  • tables: th 13/700 rgba(255,255,255,.4); td 14/700 #fff p '16px 12px';
  *    row borders rgba(255,255,255,.05); zebra rgba(255,255,255,.01)
+ *
+ * Round O: the app-side primitives resolve those values from the theme tokens
+ * (globals.css) so the module re-tints with <html data-theme>; in dark every
+ * token is the prototype value above. The customer document palettes
+ * (DARK_PALETTE / LIGHT_PALETTE) stay literal — they theme the invoice/PDF.
+ * INVO.* used inside the customer document (InvoiceRenderer, PrintPaymentBlock,
+ * /inv, /invoicing/:id/preview) resolves through app/(public)/layout.tsx's
+ * data-theme="dark" wrapper; keep that wrapper, or move those sites onto
+ * DARK_PALETTE / LIGHT_PALETTE.
  */
 
 import type { CSSProperties, ReactNode } from 'react'
+import { useTheme } from '@/lib/theme/theme'
 
 // ─── tokens ──────────────────────────────────────────────────────────────────
 
+// rgba(255,255,255,n%) of the prototype in dark; n% ink on white in light.
+const ink = (pct: number) => `color-mix(in srgb, var(--text) ${pct}%, transparent)`
+
+// Hex for non-CSS sinks only (Razorpay checkout `theme.color` renders in its
+// own iframe and cannot read our custom properties). Everything painted by
+// the app uses INVO.blue.
+export const INVO_BRAND_BLUE = '#3E7BFA'
+
 export const INVO = {
-  blue: '#3E7BFA',
-  green: '#27D280',
-  yellow: '#FED800',
-  coral: '#F8786B',
-  text: '#fff',
-  muted30: 'rgba(255,255,255,0.3)',
-  muted40: 'rgba(255,255,255,0.4)',
-  muted50: 'rgba(255,255,255,0.5)',
-  muted60: 'rgba(255,255,255,0.6)',
-  cardBg: 'linear-gradient(rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 100%)',
-  cardBgStrong: 'linear-gradient(rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 100%)',
-  fieldBg: 'rgba(255,255,255,0.05)',
-  fieldBorder: '1.5px solid rgba(255,255,255,0.10)',
-  rowBorder: '1px solid rgba(255,255,255,0.05)',
-  headBorder: '1px solid rgba(255,255,255,0.07)',
-  zebra: 'rgba(255,255,255,0.01)',
+  blue: 'var(--blue)',
+  green: 'var(--green)',
+  yellow: 'var(--yellow)',
+  coral: 'var(--coral)',
+  text: 'var(--text)',
+  muted30: 'var(--text-faint)',
+  muted40: 'var(--text-faint)',
+  muted50: 'var(--text-mute)',
+  muted60: 'var(--text-2)',
+  cardBg: `linear-gradient(${ink(7)} 0%, ${ink(2)} 100%)`,
+  cardBgStrong: `linear-gradient(${ink(10)} 0%, transparent 100%)`,
+  fieldBg: ink(5),
+  fieldBorder: `1.5px solid ${ink(10)}`,
+  rowBorder: `1px solid ${ink(5)}`,
+  headBorder: `1px solid ${ink(7)}`,
+  zebra: ink(1),
 } as const
 
 // ─── Invoice document theme (dark = app default, light = print/PDF option) ────
@@ -66,19 +84,21 @@ export interface InvoicePalette {
   qrModule: string
 }
 
+// Literal on purpose: these palettes theme the customer's document (hosted
+// invoice, print/PDF, preview) via its own toggle, never via <html data-theme>.
 const DARK_PALETTE: InvoicePalette = {
   name: 'dark',
   pageBg: '#01010D',
-  cardBg: INVO.cardBgStrong,
+  cardBg: 'linear-gradient(rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 100%)',
   cardBorder: '1px solid rgba(255,255,255,0.06)',
   cardShadow: 'none',
   text: '#fff',
-  muted30: INVO.muted30,
-  muted40: INVO.muted40,
-  muted50: INVO.muted50,
-  muted60: INVO.muted60,
-  headBorder: INVO.headBorder,
-  rowBorder: INVO.rowBorder,
+  muted30: 'rgba(255,255,255,0.3)',
+  muted40: 'rgba(255,255,255,0.4)',
+  muted50: 'rgba(255,255,255,0.5)',
+  muted60: 'rgba(255,255,255,0.6)',
+  headBorder: '1px solid rgba(255,255,255,0.07)',
+  rowBorder: '1px solid rgba(255,255,255,0.05)',
   divider: 'rgba(255,255,255,0.1)',
   qrBoxBg: '#ffffff',
   qrBoxBorder: 'none',
@@ -113,7 +133,11 @@ const FONT: CSSProperties = { fontFamily: 'inherit', letterSpacing: '-0.02em' }
 
 export function InvoPage({ children, glow = 'blue' }: { children: ReactNode; glow?: 'blue' | 'green' | 'coral' }) {
   const glowColor =
-    glow === 'green' ? 'rgba(39,210,128,0.06)' : glow === 'coral' ? 'rgba(248,120,107,0.06)' : 'rgba(62,123,250,0.08)'
+    glow === 'green'
+      ? 'color-mix(in srgb, var(--green) 6%, transparent)'
+      : glow === 'coral'
+        ? 'color-mix(in srgb, var(--coral) 6%, transparent)'
+        : 'color-mix(in srgb, var(--blue) 8%, transparent)'
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: '32px 48px', position: 'relative', minWidth: 0 }}>
       <div
@@ -137,7 +161,7 @@ export function InvoPage({ children, glow = 'blue' }: { children: ReactNode; glo
           width: 300,
           height: 300,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(248,120,107,0.06) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, color-mix(in srgb, var(--coral) 6%, transparent) 0%, transparent 70%)',
           pointerEvents: 'none',
           zIndex: 0,
         }}
@@ -207,8 +231,7 @@ export const invoSelectReset: CSSProperties = {
   appearance: 'none',
   WebkitAppearance: 'none',
   paddingRight: 40,
-  backgroundImage:
-    "url(\"data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-opacity='.5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+  backgroundImage: 'var(--chevron)',
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 14px center',
   backgroundSize: 16,
@@ -271,20 +294,20 @@ export function InvoBtn({
     opacity: disabled ? 0.5 : 1,
   }
   const kinds: Record<InvoBtnKind, CSSProperties> = {
-    primary: { background: INVO.blue, color: '#fff' },
-    secondary: { background: 'rgba(255,255,255,0.08)', color: '#fff' },
-    outline: { background: 'transparent', border: '1.5px solid rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.7)' },
+    primary: { background: INVO.blue, color: 'var(--on-accent)' },
+    secondary: { background: ink(8), color: INVO.text },
+    outline: { background: 'transparent', border: `1.5px solid ${ink(20)}`, color: 'var(--text-2)' },
     dashed: {
       background: 'transparent',
-      border: '1.5px dashed rgba(255,255,255,0.2)',
+      border: `1.5px dashed ${ink(20)}`,
       color: INVO.muted50,
       padding: '8px 16px',
       height: undefined,
       fontSize: 13,
       borderRadius: 8,
     },
-    'chip-blue': { background: 'rgba(62,123,250,0.15)', color: INVO.blue },
-    'chip-outline': { background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: INVO.muted60 },
+    'chip-blue': { background: 'color-mix(in srgb, var(--blue) 15%, transparent)', color: INVO.blue },
+    'chip-outline': { background: 'transparent', border: `1px solid ${ink(15)}`, color: INVO.muted60 },
   }
   return (
     <button type={type} onClick={onClick} disabled={disabled} title={title} style={{ ...base, ...kinds[kind] }}>
@@ -296,20 +319,21 @@ export function InvoBtn({
 
 // ─── status chip (exact prototype mapping) ──────────────────────────────────
 
+const tint = (token: string) => `color-mix(in srgb, var(--${token}) 15%, transparent)`
 const CHIP_STYLES: Record<string, { label: string; bg: string; color: string }> = {
-  PAID: { label: 'Paid', bg: 'rgba(39,210,128,0.15)', color: INVO.green },
-  SENT: { label: 'Pending', bg: 'rgba(254,216,0,0.15)', color: INVO.yellow },
-  VIEWED: { label: 'Viewed', bg: 'rgba(254,216,0,0.15)', color: INVO.yellow },
-  PARTIALLY_PAID: { label: 'Partial', bg: 'rgba(254,216,0,0.15)', color: INVO.yellow },
-  OVERDUE: { label: 'Overdue', bg: 'rgba(248,120,107,0.15)', color: INVO.coral },
-  DRAFT: { label: 'Draft', bg: 'rgba(255,255,255,0.10)', color: INVO.muted60 },
-  CANCELLED: { label: 'Cancelled', bg: 'rgba(255,255,255,0.08)', color: INVO.muted40 },
-  VOIDED: { label: 'Voided', bg: 'rgba(255,255,255,0.08)', color: INVO.muted40 },
-  WRITE_OFF: { label: 'Write-off', bg: 'rgba(248,120,107,0.15)', color: INVO.coral },
-  DISPUTED: { label: 'Disputed', bg: 'rgba(248,120,107,0.15)', color: INVO.coral },
-  REFUNDED: { label: 'Refunded', bg: 'rgba(62,123,250,0.15)', color: INVO.blue },
-  active: { label: 'Active', bg: 'rgba(39,210,128,0.15)', color: INVO.green },
-  archived: { label: 'Archived', bg: 'rgba(255,255,255,0.08)', color: INVO.muted40 },
+  PAID: { label: 'Paid', bg: tint('green'), color: INVO.green },
+  SENT: { label: 'Pending', bg: tint('yellow'), color: INVO.yellow },
+  VIEWED: { label: 'Viewed', bg: tint('yellow'), color: INVO.yellow },
+  PARTIALLY_PAID: { label: 'Partial', bg: tint('yellow'), color: INVO.yellow },
+  OVERDUE: { label: 'Overdue', bg: tint('coral'), color: INVO.coral },
+  DRAFT: { label: 'Draft', bg: ink(10), color: INVO.muted60 },
+  CANCELLED: { label: 'Cancelled', bg: ink(8), color: INVO.muted40 },
+  VOIDED: { label: 'Voided', bg: ink(8), color: INVO.muted40 },
+  WRITE_OFF: { label: 'Write-off', bg: tint('coral'), color: INVO.coral },
+  DISPUTED: { label: 'Disputed', bg: tint('coral'), color: INVO.coral },
+  REFUNDED: { label: 'Refunded', bg: tint('blue'), color: INVO.blue },
+  active: { label: 'Active', bg: tint('green'), color: INVO.green },
+  archived: { label: 'Archived', bg: ink(8), color: INVO.muted40 },
 }
 
 // Light-theme chip colors (the translucent-white neutrals above vanish on a
@@ -322,20 +346,24 @@ const CHIP_STYLES_LIGHT: Record<string, { bg: string; color: string }> = {
   PARTIALLY_PAID: { bg: '#FEF7E6', color: '#B54708' },
   OVERDUE: { bg: '#FEECEB', color: '#B42318' },
   DRAFT: { bg: '#F2F4F7', color: '#475467' },
-  CANCELLED: { bg: '#F2F4F7', color: '#667085' },
-  VOIDED: { bg: '#F2F4F7', color: '#667085' },
+  CANCELLED: { bg: '#F2F4F7', color: '#5B6578' },
+  VOIDED: { bg: '#F2F4F7', color: '#5B6578' },
   WRITE_OFF: { bg: '#FEECEB', color: '#B42318' },
   DISPUTED: { bg: '#FEECEB', color: '#B42318' },
-  REFUNDED: { bg: '#EAF0FE', color: '#3E7BFA' },
+  REFUNDED: { bg: '#EAF0FE', color: '#1D4ED8' },
   active: { bg: '#E7F8EF', color: '#067647' },
-  archived: { bg: '#F2F4F7', color: '#667085' },
+  archived: { bg: '#F2F4F7', color: '#5B6578' },
 }
 
-export function StatusChip({ status, theme = 'dark' }: { status: string; theme?: InvoiceThemeName }) {
-  const base = CHIP_STYLES[status] ?? { label: status, bg: 'rgba(255,255,255,0.08)', color: INVO.muted60 }
+export function StatusChip({ status, theme }: { status: string; theme?: InvoiceThemeName }) {
+  // An explicit `theme` is the customer document's toggle (InvoiceRenderer);
+  // app surfaces leave it unset and follow the resolved app theme.
+  const { resolved } = useTheme()
+  const mode = theme ?? resolved
+  const base = CHIP_STYLES[status] ?? { label: status, bg: ink(8), color: INVO.muted60 }
   const light = CHIP_STYLES_LIGHT[status]
   const s =
-    theme === 'light'
+    mode === 'light'
       ? { label: base.label, bg: light?.bg ?? '#F2F4F7', color: light?.color ?? '#475467' }
       : base
   return (
@@ -425,7 +453,7 @@ export function InvoTabs({
   onChange: (id: string) => void
 }) {
   return (
-    <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid rgba(255,255,255,0.08)', marginBottom: 4 }}>
+    <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--bord)', marginBottom: 4 }}>
       {tabs.map((t) => (
         <div
           key={t.id}
@@ -436,8 +464,8 @@ export function InvoTabs({
             ...FONT,
             fontWeight: 700,
             fontSize: 14,
-            color: active === t.id ? INVO.text : 'rgba(255,255,255,0.35)',
-            borderBottom: active === t.id ? '2px solid #fff' : '2px solid transparent',
+            color: active === t.id ? INVO.text : 'var(--text-faint)',
+            borderBottom: active === t.id ? '2px solid var(--text)' : '2px solid transparent',
             marginBottom: -2,
           }}
         >
@@ -450,7 +478,14 @@ export function InvoTabs({
 
 // ─── avatar circle with initials ────────────────────────────────────────────
 
-const AVATAR_BGS = ['#3E7BFA', 'rgba(255,255,255,0.12)', 'rgba(248,120,107,0.4)', 'rgba(39,210,128,0.3)', 'rgba(254,216,0,0.25)']
+// [face, initials] — white on the solid blue, theme ink on the tints.
+const AVATAR_BGS: Array<[string, string]> = [
+  ['var(--blue)', 'var(--on-accent)'],
+  [ink(12), 'var(--text)'],
+  ['color-mix(in srgb, var(--coral) 40%, transparent)', 'var(--text)'],
+  ['color-mix(in srgb, var(--green) 30%, transparent)', 'var(--text)'],
+  ['color-mix(in srgb, var(--yellow) 25%, transparent)', 'var(--text)'],
+]
 
 export function InvoAvatar({ name, size = 36 }: { name: string; size?: number }) {
   const initials = name
@@ -460,7 +495,9 @@ export function InvoAvatar({ name, size = 36 }: { name: string; size?: number })
     .slice(0, 2)
     .join('')
     .toUpperCase()
-  const bg = AVATAR_BGS[(name.charCodeAt(0) + name.length) % AVATAR_BGS.length]
+  // An empty name indexes NaN — fall back to the first face instead of throwing.
+  const idx = name ? (name.charCodeAt(0) + name.length) % AVATAR_BGS.length : 0
+  const [bg, fg] = AVATAR_BGS[idx] ?? AVATAR_BGS[0]!
   return (
     <div
       style={{
@@ -474,7 +511,7 @@ export function InvoAvatar({ name, size = 36 }: { name: string; size?: number })
         ...FONT,
         fontWeight: 700,
         fontSize: size > 36 ? 14 : 13,
-        color: '#fff',
+        color: fg,
         flexShrink: 0,
       }}
     >
@@ -505,8 +542,8 @@ export function InvoSearch({
         viewBox="0 0 16 16"
         fill="none"
       >
-        <circle cx="7" cy="7" r="5" stroke="white" strokeWidth="1.5" />
-        <path d="M11 11l3 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
       <input
         value={value}
@@ -516,13 +553,13 @@ export function InvoSearch({
           height: 44,
           paddingLeft: 38,
           paddingRight: 16,
-          background: 'rgba(255,255,255,0.06)',
-          border: '1.5px solid rgba(255,255,255,0.1)',
+          background: 'var(--surf-2)',
+          border: `1.5px solid ${ink(10)}`,
           borderRadius: 10,
           ...FONT,
           fontWeight: 600,
           fontSize: 14,
-          color: '#fff',
+          color: INVO.text,
           outline: 'none',
           width,
         }}
@@ -542,25 +579,25 @@ export const InvoIcons = {
   ),
   invoices: (
     <svg width="24" height="24" viewBox="0 0 22 22" fill="none">
-      <rect x="3" y="1" width="14" height="18" rx="2" stroke="white" strokeWidth="1.5" fill="none" />
-      <path d="M6 6h8M6 10h8M6 14h5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="3" y="1" width="14" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path d="M6 6h8M6 10h8M6 14h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
   drafts: (
     <svg width="24" height="24" viewBox="0 0 22 22" fill="none">
-      <path d="M4 1h10l5 5v15H4V1z" stroke="white" strokeWidth="1.5" fill="none" />
-      <path d="M14 1v5h5" stroke="white" strokeWidth="1.5" />
+      <path d="M4 1h10l5 5v15H4V1z" stroke="currentColor" strokeWidth="1.5" fill="none" />
+      <path d="M14 1v5h5" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   ),
   clients: (
     <svg width="24" height="24" viewBox="0 0 22 22" fill="none">
-      <circle cx="11" cy="7" r="4" stroke="white" strokeWidth="1.5" />
-      <path d="M3 19c0-4 3.6-7 8-7s8 3 8 7" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="11" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 19c0-4 3.6-7 8-7s8 3 8 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
   plus: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 2v12M2 8h12" stroke="white" strokeWidth="2" strokeLinecap="round" />
+      <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   ),
   plusSmall: (
@@ -575,20 +612,20 @@ export const InvoIcons = {
   ),
   chevronRight: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M6 4l4 4-4 4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6 4l4 4-4 4" stroke="var(--text-faint)" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
   arrow: (
-    <svg width="14" height="12" viewBox="0 0 17 15" fill="white">
+    <svg width="14" height="12" viewBox="0 0 17 15" fill="currentColor">
       <path d="M10.5 15L2 6 2 8 10.5 0 7 0 0 7 0 8 7 15ZM17 9L17 6 2 6 2 9Z" />
     </svg>
   ),
   settings: (
     <svg width="24" height="24" viewBox="0 0 22 22" fill="none">
-      <circle cx="11" cy="11" r="3" stroke="white" strokeWidth="1.5" />
+      <circle cx="11" cy="11" r="3" stroke="currentColor" strokeWidth="1.5" />
       <path
         d="M11 1v3M11 18v3M21 11h-3M4 11H1M18 4l-2 2M6 16l-2 2M18 18l-2-2M6 6L4 4"
-        stroke="white"
+        stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
       />
@@ -643,14 +680,14 @@ export function InvoiceStepper({ status }: { status: string }) {
         const here = !branch && st === status
         return (
           <span key={st} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {i > 0 && <span style={{ width: 14, height: 1.5, background: on ? 'var(--blue)' : 'rgba(255,255,255,.14)' }} />}
+            {i > 0 && <span style={{ width: 14, height: 1.5, background: on ? 'var(--blue)' : 'var(--bord-2)' }} />}
             <span
               className={here ? 'pm-pop' : undefined}
               style={{
                 padding: '3px 10px', borderRadius: 99, fontSize: 10, fontWeight: 800,
-                background: here ? 'rgba(62,123,250,.14)' : 'transparent',
-                border: `1px solid ${on ? 'rgba(62,123,250,.45)' : 'rgba(255,255,255,.08)'}`,
-                color: on ? '#fff' : 'rgba(255,255,255,.32)',
+                background: here ? 'color-mix(in srgb, var(--blue) 14%, transparent)' : 'transparent',
+                border: `1px solid ${on ? 'color-mix(in srgb, var(--blue) 45%, transparent)' : 'var(--bord)'}`,
+                color: on ? 'var(--text)' : 'var(--text-faint)',
               }}
             >
               {LABEL[st]}
@@ -661,9 +698,9 @@ export function InvoiceStepper({ status }: { status: string }) {
       {branch && (
         <span className="pm-pop" style={{
           marginLeft: 6, padding: '3px 10px', borderRadius: 99, fontSize: 10, fontWeight: 800,
-          background: branch === 'OVERDUE' ? 'rgba(248,120,107,.12)' : 'rgba(255,255,255,.06)',
-          border: branch === 'OVERDUE' ? '1px solid rgba(248,120,107,.4)' : '1px solid rgba(255,255,255,.14)',
-          color: branch === 'OVERDUE' ? 'var(--coral)' : 'rgba(255,255,255,.5)',
+          background: branch === 'OVERDUE' ? 'color-mix(in srgb, var(--coral) 12%, transparent)' : 'var(--surf-2)',
+          border: branch === 'OVERDUE' ? '1px solid color-mix(in srgb, var(--coral) 40%, transparent)' : '1px solid var(--bord-2)',
+          color: branch === 'OVERDUE' ? 'var(--coral)' : 'var(--text-mute)',
         }}>
           {branch === 'OVERDUE' ? 'Overdue' : branch === 'WRITE_OFF' ? 'Write-off' : branch[0] + branch.slice(1).toLowerCase()}
         </span>

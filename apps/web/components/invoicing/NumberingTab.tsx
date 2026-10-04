@@ -144,7 +144,7 @@ export function NumberingTab() {
               border: `1px solid ${sel === i ? 'var(--bord-2)' : 'var(--bord)'}`,
             }}
           >
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: sel === i ? '#fff' : 'var(--text-2)' }}>{q.label}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: sel === i ? 'var(--text)' : 'var(--text-2)' }}>{q.label}</div>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-mute)', fontFamily: 'var(--font-mono)' }}>
               {buildNumber(q)}
             </div>
@@ -212,7 +212,7 @@ export function NumberingTab() {
                 fontWeight: 800,
                 letterSpacing: '-0.02em',
                 fontFamily: 'var(--font-mono)',
-                color: issues.length ? 'var(--coral)' : '#fff',
+                color: issues.length ? 'var(--coral)' : 'var(--text)',
               }}
             >
               {preview}

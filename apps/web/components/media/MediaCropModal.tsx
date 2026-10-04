@@ -142,10 +142,10 @@ export function MediaCropModal({
         style={{
           width: '100%',
           maxWidth: 460,
-          background: 'rgba(18,18,30,.98)',
+          background: 'var(--surf-pop)',
           border: '1px solid var(--bord-2)',
           borderRadius: 16,
-          boxShadow: '0 32px 80px rgba(0,0,0,.6)',
+          boxShadow: 'var(--e3)',
           overflow: 'hidden',
         }}
       >
@@ -208,7 +208,7 @@ export function MediaCropModal({
 
           {state === 'cropping' && imageSrc && (
             <>
-              <div style={{ position: 'relative', width: 280, height: 280, borderRadius: 12, overflow: 'hidden', background: '#0A0A14' }}>
+              <div style={{ position: 'relative', width: 280, height: 280, borderRadius: 12, overflow: 'hidden', background: 'var(--bg-2)' }}>
                 <Cropper
                   image={imageSrc}
                   crop={crop}

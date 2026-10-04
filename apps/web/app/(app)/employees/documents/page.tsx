@@ -32,7 +32,7 @@ export default function EmployeeDocumentsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="mb-8"
         >
-          <h1 className="text-3xl font-bold text-white font-gilroy">Documents</h1>
+          <h1 className="text-3xl font-bold text-ink font-gilroy">Documents</h1>
           <p className="text-brand-muted mt-1">
             Centralised storage for offer letters, contracts and identity proofs
           </p>

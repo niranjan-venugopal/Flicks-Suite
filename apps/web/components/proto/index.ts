@@ -1,6 +1,6 @@
 export { Logo, LogoMark } from './Logo'
 export { Icon, type IconKey } from './Icon'
-export { Avatar, AvatarStack, avBg, initials } from './Avatar'
+export { Avatar, AvatarStack, avBg, avFg, initials } from './Avatar'
 export { Pill, type PillTone } from './Pill'
 export { Btn, type BtnKind, type BtnSize } from './Btn'
 export { Kpi } from './Kpi'

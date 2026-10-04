@@ -226,7 +226,7 @@ export function EditDetailsDialog({
                 cursor: 'pointer',
                 background: tab === t ? 'var(--surf-2)' : 'transparent',
                 border: tab === t ? '1px solid var(--bord-2)' : '1px solid transparent',
-                color: tab === t ? '#fff' : 'var(--text-2)',
+                color: tab === t ? 'var(--text)' : 'var(--text-2)',
               }}
             >
               {t}

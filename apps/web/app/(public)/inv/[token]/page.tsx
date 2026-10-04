@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { InvoiceRenderer } from '@/components/invoicing/InvoiceRenderer'
 import {
   INVO,
+  INVO_BRAND_BLUE,
   InvoBtn,
   InvoIcons,
   invoiceTheme,
@@ -81,7 +82,9 @@ function PaymentBlock({
         currency: order.currency,
         name: payload.seller?.name ?? 'Payment',
         description: `Invoice ${invoice.invoice_number}`,
-        theme: { color: INVO.blue },
+        // Razorpay's checkout iframe cannot resolve our CSS custom properties
+        // (INVO.blue is var(--blue) since Round O) — hand it the literal hex.
+        theme: { color: INVO_BRAND_BLUE },
         handler: () => {
           toast({ title: 'Payment received', description: 'Confirming with the seller…' })
           // The webhook is the source of truth; refresh shortly after.

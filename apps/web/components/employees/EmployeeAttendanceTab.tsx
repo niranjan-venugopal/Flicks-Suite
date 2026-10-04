@@ -189,7 +189,7 @@ export function EmployeeAttendanceTab({ employeeId }: { employeeId: string }) {
                   <td style={{ color: 'var(--text-mute)' }}>{fmtDay(r.attendanceDate)}</td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtClock(r.firstPunchInAt)}</td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtClock(r.lastPunchOutAt)}</td>
-                  <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: r.totalWorkedMinutes > 540 ? 'var(--purple)' : '#fff' }}>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: r.totalWorkedMinutes > 540 ? 'var(--purple)' : 'var(--text)' }}>
                     {fmtHM(r.totalWorkedMinutes)}
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-mute)' }}>{fmtHM(r.totalBreakMinutes)}</td>

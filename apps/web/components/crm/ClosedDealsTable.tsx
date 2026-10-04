@@ -75,7 +75,7 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
             <button key={id} type="button" onClick={() => pick(id)} data-testid={`closed-chip-${id}`} style={{
               padding: '7px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap',
               background: outcome === id ? 'var(--surf-3)' : 'transparent',
-              color: outcome === id ? '#fff' : 'var(--text-2)',
+              color: outcome === id ? 'var(--text)' : 'var(--text-2)',
             }}>{label}</button>
           ))}
         </div>
@@ -122,7 +122,7 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
                 {rows.map((d, i) => (
                   <tr key={d.id} data-testid={`closed-row-${d.id}`} style={{ borderBottom: i < rows.length - 1 ? '1px solid var(--bord)' : 'none' }}>
                     <td style={td}>
-                      <Link href={`/crm/deals/${d.id}`} onClick={(e) => { e.preventDefault(); onOpen(d.id) }} style={{ color: '#fff', textDecoration: 'none', fontWeight: 800, fontSize: 12.5 }}>
+                      <Link href={`/crm/deals/${d.id}`} onClick={(e) => { e.preventDefault(); onOpen(d.id) }} style={{ color: 'var(--text)', textDecoration: 'none', fontWeight: 800, fontSize: 12.5 }}>
                         {d.title}
                       </Link>
                     </td>

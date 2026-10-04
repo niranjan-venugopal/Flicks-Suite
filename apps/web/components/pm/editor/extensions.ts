@@ -27,8 +27,10 @@ export const MISSING_IMAGE_SRC =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72" viewBox="0 0 240 72">' +
-      '<rect x="0.5" y="0.5" width="239" height="71" rx="8" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.16)"/>' +
-      '<text x="120" y="41" text-anchor="middle" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="rgba(255,255,255,0.5)">Image unavailable</text>' +
+      // A data URI can't read the theme tokens — neutral mid-greys read on
+      // both the dark and the light page.
+      '<rect x="0.5" y="0.5" width="239" height="71" rx="8" fill="rgba(128,128,128,0.12)" stroke="rgba(128,128,128,0.3)"/>' +
+      '<text x="120" y="41" text-anchor="middle" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="#767676">Image unavailable</text>' +
       '</svg>',
   )
 

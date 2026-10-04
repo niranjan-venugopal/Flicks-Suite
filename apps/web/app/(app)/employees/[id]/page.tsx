@@ -129,7 +129,7 @@ function EmployeeDetailInner({ params }: { params: Promise<{ id: string }> }) {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/employees"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to employees
@@ -828,7 +828,7 @@ function TabsBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
             fontSize: 12.5,
             fontWeight: tab === t ? 800 : 600,
             letterSpacing: '-0.01em',
-            color: tab === t ? '#fff' : 'var(--text-mute)',
+            color: tab === t ? 'var(--text)' : 'var(--text-mute)',
             borderBottom: `2px solid ${tab === t ? 'var(--blue)' : 'transparent'}`,
             marginBottom: -1,
             textTransform: 'capitalize',

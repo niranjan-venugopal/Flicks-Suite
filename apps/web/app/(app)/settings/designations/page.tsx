@@ -132,15 +132,15 @@ export default function DesignationsSettingsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           <div className="card p-4">
             <div className="t-caption">Total designations</div>
-            <div className="text-2xl font-bold text-white mt-1">{items.length}</div>
+            <div className="text-2xl font-bold text-ink mt-1">{items.length}</div>
           </div>
           <div className="card p-4">
             <div className="t-caption">Active</div>
-            <div className="text-2xl font-bold text-white mt-1">{activeCount}</div>
+            <div className="text-2xl font-bold text-ink mt-1">{activeCount}</div>
           </div>
           <div className="card p-4">
             <div className="t-caption">Linked to departments</div>
-            <div className="text-2xl font-bold text-white mt-1">
+            <div className="text-2xl font-bold text-ink mt-1">
               {items.filter((d) => d.departmentId).length}
             </div>
           </div>
@@ -182,7 +182,7 @@ export default function DesignationsSettingsPage() {
                         <div className="w-7 h-7 rounded-lg bg-brand-purple/10 flex items-center justify-center shrink-0">
                           <Briefcase className="w-3.5 h-3.5 text-brand-purple" />
                         </div>
-                        <div className="font-semibold text-white">{d.title}</div>
+                        <div className="font-semibold text-ink">{d.title}</div>
                       </div>
                     </td>
                     <td>

@@ -23,6 +23,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { fmtAddress, fmtPhone } from '@/components/employees/detail-kit'
 import { EditProfileDialog, primaryEmergencyContact } from '@/components/profile/EditProfileDialog'
+import { AppearanceCard } from '@/components/profile/AppearanceCard'
 import {
   useCurrentUser,
   useLogoutOthers,
@@ -254,6 +255,9 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
+
+        {/* Appearance (Round O) — full width; /profile is the one page every role can open */}
+        <AppearanceCard />
 
         {/* Data & privacy (DPDP) */}
         <DataPrivacyCard />
@@ -554,7 +558,7 @@ function Field({
         style={{
           fontSize: 13,
           fontWeight: 600,
-          color: '#fff',
+          color: 'var(--text)',
           fontFamily: mono ? 'var(--font-mono)' : 'inherit',
         }}
       >

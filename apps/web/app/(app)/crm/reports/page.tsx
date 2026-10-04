@@ -25,7 +25,7 @@ import {
 const fmtBase = (v: number) =>
   v >= 10_000_000 ? `₹${(v / 10_000_000).toFixed(1)} Cr` : v >= 100_000 ? `₹${(v / 100_000).toFixed(1)} L` : `₹${Math.round(v).toLocaleString('en-IN')}`
 
-const LOST_COLS = ['#F8786B', '#FF9933', '#FED800', '#9B7BFA', '#5C6477']
+const LOST_COLS = ['var(--coral)', '#FF9933', 'var(--yellow)', 'var(--purple)', 'var(--text-faint)']
 
 function RptCard({ title, sub, children, wide }: { title: string; sub?: string; children: React.ReactNode; wide?: boolean }) {
   return (
@@ -46,7 +46,7 @@ export default function ReportsPage() {
       <SectionHead title="Reports" sub="Pipeline health, forecast and goals — all sums in your base currency." />
       <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 10, marginBottom: 18, width: 'fit-content' }}>
         {([['reports', 'Dashboard'], ['forecast', 'Forecast'], ['goals', 'Goals']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
+          <button key={k} onClick={() => setTab(k)} style={{ padding: '8px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', background: tab === k ? 'var(--surf-3)' : 'transparent', color: tab === k ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: 800 }}>{l}</button>
         ))}
       </div>
       {tab === 'reports' && <Dashboard />}
@@ -80,7 +80,7 @@ function Dashboard() {
                 <span className="t-num" style={{ fontSize: 11.5, fontWeight: 800 }}>{fmtBase(r.raw)}</span>
               </div>
               <div style={{ position: 'relative', height: 14, borderRadius: 5, background: 'var(--surf-2)', overflow: 'hidden' }}>
-                <div style={{ position: 'absolute', inset: 0, width: `${(r.raw / maxRaw) * 100}%`, background: 'rgba(62,123,250,.3)', borderRadius: 5 }} />
+                <div style={{ position: 'absolute', inset: 0, width: `${(r.raw / maxRaw) * 100}%`, background: 'color-mix(in srgb, var(--blue) 30%, transparent)', borderRadius: 5 }} />
                 <div title={`weighted ${fmtBase(r.weighted)}`} style={{ position: 'absolute', top: 0, bottom: 0, width: `${(r.weighted / maxRaw) * 100}%`, background: 'var(--blue)', borderRadius: 5 }} />
               </div>
             </div>
@@ -88,7 +88,7 @@ function Dashboard() {
         </div>
         <div style={{ display: 'flex', gap: 14 }}>
           <span className="t-caption" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--blue)' }} />weighted</span>
-          <span className="t-caption" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'rgba(62,123,250,.3)' }} />raw</span>
+          <span className="t-caption" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'color-mix(in srgb, var(--blue) 30%, transparent)' }} />raw</span>
         </div>
       </RptCard>
 
@@ -98,8 +98,9 @@ function Dashboard() {
             <div key={f.stage} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ width: 110, fontSize: 11, fontWeight: 700, color: 'var(--text-2)', textAlign: 'right' }}>{f.stage}</span>
               <div style={{ flex: 1, height: 20, borderRadius: 5, background: 'var(--surf-2)', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.max(f.pct, 4)}%`, height: '100%', background: i === d.funnel.length - 1 ? 'var(--green)' : 'var(--purple, #9b7bfa)', opacity: 0.4 + 0.6 * (f.pct / 100), display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 7 }}>
-                  <span style={{ fontSize: 9.5, fontWeight: 800, color: '#fff' }}>{f.pct}%</span>
+                {/* Fade lives in the fill (40–100%) so the label stays opaque; ink on the pale tints. */}
+                <div style={{ width: `${Math.max(f.pct, 4)}%`, height: '100%', background: `color-mix(in srgb, ${i === d.funnel.length - 1 ? 'var(--green)' : 'var(--purple, #9b7bfa)'} ${(40 + 0.6 * f.pct).toFixed(1)}%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 7 }}>
+                  <span style={{ fontSize: 9.5, fontWeight: 800, color: f.pct >= 60 ? 'var(--on-accent)' : 'var(--text)' }}>{f.pct}%</span>
                 </div>
               </div>
             </div>
@@ -114,7 +115,7 @@ function Dashboard() {
       <RptCard title="Win / loss" sub="by source & owner · lost reasons">
         <div style={{ display: 'inline-flex', gap: 3, padding: 3, background: 'var(--surf-1)', border: '1px solid var(--bord)', borderRadius: 8, width: 'fit-content' }}>
           {([['by_source', 'By source'], ['by_owner', 'By owner']] as const).map(([k, l]) => (
-            <button key={k} onClick={() => setDim(k)} style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: dim === k ? 'var(--surf-3)' : 'transparent', color: dim === k ? '#fff' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>{l}</button>
+            <button key={k} onClick={() => setDim(k)} style={{ padding: '5px 11px', borderRadius: 5, border: 'none', cursor: 'pointer', background: dim === k ? 'var(--surf-3)' : 'transparent', color: dim === k ? 'var(--text)' : 'var(--text-2)', fontSize: 10.5, fontWeight: 800 }}>{l}</button>
           ))}
         </div>
         {rows.length === 0 ? <div className="t-mute" style={{ fontSize: 12 }}>No decided deals in the window yet.</div> : (
@@ -207,7 +208,7 @@ function Forecast() {
   return (
     <div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-        {([['var(--purple, #9b7bfa)', 'Weighted'], ['var(--blue)', 'Committed (≥70%)'], ['var(--green)', 'Won'], ['rgba(254,216,0,.8)', 'Goal']] as const).map(([c, l]) => (
+        {([['var(--purple, #9b7bfa)', 'Weighted'], ['var(--blue)', 'Committed (≥70%)'], ['var(--green)', 'Won'], ['color-mix(in srgb, var(--yellow) 80%, transparent)', 'Goal']] as const).map(([c, l]) => (
           <span key={l} className="t-caption" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 8, height: 8, borderRadius: l === 'Goal' ? 0 : 2, background: l === 'Goal' ? 'transparent' : c, borderTop: l === 'Goal' ? `2px dashed ${c}` : 'none' }} />{l}
           </span>
@@ -221,7 +222,7 @@ function Forecast() {
           {rows.map((f) => (
             <div key={f.period} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ position: 'relative', height: H, display: 'flex', alignItems: 'flex-end', gap: 8, justifyContent: 'center' }}>
-                {f.goal != null && <div title={`Goal ${fmtBase(f.goal)}`} style={{ position: 'absolute', left: 0, right: 0, bottom: (f.goal / max) * H, borderTop: '2px dashed rgba(254,216,0,.6)' }} />}
+                {f.goal != null && <div title={`Goal ${fmtBase(f.goal)}`} style={{ position: 'absolute', left: 0, right: 0, bottom: (f.goal / max) * H, borderTop: '2px dashed color-mix(in srgb, var(--yellow) 60%, transparent)' }} />}
                 {([['weighted', 'var(--purple, #9b7bfa)'], ['committed', 'var(--blue)'], ['won', 'var(--green)']] as const).map(([k, c]) => (
                   <div key={k} onClick={() => setDrill(f)} title={`${k} ${fmtBase(f[k])}`}
                     style={{ width: 34, height: Math.max(4, (f[k] / max) * H), borderRadius: '6px 6px 0 0', background: c, opacity: k === 'won' && !f[k] ? 0.25 : 1, cursor: 'pointer' }} />

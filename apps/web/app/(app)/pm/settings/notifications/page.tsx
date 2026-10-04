@@ -55,7 +55,7 @@ function DndDot({ size = 10 }: { size?: number }) {
       width: size, height: size, borderRadius: '50%', background: 'var(--coral)',
       boxShadow: '0 0 0 2px var(--bg)', flexShrink: 0, display: 'inline-block', position: 'relative',
     }}>
-      <span style={{ position: 'absolute', left: '20%', right: '20%', top: '50%', height: 1.4, transform: 'translateY(-50%)', background: '#fff', borderRadius: 99 }} />
+      <span style={{ position: 'absolute', left: '20%', right: '20%', top: '50%', height: 1.4, transform: 'translateY(-50%)', background: 'var(--on-accent)', borderRadius: 99 }} />
     </span>
   )
 }
@@ -92,7 +92,7 @@ export default function PmNotifSettingsPage() {
           {FEATURES.pm_github && (
             <Link href="/pm/settings/github" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>GitHub</Link>
           )}
-          <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: '#fff', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
+          <Link href="/pm/settings/notifications" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text)', background: 'var(--surf-2)', border: '1px solid var(--bord-2)' }}>Notifications</Link>
           <Link href="/pm/settings/import" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Import</Link>
           <Link href="/pm/settings/workspace" style={{ padding: '5px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 800, textDecoration: 'none', color: 'var(--text-mute)', border: '1px solid transparent' }}>Workspace</Link>
         </div>
@@ -133,9 +133,9 @@ export default function PmNotifSettingsPage() {
                 }}
                 style={{
                   flex: 1, padding: '9px 0', borderRadius: 9, cursor: 'pointer',
-                  background: freq === k ? 'rgba(62,123,250,.1)' : 'var(--surf-1)',
-                  border: `1px solid ${freq === k ? 'rgba(62,123,250,.45)' : 'var(--bord)'}`,
-                  color: freq === k ? '#fff' : 'var(--text-2)',
+                  background: freq === k ? 'color-mix(in srgb, var(--blue) 10%, transparent)' : 'var(--surf-1)',
+                  border: `1px solid ${freq === k ? 'color-mix(in srgb, var(--blue) 45%, transparent)' : 'var(--bord)'}`,
+                  color: freq === k ? 'var(--text)' : 'var(--text-2)',
                   fontSize: 11.5, fontWeight: 800,
                 }}
               >{l}</button>

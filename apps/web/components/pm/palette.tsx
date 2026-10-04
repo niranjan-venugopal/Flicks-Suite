@@ -166,7 +166,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
 
   return (
     <Overlay open onClose={onClose} zIndex={1250} align="start" padding="14vh 0 0" blur={4} label="Command palette">
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '92vw', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 14, boxShadow: '0 24px 60px rgba(0,0,0,.6)', overflow: 'hidden' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '92vw', background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 14, boxShadow: 'var(--e3)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '1px solid var(--bord)' }}>
           <Icon.search size={15} style={{ color: 'var(--text-mute)' }} />
           <input
@@ -180,7 +180,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
               if (e.key === 'Enter' && total > 0) pick(idx)
             }}
             placeholder="Search issues, or type a command…"
-            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600 }}
+            style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13.5, fontWeight: 600 }}
           />
           <Kbd>Esc</Kbd>
         </div>
@@ -228,7 +228,7 @@ function PmPalette({ onClose }: { onClose: () => void }) {
 function PaletteRow({ active, onClick, onHover, onLeave, children }: { active: boolean; onClick: () => void; onHover?: () => void; onLeave?: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} onMouseEnter={onHover} onMouseLeave={onLeave}
-      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: active ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer', color: active ? '#fff' : 'var(--text-2)', fontSize: 12.5, fontWeight: 700, textAlign: 'left' }}>
+      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: active ? 'var(--surf-2)' : 'transparent', border: 'none', cursor: 'pointer', color: active ? 'var(--text)' : 'var(--text-2)', fontSize: 12.5, fontWeight: 700, textAlign: 'left' }}>
       {children}
     </button>
   )
@@ -249,7 +249,7 @@ export function PmKeymapOverlay({ onClose }: { onClose: () => void }) {
   }, [])
   return (
     <Overlay open onClose={onClose} zIndex={1200} padding={0} blur={4} label="Keyboard shortcuts">
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 640, maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto', background: 'rgba(18,18,30,.98)', border: '1px solid var(--bord-2)', borderRadius: 14, padding: 20, boxShadow: '0 24px 60px rgba(0,0,0,.6)' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 640, maxWidth: '94vw', maxHeight: '80vh', overflowY: 'auto', background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 14, padding: 20, boxShadow: 'var(--e3)' }}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
           <span style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>Keyboard shortcuts</span>
           <Kbd>?</Kbd>

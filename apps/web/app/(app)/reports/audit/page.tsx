@@ -120,7 +120,7 @@ export default function AuditLogReportPage() {
         <div style={{ marginBottom: 16 }}>
           <Link
             href="/reports"
-            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-2 text-sm text-brand-muted hover:text-ink transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to reports
@@ -226,7 +226,7 @@ export default function AuditLogReportPage() {
                       <tr
                         style={{
                           borderBottom: '1px solid var(--bord)',
-                          background: i % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent',
+                          background: i % 2 === 1 ? 'color-mix(in srgb, var(--text) 1.5%, transparent)' : 'transparent',
                         }}
                       >
                         <td style={{ ...td, fontFamily: 'var(--font-mono)', fontSize: 11 }}>

@@ -374,7 +374,7 @@ export function IssueComposer({
             data-testid="composer-title"
             style={{
               width: '100%', background: 'transparent', border: 'none', outline: 'none',
-              fontSize: 17, fontWeight: 700, color: '#fff', padding: '2px 0', letterSpacing: '-0.01em',
+              fontSize: 17, fontWeight: 700, color: 'var(--text)', padding: '2px 0', letterSpacing: '-0.01em',
             }}
           />
           {rich ? (
@@ -529,7 +529,7 @@ export function IssueComposer({
               title="Estimate points"
               style={{
                 width: 52, height: 26, borderRadius: 7, background: estimate ? 'var(--surf-2)' : 'var(--surf-1)',
-                border: '1px solid var(--bord)', color: estimate ? '#fff' : 'var(--text-2)',
+                border: '1px solid var(--bord)', color: estimate ? 'var(--text)' : 'var(--text-2)',
                 fontSize: 11, fontWeight: 700, textAlign: 'center', outline: 'none',
               }}
             />

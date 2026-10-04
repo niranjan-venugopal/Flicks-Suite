@@ -438,7 +438,7 @@ export default function EmployeeOnboardingPage() {
               }}
             >
               Hi {userName.split(' ')[0]}, your start date is{' '}
-              <strong style={{ color: '#fff' }}>{startDate}</strong>
+              <strong style={{ color: 'var(--text)' }}>{startDate}</strong>
             </div>
           </div>
 
@@ -474,7 +474,7 @@ export default function EmployeeOnboardingPage() {
                         : active
                           ? 'var(--blue)'
                           : 'var(--surf-2)',
-                      color: done || active ? '#fff' : 'var(--text-mute)',
+                      color: done || active ? 'var(--on-accent)' : 'var(--text-mute)',
                       border:
                         done || active ? 'none' : '1px solid var(--bord-2)',
                       display: 'flex',
@@ -493,7 +493,7 @@ export default function EmployeeOnboardingPage() {
                         fontSize: 12.5,
                         fontWeight: active ? 800 : 700,
                         color:
-                          active || done ? '#fff' : 'var(--text-2)',
+                          active || done ? 'var(--text)' : 'var(--text-2)',
                       }}
                     >
                       {s.title}
@@ -1110,7 +1110,7 @@ function DocumentsStep({ isIndia }: { isIndia: boolean }) {
           style={{ color: 'var(--yellow)', marginTop: 1, flexShrink: 0 }}
         />
         <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
-          <strong style={{ color: '#fff' }}>Uploads coming soon.</strong> You can
+          <strong style={{ color: 'var(--text)' }}>Uploads coming soon.</strong> You can
           finish onboarding without them — HR will collect your documents over
           email in the meantime.
         </div>

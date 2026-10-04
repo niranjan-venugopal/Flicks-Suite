@@ -21,13 +21,13 @@ import { isGstCurrency } from '@/lib/invoicing/constants'
 const FIELD: React.CSSProperties = {
   width: '100%',
   height: 44,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1.5px solid rgba(255,255,255,0.10)',
+  background: 'var(--surf-2)',
+  border: '1.5px solid var(--surf-3)',
   borderRadius: 10,
   padding: '0 14px',
   fontWeight: 600,
   fontSize: 14,
-  color: '#fff',
+  color: 'var(--text)',
   outline: 'none',
   letterSpacing: '-0.02em',
 }
@@ -35,7 +35,7 @@ const LABEL: React.CSSProperties = {
   display: 'block',
   fontWeight: 700,
   fontSize: 13,
-  color: 'rgba(255,255,255,0.6)',
+  color: 'var(--text-2)',
   marginBottom: 6,
   letterSpacing: '-0.02em',
 }
@@ -158,7 +158,7 @@ export function ItemModal({
                   borderRadius: 9,
                   maxHeight: 200,
                   overflowY: 'auto',
-                  border: '1px solid var(--line)',
+                  border: '1px solid var(--bord)',
                 }}
               >
                 {hsnResults!.data.slice(0, 8).map((r) => (
@@ -186,7 +186,7 @@ export function ItemModal({
                     }}
                   >
                     <strong>{r.code}</strong>{' '}
-                    <span style={{ color: 'var(--muted)' }}>· {r.description}</span>
+                    <span style={{ color: 'var(--text-mute)' }}>· {r.description}</span>
                   </button>
                 ))}
               </div>

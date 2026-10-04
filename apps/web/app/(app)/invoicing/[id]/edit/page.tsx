@@ -10,7 +10,7 @@ export default function EditInvoicePage() {
   const { data, isLoading, isError } = useInvoice(params?.id)
   const access = useInvoicingAccess()
 
-  if (isLoading || access.isLoading) return <div style={{ padding: 32, color: 'var(--muted)' }}>Loading invoice…</div>
+  if (isLoading || access.isLoading) return <div style={{ padding: 32, color: 'var(--text-mute)' }}>Loading invoice…</div>
   if (!access.canEdit)
     return (
       <div style={{ padding: 32, color: 'var(--text-mute)' }}>
@@ -21,7 +21,7 @@ export default function EditInvoicePage() {
     return <div style={{ padding: 32, color: 'var(--coral, #ff6b6b)' }}>Couldn’t load this invoice.</div>
   if (data.data.status !== 'DRAFT')
     return (
-      <div style={{ padding: 32, color: 'var(--muted)' }}>
+      <div style={{ padding: 32, color: 'var(--text-mute)' }}>
         Only DRAFT invoices can be edited — {data.data.invoice_number} is {data.data.status}.
       </div>
     )

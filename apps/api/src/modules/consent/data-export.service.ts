@@ -198,6 +198,7 @@ export class DataExportService {
         phone: user.phone,
         locale: user.locale,
         timezone: user.timezone,
+        theme: user.theme,
         created_at: user.created_at,
         last_login_at: user.last_login_at,
       },

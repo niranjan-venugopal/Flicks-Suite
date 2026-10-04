@@ -402,7 +402,7 @@ export function ClockCard() {
               }}
             >
               <span className="pm-pending" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)' }} />
-              <span style={{ fontSize: 15, fontWeight: 800, color: '#fff', fontFamily: 'var(--font-mono)' }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', fontFamily: 'var(--font-mono)' }}>
                 {fmtHM(workedMin)}
               </span>
               <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--green)' }}>Clock out</span>

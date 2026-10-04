@@ -69,7 +69,7 @@ export function CrmSearchPalette() {
       <div
         onClick={(e) => e.stopPropagation()}
         className="card modal-card"
-        style={{ width: 'min(620px, 92vw)', padding: 0, overflow: 'hidden', boxShadow: '0 24px 80px rgba(0,0,0,.5)' }}
+        style={{ width: 'min(620px, 92vw)', padding: 0, overflow: 'hidden' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--bord)' }}>
           <Search size={16} style={{ color: 'var(--text-mute)' }} />
@@ -79,7 +79,7 @@ export function CrmSearchPalette() {
             onChange={(e) => setRaw(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && firstHref) go(firstHref) }}
             placeholder="Search contacts, companies, deals…"
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-1)', fontSize: 15 }}
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 15 }}
           />
           <kbd style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-mute)', border: '1px solid var(--bord)', borderRadius: 5, padding: '2px 6px' }}>ESC</kbd>
         </div>
