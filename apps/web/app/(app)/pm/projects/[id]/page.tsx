@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { observer } from 'mobx-react-lite'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '@/components/proto'
+import { useToast } from '@/components/ui/use-toast'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { IssueComposer } from '@/components/pm/IssueComposer'
 import { PmPage } from '@/components/pm/PmPage'
@@ -118,6 +119,7 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
   invalidate: () => void
 }) {
   const qc = useQueryClient()
+  const { toast } = useToast()
   const live = engine?.store.projects.get(id)
   const project = { ...d.project, ...(live ?? {}) }
 
@@ -158,7 +160,23 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
 
   const restPatch = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api.patch(`/api/v1/pm/projects/${id}`, patch),
-    onSuccess: invalidate,
+    // Round P R5 — the list payload carries the same face (icon / colour /
+    // logo_url) as the detail, and an icon pick drops the image server-side:
+    // refetch both (the same two keys the logo upload/remove hooks touch), or
+    // the list keeps the old image for the 5-minute staleTime.
+    onSuccess: () => {
+      invalidate()
+      void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })
+    },
+    // Sync mode toasts a rejection through engine.onReject (PmProvider); the
+    // REST door had nothing, so a guest's 403 or "invalid icon" left the
+    // header silently unchanged.
+    onError: (err: unknown) =>
+      toast({
+        title: 'Change rejected',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'destructive',
+      }),
   })
   const patchProject = (patch: Partial<PmProjectRow>) => {
     if (engine) engine.updateProject(id, patch)
@@ -256,6 +274,22 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
         mayDelete={mayDelete}
         patchProject={patchProject}
         onOpenLogo={() => setLogoModal(true)}
+        // Round P R5 — the picker's "Remove image": same mutation + delta pull
+        // as the crop modal's footer link. The picker has already closed, so
+        // a failure (a guest's 403, a network drop) is surfaced as a toast —
+        // the image staying put with no word would be a dead end.
+        onRemoveLogo={() => {
+          void removeLogo
+            .mutateAsync()
+            .then(() => { if (engine) void engine.pullDelta() })
+            .catch((err: unknown) =>
+              toast({
+                title: 'Could not remove the image',
+                description: err instanceof Error ? err.message : 'Please try again.',
+                variant: 'destructive',
+              }),
+            )
+        }}
         onDelete={() => setConfirmDelete(true)}
       />
       {/* Round M — Latest update (Agent C): health + body + what changed since the previous update. */}
@@ -361,6 +395,8 @@ const ProjectBody = observer(function ProjectBody({ id, d, engine, onBack, inval
       {logoModal && (
         <MediaCropModal
           kind="logo"
+          title="Project image"
+          noun="image"
           hasCurrent={!!logoUrl}
           onClose={() => setLogoModal(false)}
           onUpload={async (blob) => {

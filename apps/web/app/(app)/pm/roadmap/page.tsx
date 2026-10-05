@@ -6,6 +6,7 @@ import { observer } from 'mobx-react-lite'
 import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { TimelineBoard, ZoomToggle, type TimelineLane } from '@/components/pm/timeline'
 import { InitiativeCreateModal } from '@/components/pm/projects'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
 import { PmPage } from '@/components/pm/PmPage'
 import { usePm } from '@/lib/pm/PmProvider'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -119,7 +120,7 @@ const Roadmap = observer(function Roadmap({ engine }: { engine: PmSyncEngine }) 
                 engine.setInitiativeProjects(assignFor, inLane ? cur.filter((x) => x !== p.id) : [...cur, p.id])
               }}
               style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 10px', borderRadius: 8, background: inLane ? 'rgba(62,123,250,.08)' : 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text)', fontSize: 12, fontWeight: 700, textAlign: 'left' }}>
-              <span>{p.icon ?? '🎯'}</span>
+              <ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={16} />
               <span style={{ flex: 1 }}>{p.name}</span>
               {inLane && <Icon.check size={13} style={{ color: 'var(--blue)' }} />}
             </button>

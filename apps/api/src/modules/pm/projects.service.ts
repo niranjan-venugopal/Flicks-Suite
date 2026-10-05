@@ -88,6 +88,32 @@ function assertPriority(value: unknown) {
   }
 }
 
+/**
+ * Round P R5 — a project's face is EITHER a lucide glyph on a colour tile
+ * (`lucide:folder-kanban`, mirrored by apps/web/components/pm/icons) OR a
+ * legacy emoji (any short run of printable non-whitespace). Anything carrying
+ * the `lucide:` prefix — in any letter case — must be a well-formed lower-case
+ * name: the web renders a malformed prefix value as literal text, which is a
+ * dead end (house rule 8). C0/DEL control characters (`\p{Cc}`) are refused
+ * too: Postgres rejects U+0000 with a non-HTTP error, which would surface as
+ * a 500 / sync E500 instead of a clean 400. Format characters (ZWJ, VS16)
+ * stay allowed so multi-code-point emoji such as 🛠️ keep matching.
+ * Shared with the REST DTOs (pm.controller.ts) so both doors agree.
+ */
+export const PROJECT_ICON_RE = /^(lucide:[a-z0-9-]{1,24}|(?![Ll][Uu][Cc][Ii][Dd][Ee]:)[^\s\p{Cc}]{1,16})$/u;
+export const PROJECT_ICON_MAX_LEN = 32;
+export const PROJECT_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** undefined / null are fine (unset / clear); strings must match the contract. */
+function assertIconColor(icon: unknown, color: unknown) {
+  if (icon != null && (typeof icon !== 'string' || icon.length > PROJECT_ICON_MAX_LEN || !PROJECT_ICON_RE.test(icon))) {
+    throw new BadRequestException('invalid icon');
+  }
+  if (color != null && (typeof color !== 'string' || !PROJECT_COLOR_RE.test(color))) {
+    throw new BadRequestException('color must be #RRGGBB');
+  }
+}
+
 @Injectable()
 export class PmProjectsService {
   constructor(
@@ -118,10 +144,23 @@ export class PmProjectsService {
 
   // ─── helpers ──────────────────────────────────────────────────────────────
 
-  private async loadProject(tx: Db, tenantId: string, id: string, opts: { withDeleted?: boolean } = {}) {
+  /**
+   * `forUpdate` takes the row lock for the rest of the tx (SELECT … FOR
+   * UPDATE). update() uses it so a write that derives from what it just read
+   * (Round P R5: "drop logo_key if the row has one") cannot be interleaved
+   * with uploadLogo's second tx — the upload then waits and lands after the
+   * icon write, instead of being nulled out and its R2 object orphaned.
+   */
+  private async loadProject(
+    tx: Db,
+    tenantId: string,
+    id: string,
+    opts: { withDeleted?: boolean; forUpdate?: boolean } = {},
+  ) {
     const conds = [eq(pmProjects.id, id), eq(pmProjects.tenant_id, tenantId)];
     if (!opts.withDeleted) conds.push(isNull(pmProjects.deleted_at));
-    const [project] = await tx.select().from(pmProjects).where(and(...conds)).limit(1);
+    const q = tx.select().from(pmProjects).where(and(...conds)).limit(1);
+    const [project] = opts.forUpdate ? await q.for('update') : await q;
     if (!project) throw new NotFoundException('Project not found');
     return project;
   }
@@ -486,6 +525,7 @@ export class PmProjectsService {
       throw new BadRequestException('invalid status');
     }
     if (input.priority != null) assertPriority(input.priority);
+    assertIconColor(input.icon, input.color);
     return this.db.withTenant(
       tenantId,
       async (tx) => {
@@ -539,12 +579,13 @@ export class PmProjectsService {
   }
 
   async update(tenantId: string, userId: string, id: string, patch: Record<string, unknown>) {
-    return this.db.withTenant(
+    const { data, prevLogoKey } = await this.db.withTenant(
       tenantId,
       async (tx) => {
         await this.visibility.assertNotGuestTx(tx, tenantId, userId, 'project management');
         await this.assertProjectAccess(tx, tenantId, userId, id);
-        const project = await this.loadProject(tx, tenantId, id);
+        // Locked: the logo drop below is decided from this read (see loadProject).
+        const project = await this.loadProject(tx, tenantId, id, { forUpdate: true });
         const clean: Record<string, unknown> = {};
         for (const f of PROJECT_PATCH_FIELDS) {
           if (f in patch) clean[f] = patch[f];
@@ -552,7 +593,9 @@ export class PmProjectsService {
         // Round M — the rich editor now writes this body (pasted images, links):
         // same tag-strip / URL allowlist / cap as issue descriptions, on both doors.
         if ('description_md' in clean) clean.description_md = this.cleanProjectDescription(clean.description_md);
-        if (!Object.keys(clean).length) return { data: await this.stripAndSignLogo(project) };
+        if (!Object.keys(clean).length) {
+          return { data: await this.stripAndSignLogo(project), prevLogoKey: null as string | null };
+        }
         if ('name' in clean && !String(clean.name ?? '').trim()) {
           throw new BadRequestException('Project name is required');
         }
@@ -560,15 +603,22 @@ export class PmProjectsService {
           throw new BadRequestException('invalid status');
         }
         if ('priority' in clean) assertPriority(clean.priority);
+        // Round P R5 — on the cleaned patch so the sync door (no DTO) is covered.
+        assertIconColor(clean.icon, clean.color);
         if ('lead_user_id' in clean && clean.lead_user_id) {
           await this.assertActiveMember(tx, tenantId, [clean.lead_user_id as string]);
         }
+        // Round P R5 — icon XOR image: choosing any icon drops an uploaded
+        // logo in the same UPDATE (the returned row already has logo_url
+        // null); the R2 object goes after the tx, best-effort, like uploadLogo.
+        const droppingLogo = 'icon' in clean && clean.icon != null && !!project.logo_key;
         const statusChanged = 'status' in clean && clean.status !== project.status;
         const completing = statusChanged && clean.status === 'completed';
         const [row] = await tx
           .update(pmProjects)
           .set({
             ...clean,
+            ...(droppingLogo ? { logo_key: null, logo_updated_at: new Date() } : {}),
             ...(completing ? { completed_at: new Date() } : {}),
             ...(statusChanged && !completing && project.status === 'completed' ? { completed_at: null } : {}),
             updated_at: new Date(),
@@ -589,10 +639,23 @@ export class PmProjectsService {
           },
           tx,
         );
-        return { data: await this.stripAndSignLogo(row!) };
+        return { data: await this.stripAndSignLogo(row!), prevLogoKey: droppingLogo ? project.logo_key : null };
       },
       userId,
     );
+    if (prevLogoKey) {
+      void this.media.deleteImage(prevLogoKey).catch(() => undefined);
+      // Same trail as removeLogo — an Owner reading the log sees who swapped
+      // the image for an icon. audit.log never throws (house rule 6).
+      await this.audit.log({
+        tenantId,
+        actorUserId: userId,
+        action: 'pm.project.logo_removed',
+        resourceType: 'pm_project',
+        resourceId: id,
+      });
+    }
+    return { data };
   }
 
   async setTeams(tenantId: string, userId: string, id: string, teamIds: string[]) {

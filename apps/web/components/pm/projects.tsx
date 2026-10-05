@@ -1,9 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Btn, Icon, Modal, avBg, initials } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { PM_PRIORITY_LABEL, PriorityGlyph } from '@/components/pm/glyphs'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
+import { ProjectVisualPicker } from '@/components/pm/ProjectVisualPicker'
+import { DEFAULT_PROJECT_ICON, defaultColorFor } from '@/components/pm/icons/project-icons'
 import type { PmSyncEngine } from '@/lib/pm/engine'
 import type { PmTeamRow, PmUserLite } from '@/lib/pm/types'
 import { useTheme } from '@/lib/theme/theme'
@@ -43,31 +46,10 @@ export function PmAv({ name, src, size = 18 }: { name: string; src?: string | nu
   )
 }
 
-export const PROJECT_ICONS = ['🤝', '⚡', '📣', '🚀', '🛠️', '🎯']
-
-/**
- * Round E — a project's face: the uploaded logo when there is one, the emoji
- * icon otherwise. Signed logo URLs age out (they persist in IndexedDB
- * between sessions), so a broken image falls back to the emoji — the next
- * bootstrap/delta re-signs it.
- */
-export function ProjectLogo({ logoUrl, icon, size = 18 }: { logoUrl?: string | null; icon?: string | null; size?: number }) {
-  const [broken, setBroken] = useState(false)
-  useEffect(() => {
-    setBroken(false)
-  }, [logoUrl])
-  if (logoUrl && !broken) {
-    return (
-      <img
-        src={logoUrl}
-        alt=""
-        onError={() => setBroken(true)}
-        style={{ width: size, height: size, borderRadius: Math.max(4, size * 0.22), objectFit: 'cover', flexShrink: 0, display: 'inline-block' }}
-      />
-    )
-  }
-  return <span style={{ fontSize: size * 0.78, lineHeight: 1, flexShrink: 0 }}>{icon ?? '🎯'}</span>
-}
+// Round P R5 — a project's face is <ProjectIcon> everywhere (uploaded image
+// → lucide tile → legacy emoji → default tile). The Round C emoji set and the
+// Round E `ProjectLogo` wrapper are gone: nothing new is created with an
+// emoji, and old projects' emoji still render through ProjectIcon.
 
 export function ProjectCreateModal({
   open,
@@ -85,7 +67,10 @@ export function ProjectCreateModal({
   onCreate: (
     input: {
       name: string
+      /** Round P R5 — `lucide:<name>` (the picker only offers the curated set). */
       icon: string
+      /** Round P R5 — #RRGGBB tile colour: follows the name until picked explicitly. */
+      color: string
       lead_user_id: string
       target_date: string | null
       team_ids: string[]
@@ -98,18 +83,35 @@ export function ProjectCreateModal({
   ) => void
 }) {
   const [name, setName] = useState('')
-  const [icon, setIcon] = useState('🤝')
+  const [icon, setIcon] = useState(DEFAULT_PROJECT_ICON)
+  // Round P R5 — null = the colour tracks the name as it is typed (hash →
+  // one of the 12 swatches); a swatch click in the picker pins it.
+  const [colorPicked, setColorPicked] = useState<string | null>(null)
   const [lead, setLead] = useState(meId)
   const [target, setTarget] = useState('')
   const [teamIds, setTeamIds] = useState<string[]>([])
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [priority, setPriority] = useState(0) // Round M — issue scale, default "No priority"
+  const [picker, setPicker] = useState(false)
+  // The picker's Image tab hands off to this hidden input — the same plain
+  // file pick as before (the server center-crops + re-encodes), so the
+  // create flow needs no crop step and no project id yet.
+  const fileInput = useRef<HTMLInputElement>(null)
+  // Object URL so the tile shows the chosen image before anything is uploaded.
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  useEffect(() => {
+    if (!logoFile) { setLogoPreview(null); return }
+    const url = URL.createObjectURL(logoFile)
+    setLogoPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [logoFile])
   if (!open) return null
+  const color = colorPicked ?? defaultColorFor(name.trim())
   const tog = (id: string) => setTeamIds((x) => (x.includes(id) ? x.filter((y) => y !== id) : [...x, id]))
   const submit = () => {
     if (!name.trim()) return
-    onCreate({ name: name.trim(), icon, lead_user_id: lead, target_date: target || null, team_ids: teamIds, priority }, logoFile)
-    setName(''); setTarget(''); setTeamIds([]); setLogoFile(null); setPriority(0)
+    onCreate({ name: name.trim(), icon, color, lead_user_id: lead, target_date: target || null, team_ids: teamIds, priority }, logoFile)
+    setName(''); setTarget(''); setTeamIds([]); setLogoFile(null); setPriority(0); setIcon(DEFAULT_PROJECT_ICON); setColorPicked(null)
     onClose()
   }
   return (
@@ -118,9 +120,43 @@ export function ProjectCreateModal({
       <div style={{ display: 'grid', gridTemplateColumns: '56px 1fr 1fr', gap: 10, marginBottom: 12 }}>
         <div>
           <div className="label">Icon</div>
-          <select className="input" value={icon} onChange={(e) => setIcon(e.target.value)} style={{ height: 38, padding: '0 8px' }}>
-            {PROJECT_ICONS.map((e) => <option key={e}>{e}</option>)}
-          </select>
+          {/* Round P R5 — the tile IS the control: click it for the icon /
+              colour / image picker. An image chosen on the Image tab shows
+              here straight away; picking an icon afterwards drops it (a
+              project has one or the other). */}
+          <button
+            type="button"
+            data-testid="project-create-visual"
+            title="Choose an icon and colour, or upload an image"
+            aria-label="Choose an icon and colour, or upload an image"
+            onClick={() => setPicker(true)}
+            style={{ display: 'inline-flex', padding: 0, border: 'none', background: 'transparent', borderRadius: 11, cursor: 'pointer', boxShadow: '0 0 0 1px var(--bord)' }}
+          >
+            <ProjectIcon logoUrl={logoPreview} icon={icon} color={color} name={name} size={38} />
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            data-testid="project-create-logo-file"
+            onChange={(e) => { setLogoFile(e.target.files?.[0] ?? null); e.target.value = '' }}
+            style={{ display: 'none' }}
+          />
+          <ProjectVisualPicker
+            open={picker}
+            onClose={() => setPicker(false)}
+            icon={icon}
+            color={color}
+            name={name}
+            hasImage={!!logoFile}
+            onPick={(nextIcon, nextColor, colorWasPicked) => {
+              setIcon(nextIcon)
+              if (colorWasPicked) setColorPicked(nextColor)
+              setLogoFile(null) // icon XOR image, at create time too
+            }}
+            onUploadImage={() => fileInput.current?.click()}
+            onRemoveImage={() => setLogoFile(null)}
+          />
         </div>
         <div style={{ gridColumn: '2/4' }}>
           <div className="label">Name</div>
@@ -156,26 +192,6 @@ export function ProjectCreateModal({
               {PM_PRIORITY_LABEL.map((l, p) => <option key={p} value={p}>{l}</option>)}
             </select>
           </div>
-        </div>
-      </div>
-      <div style={{ marginBottom: 12 }}>
-        <div className="label" style={{ marginBottom: 4 }}>Logo (optional)</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
-            style={{ fontSize: 11, color: 'var(--text-2)' }}
-          />
-          {logoFile && (
-            <button type="button" onClick={() => setLogoFile(null)}
-              style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 10.5, fontWeight: 700 }}>
-              Clear
-            </button>
-          )}
-        </div>
-        <div style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', marginTop: 3 }}>
-          JPG/PNG/WebP, squared automatically. The emoji icon stays the fallback.
         </div>
       </div>
       <div className="label" style={{ marginBottom: 6 }}>Teams</div>

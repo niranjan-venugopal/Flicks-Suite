@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Btn, Icon } from '@/components/proto'
 import { DiamondGlyph, PriorityGlyph } from '@/components/pm/glyphs'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
 import type { PmMilestoneRow, PmProjectRow } from '@/lib/pm/types'
 
 // ─────────────────────────────────────────────────────────
@@ -169,8 +170,9 @@ export function TimelineBoard({
               if (!startIso || !targetIso) {
                 return (
                   <div key={p.id} style={{ display: 'flex', alignItems: 'center', height: 24, paddingLeft: 14 }}>
-                    <button onClick={() => onOpenProject(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)' }}>
-                      {p.icon ?? '🎯'} {p.name} — set start &amp; target dates to place it here
+                    <button onClick={() => onOpenProject(p.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 10.5, fontWeight: 700, color: 'var(--text-mute)' }}>
+                      <ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={14} />
+                      <span>{p.name} — set start &amp; target dates to place it here</span>
                     </button>
                   </div>
                 )
@@ -191,10 +193,15 @@ export function TimelineBoard({
                       onPointerDown={(e) => beginDrag(e, p, 'start')}
                       title="Drag to re-date start"
                       style={{ position: 'absolute', left: -1, top: 3, bottom: 3, width: 4, borderRadius: 2, background: color, cursor: 'ew-resize' }} />
-                    {/* Round M — prioritized projects carry their glyph on the bar */}
-                    {(p.priority ?? 0) > 0 && <PriorityGlyph p={p.priority} size={11} />}
-                    <span style={{ fontSize: 9.5 }}>{p.icon ?? '🎯'}</span>
-                    <span style={{ fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+                    {/* Round P R5 — glyph + face + name clip inside the bar on a
+                        very narrow span (the bar itself can't be overflow:hidden:
+                        the milestone diamonds sit at top:-4 outside it). */}
+                    <span data-bar-content style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                      {/* Round M — prioritized projects carry their glyph on the bar */}
+                      {(p.priority ?? 0) > 0 && <PriorityGlyph p={p.priority} size={11} />}
+                      <ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={14} />
+                      <span style={{ fontSize: 10, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+                    </span>
                     {ms.slice(0, 5).map((m) => {
                       if (!m.target_date) return null
                       const mp = clampPct(pctOf(m.target_date))

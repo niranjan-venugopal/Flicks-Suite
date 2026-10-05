@@ -743,7 +743,10 @@ export class PmSyncEngine {
 
   createProject(input: {
     name: string
+    /** Round P R5 — `lucide:<name>` from the picker (legacy emoji still accepted). */
     icon?: string | null
+    /** Round P R5 — #RRGGBB tile colour behind the glyph. */
+    color?: string | null
     summary?: string | null
     status?: PmProjectRow['status']
     lead_user_id?: string | null
@@ -760,7 +763,7 @@ export class PmSyncEngine {
       name: input.name,
       summary: input.summary ?? null,
       icon: input.icon ?? null,
-      color: null,
+      color: input.color ?? null,
       status: input.status ?? 'planned',
       health: 'on_track',
       priority: input.priority ?? 0,
@@ -801,7 +804,16 @@ export class PmSyncEngine {
       // description_md is lazy (detail-only, not in the sync projection) — it rides the op but is not a PmProjectRow column.
       & { description_md?: string | null },
   ): void {
-    const prev = this.store.patchProject(id, { ...fields, updated_at: new Date().toISOString() })
+    // Round P R5 — icon XOR image: the server clears logo_key on any icon
+    // write (and the delta brings logo_url: null), so mirror it on the
+    // optimistic row — the tile shows the moment the glyph is picked, not a
+    // delta later. `prev` keeps the old logo_url, so a rejected op restores it.
+    const dropsImage = fields.icon != null
+    const prev = this.store.patchProject(id, {
+      ...fields,
+      ...(dropsImage ? { logo_url: null } : {}),
+      updated_at: new Date().toISOString(),
+    })
     this.enqueue({
       clientMutationId: crypto.randomUUID(),
       op: 'project.update',

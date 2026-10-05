@@ -3,7 +3,8 @@
 import type { MouseEvent } from 'react'
 import { Icon } from '@/components/proto'
 import { DiamondGlyph, HealthChip, PM_PRIORITY_LABEL, PriorityGlyph } from '@/components/pm/glyphs'
-import { PmAv, ProjectLogo, TeamKeyChips } from '@/components/pm/projects'
+import { PmAv, TeamKeyChips } from '@/components/pm/projects'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
 import { useIsMobile } from '@/lib/hooks/use-is-mobile'
 import { ProgressRing, progressPct } from './ProgressRing'
 import { milestoneStats } from './ProjectMilestones'
@@ -148,7 +149,7 @@ export function ProjectListRow({ p, progress, milestones, teamIds, teams, leadNa
     return (
       <div data-project-row={p.id} onClick={onOpen} style={{ ...rowStyle, padding: '8px 14px 9px' }} {...hover}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 28, minWidth: 0 }}>
-          <ProjectLogo logoUrl={p.logo_url} icon={p.icon} size={20} />
+          <ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={20} />
           {nameCell}
           {progressCell}
           {trashCell}
@@ -167,7 +168,7 @@ export function ProjectListRow({ p, progress, milestones, teamIds, teams, leadNa
 
   return (
     <div data-project-row={p.id} onClick={onOpen} style={{ ...rowStyle, display: 'flex', alignItems: 'center', gap: 12, height: 46, padding: '0 14px' }} {...hover}>
-      <ProjectLogo logoUrl={p.logo_url} icon={p.icon} size={20} />
+      <ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={20} />
       {nameCell}
       {healthCell}
       {priorityCell}

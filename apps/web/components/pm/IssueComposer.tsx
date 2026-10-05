@@ -6,6 +6,7 @@ import { Btn, Icon, Modal, Toggle } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { DiamondGlyph, PriorityGlyph, StateGlyph, PM_PRIORITY_LABEL } from '@/components/pm/glyphs'
 import { PmAv } from '@/components/pm/projects'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
 import { PillOption, PropertyPill } from '@/components/pm/PropertyPill'
 import { RichEditor } from '@/components/pm/editor'
 import { AttachButton, AttachmentList, DropZone } from '@/components/pm/attachments'
@@ -14,7 +15,7 @@ import { api } from '@/lib/api/client'
 import { uploadPmFiles, useAttachmentsEnabled } from '@/lib/api/queries/use-pm-files'
 import type { FileUrlMap, PmFile, PmFileKind } from '@/lib/pm/files'
 import type { PmSyncEngine } from '@/lib/pm/engine'
-import type { PmLabelRow, PmStateRow } from '@/lib/pm/types'
+import type { PmLabelRow, PmProjectRow, PmStateRow } from '@/lib/pm/types'
 
 // ─────────────────────────────────────────────────────────
 // Round B — the ONE issue composer (founder: "I want the thing to be exactly
@@ -68,6 +69,11 @@ interface TeamsIndex {
   labels: PmLabelRow[]
 }
 
+/** Round P R5 — what the Project pill needs to draw a project's face (icon
+ *  tile or image). A Pick of the store row so the REST (kill-switch) shape
+ *  can never drift from the engine's. */
+type ProjectOption = Pick<PmProjectRow, 'id' | 'name' | 'icon' | 'color' | 'logo_url'>
+
 export function IssueComposer({
   open,
   onClose,
@@ -100,7 +106,7 @@ export function IssueComposer({
   })
   const projectsQ = useQuery({
     queryKey: ['pm', 'projects'],
-    queryFn: () => api.get<{ data: { projects: Array<{ id: string; name: string; icon: string | null }> } }>('/api/v1/pm/projects'),
+    queryFn: () => api.get<{ data: { projects: ProjectOption[] } }>('/api/v1/pm/projects'),
     enabled: open && !engine,
     staleTime: 120_000,
   })
@@ -165,8 +171,8 @@ export function IssueComposer({
   const users = (engine ? [...engine.store.users.values()] : usersQ.data?.data ?? [])
     .map((u) => ({ id: u.id, name: u.name ?? '—', avatar_url: u.avatar_url ?? null }))
     .sort((a, b) => a.name.localeCompare(b.name))
-  const projects = engine
-    ? engine.store.projectList().map((p) => ({ id: p.id, name: p.name, icon: p.icon }))
+  const projects: ProjectOption[] = engine
+    ? engine.store.projectList().map((p) => ({ id: p.id, name: p.name, icon: p.icon, color: p.color, logo_url: p.logo_url }))
     : projectsQ.data?.data.projects ?? []
   const labels: PmLabelRow[] = (engine
     ? [...engine.store.labels.values()]
@@ -480,7 +486,17 @@ export function IssueComposer({
             <PropertyPill
               title="Project"
               active={!!project}
-              icon={<span style={{ fontSize: 11 }}>{selProject?.icon ?? '🎯'}</span>}
+              icon={
+                // Round P R5 — the project's face (icon tile or image). A
+                // pre-linked project whose row hasn't loaded yet draws the
+                // default tile; no project at all is a dashed square, like
+                // the Assignee pill's "unassigned" ring.
+                selProject || project ? (
+                  <ProjectIcon logoUrl={selProject?.logo_url} icon={selProject?.icon} color={selProject?.color} name={selProject?.name ?? projectName} size={16} />
+                ) : (
+                  <span style={{ width: 13, height: 13, borderRadius: 4, border: '1.5px dashed var(--bord-2)', display: 'inline-block', boxSizing: 'border-box' }} />
+                )
+              }
               label={projectLabel}
               width={240}
               menu={(close) => (
@@ -489,7 +505,7 @@ export function IssueComposer({
                   {projects.map((p) => (
                     <PillOption
                       key={p.id}
-                      icon={<span style={{ fontSize: 11 }}>{p.icon ?? '🎯'}</span>}
+                      icon={<ProjectIcon logoUrl={p.logo_url} icon={p.icon} color={p.color} name={p.name} size={16} />}
                       label={p.name}
                       selected={p.id === project}
                       onPick={() => { setProject(p.id); setMilestone(''); close() }}

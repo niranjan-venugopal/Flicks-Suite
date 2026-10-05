@@ -25,9 +25,11 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { PmGrantGuard } from '../../core/auth/guards/pm-grant.guard';
@@ -46,7 +48,7 @@ import {
 } from '@flicks/shared/pm';
 import { PmTeamsService } from './teams.service';
 import { PmIssuesService } from './issues.service';
-import { PmProjectsService } from './projects.service';
+import { PmProjectsService, PROJECT_COLOR_RE, PROJECT_ICON_RE } from './projects.service';
 import { PmCyclesService } from './cycles.service';
 import { PmSampleDataService } from './sample-data.service';
 import { PmViewsService } from './views.service';
@@ -145,8 +147,15 @@ export class CreateProjectDto {
   @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
   @IsOptional() @IsString() @MaxLength(300) summary?: string;
   @IsOptional() @IsString() description_md?: string;
-  @IsOptional() @IsString() @MaxLength(16) icon?: string;
-  @IsOptional() @IsString() @MaxLength(16) color?: string;
+  // Round P R5 — a lucide glyph ('lucide:folder-kanban') or a legacy emoji;
+  // colour is the tile behind the glyph. The service re-checks both (sync door).
+  // Typed `string | null` (reflects as Object) so the pipe's implicit
+  // conversion cannot turn 42 / true into an accepted '42' / 'true' "emoji" —
+  // @IsString then refuses non-strings, as it already does on update.
+  @IsOptional() @IsString() @MaxLength(32)
+  @Matches(PROJECT_ICON_RE, { message: 'icon must be lucide:<name> or a short emoji' })
+  icon?: string | null;
+  @IsOptional() @IsString() @Matches(PROJECT_COLOR_RE, { message: 'color must be #RRGGBB' }) color?: string | null;
   @IsOptional() @IsIn(['backlog', 'planned', 'in_progress', 'paused', 'completed', 'canceled']) status?: string;
   @IsOptional() @IsUUID() lead_user_id?: string;
   @IsOptional() @IsString() start_date?: string;
@@ -160,8 +169,15 @@ export class UpdateProjectDto {
   @IsOptional() @IsInt() @Min(0) @Max(4) @Type(() => Number) priority?: number;
   @IsOptional() @IsString() @MaxLength(300) summary?: string | null;
   @IsOptional() @IsString() description_md?: string | null;
-  @IsOptional() @IsString() @MaxLength(16) icon?: string | null;
-  @IsOptional() @IsString() @MaxLength(16) color?: string | null;
+  // Round P R5 — null clears; a string must be lucide:<name> or a short emoji.
+  // Setting any icon also drops an uploaded logo (icon XOR image) — see
+  // PmProjectsService.update.
+  @IsOptional() @ValidateIf((o: UpdateProjectDto) => o.icon !== null) @IsString() @MaxLength(32)
+  @Matches(PROJECT_ICON_RE, { message: 'icon must be lucide:<name> or a short emoji' })
+  icon?: string | null;
+  @IsOptional() @ValidateIf((o: UpdateProjectDto) => o.color !== null)
+  @Matches(PROJECT_COLOR_RE, { message: 'color must be #RRGGBB' })
+  color?: string | null;
   @IsOptional() @IsIn(['backlog', 'planned', 'in_progress', 'paused', 'completed', 'canceled']) status?: string;
   @IsOptional() @IsUUID() lead_user_id?: string | null;
   @IsOptional() start_date?: string | null;

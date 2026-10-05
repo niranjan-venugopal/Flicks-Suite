@@ -45,12 +45,18 @@ export function MediaCropModal({
   onRemove,
   hasCurrent,
   onClose,
+  title: titleProp,
+  noun: nounProp,
 }: {
   kind: 'avatar' | 'logo'
   onUpload: (blob: Blob) => Promise<void>
   onRemove?: () => Promise<void>
   hasCurrent?: boolean
   onClose: () => void
+  /** Dialog title; defaults to "Update company logo" / "Update photo". Round P R5: the project picker passes "Project image". */
+  title?: string
+  /** The word used in "Remove current …" / "… updated" / "previous … deleted"; defaults to logo / photo. */
+  noun?: string
 }) {
   const [state, setState] = useState<CropState>('idle')
   const [error, setError] = useState<{ title: string; desc: string } | null>(null)
@@ -132,7 +138,8 @@ export function MediaCropModal({
     }
   }
 
-  const title = kind === 'logo' ? 'Update company logo' : 'Update photo'
+  const noun = nounProp ?? (kind === 'logo' ? 'logo' : 'photo')
+  const title = titleProp ?? (kind === 'logo' ? 'Update company logo' : 'Update photo')
 
   return (
     // Only a scrim click dismisses (the scrim is its own element now, so a
@@ -266,10 +273,10 @@ export function MediaCropModal({
                 <Icon.check size={22} />
               </div>
               <div style={{ fontSize: 13.5, fontWeight: 800 }}>
-                {kind === 'logo' ? 'Logo updated' : 'Photo updated'}
+                {noun.charAt(0).toUpperCase() + noun.slice(1)} updated
               </div>
               <div className="t-mute" style={{ fontSize: 11.5 }}>
-                Re-encoded to WebP at 256 px + 64 px · EXIF stripped · previous {kind === 'logo' ? 'logo' : 'photo'} deleted
+                Re-encoded to WebP at 256 px + 64 px · EXIF stripped · previous {noun} deleted
               </div>
             </div>
           )}
@@ -282,7 +289,7 @@ export function MediaCropModal({
               onClick={remove}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--coral)', fontSize: 12, fontWeight: 800 }}
             >
-              <Icon.trash size={13} /> Remove current {kind === 'logo' ? 'logo' : 'photo'}
+              <Icon.trash size={13} /> Remove current {noun}
             </button>
           )}
           <div style={{ flex: 1 }} />

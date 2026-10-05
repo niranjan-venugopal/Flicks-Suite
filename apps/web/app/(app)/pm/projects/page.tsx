@@ -210,7 +210,8 @@ const SyncProjects = observer(function SyncProjects({ engine }: { engine: PmSync
         meId={me}
         onCreate={(input, logoFile) => {
           // Round M — `priority` (when the modal sets it) rides the create op.
-          const id = engine.createProject({ ...input, priority: input.priority })
+          // Round P R5 — `icon` (lucide:<name>) + `color` (#RRGGBB) ride it too.
+          const id = engine.createProject({ ...input, color: input.color, priority: input.priority })
           if (logoFile) {
             // The optimistic id isn't on the server yet — upload once the
             // create op is ACKED (round E; onFlushed is the same hook the
@@ -359,7 +360,9 @@ function RestProjects() {
         meId={currentUser?.id ?? ''}
         onCreate={(input, logoFile) => {
           // Round M — `priority` (when the modal sets it) rides the POST body.
-          const body = { ...input, ...(input.priority !== undefined ? { priority: input.priority } : {}) }
+          // Round P R5 — `icon` + `color` from the picker ride it too (the DTO
+          // validates lucide:<name> / #RRGGBB).
+          const body = { ...input, color: input.color, ...(input.priority !== undefined ? { priority: input.priority } : {}) }
           void api.post<{ data: { id: string } }>('/api/v1/pm/projects', body).then(async (res) => {
             if (logoFile) await uploadProjectLogoBlob(res.data.id, logoFile).catch(() => undefined)
             void qc.invalidateQueries({ queryKey: ['pm', 'projects'] })

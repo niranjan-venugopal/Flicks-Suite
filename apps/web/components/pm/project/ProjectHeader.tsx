@@ -5,7 +5,10 @@ import { observer } from 'mobx-react-lite'
 import { Icon } from '@/components/proto'
 import { DateField } from '@/components/ui/date-picker'
 import { HealthChip, PmProgressBar, PM_PRIORITY_LABEL, PM_PROJECT_STATUS_LABEL, PendingDot, PriorityGlyph } from '@/components/pm/glyphs'
-import { PmAv, PROJECT_ICONS, ProjectLogo } from '@/components/pm/projects'
+import { PmAv } from '@/components/pm/projects'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
+import { ProjectVisualPicker } from '@/components/pm/ProjectVisualPicker'
+import { DEFAULT_PROJECT_ICON } from '@/components/pm/icons/project-icons'
 import type { PmStore } from '@/lib/pm/store'
 import type { PmProjectRow } from '@/lib/pm/types'
 
@@ -27,6 +30,8 @@ export interface ProjectHeaderProps {
   patchProject: (patch: Partial<PmProjectRow>) => void
   /** Opens the logo crop modal (rendered by the page). */
   onOpenLogo: () => void
+  /** Round P R5 — removes the uploaded image (the page owns the mutation + delta pull). */
+  onRemoveLogo: () => void
   /** Opens the delete confirmation (rendered by the page). */
   onDelete: () => void
 }
@@ -41,14 +46,28 @@ export const ProjectHeader = observer(function ProjectHeader({
   mayDelete,
   patchProject,
   onOpenLogo,
+  onRemoveLogo,
   onDelete,
 }: ProjectHeaderProps) {
-  // ── Rename / re-icon in place (founder round C) ───────────────────────────
+  // ── Rename in place (founder round C) ─────────────────────────────────────
   // The backend and engine accepted {name, icon} since P11; only the header UI
   // was missing. Blank names are dropped client-side to match the server's
-  // non-blank guard; an icon outside the stock list is offered as-is so the
-  // select doesn't silently rewrite it.
+  // non-blank guard.
   const [editingName, setEditingName] = useState(false)
+  // ── Icon / colour / image (Round P R5) ────────────────────────────────────
+  // One tile button opens the picker. Picking a glyph patches {icon, color}
+  // — the server drops an uploaded image on any icon write, and the engine
+  // clears logo_url locally so the tile shows without waiting for the delta.
+  // A swatch click on the glyph already shown rides as {color} ALONE: the
+  // server leaves an uploaded image untouched on a colour-only update, so a
+  // `logoUrl` that lags the server (our own upload before the delta lands,
+  // or another member's) can never be dropped by a colour change. A glyph
+  // re-click while an image IS shown still sends `icon` — the intended drop.
+  const [picker, setPicker] = useState(false)
+  const pickVisual = (icon: string, color: string) => {
+    const shownGlyph = project.icon ?? DEFAULT_PROJECT_ICON
+    patchProject(icon === shownGlyph && !logoUrl ? { color } : { icon, color })
+  }
   const [nameDraft, setNameDraft] = useState('')
   // Escape must not commit: Chrome fires blur on the input React removes,
   // with the pre-Escape draft still in the closure (same guard as milestones).
@@ -60,9 +79,6 @@ export const ProjectHeader = observer(function ProjectHeader({
     const next = nameDraft.trim()
     if (next && next !== project.name) patchProject({ name: next })
   }
-  const currentIcon = project.icon ?? '🎯'
-  const iconOptions = PROJECT_ICONS.includes(currentIcon) ? PROJECT_ICONS : [currentIcon, ...PROJECT_ICONS]
-
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       {/* One line while it fits (founder round E: the delete button wrapped
@@ -72,26 +88,29 @@ export const ProjectHeader = observer(function ProjectHeader({
           shrunken name can't fit (a 390 px phone), instead of overflowing the
           card and giving the page a horizontal scroll. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 8, flexWrap: 'wrap', marginBottom: 9, minWidth: 0 }}>
-        {/* Round E — the project's face: uploaded logo (click to change)
-            or the emoji icon picker. */}
+        {/* Round P R5 — the project's face (image, lucide tile or legacy
+            emoji) is one button: it opens the icon / colour / image picker. */}
         <button
           type="button"
-          title={logoUrl ? 'Change or remove the project logo' : 'Upload a project logo'}
-          onClick={onOpenLogo}
+          data-testid="project-visual"
+          title="Change the project icon or image"
+          aria-label="Change the project icon or image"
+          onClick={() => setPicker(true)}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, borderRadius: 9, background: 'var(--surf-1)', border: '1px solid var(--bord)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
         >
-          {logoUrl ? <ProjectLogo logoUrl={logoUrl} icon={currentIcon} size={30} /> : <Icon.image size={14} style={{ color: 'var(--text-faint)' }} />}
+          <ProjectIcon logoUrl={logoUrl} icon={project.icon} color={project.color} name={project.name} size={30} />
         </button>
-        <select
-          className="input"
-          title="Project icon"
-          aria-label="Project icon"
-          value={currentIcon}
-          onChange={(e) => patchProject({ icon: e.target.value })}
-          style={{ height: 30, width: 46, padding: '0 4px', fontSize: 16, flexShrink: 0 }}
-        >
-          {iconOptions.map((e) => <option key={e}>{e}</option>)}
-        </select>
+        <ProjectVisualPicker
+          open={picker}
+          onClose={() => setPicker(false)}
+          icon={project.icon}
+          color={project.color}
+          name={project.name}
+          hasImage={!!logoUrl}
+          onPick={pickVisual}
+          onUploadImage={onOpenLogo}
+          onRemoveImage={onRemoveLogo}
+        />
         {editingName ? (
           <input
             autoFocus

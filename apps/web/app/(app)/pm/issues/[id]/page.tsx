@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Pill } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { PmAv } from '@/components/pm/projects'
+import { ProjectIcon } from '@/components/pm/ProjectIcon'
 import { DateField } from '@/components/ui/date-picker'
 import { Kbd, PendingDot, PriorityGlyph, StateGlyph, PrChip, PM_PRIORITY_LABEL, type GitLink } from '@/components/pm/glyphs'
 import { IssuePicker, type PickedIssue } from '@/components/pm/IssuePicker'
@@ -21,7 +22,7 @@ import { useHotkeys } from '@/lib/pm/hotkeys'
 import { backLabel, defaultOrigin, issueHref, safeFrom } from '@/lib/pm/nav'
 import { issueDetailQueryKey, issuePrefetchProps } from '@/lib/pm/prefetch'
 import type { PmFile } from '@/lib/api/queries/use-pm-files'
-import type { PmIssueRow } from '@/lib/pm/types'
+import type { PmIssueRow, PmProjectRow } from '@/lib/pm/types'
 import { FEATURES } from '@/lib/feature-flags'
 
 // ─────────────────────────────────────────────────────────
@@ -294,9 +295,14 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
       restDelete.mutate()
     }
   }
+  // Round P R5 — the kill-switch shape is a Pick of the store row so the
+  // project's face (icon / color / logo_url) can never drift from the engine's.
   const projectsQ = useQuery({
     queryKey: ['pm', 'projects'],
-    queryFn: () => api.get<{ data: { projects: Array<{ id: string; name: string; icon: string | null }> } }>('/api/v1/pm/projects'),
+    queryFn: () =>
+      api.get<{ data: { projects: Array<Pick<PmProjectRow, 'id' | 'name' | 'icon' | 'color' | 'logo_url'>> } }>(
+        '/api/v1/pm/projects',
+      ),
     enabled: !engine,
   })
   // Milestones of the issue's project (kill-switch path — the engine store
@@ -659,7 +665,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               const proj = engine
                 ? (issue.project_id ? engine.store.projects.get(issue.project_id) : null)
                 : (projectsQ.data?.data.projects ?? []).find((x) => x.id === issue.project_id) ?? null
-              return proj ? <><span style={{ fontSize: 12 }}>{proj.icon ?? '🎯'}</span> <span>{proj.name}</span></> : <span className="t-mute">None</span>
+              return proj ? <><ProjectIcon logoUrl={proj.logo_url} icon={proj.icon} color={proj.color} name={proj.name} size={16} /> <span>{proj.name}</span></> : <span className="t-mute">None</span>
             })()}
           </RailRow>
           {menu === 'project' && (
@@ -667,7 +673,7 @@ const IssueDetail = observer(function IssueDetail({ id }: { id: string }) {
               <button onClick={() => { doProject(null); setMenu(null) }} style={railMenuRow(!issue.project_id)}>No project</button>
               {(engine ? engine.store.projectList() : projectsQ.data?.data.projects ?? []).map((pr) => (
                 <button key={pr.id} onClick={() => { doProject(pr.id); setMenu(null) }} style={railMenuRow(pr.id === issue.project_id)}>
-                  <span style={{ fontSize: 12 }}>{pr.icon ?? '🎯'}</span> {pr.name}
+                  <ProjectIcon logoUrl={pr.logo_url} icon={pr.icon} color={pr.color} name={pr.name} size={16} /> {pr.name}
                 </button>
               ))}
             </RailMenu>
