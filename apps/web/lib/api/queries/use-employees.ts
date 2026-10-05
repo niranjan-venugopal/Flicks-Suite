@@ -551,6 +551,14 @@ export interface RemovalPreview {
   documents: number
   historyRows: number
   total: number
+  /**
+   * Round P R4 — every asset assignment the person ever had (open or
+   * returned); counts toward `total` so anyone with equipment history is
+   * archived, never hard-deleted. Optional: tolerates an API that predates it.
+   */
+  assets?: number
+  /** Equipment still out with the person — removal is refused (409 ASSETS_ASSIGNED) until these are returned. */
+  openAssets?: Array<{ asset_tag: string; name: string }>
 }
 
 export function useRemovalPreview(id: string, enabled: boolean) {

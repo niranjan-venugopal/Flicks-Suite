@@ -141,6 +141,8 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/employees', label: 'Employees' },
           { href: '/employees/org-chart', label: 'Org chart' },
           { href: '/employees/onboarding', label: 'Onboarding' },
+          // Round P R4 — the company equipment register (assign / return / who holds what).
+          { href: '/employees/assets', label: 'Assets' },
           // Round P R3 — company policies (write / publish / who agreed).
           { href: '/settings/policies', label: 'Policies' },
           { href: '/employees/documents', label: 'Documents' },
@@ -188,6 +190,16 @@ const ADMIN_NAV: NavSection[] = [
       { id: 'settings', label: 'Settings', icon: 'cog', href: '/settings' },
     ],
   },
+  {
+    section: 'Personal',
+    items: [
+      // Round P R4 — owners and HR admins are employees too (self-onboarding
+      // applies to every tenant role) and get issued laptops like anyone
+      // else. Without this row the "please acknowledge" notification link
+      // was their only way back to /assets/me once it was dismissed.
+      { id: 'my-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
+    ],
+  },
 ]
 
 // Manager nav — see direct reports + own self-service.
@@ -222,6 +234,8 @@ const MANAGER_NAV: NavSection[] = [
       { id: 'emp-leave', label: 'My leave', icon: 'cal', href: '/leave' },
       { id: 'emp-timesheet', label: 'My timesheet', icon: 'sheet', href: '/timesheets' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+      // Round P R4 — the equipment issued to me (acknowledge receipt).
+      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],
@@ -257,6 +271,8 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Personal',
     items: [
       { id: 'emp-profile', label: 'Profile', icon: 'user', href: '/profile' },
+      // Round P R4 — the equipment issued to me (acknowledge receipt).
+      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
       { id: 'emp-documents', label: 'Documents', icon: 'doc', href: '/documents' },
@@ -324,6 +340,8 @@ const FINANCE_NAV: NavSection[] = [
       // /employees/org-chart carries no @Roles gate — every member can read it.
       { id: 'fin-org-chart', label: 'Org chart', icon: 'people', href: '/employees/org-chart' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+      // Round P R4 — the equipment issued to me (acknowledge receipt).
+      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],

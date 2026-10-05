@@ -55,6 +55,7 @@ import { ModuleAccessModule } from './core/auth/module-access.module';
 import { PmModule } from './modules/pm/pm.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { PoliciesModule } from './modules/policies/policies.module';
+import { AssetsModule } from './modules/assets/assets.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
 
@@ -194,6 +195,8 @@ import { PmJobs } from './jobs/pm.jobs';
     ApprovalsModule,
     // Round P R3 — company policies (rich text / PDF, acknowledgement gate).
     PoliciesModule,
+    // Round P R4 — company asset register (equipment, photo, assign / return / acknowledge).
+    AssetsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -11,6 +11,7 @@ import {
   type OnboardingQueueRow,
 } from '@/lib/api/queries/use-employees'
 import { useToast } from '@/components/ui/use-toast'
+import { ToastAction } from '@/components/ui/toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { OnboardingReviewDialog } from '@/components/employees/OnboardingReviewDialog'
 
@@ -48,7 +49,17 @@ function OnboardingQueueContent() {
   const handleApprove = async (row: OnboardingQueueRow) => {
     try {
       await approve.mutateAsync(row.id)
-      toast({ title: 'Onboarding approved', description: `${rowName(row)} is now active.` })
+      // Round P R4: the day-one kit is the next thing HR does — the register
+      // opens its Assign flow for this person via ?assign=<employeeId>.
+      toast({
+        title: 'Onboarding approved',
+        description: `${rowName(row)} is now active.`,
+        action: (
+          <ToastAction altText="Assign equipment" onClick={() => router.push(`/employees/assets?assign=${row.id}`)}>
+            Assign equipment
+          </ToastAction>
+        ),
+      })
     } catch (e) {
       toast({
         title: 'Could not approve',

@@ -39,6 +39,7 @@ export * from './pm';
 
 // ─── Company policies + acknowledgements (Round P R3, 0067) ──────────────────
 export * from './policies';
+export * from './assets';
 
 // ─── Combined schema object (for Drizzle client) ─────────────────────────────
 import * as platformSchema from './platform';
@@ -55,6 +56,7 @@ import * as eventsSchema from './events';
 import * as crmSchema from './crm';
 import * as pmSchema from './pm';
 import * as policiesSchema from './policies';
+import * as assetsSchema from './assets';
 
 export const schema = {
   ...platformSchema,
@@ -71,6 +73,7 @@ export const schema = {
   ...crmSchema,
   ...pmSchema,
   ...policiesSchema,
+  ...assetsSchema,
 } as const;
 
 export type Schema = typeof schema;

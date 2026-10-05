@@ -48,6 +48,12 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { MediaService } from '../media/media.service';
+// Round P R4: equipment held by the person — plain tx helpers via the assets
+// module's public facade (house rule 3), run inside our own tenant tx.
+import {
+  countAllAssignmentsTx,
+  listOpenAssignmentsTx,
+} from '../assets/public';
 import type {
   InviteEmployeeDto,
   UpdateEmployeeDto,
@@ -3406,10 +3412,12 @@ export class EmployeesService {
    * tables CASCADE off employees.id (see migration 0057).
    *
    * Deliberately counts only the tables an Indian employer has to be able to
-   * produce later — attendance, punches, leave, timesheets, documents and the
-   * employment history. Emergency contacts and an unopened invitation are not
-   * "history": a mistyped row usually has both, and neither is worth keeping a
-   * ghost employee in the directory for.
+   * produce later — attendance, punches, leave, timesheets, documents, the
+   * employment history and (Round P R4) the equipment register: anyone who
+   * was ever issued a laptop / phone / ID card has an assignment row, open or
+   * returned, and that trail must survive their removal. Emergency contacts
+   * and an unopened invitation are not "history": a mistyped row usually has
+   * both, and neither is worth keeping a ghost employee in the directory for.
    */
   private async historyFootprint(db: Db, tenantId: string, employeeId: string) {
     const count = async (table: typeof attendanceRecords | typeof attendancePunches
@@ -3425,12 +3433,13 @@ export class EmployeesService {
         );
       return row?.n ?? 0;
     };
-    const [attendance, punches, leave, timesheets, documents] = await Promise.all([
+    const [attendance, punches, leave, timesheets, documents, assets] = await Promise.all([
       count(attendanceRecords),
       count(attendancePunches),
       count(leaveRequests),
       count(timesheetEntries),
       count(employeeDocuments),
+      countAllAssignmentsTx(db, tenantId, employeeId),
     ]);
     // The hire row every employee gets at creation is not history; a SECOND
     // entry means something real happened (promotion, transfer, separation).
@@ -3444,8 +3453,29 @@ export class EmployeesService {
         ),
       );
     const historyRows = Math.max(0, (hist?.n ?? 0) - 1);
-    const total = attendance + punches + leave + timesheets + documents + historyRows;
-    return { attendance, punches, leave, timesheets, documents, historyRows, total };
+    const total = attendance + punches + leave + timesheets + documents + historyRows + assets;
+    return { attendance, punches, leave, timesheets, documents, historyRows, assets, total };
+  }
+
+  /**
+   * Round P R4: equipment the person still holds. Removal refuses while any
+   * is open (the register would otherwise show a laptop in the hands of a
+   * ghost), and the preview lists it so the dialog can warn before the click.
+   */
+  private async openAssetsHeld(db: Db, tenantId: string, employeeId: string) {
+    const open = await listOpenAssignmentsTx(db, tenantId, employeeId);
+    return open.map((a) => ({ asset_tag: a.asset_tag, name: a.name }));
+  }
+
+  /** The 409 the removal path throws while equipment is still out. */
+  private assetsStillHeld(name: string, open: Array<{ asset_tag: string }>): ConflictException {
+    const n = open.length;
+    const tags = open.map((a) => a.asset_tag);
+    const shown = tags.slice(0, 5).join(', ') + (tags.length > 5 ? ', …' : '');
+    return new ConflictException({
+      code: 'ASSETS_ASSIGNED',
+      message: `${name} still holds ${n} asset${n === 1 ? '' : 's'} (${shown}) — record their return in People → Assets first.`,
+    });
   }
 
   /**
@@ -3461,12 +3491,18 @@ export class EmployeesService {
         .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
         .limit(1);
       if (!emp) throw new NotFoundException('Employee not found');
-      const footprint = await this.historyFootprint(db, tenantId, employeeId);
+      const [footprint, openAssets] = await Promise.all([
+        this.historyFootprint(db, tenantId, employeeId),
+        this.openAssetsHeld(db, tenantId, employeeId),
+      ]);
       return {
         data: {
           mode: footprint.total === 0 ? ('delete' as const) : ('archive' as const),
           name: `${emp.first} ${emp.last}`.trim(),
           ...footprint,
+          // Round P R4: what they still hold — removal will 409 until these
+          // are returned, so the dialog says so up front.
+          openAssets,
         },
       };
     });
@@ -3494,11 +3530,19 @@ export class EmployeesService {
     const result = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
+        // FOR UPDATE: removal is check-then-write (open-asset guard, footprint,
+        // then DELETE / deleted_at) at READ COMMITTED. Holding the row for the
+        // whole tx serialises it against a concurrent assets assign — that
+        // INSERT takes FOR KEY SHARE on this row for its employee_id FK, which
+        // conflicts with FOR UPDATE — so a laptop can't be issued to someone
+        // in the ms between the guard and the cascade that would eat the
+        // assignment row and leave an 'assigned' asset with no holder.
         const [emp] = await db
           .select()
           .from(employees)
           .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
-          .limit(1);
+          .limit(1)
+          .for('update');
         if (!emp) throw new NotFoundException('Employee not found');
         if (emp.deleted_at) {
           throw new BadRequestException('This employee has already been removed.');
@@ -3562,8 +3606,19 @@ export class EmployeesService {
           }
         }
 
-        const footprint = await this.historyFootprint(db, tenantId, employeeId);
         const name = `${emp.first_name} ${emp.last_name}`.trim();
+
+        // Round P R4: company equipment must come back before the person goes.
+        // Removing them with a laptop still out would leave the register
+        // pointing at a ghost, so the return is recorded first (People →
+        // Assets). Checked inside the tx, before anything is written. One
+        // query: the count, the tags in the message and the 409 itself all
+        // come from the same rows (a second statement could see a return
+        // committed in between and name nothing).
+        const stillHeld = await this.openAssetsHeld(db, tenantId, employeeId);
+        if (stillHeld.length > 0) throw this.assetsStillHeld(name, stillHeld);
+
+        const footprint = await this.historyFootprint(db, tenantId, employeeId);
 
         // Revoke the seat either way — a removed person must not keep a login.
         // 'deactivated' is the membership enum's revoked state; the /me guard

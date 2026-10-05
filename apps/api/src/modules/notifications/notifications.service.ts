@@ -228,7 +228,9 @@ type EmailTemplate =
   | 'calendar-cancelled'
   // Company policies (Round P R3) — publish fan-out + HR reminder
   | 'policy-published'
-  | 'policy-reminder';
+  | 'policy-reminder'
+  // Company assets (Round P R4) — equipment issued to an employee
+  | 'asset-assigned';
 
 @Injectable()
 export class NotificationsService {
@@ -900,6 +902,66 @@ export class NotificationsService {
                 <a href="${this.esc(href)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Read &amp; agree</a>
               </p>
               <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open Policies from the sidebar.</p>
+            </div>
+          `,
+        };
+      }
+
+      // ─── Company assets (Round P R4) ─────────────────────────────────────
+      // 'asset-assigned' goes to the employee when HR issues them a piece of
+      // equipment (laptop, phone, SIM, ID card, …). Props:
+      //   { assetName, assetTag, companyName, link, issuedBy, issueCondition, notes }
+      // Every value is tenant-typed (asset names/tags, the HR user's name,
+      // free-text notes) → esc() in the body and line-break-stripped in the
+      // plain-text subject, exactly like policy-published. `link` is the
+      // employee's own "My assets" page — usually the relative '/assets/me'
+      // (prefixed with APP_URL here); an absolute https URL is used as-is.
+      // The CTA only OPENS the page: acknowledging receipt happens in-app,
+      // behind the sign-in gate.
+      case 'asset-assigned': {
+        const { assetName, assetTag, companyName, link, issuedBy, issueCondition, notes } = props as {
+          assetName: string;
+          assetTag: string;
+          companyName?: string | null;
+          link?: string | null;
+          issuedBy?: string | null;
+          issueCondition?: string | null;
+          notes?: string | null;
+        };
+        const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+        const base = this.configService
+          .get<string>('APP_URL', 'http://localhost:3000')
+          .replace(/\/$/, '');
+        const rawLink = String(link ?? '/assets/me');
+        const href = /^https?:\/\//i.test(rawLink)
+          ? rawLink
+          : `${base}${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
+        const name = plain(assetName);
+        const tag = plain(assetTag);
+        const company = plain(companyName);
+        const by = plain(issuedBy);
+        const condition = plain(issueCondition).replace(/_/g, ' ');
+        const note = String(notes ?? '').trim();
+        const item = `<strong>${this.esc(name)}</strong>${tag ? ` (${this.esc(tag)})` : ''}`;
+        // Lead with the person when known — "Priya HR (Acme Pvt Ltd) issued
+        // you …" — else the company, else "Your company".
+        const issuer = by
+          ? `${this.esc(by)}${company ? ` (${this.esc(company)})` : ''}`
+          : company
+            ? `<strong>${this.esc(company)}</strong>`
+            : 'Your company';
+        return {
+          subject: `You've been issued ${name}${tag ? ` (${tag})` : ''}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Equipment issued to you</h2>
+              <p>${issuer} issued you ${item}${condition ? ` in <strong>${this.esc(condition)}</strong> condition` : ''}.</p>
+              ${note ? `<p style="background: #f4f6fa; border-radius: 8px; padding: 12px 14px; white-space: pre-wrap;"><strong>Notes:</strong> ${this.esc(note)}</p>` : ''}
+              <p>Please check it over and acknowledge receipt under My assets — that is your record of what was handed to you and in what condition.</p>
+              <p style="margin: 24px 0 8px;">
+                <a href="${this.esc(href)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">View my assets</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open <a href="${this.esc(href)}" style="color: #3E7BFA;">${this.esc(href)}</a>.</p>
             </div>
           `,
         };

@@ -4,8 +4,11 @@ import { Suspense, use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Loader2 } from 'lucide-react'
-import { Avatar, Btn, Icon, Pill, type PillTone } from '@/components/proto'
+import { Avatar, Btn, Icon, Modal, Pill, type PillTone } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { EmployeeAssetsTab } from '@/components/assets/EmployeeAssetsTab'
+import { ReturnAssetModal } from '@/components/assets/ReturnAssetModal'
+import { useEmployeeAssets, type Asset } from '@/lib/api/queries/use-assets'
 import {
   UI_STATUS_LABELS,
   deriveUiStatus,
@@ -43,6 +46,8 @@ const TABS = [
   'leave',
   'timesheet',
   'documents',
+  // Round P R4 — company equipment the person holds / returned.
+  'assets',
   'access',
 ] as const
 type Tab = (typeof TABS)[number]
@@ -160,6 +165,16 @@ function EmployeeDetailInner({ params }: { params: Promise<{ id: string }> }) {
             {tab === 'leave' && <ModuleLink href="/leave" label="Leave" />}
             {tab === 'timesheet' && <ModuleLink href="/timesheets" label="Timesheets" />}
             {tab === 'documents' && <ComingSoon title="Documents" desc="Offer letters, ID proofs, contracts and policies will land here once secure file uploads are enabled." />}
+            {tab === 'assets' && (
+              <EmployeeAssetsTab
+                employeeId={e.id}
+                // Round P R4: equipment can be returned by anyone, but only
+                // people still with the company can be issued more (the
+                // server answers 400 for separated / absconded).
+                canAssign={e.status !== 'separated' && e.status !== 'absconded'}
+                cannotAssignReason={`${[e.firstName, e.lastName].filter(Boolean).join(' ') || e.workEmail} has left the company — nothing new can be issued.`}
+              />
+            )}
             {tab === 'access' && <ComingSoon title="Access" desc="Workspace role, IP allowlist, and SSO bindings move here in a future polish pass." />}
           </>
         )}
@@ -221,6 +236,10 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   const removeEmp = useRemoveEmployee()
   const alreadyOff = e.status === 'separated' || e.status === 'absconded'
   const pv = preview.data?.data
+  // Round P R4: equipment still out with the person blocks removal (the API
+  // answers 409 ASSETS_ASSIGNED) — say so before the click, with the tags.
+  const openAssets = pv?.openAssets ?? []
+  const blockedByAssets = openAssets.length > 0
   const doRemove = async () => {
     try {
       await removeEmp.mutateAsync(e.id)
@@ -249,7 +268,7 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
     ? 'Checking what removing this employee would touch…'
     : pv.mode === 'delete'
       ? `${name} has no attendance, leave or timesheet history yet, so their record is deleted for good and their sign-in access is revoked. This cannot be undone.`
-      : `${name} has history on the books (${pv.attendance} attendance day${pv.attendance === 1 ? '' : 's'}, ${pv.leave} leave request${pv.leave === 1 ? '' : 's'}, ${pv.timesheets} timesheet entr${pv.timesheets === 1 ? 'y' : 'ies'}). They will leave every list and their sign-in is revoked, but the records are kept for compliance — you can bring them back from Employees → status filter → Removed.`
+      : `${name} has history on the books (${pv.attendance} attendance day${pv.attendance === 1 ? '' : 's'}, ${pv.leave} leave request${pv.leave === 1 ? '' : 's'}, ${pv.timesheets} timesheet entr${pv.timesheets === 1 ? 'y' : 'ies'}${pv.assets ? `, ${pv.assets} equipment record${pv.assets === 1 ? '' : 's'}` : ''}). They will leave every list and their sign-in is revoked, but the records are kept for compliance — you can bring them back from Employees → status filter → Removed.`
 
   return (
     <div
@@ -377,7 +396,7 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
           onClose={() => setOffboarding(false)}
         />
       )}
-      {canEdit && (
+      {canEdit && !blockedByAssets && (
         <ConfirmDialog
           open={confirmRemove}
           onClose={() => setConfirmRemove(false)}
@@ -389,6 +408,62 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
           loadingLabel="Removing…"
           onConfirm={doRemove}
         />
+      )}
+      {canEdit && blockedByAssets && (
+        <Modal
+          open={confirmRemove}
+          onClose={() => setConfirmRemove(false)}
+          title="Remove employee"
+          width={460}
+          footer={
+            <>
+              <Btn kind="ghost" onClick={() => setConfirmRemove(false)}>
+                Cancel
+              </Btn>
+              <Btn
+                kind="secondary"
+                icon={<Icon.laptop size={14} />}
+                onClick={() => {
+                  setConfirmRemove(false)
+                  router.replace(`/employees/${e.id}?tab=assets`, { scroll: false })
+                }}
+              >
+                Open Assets tab
+              </Btn>
+              <Btn kind="danger" icon={<Icon.trash size={14} />} disabled title="Return the equipment first" data-testid="remove-blocked">
+                Remove
+              </Btn>
+            </>
+          }
+        >
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.55 }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'flex-start',
+                padding: '11px 13px',
+                borderRadius: 10,
+                background: 'rgba(248,120,107,.08)',
+                border: '1px solid rgba(248,120,107,.3)',
+                marginBottom: 12,
+              }}
+              data-testid="remove-assets-warning"
+            >
+              <Icon.warn size={16} style={{ color: 'var(--coral)', flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <div style={{ fontWeight: 800, color: 'var(--text)' }}>
+                  Return {openAssets.length} asset{openAssets.length === 1 ? '' : 's'} first (
+                  {openAssets.map((a) => a.asset_tag).join(', ')})
+                </div>
+                <div style={{ marginTop: 3 }}>
+                  {openAssets.map((a) => `${a.asset_tag} · ${a.name}`).join(' · ')}
+                </div>
+              </div>
+            </div>
+            {name} still holds company equipment. Record the return in the Assets tab, then remove them.
+          </div>
+        </Modal>
       )}
     </div>
   )
@@ -413,6 +488,12 @@ function OffboardDialog({
   const [reason, setReason] = useState('')
   const [lastDay, setLastDay] = useState('')
   const [type, setType] = useState<'resigned' | 'terminated' | 'absconded' | 'retired' | 'end_of_contract'>('resigned')
+  // Round P R4: equipment still out with the person. Offboarding is never
+  // blocked (they work through notice and hand it back by the last day) —
+  // the list is a reminder with Return right here.
+  const held = useEmployeeAssets(e.id, open)
+  const outstanding = held.data?.data.current ?? []
+  const [returning, setReturning] = useState<Asset | null>(null)
 
   const submit = async () => {
     if (!reason.trim()) {
@@ -441,8 +522,32 @@ function OffboardDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+    // modal={false} while the Return modal (a proto Overlay, portaled outside
+    // this Radix tree) is up: Radix's focus trap would otherwise bounce focus
+    // out of the return form, and a click inside it would read as "outside".
+    // Flipping `modal` swaps Radix's content component, which remounts the
+    // form (state lives here, so nothing is lost), so both auto-focus paths
+    // (the textarea's own and FocusScope's mount focus) are switched off
+    // while the Return modal is up — otherwise keystrokes meant for the
+    // return form land in the hidden Reason field. The Return modal stays a
+    // CHILD of DialogContent on purpose: Radix tells "inside" from "outside"
+    // by the React tree, and a focus landing on the re-mounted Reason field
+    // while the previous layer's listener is still attached would otherwise
+    // read as outside and dismiss the dialog mid-flow.
+    <Dialog open={open} onOpenChange={(o) => !o && !returning && onClose()} modal={!returning}>
+      <DialogContent
+        className="max-w-md"
+        onOpenAutoFocus={(ev) => {
+          if (returning) ev.preventDefault()
+        }}
+        onInteractOutside={(ev) => {
+          const target = ev.target as Element | null
+          // The Return modal (a proto Overlay portaled to body) and our own
+          // dialog content (focus moving within it across the modal swap)
+          // are never "outside".
+          if (target?.closest?.('[data-overlay-root],[data-overlay-scrim],[role="dialog"]')) ev.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Offboard {name}</DialogTitle>
         </DialogHeader>
@@ -483,14 +588,44 @@ function OffboardDialog({
               rows={3}
               placeholder="e.g. Resigned — moving to a new role"
               style={{ width: '100%', resize: 'vertical', paddingTop: 8 }}
-              autoFocus
+              autoFocus={!returning}
             />
           </div>
+          {outstanding.length > 0 && (
+            <div
+              style={{
+                padding: '11px 13px',
+                borderRadius: 10,
+                background: 'rgba(254, 216, 0, 0.07)',
+                border: '1px solid rgba(254, 216, 0, 0.22)',
+              }}
+              data-testid="offboard-assets"
+            >
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                <Icon.laptop size={15} style={{ color: 'var(--yellow)', flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, fontWeight: 800, lineHeight: 1.4 }}>
+                  {outstanding.length} asset{outstanding.length === 1 ? '' : 's'} still assigned — record the return before the last working day
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {outstanding.map((a) => (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--text-mute)' }}>{a.asset_tag}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                    <Btn kind="secondary" size="sm" icon={<Icon.swap size={12} />} onClick={() => setReturning(a)} data-testid="offboard-return">
+                      Return
+                    </Btn>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.5 }}>
             This records the exit and starts their notice — it does not delete
             anything. Use Remove only for records added by mistake.
           </div>
         </div>
+        <ReturnAssetModal open={!!returning} onClose={() => setReturning(null)} asset={returning} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
           <Btn kind="ghost" onClick={onClose} disabled={terminate.isPending}>
             Cancel

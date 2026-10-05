@@ -98,6 +98,10 @@ async function bootstrap() {
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-device-id'],
+    // Round P R4: let the cross-origin web read the server's filename on CSV /
+    // PDF downloads (assets-<date>.csv, policy-acknowledgements.csv, invoice
+    // PDFs) instead of falling back to a generic name.
+    exposedHeaders: ['Content-Disposition'],
   });
 
   // Cookie parser
