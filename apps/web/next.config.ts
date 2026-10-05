@@ -14,6 +14,28 @@ const localConnect = allowLocalhost
   : ''
 const localImg = allowLocalhost ? ' http://127.0.0.1:9000 http://localhost:9000' : ''
 
+// Round P (R3): PDF company policies render their 15-minute signed R2 URL in
+// an <iframe> (components/policies/PolicyReader). The bucket's public host
+// differs per deployment, so it comes from NEXT_PUBLIC_FILES_FRAME_SRC
+// (comma-separated origins, read at BUILD time). Unset/empty leaves frame-src
+// byte-identical to before — the reader then falls back to "Open PDF".
+// Only bare https?://host[:port] origins are accepted: the value is spliced
+// into the CSP header, so a stray `;`, path or wildcard must never widen the
+// policy at build time — anything else is dropped loudly.
+const FRAME_ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/
+const filesFrameSrc = (process.env.NEXT_PUBLIC_FILES_FRAME_SRC ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .filter((origin) => {
+    if (FRAME_ORIGIN_RE.test(origin)) return true
+    console.warn(
+      `[next.config] NEXT_PUBLIC_FILES_FRAME_SRC entry "${origin}" is not a plain origin (https://host[:port]) — ignored.`,
+    )
+    return false
+  })
+  .join(' ')
+
 // Defence-in-depth response headers. The CSP is only enforced in production —
 // in dev it would block http://localhost API/websocket calls and Next's HMR.
 // script/style allow 'unsafe-inline' (the app uses inline styles throughout and
@@ -28,7 +50,7 @@ const PROD_CSP = [
   "font-src 'self' data:",
   `connect-src 'self' https: wss:${localConnect}`,
   // Razorpay Checkout renders its payment UI in an iframe/popup.
-  "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com",
+  `frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com${filesFrameSrc ? ` ${filesFrameSrc}` : ''}`,
   "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'",

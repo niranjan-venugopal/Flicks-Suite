@@ -14,6 +14,8 @@ export type GrantModule =
   | 'invoicing'
   | 'crm'
   | 'pm'
+  // Round P R3 — company policies: Owner/Admin by role, anyone else by grant.
+  | 'policies'
   | 'reports'
   | 'org_financial'
   | 'payroll'

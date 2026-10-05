@@ -225,7 +225,10 @@ type EmailTemplate =
   // Calendar (Round J)
   | 'calendar-invite'
   | 'calendar-updated'
-  | 'calendar-cancelled';
+  | 'calendar-cancelled'
+  // Company policies (Round P R3) — publish fan-out + HR reminder
+  | 'policy-published'
+  | 'policy-reminder';
 
 @Injectable()
 export class NotificationsService {
@@ -845,6 +848,58 @@ export class NotificationsService {
                   ? `This meeting no longer appears on your ${appName} calendar.`
                   : `Accept or decline from your ${appName} calendar. The attached invite adds it to Outlook or Google Calendar.`
               }</p>
+            </div>
+          `,
+        };
+      }
+
+      // ─── Company policies (Round P R3) ───────────────────────────────────
+      // 'policy-published' goes to every applicable active member when HR
+      // publishes a policy that needs acknowledgement; 'policy-reminder' is
+      // the HR-triggered nudge to whoever is still pending. Same props:
+      //   { policyTitle, companyName, link }
+      // policyTitle / companyName are tenant-typed → esc() in the body and
+      // line-break-stripped in the plain-text subject (mail clients never
+      // decode entities there, and a CR/LF in a title must not inject
+      // headers). `link` is the app's own policies page — usually the
+      // relative '/policies' (prefixed with APP_URL here); an absolute
+      // https URL is used as-is. The CTA only OPENS the page: agreeing
+      // happens in-app, behind the sign-in gate.
+      case 'policy-published':
+      case 'policy-reminder': {
+        const { policyTitle, companyName, link } = props as {
+          policyTitle: string;
+          companyName?: string | null;
+          link?: string | null;
+        };
+        const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+        const base = this.configService
+          .get<string>('APP_URL', 'http://localhost:3000')
+          .replace(/\/$/, '');
+        const rawLink = String(link ?? '/policies');
+        const href = /^https?:\/\//i.test(rawLink)
+          ? rawLink
+          : `${base}${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
+        const reminder = template === 'policy-reminder';
+        const company = plain(companyName);
+        const title = plain(policyTitle);
+        return {
+          subject: reminder
+            ? `Reminder: please agree to ${title}`
+            : `Please read and agree: ${title}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: ${reminder ? '#f59e0b' : '#1a1a2e'};">${reminder ? 'Still waiting for your agreement' : 'A company policy needs your agreement'}</h2>
+              <p>${
+                reminder
+                  ? `This is a reminder that <strong>${this.esc(title)}</strong>${company ? ` from <strong>${this.esc(company)}</strong>` : ''} is still waiting for you to read and agree to it.`
+                  : `${company ? `<strong>${this.esc(company)}</strong> published` : 'Your company published'} <strong>${this.esc(title)}</strong> and asks you to read it and agree.`
+              }</p>
+              <p>It takes a minute: open the policy, read it through, tick the box and press Agree. Until you do, ${appName} shows it at your next sign-in.</p>
+              <p style="margin: 24px 0 8px;">
+                <a href="${this.esc(href)}" style="display: inline-block; background: #3E7BFA; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Read &amp; agree</a>
+              </p>
+              <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open Policies from the sidebar.</p>
             </div>
           `,
         };

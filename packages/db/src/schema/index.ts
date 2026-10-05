@@ -37,6 +37,9 @@ export * from './crm';
 // ─── PM: projects module + sync engine (v6) ──────────────────────────────────
 export * from './pm';
 
+// ─── Company policies + acknowledgements (Round P R3, 0067) ──────────────────
+export * from './policies';
+
 // ─── Combined schema object (for Drizzle client) ─────────────────────────────
 import * as platformSchema from './platform';
 import * as authSchema from './auth';
@@ -51,6 +54,7 @@ import * as invoicingSchema from './invoicing';
 import * as eventsSchema from './events';
 import * as crmSchema from './crm';
 import * as pmSchema from './pm';
+import * as policiesSchema from './policies';
 
 export const schema = {
   ...platformSchema,
@@ -66,6 +70,7 @@ export const schema = {
   ...eventsSchema,
   ...crmSchema,
   ...pmSchema,
+  ...policiesSchema,
 } as const;
 
 export type Schema = typeof schema;

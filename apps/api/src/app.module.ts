@@ -54,6 +54,7 @@ import { FlagsModule } from './core/flags/flags.module';
 import { ModuleAccessModule } from './core/auth/module-access.module';
 import { PmModule } from './modules/pm/pm.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { PoliciesModule } from './modules/policies/policies.module';
 import { BillingStateModule } from './core/billing/billing-state.module';
 import { BillingGuard } from './core/auth/guards/billing.guard';
 
@@ -191,6 +192,8 @@ import { PmJobs } from './jobs/pm.jobs';
     PmModule,
     // Round L — approval routing + the 24 h escalation sweep (item 2).
     ApprovalsModule,
+    // Round P R3 — company policies (rich text / PDF, acknowledgement gate).
+    PoliciesModule,
   ],
   controllers: [HealthController],
   providers: [

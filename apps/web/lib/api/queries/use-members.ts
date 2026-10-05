@@ -21,16 +21,23 @@ export type GrantModule =
   | 'expenses'
   | 'crm'
   | 'pm'
+  | 'policies'
 export type GrantLevel = 'none' | 'view' | 'edit'
 
-/** The three modules an Owner administers from Settings → Module access. */
-export const MANAGED_MODULES = ['crm', 'invoicing', 'pm'] as const
+/**
+ * The modules an Owner administers from Settings → Module access. Round P
+ * R3 adds `policies` (company policies: write / publish / see who agreed) so
+ * "any position the Owner gives access to" can manage them without being
+ * made an HR admin.
+ */
+export const MANAGED_MODULES = ['crm', 'invoicing', 'pm', 'policies'] as const
 export type ManagedModule = (typeof MANAGED_MODULES)[number]
 
 export const MODULE_LABELS: Record<ManagedModule, string> = {
   crm: 'CRM',
   invoicing: 'Invoicing',
   pm: 'Projects',
+  policies: 'Policies',
 }
 
 /** Roles a workspace policy can set — owner/admin hold everything by role. */

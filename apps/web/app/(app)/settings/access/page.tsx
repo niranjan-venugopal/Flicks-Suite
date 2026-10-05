@@ -21,9 +21,10 @@ import {
 } from '@/lib/api/queries/use-members'
 
 // ─────────────────────────────────────────────────────────
-// Settings → Module access. Who can open CRM, Invoicing and
-// Projects — set once per role, or per person when someone
-// needs an exception.
+// Settings → Module access. Who can open CRM, Invoicing,
+// Projects and (Round P R3) manage company Policies — set
+// once per role, or per person when someone needs an
+// exception.
 // ─────────────────────────────────────────────────────────
 
 const LEVELS: { value: GrantLevel; label: string }[] = [
@@ -34,8 +35,8 @@ const LEVELS: { value: GrantLevel; label: string }[] = [
 
 /** Roles that hold every module by role — shown, but not editable. */
 const FULL_BY_ROLE: Record<string, ManagedModule[]> = {
-  owner: ['crm', 'invoicing', 'pm'],
-  admin: ['crm', 'invoicing', 'pm'],
+  owner: ['crm', 'invoicing', 'pm', 'policies'],
+  admin: ['crm', 'invoicing', 'pm', 'policies'],
   finance: ['invoicing'],
 }
 
@@ -58,7 +59,7 @@ export default function ModuleAccessPage() {
   if (!isOwnerOrAdmin) {
     return (
       <SettingsLayout>
-        <SectionHead title="Module access" sub="Who can open CRM, Invoicing and Projects." />
+        <SectionHead title="Module access" sub="Who can open CRM, Invoicing and Projects, and who manages company policies." />
         <div className="card" style={{ textAlign: 'center', padding: '34px 24px' }}>
           <Icon.lock size={20} style={{ color: 'var(--text-faint)', marginBottom: 10 }} />
           <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>Owners and admins only</div>
@@ -74,7 +75,7 @@ export default function ModuleAccessPage() {
     <SettingsLayout>
       <SectionHead
         title="Module access"
-        sub="Decide who can open CRM, Invoicing and Projects — by role, or per person."
+        sub="Decide who can open CRM, Invoicing and Projects, and who manages company policies — by role, or per person."
       />
       <div
         style={{
@@ -112,7 +113,9 @@ export default function ModuleAccessPage() {
         Owners and admins always keep every module — change someone&apos;s role to
         change that. Access set here decides what a person can open; admin-only
         actions inside a module (deleting records, changing settings) still follow
-        their role.
+        their role. Policies: &ldquo;View only&rdquo; sees every policy and who agreed;
+        &ldquo;Full access&rdquo; also writes, publishes and reminds. Reading and agreeing
+        to published policies never needs a grant.
       </div>
     </SettingsLayout>
   )

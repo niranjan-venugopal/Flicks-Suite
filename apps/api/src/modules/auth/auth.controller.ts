@@ -370,7 +370,12 @@ export class AuthController {
             user.role,
             user.sub,
           )
-        : { crm: 'none' as const, invoicing: 'none' as const, pm: 'none' as const },
+        : {
+            crm: 'none' as const,
+            invoicing: 'none' as const,
+            pm: 'none' as const,
+            policies: 'none' as const,
+          },
       avatarUrl: await this.mediaService.servedUrl(avatarKey ?? null, raw.avatarUrl),
       currentMembership: raw.currentMembership
         ? {

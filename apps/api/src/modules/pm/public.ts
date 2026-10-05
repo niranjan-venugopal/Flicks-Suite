@@ -9,6 +9,13 @@ import { PmProjectsService } from './projects.service';
 import { PmTeamsService } from './teams.service';
 
 /**
+ * Round P R3 — the markdown cleaner is PM's, but company policies store
+ * markdown bodies too; re-exported here so the policies module consumes it
+ * through the facade (house rule 3) instead of deep-importing ./markdown.
+ */
+export { cleanMarkdown } from './markdown';
+
+/**
  * PmPublicService (PRD v6 §15.2/§19) — the ONLY PM surface other modules and
  * the public API may consume. Thin delegation (CRM facade shape) plus the one
  * cross-module flow PM owns: deal → project.

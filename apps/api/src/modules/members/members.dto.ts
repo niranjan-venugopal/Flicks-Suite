@@ -35,7 +35,10 @@ export const GRANT_MODULES = [
  * The modules an Owner administers from Settings → Module access. The rest of
  * GRANT_MODULES stay auditor-scope concerns on the Invite-auditor modal.
  */
-export const MANAGED_MODULES = ['crm', 'invoicing', 'pm'] as const;
+// Round P R3: 'policies' lets an Owner hand HR-style policy management to any
+// seat (view = see Settings → Policies + who signed; edit = write/publish/
+// remind). Deliberately NOT in GRANT_MODULES — auditors never see policies.
+export const MANAGED_MODULES = ['crm', 'invoicing', 'pm', 'policies'] as const;
 
 /**
  * Roles a workspace policy may set. The full-access roles (owner/admin, plus

@@ -84,7 +84,10 @@ interface VerifyAuthResponse {
 }
 
 export type ModuleAccessLevel = 'none' | 'view' | 'edit'
-export type ModuleAccessMap = Record<'crm' | 'invoicing' | 'pm', ModuleAccessLevel>
+// Round P R3 — `policies` joins the managed set (Owner/Admin by role,
+// anyone else via Settings → Module access). An API older than 0067 omits the
+// key, so readers treat a missing entry as 'none'.
+export type ModuleAccessMap = Record<'crm' | 'invoicing' | 'pm' | 'policies', ModuleAccessLevel>
 
 // Returned by /me
 interface MeResponse extends ApiUser {

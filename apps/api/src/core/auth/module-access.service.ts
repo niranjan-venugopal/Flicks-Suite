@@ -17,7 +17,7 @@ export type AccessLevel = 'none' | 'view' | 'edit';
 export const LEVEL_RANK: Record<string, number> = { none: 0, view: 1, edit: 2 };
 
 /** Modules an Owner administers from Settings → Module access. */
-export const MANAGED_ACCESS_MODULES = ['crm', 'invoicing', 'pm'] as const;
+export const MANAGED_ACCESS_MODULES = ['crm', 'invoicing', 'pm', 'policies'] as const;
 
 /**
  * Roles that hold a module outright, by role. These short-circuit BEFORE any
@@ -35,12 +35,15 @@ export const FULL_ACCESS_ROLES: Record<GrantModule, ReadonlySet<UserRole>> = {
   expenses: new Set<UserRole>(['owner', 'admin', 'finance', 'super_admin', 'fam']),
   crm: new Set<UserRole>(['owner', 'admin', 'super_admin', 'fam']),
   pm: new Set<UserRole>(['owner', 'admin', 'super_admin', 'fam']),
+  // Round P R3 — managing company policies is an HR/Owner job by role; every
+  // other seat starts at 'none' and is let in per person from Settings → Access.
+  policies: new Set<UserRole>(['owner', 'admin', 'super_admin', 'fam']),
 };
 
 /**
  * Access a role holds with NO rows anywhere — the shipped default. CRM and PM
- * are org-open for standard members (the SMB default); everything else is
- * opt-in via a grant row.
+ * are org-open for standard members (the SMB default); everything else —
+ * including 'policies' (Round P R3) — is opt-in via a grant row.
  */
 export function builtInDefault(module: GrantModule, role: UserRole): AccessLevel {
   if ((module === 'crm' || module === 'pm') &&

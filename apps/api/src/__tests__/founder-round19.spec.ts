@@ -170,8 +170,9 @@ describe('Founder round 19 — the sidebar never offers a locked door', () => {
       'finance',
       userIds.finance,
     );
-    // CRM + Projects are org-open for a standard member (builtInDefault).
-    expect(access).toEqual({ crm: 'edit', invoicing: 'edit', pm: 'edit' });
+    // CRM + Projects are org-open for a standard member (builtInDefault);
+    // Policies (Round P R3) is HR-only unless the Owner grants it.
+    expect(access).toEqual({ crm: 'edit', invoicing: 'edit', pm: 'edit', policies: 'none' });
   });
 
   it('Owner and Admin hold every ranked gate the full sidebar advertises', async () => {
@@ -218,7 +219,7 @@ describe('Founder round 19 — the sidebar never offers a locked door', () => {
     // sitting in the platform console. The web sidebar therefore takes its
     // console from the LAYOUT (variant='fam'), never from this map or from
     // the membership role.
-    for (const module of ['crm', 'invoicing', 'pm'] as const) {
+    for (const module of ['crm', 'invoicing', 'pm', 'policies'] as const) {
       expect(FULL_ACCESS_ROLES[module].has('fam')).toBe(true);
       expect(FULL_ACCESS_ROLES[module].has('super_admin')).toBe(true);
     }
@@ -228,7 +229,7 @@ describe('Founder round 19 — the sidebar never offers a locked door', () => {
       'fam',
       userIds.fam,
     );
-    expect(access).toEqual({ crm: 'edit', invoicing: 'edit', pm: 'edit' });
+    expect(access).toEqual({ crm: 'edit', invoicing: 'edit', pm: 'edit', policies: 'edit' });
   });
 
   it('only a platform admin passes the FAM console gate', async () => {
@@ -282,6 +283,6 @@ describe('Founder round 19 — the sidebar never offers a locked door', () => {
       'auditor',
       userIds.auditor,
     );
-    expect(access).toEqual({ crm: 'none', invoicing: 'none', pm: 'none' });
+    expect(access).toEqual({ crm: 'none', invoicing: 'none', pm: 'none', policies: 'none' });
   });
 });

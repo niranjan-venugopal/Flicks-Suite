@@ -6,11 +6,26 @@ import { type ReactNode } from 'react'
 import { Icon } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
 import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
+import { useAuthStore } from '@/lib/stores/auth.store'
+import { useModuleAccess } from '@/lib/api/queries/use-auth'
 
 interface NavItem {
   href: string
   label: string
   icon: IconKey
+  /**
+   * Who sees the entry besides Owner / HR admin. The Topbar only offers
+   * Settings to Owner / HR admin, so every other seat arrives by deep link:
+   * the inbox sends every member to Notifications (per-user preferences),
+   * BillingGate sends them to Billing (read-only plan view), Profile to
+   * Privacy & data, and the Sidebar's "Manage policies" to Company policies
+   * (Round P R3 — any seat the Owner granted `policies` from Settings →
+   * Module access). Those stay in a non-admin's rail; the admin-only pages
+   * (whose writes are all @Roles('admin')) are hidden so a granted manager
+   * does not get a rail full of entries that only 403. The page the person
+   * is actually on is always listed, whatever its flag.
+   */
+  openTo?: 'everyone' | 'policies'
 }
 
 // Matches prototype's ScrSettings sections, mapped to our actual routes.
@@ -25,13 +40,14 @@ const NAV: Array<NavItem & { disabled?: boolean }> = [
   { href: '/settings/working-hours',label: 'Working hours & shifts', icon: 'clock' },
   { href: '/settings/leave-policies', label: 'Leave policy',       icon: 'cal' },
   { href: '/settings/holidays',     label: 'Holiday calendar',     icon: 'sun' },
+  { href: '/settings/policies',     label: 'Company policies',     icon: 'clipboard', openTo: 'policies' },
   { href: '/settings/members',      label: 'Roles & permissions',  icon: 'shield' },
   { href: '/settings/access',       label: 'Module access',        icon: 'lock' },
-  { href: '/settings/billing',      label: 'Billing & plan',       icon: 'card' },
-  { href: '/settings/notifications',label: 'Notifications',        icon: 'bell' },
+  { href: '/settings/billing',      label: 'Billing & plan',       icon: 'card', openTo: 'everyone' },
+  { href: '/settings/notifications',label: 'Notifications',        icon: 'bell', openTo: 'everyone' },
   { href: '/settings/integrations', label: 'Integrations',         icon: 'link' },
   { href: '/settings/developer',    label: 'API & webhooks',       icon: 'key' },
-  { href: '/settings/privacy',      label: 'Privacy & data',       icon: 'eye' },
+  { href: '/settings/privacy',      label: 'Privacy & data',       icon: 'eye', openTo: 'everyone' },
 ]
 
 interface SettingsLayoutProps {
@@ -40,11 +56,34 @@ interface SettingsLayoutProps {
 
 export function SettingsLayout({ children }: SettingsLayoutProps) {
   const pathname = usePathname() ?? '/settings'
+  const { currentUser } = useAuthStore()
+  const moduleAccess = useModuleAccess()
+  const role = currentUser?.role
+  // Right after OTP / magic-link sign-in the persisted store holds a partial
+  // user with no role until /me answers — show the full rail until the role
+  // is known rather than flashing a trimmed one at an Owner.
+  const roleKnown = role != null
+  const isAdmin = role === 'OWNER' || role === 'HR_ADMIN'
+  // `?? 'none'`: an API older than 0067 sends no `policies` key.
+  const policiesGranted = (moduleAccess?.policies ?? 'none') !== 'none'
 
-  // Longest-prefix match so /settings/departments doesn't activate /settings.
+  // Longest-prefix match over the FULL nav so /settings/departments doesn't
+  // activate /settings, and so the current page is found even when the
+  // viewer's trimmed rail would not otherwise list it.
   const activeHref = [...NAV]
     .sort((a, b) => b.href.length - a.href.length)
     .find((n) => pathname === n.href || pathname.startsWith(`${n.href}/`))?.href
+
+  const items =
+    !roleKnown || isAdmin
+      ? NAV
+      : NAV.filter(
+          (n) =>
+            n.openTo === 'everyone' ||
+            (n.openTo === 'policies' && policiesGranted) ||
+            // Never orphan a deep link: whatever page they are on stays listed.
+            n.href === activeHref,
+        )
 
   return (
     <div className="relative min-h-full">
@@ -61,7 +100,7 @@ export function SettingsLayout({ children }: SettingsLayoutProps) {
         <div className="settings-grid">
           {/* Vertical nav */}
           <nav className="settings-nav" style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {NAV.map((item) => {
+            {items.map((item) => {
               const active = item.href === activeHref
               const IconComp = Icon[item.icon]
               return (

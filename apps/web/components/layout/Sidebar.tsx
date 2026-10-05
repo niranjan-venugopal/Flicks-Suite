@@ -141,6 +141,8 @@ const ADMIN_NAV: NavSection[] = [
           { href: '/employees', label: 'Employees' },
           { href: '/employees/org-chart', label: 'Org chart' },
           { href: '/employees/onboarding', label: 'Onboarding' },
+          // Round P R3 — company policies (write / publish / who agreed).
+          { href: '/settings/policies', label: 'Policies' },
           { href: '/employees/documents', label: 'Documents' },
         ],
       },
@@ -220,6 +222,8 @@ const MANAGER_NAV: NavSection[] = [
       { id: 'emp-leave', label: 'My leave', icon: 'cal', href: '/leave' },
       { id: 'emp-timesheet', label: 'My timesheet', icon: 'sheet', href: '/timesheets' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+      // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
+      { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],
   },
 ]
@@ -253,6 +257,8 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Personal',
     items: [
       { id: 'emp-profile', label: 'Profile', icon: 'user', href: '/profile' },
+      // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
+      { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
       { id: 'emp-documents', label: 'Documents', icon: 'doc', href: '/documents' },
     ],
   },
@@ -318,6 +324,8 @@ const FINANCE_NAV: NavSection[] = [
       // /employees/org-chart carries no @Roles gate — every member can read it.
       { id: 'fin-org-chart', label: 'Org chart', icon: 'people', href: '/employees/org-chart' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
+      // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
+      { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],
   },
 ]
@@ -516,6 +524,34 @@ function withGrantedCrm(
   ]
 }
 
+/**
+ * Round P R3 — a non-admin seat the Owner granted `policies` (view or edit)
+ * from Settings → Module access gets "Manage policies" next to their
+ * personal Policies entry, so the grant is reachable without being an HR
+ * admin. `undefined` = /me still in flight: add nothing; an API older than
+ * 0067 sends no `policies` key, which reads as 'none'.
+ */
+function withGrantedPolicies(
+  base: NavSection[],
+  access: ModuleAccessMap | undefined,
+): NavSection[] {
+  if (!access || (access.policies ?? 'none') === 'none') return base
+  if (base.some((sec) => sec.items.some((it) => it.id === 'manage-policies'))) return base
+  const entry: NavItem = {
+    id: 'manage-policies',
+    label: 'Manage policies',
+    icon: 'shield',
+    href: '/settings/policies',
+  }
+  const personalIdx = base.findIndex((sec) => sec.section === 'Personal')
+  if (personalIdx === -1) {
+    return [...base, { section: 'Personal', items: [entry] }]
+  }
+  return base.map((sec, i) =>
+    i === personalIdx ? { ...sec, items: [...sec.items, entry] } : sec,
+  )
+}
+
 // Manager/Employee see Invoicing ONLY if the Owner granted it (membership_grants).
 // Their base HRMS nav stays; the granted invoicing section is appended.
 function withGrantedInvoicing(base: NavSection[], grants: ModuleGrant[]): NavSection[] {
@@ -585,7 +621,11 @@ export function Sidebar({ variant = 'tenant' }: { variant?: SidebarVariant } = {
         : role === 'EMPLOYEE'
           ? withGrantedCrm(withGrantedInvoicing(EMPLOYEE_NAV, activeGrants), moduleAccess)
           : navFor(role)
-    return withoutParkedCrm(withModuleAccess(base, moduleAccess))
+    // Owner/Admin already reach policies under People; everyone else only
+    // when granted.
+    const withPolicies =
+      role === 'OWNER' || role === 'HR_ADMIN' ? base : withGrantedPolicies(base, moduleAccess)
+    return withoutParkedCrm(withModuleAccess(withPolicies, moduleAccess))
   }, [isFam, role, activeGrants, moduleAccess])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.

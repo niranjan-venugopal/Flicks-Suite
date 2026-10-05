@@ -1722,9 +1722,12 @@ export class FamService {
   // Service-role only. FAM never reads invoice CONTENT here — only enablement,
   // membership/seat metadata, and anonymized aggregates.
 
-  private static readonly MANAGED_MODULES = ['invoicing', 'crm', 'payroll', 'expenses'];
+  // Round P R3: 'policies' (company policies) is a FAM-toggleable module like
+  // invoicing/crm — the PoliciesGrantGuard reads the same tenant_module_toggles
+  // row, so a platform kill-switch bites on the next request.
+  private static readonly MANAGED_MODULES = ['invoicing', 'crm', 'payroll', 'expenses', 'policies'];
   /** ON when no toggle row exists (PRD v5 §13: crm ships default-enabled). */
-  private static readonly DEFAULT_ENABLED = new Set(['invoicing', 'crm']);
+  private static readonly DEFAULT_ENABLED = new Set(['invoicing', 'crm', 'policies']);
 
   /** Per-module enablement for one tenant. Invoicing + CRM default ENABLED. */
   async getTenantModules(tenantId: string) {

@@ -6,6 +6,7 @@ import { Btn, Icon, Pill, type IconKey } from '@/components/proto'
 import { AuthLayout, AuthCard } from '@/components/layout/AuthLayout'
 import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
+import { isPolicyReadable, PolicyReader } from '@/components/policies/PolicyReader'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import {
@@ -16,17 +17,19 @@ import {
 } from '@/lib/api/queries/use-employee-onboarding'
 import { useMyEmployeeRecord } from '@/lib/api/queries/use-employees'
 import { useOrganization } from '@/lib/api/queries/use-settings'
+import { usePendingPolicies, type PendingPolicy } from '@/lib/api/queries/use-policies'
 import { PAN_RE, IFSC_RE, BANKS, OTHER_BANK } from '@/lib/employee-details'
 import { INDIAN_STATES } from '@flicks/shared/constants'
 
 // ─── Step metadata ───────────────────────────────────────────────────────────
 
 interface StepMeta {
-  key: 'personal' | 'identity' | 'bank' | 'documents' | 'review'
+  key: 'personal' | 'identity' | 'bank' | 'documents' | 'policies' | 'review'
   // The :step number posted to the API. Decoupled from the UI index — the
   // owner/admin variant drops the Documents step, so index and server step
-  // no longer line up.
-  serverStep: 1 | 2 | 3 | 4 | 5
+  // no longer line up. `null` = a purely client-side step (Round P R3:
+  // company policies) that never POSTs to /employees/me/onboarding/:step.
+  serverStep: 1 | 2 | 3 | 4 | 5 | null
   title: string
   sub: string
 }
@@ -38,13 +41,21 @@ interface StepMeta {
 // and the final step confirms + finishes instead of submitting for HR review
 // — there is nobody senior to review them (founder round 17). Every other
 // role, HR admins included, keeps the full flow.
-const stepsFor = (isIndia: boolean, isPrivileged: boolean): StepMeta[] => [
+//
+// Round P (R3): when the member has company policies waiting for their
+// agreement, a "Company policies" step sits right before Review — for the
+// privileged variant too. It is client-only (serverStep null): the
+// acknowledgements go through /policies/:id/acknowledge, not the wizard.
+const stepsFor = (isIndia: boolean, isPrivileged: boolean, withPolicies: boolean): StepMeta[] => [
   { key: 'personal', serverStep: 1, title: 'Personal info',    sub: 'Basic details & address' },
   { key: 'identity', serverStep: 2, title: 'Identity',         sub: isIndia ? 'PAN, Aadhaar, contact' : 'Passport / ID, contact' },
   { key: 'bank',     serverStep: 3, title: 'Bank & statutory', sub: isIndia ? 'Salary account & UAN' : 'Salary account details' },
   ...(isPrivileged
     ? []
     : [{ key: 'documents', serverStep: 4, title: 'Documents', sub: 'Upload offer & ID proofs' } as StepMeta]),
+  ...(withPolicies
+    ? [{ key: 'policies', serverStep: null, title: 'Company policies', sub: 'Read & agree' } as StepMeta]
+    : []),
   { key: 'review', serverStep: 5, title: 'Review', sub: isPrivileged ? 'Confirm your details' : 'Submit for HR review' },
 ]
 
@@ -145,24 +156,58 @@ export default function EmployeeOnboardingPage() {
   const [consentData, setConsentData] = useState(false)
   const [consentComms, setConsentComms] = useState(false)
 
+  // Round P (R3): company policies awaiting this member's agreement. Only
+  // asked once /me is in (the wizard is never shown to guests/auditors/FAM,
+  // who the API answers [] anyway). The step is STICKY for the session:
+  // once it has appeared it stays in the rail (showing "all agreed") so the
+  // list doesn't jump the user straight into Review the moment the last
+  // policy is signed.
+  const pendingPolicies = usePendingPolicies(!!me.data)
+  const pendingList = useMemo(() => pendingPolicies.data?.data ?? [], [pendingPolicies.data])
+  const [policiesStepSeen, setPoliciesStepSeen] = useState(false)
+  useEffect(() => {
+    if (pendingList.length > 0) setPoliciesStepSeen(true)
+  }, [pendingList.length])
+  const withPolicies = pendingList.length > 0 || policiesStepSeen
+  // Agreed in THIS session, keyed `${id}:${version}` → acknowledged_at. The
+  // ack mutation invalidates ['policies'], but until that refetch lands the
+  // server list still holds the policy just signed — so the card flips to
+  // "Agreed on …" and Continue arms from this map, not from the refetch.
+  const [ackedPolicies, setAckedPolicies] = useState<Record<string, string>>({})
+  // What actually blocks Continue: readable, not yet agreed. A PDF whose
+  // signed URL the API could not produce (file_url null) cannot be read, so
+  // it never blocks — it stays listed and the dashboard gate / Policies page
+  // pick it up once the URL is back (same rule as PolicyGate).
+  const blockingPending = useMemo(
+    () => pendingList.filter((p) => isPolicyReadable(p) && !ackedPolicies[`${p.id}:${p.version}`]),
+    [pendingList, ackedPolicies],
+  )
+
   const steps = useMemo(
-    () => stepsFor(isIndia, isPrivileged),
-    [isIndia, isPrivileged],
+    () => stepsFor(isIndia, isPrivileged, withPolicies),
+    [isIndia, isPrivileged, withPolicies],
   )
 
   // Resume on whatever step the user left off on. onboarding_step is the
   // SERVER step number — map it back to a UI index (the privileged variant
-  // has no Documents step, so the two are not interchangeable).
+  // has no Documents step, so the two are not interchangeable; the policies
+  // step has no server number at all and is skipped by the lookup).
   useEffect(() => {
     if (status.data) {
       const savedStep = status.data.onboardingStep
-      const idx = steps.findIndex((s) => s.serverStep >= savedStep)
-      const lastSaved = Math.max(0, idx === -1 ? steps.length - 1 : idx)
+      const idx = steps.findIndex((s) => s.serverStep !== null && s.serverStep >= savedStep)
+      let lastSaved = Math.max(0, idx === -1 ? steps.length - 1 : idx)
+      // Never resume PAST unsigned policies: someone who saved at Review and
+      // comes back to a new policy lands on the policies step first.
+      const policiesIdx = steps.findIndex((s) => s.key === 'policies')
+      if (policiesIdx !== -1 && lastSaved > policiesIdx && blockingPending.length > 0) {
+        lastSaved = policiesIdx
+      }
       // Only auto-advance forward — if the user manually clicked back we let
       // them stay there.
       setStepIdx((cur) => Math.max(cur, lastSaved))
     }
-  }, [status.data, steps])
+  }, [status.data, steps, blockingPending.length])
 
   // The step list can shrink 5 → 4 when /me resolves after first paint —
   // never let stepIdx point past the end.
@@ -188,6 +233,10 @@ export default function EmployeeOnboardingPage() {
     // The server step id, NOT the UI index — the privileged variant skips
     // the Documents step (4) entirely.
     const step = steps[stepIdx]!.serverStep
+
+    // Client-only steps (company policies) never build a payload — the
+    // callers short-circuit before getting here; this is the type guard.
+    if (step === null) return null
 
     if (step === 1) {
       if (!form.emergencyName.trim() || !form.emergencyPhone.trim()) {
@@ -333,7 +382,28 @@ export default function EmployeeOnboardingPage() {
 
   // ─── Navigation ───────────────────────────────────────────────────────
 
+  // Round P (R3): the policies step is client-only — it advances once every
+  // pending policy has been agreed (each "Agree" posts its own ack) and
+  // never POSTs to /employees/me/onboarding/:step.
+  const onPoliciesStep = stepMeta.key === 'policies'
+  const policiesRemaining = onPoliciesStep ? blockingPending.length : 0
+
   const handleContinue = async () => {
+    if (stepMeta.serverStep === null) {
+      if (policiesRemaining > 0) {
+        toast({
+          title: 'Please agree to each policy',
+          description:
+            policiesRemaining === 1
+              ? '1 policy still needs your agreement.'
+              : `${policiesRemaining} policies still need your agreement.`,
+          variant: 'destructive',
+        })
+        return
+      }
+      setStepIdx((cur) => Math.min(steps.length - 1, cur + 1))
+      return
+    }
     const payload = validateAndBuildPayload()
     if (!payload) return
     try {
@@ -390,6 +460,13 @@ export default function EmployeeOnboardingPage() {
   }
 
   const handleSaveAndExit = async () => {
+    if (stepMeta.serverStep === null) {
+      // Nothing of this step lives in the wizard's own progress — every
+      // agreement is already on record. The blocking gate on the dashboard
+      // picks up whatever is still unsigned.
+      router.replace('/dashboard')
+      return
+    }
     const payload = validateAndBuildPayload()
     if (!payload) return
     try {
@@ -604,6 +681,21 @@ export default function EmployeeOnboardingPage() {
             <BankStep form={form} set={setField} isIndia={isIndia} />
           )}
           {stepMeta.key === 'documents' && <DocumentsStep isIndia={isIndia} />}
+          {stepMeta.key === 'policies' && (
+            <PoliciesStep
+              pending={pendingList}
+              acked={ackedPolicies}
+              onAcknowledged={(res) =>
+                setAckedPolicies((prev) => ({
+                  ...prev,
+                  [`${res.policy_id}:${res.version}`]: res.acknowledged_at,
+                }))
+              }
+              loading={pendingPolicies.isLoading}
+              failed={pendingPolicies.isError}
+              onRefetch={() => pendingPolicies.refetch()}
+            />
+          )}
           {stepMeta.key === 'review' && (
             <ReviewStep
               form={form}
@@ -646,8 +738,9 @@ export default function EmployeeOnboardingPage() {
             <Btn
               kind="primary"
               onClick={handleContinue}
-              disabled={submit.isPending}
+              disabled={submit.isPending || policiesRemaining > 0}
               iconRight={<Icon.arrow size={14} />}
+              data-testid="onboarding-continue"
             >
               {submit.isPending
                 ? 'Saving…'
@@ -655,7 +748,11 @@ export default function EmployeeOnboardingPage() {
                   ? isPrivileged
                     ? 'Finish setup'
                     : 'Submit for review'
-                  : 'Continue'}
+                  : policiesRemaining > 0
+                    ? policiesRemaining === 1
+                      ? '1 policy to agree'
+                      : `${policiesRemaining} policies to agree`
+                    : 'Continue'}
             </Btn>
           </div>
           {canDefer && (
@@ -1220,6 +1317,146 @@ function DocumentsStep({ isIndia }: { isIndia: boolean }) {
         ))}
       </div>
     </>
+  )
+}
+
+// ─── Company policies (Round P R3, client-only step) ─────────────────────────
+
+function PoliciesStep({
+  pending,
+  acked,
+  onAcknowledged,
+  loading,
+  failed,
+  onRefetch,
+}: {
+  pending: PendingPolicy[]
+  /** `${id}:${version}` → acknowledged_at for policies agreed in this session. */
+  acked: Record<string, string>
+  onAcknowledged: (res: { policy_id: string; version: number; acknowledged_at: string }) => void
+  loading: boolean
+  failed: boolean
+  onRefetch: () => unknown
+}) {
+  const stillToAgree = pending.filter((p) => isPolicyReadable(p) && !acked[`${p.id}:${p.version}`]).length
+  const unreadable = pending.filter((p) => !isPolicyReadable(p)).length
+  const agreedHere = pending.filter((p) => !!acked[`${p.id}:${p.version}`]).length
+
+  if (failed && pending.length === 0) {
+    return (
+      <div
+        className="card"
+        style={{ padding: 40, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}
+      >
+        <Icon.warn size={22} style={{ color: 'var(--coral)' }} />
+        <div style={{ fontSize: 14, fontWeight: 800 }}>Couldn&apos;t load your policies</div>
+        <div className="t-mute" style={{ fontSize: 12.5, maxWidth: 380, lineHeight: 1.55 }}>
+          We couldn&apos;t reach the server just now. Try again in a moment.
+        </div>
+        <Btn kind="primary" icon={<Icon.refresh size={14} />} onClick={() => void onRefetch()} style={{ marginTop: 6 }}>
+          Retry
+        </Btn>
+      </div>
+    )
+  }
+
+  if (pending.length === 0) {
+    return (
+      <div
+        data-testid="onboarding-policies-done"
+        style={{
+          padding: 14,
+          background: 'rgb(var(--green-rgb) / 0.06)',
+          border: '1px solid rgb(var(--green-rgb) / 0.25)',
+          borderRadius: 10,
+          display: 'flex',
+          gap: 12,
+        }}
+      >
+        <Icon.check size={18} style={{ color: 'var(--green)', marginTop: 1, flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+            {loading ? 'Checking for company policies…' : 'All company policies agreed'}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            {loading
+              ? 'One moment.'
+              : 'Thanks — your agreements are on record. You can revisit any policy later under Policies.'}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div
+        data-testid="onboarding-policies-intro"
+        style={{
+          padding: 14,
+          background: stillToAgree > 0 ? 'rgb(var(--blue-rgb) / 0.06)' : 'rgb(var(--green-rgb) / 0.06)',
+          border: `1px solid ${stillToAgree > 0 ? 'rgb(var(--blue-rgb) / 0.2)' : 'rgb(var(--green-rgb) / 0.25)'}`,
+          borderRadius: 10,
+          display: 'flex',
+          gap: 10,
+        }}
+      >
+        {stillToAgree > 0 ? (
+          <Icon.info size={16} style={{ color: 'var(--blue)', marginTop: 1, flexShrink: 0 }} />
+        ) : (
+          <Icon.check size={16} style={{ color: 'var(--green)', marginTop: 1, flexShrink: 0 }} />
+        )}
+        <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+          {stillToAgree > 0 ? (
+            <>
+              <strong style={{ color: 'var(--text)' }}>
+                {stillToAgree === 1 ? 'One policy' : `${stillToAgree} policies`} need your agreement.
+              </strong>{' '}
+              Read each one and tick the box to agree — each agreement is recorded with the policy
+              version and time.
+            </>
+          ) : agreedHere > 0 ? (
+            <>
+              <strong style={{ color: 'var(--text)' }}>All set — your agreements are on record.</strong>{' '}
+              Continue to the next step.
+            </>
+          ) : (
+            <strong style={{ color: 'var(--text)' }}>Nothing to agree to right now.</strong>
+          )}
+          {unreadable > 0 && (
+            <>
+              {' '}
+              {unreadable === 1 ? 'One PDF policy is' : `${unreadable} PDF policies are`} temporarily
+              unavailable — that won&apos;t hold you up here; you&apos;ll be asked to agree once the file
+              loads.
+            </>
+          )}
+        </div>
+      </div>
+      {pending.map((p, i) => (
+        <div
+          key={`${p.id}:${p.version}`}
+          data-testid="onboarding-policy"
+          style={{
+            padding: '16px 18px',
+            background: 'var(--surf-1)',
+            border: '1px solid var(--bord)',
+            borderRadius: 12,
+          }}
+        >
+          <div className="t-caption" style={{ marginBottom: 10 }}>
+            Policy {i + 1} of {pending.length}
+          </div>
+          <PolicyReader
+            policy={p}
+            acknowledgedAt={acked[`${p.id}:${p.version}`] ?? null}
+            onAcknowledged={onAcknowledged}
+            onRefetch={onRefetch}
+            frameHeight={420}
+          />
+        </div>
+      ))}
+    </div>
   )
 }
 

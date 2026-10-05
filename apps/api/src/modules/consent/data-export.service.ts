@@ -4,6 +4,7 @@ import {
   Logger,
   HttpException,
   HttpStatus,
+  Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import JSZip from 'jszip';
@@ -42,8 +43,18 @@ import { R2Service } from '../../core/storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
 import { AnalyticsService } from '../../core/analytics/analytics.service';
+// Round P R3: company policies join both exports — ONLY through the facade
+// (module-boundary rule), and optionally (see the constructor).
+import { PoliciesPublicService } from '../policies/public';
 
 const LINK_TTL_SECONDS = 7 * 24 * 60 * 60; // 7-day signed links (§3.5)
+
+/** Row shapes the policies facade hands back (contract P5). */
+type PolicyAckExportRow = { policy_title: string; version: number; acknowledged_at: Date | string | null };
+type PolicyOrgExport = {
+  policies: Record<string, unknown>[];
+  acknowledgements: Record<string, unknown>[];
+};
 
 /** Flat rows → CSV with a UTF-8 BOM (Excel-friendly). */
 function toCsv(rows: Record<string, unknown>[]): string {
@@ -80,7 +91,47 @@ export class DataExportService {
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
     private readonly analytics: AnalyticsService,
+    // Optional on purpose: specs instantiate this service without the
+    // policies module, and a workspace that never published a policy must
+    // still get its export. When absent the policy files are written empty.
+    @Optional() private readonly policies?: PoliciesPublicService,
   ) {}
+
+  // ─── Company policies (Round P R3) — best-effort facade reads ──────────────
+  //
+  // A failure inside the policies module must not sink the whole export (the
+  // build is fire-and-forget and the 1/day limit would make the user wait):
+  // log it and ship the rest with the policy files empty.
+
+  private async policyAcksForUser(tenantId: string, userId: string): Promise<PolicyAckExportRow[]> {
+    if (!this.policies) return [];
+    try {
+      const rows = await this.policies.exportForUser(tenantId, userId);
+      return Array.isArray(rows) ? (rows as PolicyAckExportRow[]) : [];
+    } catch (err) {
+      this.logger.error(
+        `Policy acknowledgements for user ${userId} skipped in export: ${err instanceof Error ? err.message : err}`,
+      );
+      return [];
+    }
+  }
+
+  private async policiesForTenant(tenantId: string): Promise<PolicyOrgExport> {
+    const empty: PolicyOrgExport = { policies: [], acknowledgements: [] };
+    if (!this.policies) return empty;
+    try {
+      const out = (await this.policies.exportForTenant(tenantId)) as Partial<PolicyOrgExport> | null;
+      return {
+        policies: Array.isArray(out?.policies) ? out!.policies : [],
+        acknowledgements: Array.isArray(out?.acknowledgements) ? out!.acknowledgements : [],
+      };
+    } catch (err) {
+      this.logger.error(
+        `Policies for tenant ${tenantId} skipped in org export: ${err instanceof Error ? err.message : err}`,
+      );
+      return empty;
+    }
+  }
 
   /** 1/day guard via the audit-marker pattern (no extra table). */
   private async assertDailyLimit(userId: string, action: string) {
@@ -189,6 +240,10 @@ export class DataExportService {
       .from(productEvents)
       .where(eq(productEvents.user_id, userId));
 
+    // Round P R3: every company policy version this person agreed to in the
+    // workspace they requested the export from (policy title, version, when).
+    const policyAcks = await this.policyAcksForUser(tenantId, userId);
+
     const bundle = {
       exported_at: new Date().toISOString(),
       profile: {
@@ -212,6 +267,7 @@ export class DataExportService {
         occurred_at: c.occurred_at,
       })),
       feedback_submissions: feedback,
+      policy_acknowledgements: policyAcks,
       activity_summary: {
         total_events: activityBounds?.total ?? 0,
         active_days: activityBounds?.active_days ?? 0,
@@ -225,9 +281,15 @@ export class DataExportService {
 
     const zip = new JSZip();
     zip.file('my-data.json', JSON.stringify(bundle, null, 2));
+    // Signed company policies as a flat sheet (policy_title, version,
+    // acknowledged_at) — the same rows as bundle.policy_acknowledgements.
+    zip.file(
+      'policy_acknowledgements.csv',
+      toCsv(policyAcks as unknown as Record<string, unknown>[]),
+    );
     zip.file(
       'README.txt',
-      'Flicks Suite personal data export.\nContents: profile, memberships, consent history, submitted feedback, activity summary.\nQuestions: privacy@specflicks.com',
+      'Flicks Suite personal data export.\nContents: profile, memberships, consent history, submitted feedback, company policy acknowledgements (also as policy_acknowledgements.csv), activity summary.\nQuestions: privacy@specflicks.com',
     );
     const buf = await zip.generateAsync({ type: 'nodebuffer' });
 
@@ -300,10 +362,21 @@ export class DataExportService {
       pm_cycles: await tx.select().from(pmCycles),
     }));
 
+    // Round P R3: company policies + every acknowledgement, via the policies
+    // facade (its own tenant-scoped reads), AFTER the transaction above so
+    // the two never nest. They land as policies.{json,csv} and
+    // policy_acknowledgements.{json,csv} next to the other modules.
+    const policyExport = await this.policiesForTenant(tenantId);
+    const allData: Record<string, unknown[]> = {
+      ...data,
+      policies: policyExport.policies,
+      policy_acknowledgements: policyExport.acknowledgements,
+    };
+
     const zip = new JSZip();
     const json = zip.folder('json')!;
     const csv = zip.folder('csv')!;
-    for (const [name, rows] of Object.entries(data)) {
+    for (const [name, rows] of Object.entries(allData)) {
       json.file(`${name}.json`, JSON.stringify(rows, null, 2));
       csv.file(`${name}.csv`, toCsv(rows as Record<string, unknown>[]));
     }
