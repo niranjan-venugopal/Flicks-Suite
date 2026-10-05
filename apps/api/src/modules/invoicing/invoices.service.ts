@@ -870,6 +870,10 @@ export class InvoicesService {
         amount: `${result.invoice.currency} ${result.invoice.total_amount}`,
         dueDate: result.invoice.due_date,
         viewUrl,
+        // Round P R2 (K6): quotes get their own wording in the shared template
+        // (subject "Quote …", "valid until <date>", CTA "View quote").
+        documentType: result.invoice.document_type,
+        validUntil: result.invoice.valid_until ?? undefined,
       }),
     );
 

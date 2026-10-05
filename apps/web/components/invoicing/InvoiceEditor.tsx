@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useToast } from '@/components/ui/use-toast'
 import { ToastAction } from '@/components/ui/toast'
@@ -38,12 +38,26 @@ import { TDS_CODES, isGstCurrency, taxLabel } from '@/lib/invoicing/constants'
 import { DateField } from '@/components/ui/date-picker'
 
 const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP']
-const emptyLine = (): InvoiceLineInput => ({ item_id: undefined, item_name: '', quantity: '1', rate: '', gst_rate: '18', cess_rate: '0' })
+// Round P R2 (contract K5): the editor's last-resort fallbacks. The tenant's
+// Invoicing → Settings values win whenever they have loaded.
+const DEFAULT_TERMS_DAYS = 30
+const DEFAULT_GST_RATE = '18'
+const emptyLine = (gstRate = DEFAULT_GST_RATE): InvoiceLineInput => ({
+  item_id: undefined, item_name: '', quantity: '1', rate: '', gst_rate: gstRate, cess_rate: '0',
+})
 const today = () => new Date().toISOString().slice(0, 10)
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const plusDays = (iso: string, days: number) => {
   const d = new Date(`${iso}T00:00:00Z`)
+  if (!ISO_DATE.test(iso) || Number.isNaN(d.getTime())) return iso
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
+}
+/** "18.00" (pg numeric) → "18", so a defaulted GST cell reads like a typed one; non-numeric → undefined. */
+const normaliseRate = (v: string | null | undefined): string | undefined => {
+  if (v == null || !v.trim()) return undefined
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? String(n) : undefined
 }
 const symbol = (c: string) => (c === 'INR' ? '₹' : c === 'USD' ? '$' : c === 'EUR' ? '€' : c === 'GBP' ? '£' : `${c} `)
 
@@ -85,6 +99,20 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
   const { data: customersData } = useCustomers({})
   const { data: banksData } = useBankAccounts()
 
+  // The tenant's own state decides intra- vs inter-state; the invoicing
+  // settings decide which export route the totals card should assume and
+  // (R2, contract K5) the defaults a NEW document starts from.
+  const org = useOrganization()
+  const invSettings = useInvSettings()
+  const settings = invSettings.data?.data
+  const termsDays =
+    typeof settings?.default_payment_terms_days === 'number' &&
+    Number.isInteger(settings.default_payment_terms_days) &&
+    settings.default_payment_terms_days >= 0
+      ? settings.default_payment_terms_days
+      : DEFAULT_TERMS_DAYS
+  const defaultGst = normaliseRate(settings?.default_gst_rate) ?? DEFAULT_GST_RATE
+
   const [customerId, setCustomerId] = useState(invoice?.customer_id ?? '')
   const [invoiceDate, setInvoiceDate] = useState(invoice?.invoice_date ?? today())
   // Round P (R1.5): in quote mode this field IS the stored validity, so seed
@@ -94,8 +122,16 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       ? isQuote
         ? (invoice.valid_until ?? invoice.due_date)
         : invoice.due_date
-      : plusDays(today(), 30),
+      : plusDays(today(), DEFAULT_TERMS_DAYS),
   )
+  // K5: a NEW document's due / valid-until date follows the issue date plus
+  // the tenant's default payment terms until the user sets it by hand. An
+  // existing document keeps its stored date — it starts out "touched".
+  const [dueTouched, setDueTouched] = useState(!!invoice)
+  useEffect(() => {
+    if (dueTouched || !ISO_DATE.test(invoiceDate)) return
+    setDueDate(plusDays(invoiceDate, termsDays))
+  }, [dueTouched, invoiceDate, termsDays])
   const [currency, setCurrency] = useState(invoice?.currency ?? 'INR')
   const [reference, setReference] = useState(invoice?.reference ?? '')
   const [discountType, setDiscountType] = useState<'percent' | 'fixed' | ''>(
@@ -119,15 +155,38 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       quantity: String(l.quantity),
       unit: l.unit ?? undefined,
       rate: String(l.rate),
-      gst_rate: l.gst_rate != null ? String(l.gst_rate) : '18',
+      gst_rate: l.gst_rate != null ? String(l.gst_rate) : DEFAULT_GST_RATE,
       cess_rate: l.cess_rate != null ? String(l.cess_rate) : '0',
     })) ?? [emptyLine()],
   )
 
-  // The tenant's own state decides intra- vs inter-state; the invoicing
-  // settings decide which export route the totals card should assume.
-  const org = useOrganization()
-  const invSettings = useInvSettings()
+  // K5: the settings usually arrive after the first blank line was created
+  // with the hard-coded fallback. On a NEW document, a line nobody has
+  // touched yet (no item, name or rate, still on the fallback rate) picks up
+  // the tenant's default GST rate; anything the user typed is left alone.
+  useEffect(() => {
+    if (invoice || !settings) return
+    setLines((ls) =>
+      ls.map((l) =>
+        !l.item_id && !l.item_name && !l.rate && l.gst_rate === DEFAULT_GST_RATE && defaultGst !== DEFAULT_GST_RATE
+          ? { ...l, gst_rate: defaultGst }
+          : l,
+      ),
+    )
+  }, [invoice, settings, defaultGst])
+
+  // K5: notes / terms come prefilled from Invoicing → Settings on a NEW
+  // document when the editor holds none — once, so clearing them sticks.
+  const prefilledRef = useRef(false)
+  useEffect(() => {
+    if (invoice || !settings || prefilledRef.current) return
+    prefilledRef.current = true
+    const defaultNotes = settings.default_invoice_notes
+    const defaultTerms = settings.default_terms_and_conditions
+    if (defaultNotes) setNotes((n) => (n.trim() ? n : defaultNotes))
+    if (defaultTerms) setTerms((t) => (t.trim() ? t : defaultTerms))
+  }, [invoice, settings])
+
   const customers = customersData?.data ?? []
   const customer = customers.find((c) => c.id === customerId)
   const bankAccounts = (banksData?.data ?? []).filter((b) => b.is_active)
@@ -219,12 +278,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
       rate: it.default_rate,
       cess_rate: it.cess_rate ?? '0',
       // One tax cell per line: GST % on domestic invoices, VAT % on foreign.
-      gst_rate: isDomestic ? (it.default_gst_rate ?? '18') : (it.intl_tax_rate ?? '0'),
+      // K5: the item's own rate, else the tenant's default, else 18.
+      gst_rate: isDomestic
+        ? (it.default_gst_rate?.trim() ? it.default_gst_rate : defaultGst)
+        : (it.intl_tax_rate ?? '0'),
     })
     setPickerFor(null)
     setItemQ('')
   }
-  const addLine = () => setLines((ls) => [...ls, emptyLine()])
+  const addLine = () => setLines((ls) => [...ls, emptyLine(defaultGst)])
   const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls))
   const onLineKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -412,7 +474,15 @@ export function InvoiceEditor({ invoice }: { invoice?: InvoiceDetail }) {
                 {/* Round P (R1.5): a quote has no due date — the same field
                     is its validity and is stored as valid_until. */}
                 <label style={invoLabel}>{isQuote ? 'Valid until' : 'Due date'}</label>
-                <DateField value={dueDate} onChange={setDueDate} style={invoField()} />
+                <DateField
+                  value={dueDate}
+                  onChange={(v) => {
+                    // Set by hand: stop following issue date + payment terms.
+                    setDueTouched(true)
+                    setDueDate(v)
+                  }}
+                  style={invoField()}
+                />
               </div>
               <div>
                 <label style={invoLabel}>Currency</label>

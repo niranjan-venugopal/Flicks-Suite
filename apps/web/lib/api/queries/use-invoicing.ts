@@ -162,6 +162,20 @@ export function useHsnSacSearch(q: string, type?: string) {
 
 // ─── Numbering ──────────────────────────────────────────────────────────────
 
+/**
+ * Round P R2 (contract K1–K3): how a document type's numbers run.
+ * - 'fiscal_year'  — PREFIX{sep}FY{sep}NNNN, the counter restarts every
+ *                    financial year (April 1 by default), e.g. INV/26-27/0001.
+ * - 'continuous'   — PREFIX{sep?}NNNNN, one counter that never resets, e.g.
+ *                    LB2400001 (separator '' allowed, no FY token).
+ */
+export type SeriesMode = 'fiscal_year' | 'continuous'
+
+/** Separators the API accepts (contract K2). '' = no separator. */
+export const SEQUENCE_SEPARATORS: readonly string[] = ['', '/', '-']
+/** FY token formats the API accepts (contract K2). */
+export const SEQUENCE_FY_FORMATS: readonly string[] = ['26-27', '2026-27', '2026-2027', '2026']
+
 export interface Sequence {
   id: string | null
   document_type: string
@@ -171,16 +185,35 @@ export interface Sequence {
   fy_format: string
   zero_padding: number
   starting_number: number
+  /** Counter of the current financial-year row. */
   current_number: number
   branch_code: string
+  /** Honours series_mode — no FY token in continuous mode. */
   next_number_preview: string
+  /**
+   * Optional on the type only so an API build that predates R2 (no
+   * series_mode column) still renders: a missing value reads as
+   * 'fiscal_year' — use `sequenceSeriesMode()` rather than the raw field.
+   */
+  series_mode?: SeriesMode
+  /** Counter of the continuous ('ALL') row; null until that series has issued a number. */
+  continuous_current_number?: number | null
 }
+
+/** The row's series mode, tolerating an older API that omits the field. */
+export const sequenceSeriesMode = (s: Pick<Sequence, 'series_mode'>): SeriesMode =>
+  s.series_mode === 'continuous' ? 'continuous' : 'fiscal_year'
+
 export interface PreviewResult {
   document_type: string
+  /** R2: the mode the preview was rendered in (the request's, else the stored one). Older APIs omit it. */
+  series_mode?: SeriesMode
   fy_label: string
   next_number_preview: string
   valid: boolean
   errors: string[]
+  /** R2: non-blocking, e.g. numbers up to the horizon would exceed 16 chars. Older APIs omit it. */
+  warnings?: string[]
   sample: string
 }
 export interface SequenceInput {
@@ -191,6 +224,13 @@ export interface SequenceInput {
   zero_padding?: number
   starting_number?: number
   branch_code?: string
+  /**
+   * R2. The API's ValidationPipe forbids unknown fields, so a caller that
+   * must keep working against an older API sends this only when the loaded
+   * row carried a series_mode (the API knows the field) or when switching
+   * to 'continuous' (which that API cannot do anyway — the 400 is honest).
+   */
+  series_mode?: SeriesMode
 }
 
 export function useSequences() {

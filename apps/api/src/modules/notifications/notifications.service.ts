@@ -371,7 +371,31 @@ export class NotificationsService {
 
     switch (template) {
       case 'invoice-sent': {
+        // Round P R2 (K6): the same template serves quotes. `documentType`
+        // defaults to INVOICE so every existing caller renders exactly what it
+        // did before; QUOTE swaps the wording (no due date, no payment call to
+        // action — a quote is accepted, not paid) and shows the acceptance
+        // deadline when the caller passes `validUntil` (the stored
+        // valid_until, same YYYY-MM-DD form as `dueDate`).
+        const { documentType, validUntil } = props as {
+          documentType?: 'INVOICE' | 'QUOTE';
+          validUntil?: string | null;
+        };
         const viewUrl = String(props.viewUrl ?? '#');
+        if (documentType === 'QUOTE') {
+          return {
+            subject: `Quote ${props.invoiceNumber} from ${props.tenantName ?? appName}`,
+            html: `
+            <p>Hi ${props.customerName ?? 'there'},</p>
+            <p>${props.tenantName ?? 'We'} sent you quote <strong>${props.invoiceNumber}</strong>
+            for <strong>${props.amount}</strong>${validUntil ? `, valid until <strong>${validUntil}</strong>` : ''}.</p>
+            <p style="margin:24px 0;">
+              <a href="${viewUrl}" style="background:#3E7BFA;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;">View quote</a>
+            </p>
+            <p>You can review the quote any time from the link above.</p>
+          `,
+          };
+        }
         return {
           subject: `Invoice ${props.invoiceNumber} from ${props.tenantName ?? appName}`,
           html: `

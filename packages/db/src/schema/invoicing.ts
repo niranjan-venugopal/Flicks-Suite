@@ -365,6 +365,10 @@ export const items = pgTable(
 );
 
 // ─── invoice_sequences (one row per tenant, doc type, FY, branch) ───────────────
+// Round P R2 (0066): the current-FY row holds the config incl. series_mode;
+// a 'continuous' series keeps its counter in ONE sentinel row per (tenant, doc
+// type, branch) with fy_label = 'ALL', fy_end_date = '9999-12-31' — the same
+// unique index guarantees it is single.
 
 export const invoiceSequences = pgTable(
   'invoice_sequences',
@@ -374,16 +378,18 @@ export const invoiceSequences = pgTable(
       .notNull()
       .references(() => tenants.id, { onDelete: 'cascade' }),
     document_type: text('document_type').notNull(), // INVOICE | QUOTE | CREDIT_NOTE | DEBIT_NOTE
-    fy_label: text('fy_label').notNull(), // '26-27'
+    fy_label: text('fy_label').notNull(), // '26-27' — or 'ALL' for the continuous counter row
     fy_start_date: date('fy_start_date').notNull(),
     fy_end_date: date('fy_end_date').notNull(),
     prefix: text('prefix').notNull().default('INV'),
-    separator: text('separator').notNull().default('/'),
+    separator: text('separator').notNull().default('/'), // '' | '/' | '-'
     fy_format: text('fy_format').notNull().default('26-27'),
     zero_padding: integer('zero_padding').notNull().default(4),
     starting_number: integer('starting_number').notNull().default(1),
     current_number: integer('current_number').notNull().default(0),
     branch_code: varchar('branch_code', { length: 10 }).notNull().default(''),
+    // 'fiscal_year' (resets each FY) | 'continuous' (never resets) — CHECK in 0066.
+    series_mode: text('series_mode').notNull().default('fiscal_year'),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

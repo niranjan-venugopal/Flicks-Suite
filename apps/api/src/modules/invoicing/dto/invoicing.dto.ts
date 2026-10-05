@@ -18,6 +18,12 @@ import {
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { GSTIN_REGEX, PAN_REGEX } from '@flicks/shared/constants';
+import {
+  SEPARATORS,
+  FY_FORMATS,
+  SERIES_MODES,
+  type SeriesMode,
+} from '../numbering.util';
 
 /**
  * Invoicing DTOs. Validation shapes for the resources implemented in Sprint 2
@@ -183,32 +189,50 @@ export class AddCustomHsnDto {
 }
 
 // ─── Numbering (invoice_sequences) ──────────────────────────────────────────
+// Round P R2 (K2): separator ∈ SEPARATORS ('' | '/' | '-'), fy_format ∈
+// FY_FORMATS, zero_padding 1..8, starting_number ≥ 1, series_mode ∈
+// SERIES_MODES ('fiscal_year' | 'continuous'). `@IsOptional()` only skips
+// null/undefined, so '' still has to pass @IsIn — which it does.
 
 export class UpsertSequenceDto {
   @IsIn(['INVOICE', 'QUOTE', 'CREDIT_NOTE', 'DEBIT_NOTE'])
   document_type!: string;
 
   @IsOptional() @IsString() @MaxLength(10) prefix?: string;
-  @IsOptional() @IsString() @MaxLength(3) separator?: string;
-  @IsOptional() @IsString() fy_format?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10) zero_padding?: number;
+  @IsOptional() @IsString() @IsIn([...SEPARATORS]) separator?: string;
+  @IsOptional() @IsString() @IsIn([...FY_FORMATS]) fy_format?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(8) zero_padding?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) starting_number?: number;
   @IsOptional() @IsString() @MaxLength(10) branch_code?: string;
-  @IsOptional() @IsString() fy_label?: string;
+  // Accepted for compatibility only — the stored label is derived from fy_format.
+  @IsOptional() @IsString() @MaxLength(12) fy_label?: string;
+  @ApiPropertyOptional({ enum: SERIES_MODES })
+  @IsOptional()
+  @IsIn([...SERIES_MODES])
+  series_mode?: SeriesMode;
 }
 
 export class PreviewNumberDto {
   @IsIn(['INVOICE', 'QUOTE', 'CREDIT_NOTE', 'DEBIT_NOTE'])
   document_type!: string;
 
-  @IsOptional() @IsString() prefix?: string;
-  @IsOptional() @IsString() separator?: string;
-  @IsOptional() @IsString() fy_format?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10) zero_padding?: number;
+  @IsOptional() @IsString() @MaxLength(10) prefix?: string;
+  @IsOptional() @IsString() @IsIn([...SEPARATORS]) separator?: string;
+  @IsOptional() @IsString() @IsIn([...FY_FORMATS]) fy_format?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(8) zero_padding?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) starting_number?: number;
-  @IsOptional() @IsString() branch_code?: string;
-  @IsOptional() @IsString() fy_label?: string;
-  @IsOptional() @IsString() on_date?: string;
+  @IsOptional() @IsString() @MaxLength(10) branch_code?: string;
+  @IsOptional() @IsString() @MaxLength(12) fy_label?: string;
+  // Shape only; the service rejects a calendar-invalid date (e.g. 2026-02-30)
+  // instead of previewing an FY of "NaN-NaN".
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'on_date must be a YYYY-MM-DD date' })
+  on_date?: string;
+  @ApiPropertyOptional({ enum: SERIES_MODES })
+  @IsOptional()
+  @IsIn([...SERIES_MODES])
+  series_mode?: SeriesMode;
 }
 
 // ─── Invoices (Sprint 3) ────────────────────────────────────────────────────

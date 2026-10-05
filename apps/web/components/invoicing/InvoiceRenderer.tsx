@@ -58,6 +58,9 @@ export function InvoiceRenderer({
   const { invoice, line_items, customer, seller } = payload
   const cur = invoice.currency
   const t: InvoicePalette = invoiceTheme(theme)
+  // Round P R2 (contract K6): a quote is titled as one and carries a validity
+  // instead of a due date; invoices render exactly as before.
+  const isQuoteDoc = invoice.document_type === 'QUOTE'
   // INR → GST (+ TDS); non-INR → a single VAT line. The tax-rate column shows
   // for both (labelled GST %/VAT %); HSN/SAC + TDS stay INR-only.
   const isDomestic = (cur ?? 'INR') === 'INR'
@@ -133,8 +136,11 @@ export function InvoiceRenderer({
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontWeight: 700, fontSize: 26, color: t.text, letterSpacing: '-0.04em', marginBottom: 6 }}>
-            INVOICE
+          <div
+            data-testid="document-title"
+            style={{ fontWeight: 700, fontSize: 26, color: t.text, letterSpacing: '-0.04em', marginBottom: 6 }}
+          >
+            {isQuoteDoc ? 'QUOTE' : 'INVOICE'}
           </div>
           <div style={{ fontWeight: 700, fontSize: 14, color: t.muted60, letterSpacing: '-0.02em', marginBottom: 8 }}>
             {invoice.invoice_number}
@@ -176,8 +182,10 @@ export function InvoiceRenderer({
           )}
         </div>
         <div>
-          <div style={label}>Due date</div>
-          <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>{dateFmt(invoice.due_date)}</div>
+          <div style={label}>{isQuoteDoc ? 'Valid until' : 'Due date'}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: t.text }}>
+            {dateFmt(isQuoteDoc ? (invoice.valid_until ?? invoice.due_date) : invoice.due_date)}
+          </div>
           {(invoice.place_of_supply || isExport) && (
             <>
               <div style={{ ...label, marginTop: 14 }}>Place of supply</div>
