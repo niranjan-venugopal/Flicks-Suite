@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import type { IconKey } from '@/components/proto'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 interface ReportTile {
   href: string
@@ -75,6 +76,9 @@ const REPORTS: ReportTile[] = [
 ]
 
 export default function ReportsHubPage() {
+  // Round Q: the audit trail is the Owner's (HR admins get the reports only).
+  const role = useAuthStore((st) => st.currentUser?.role)
+  const reports = REPORTS.filter((r) => r.href !== '/reports/audit' || role === 'OWNER' || role === 'FAM')
   return (
     <div className="relative min-h-full">
       <div className="relative z-10 p-8 max-w-6xl mx-auto">
@@ -89,7 +93,7 @@ export default function ReportsHubPage() {
             gap: 14,
           }}
         >
-          {REPORTS.map((r) => {
+          {reports.map((r) => {
             const IconComp = Icon[r.icon]
             const isLive = r.status === 'live'
             const card = (

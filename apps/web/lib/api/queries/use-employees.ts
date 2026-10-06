@@ -574,7 +574,7 @@ export function useRemoveEmployee() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.delete<{ data: { removed: true } }>(`/api/v1/employees/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['employees'] }),
+    onSuccess: () => invalidateOffboarding(queryClient),
   })
 }
 
@@ -591,17 +591,44 @@ export interface TerminatePayload {
   reason: string
   lastWorkingDate?: string
   separationType?: 'resigned' | 'terminated' | 'absconded' | 'retired' | 'end_of_contract'
+  /** Round Q: true → off-boarded and signed out now; false → the notice period starts. */
+  immediate?: boolean
+}
+
+export interface TerminateResult {
+  employeeId: string
+  status: 'separated' | 'notice_period'
+  lastWorkingDate: string
+  immediate: boolean
+}
+
+// Off-boarding changes the person's pill, the approvals inbox (Round Q: an
+// off-boarded person must never linger there) and their Members seat.
+function invalidateOffboarding(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['employees'] })
+  queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+  queryClient.invalidateQueries({ queryKey: ['settings', 'members'] })
 }
 
 export function useTerminateEmployee() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ id, ...data }: TerminatePayload) =>
-      api.post(`/api/v1/employees/${id}/terminate`, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['employees', variables.id] })
-      queryClient.invalidateQueries({ queryKey: ['employees'] })
-    },
+      api.post<TerminateResult>(`/api/v1/employees/${id}/terminate`, data),
+    onSuccess: () => invalidateOffboarding(queryClient),
+  })
+}
+
+/** Round Q: cancel a notice period, or reinstate a separated employee. */
+export function useCancelOffboarding() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: { id: string; status: 'active'; seat: string | null } }>(
+        `/api/v1/employees/${id}/cancel-offboarding`,
+        {},
+      ),
+    onSuccess: () => invalidateOffboarding(queryClient),
   })
 }
 
@@ -682,6 +709,8 @@ export interface OnboardingQueueRow {
    *  owners only (round 18), so this is what the "Owner approval" badge keys on. */
   memberRole: string | null
   submittedAt: string | null
+  /** Round Q: set once it has waited over 24 hours and been escalated. */
+  escalatedAt?: string | null
 }
 
 export function useOnboardingQueue() {

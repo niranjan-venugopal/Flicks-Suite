@@ -190,17 +190,37 @@ const ADMIN_NAV: NavSection[] = [
       { id: 'settings', label: 'Settings', icon: 'cog', href: '/settings' },
     ],
   },
-  {
-    section: 'Personal',
-    items: [
-      // Round P R4 — owners and HR admins are employees too (self-onboarding
-      // applies to every tenant role) and get issued laptops like anyone
-      // else. Without this row the "please acknowledge" notification link
-      // was their only way back to /assets/me once it was dismissed.
-      { id: 'my-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
-    ],
-  },
+  // Round Q (founder): no separate Personal → My assets row any more — Owners
+  // and HR admins reach their own equipment through People → Assets, whose
+  // "My assets | All assets" toggle sits next to the company register.
 ]
+
+// Round Q (founder 2026-10-06): "instead of adding Assets as Personal
+// separately in the sidebar, show it in the People menu, inside Assets." Every
+// non-admin seat gets a People group whose Assets page shows only their own
+// equipment (the API's /assets/me); Owners / HR see the same page with the
+// company register behind a toggle.
+const PEOPLE_SELF_GROUP: NavItem = {
+  id: 'people',
+  label: 'People',
+  icon: 'people',
+  children: [{ href: '/employees/assets', label: 'Assets' }],
+}
+
+// Round Q (founder 2026-10-06): "HR should be shown the Insights menu but
+// only with Report access" — the audit trail (Insights → Audit log, API
+// `GET audit/logs` @Roles('owner')) is the Owner's. Drops those children for
+// HR admins; a group left empty disappears.
+const OWNER_ONLY_HREFS = new Set(['/reports/audit'])
+function withoutOwnerOnly(nav: NavSection[]): NavSection[] {
+  return nav.map((sec) => ({
+    ...sec,
+    items: sec.items
+      .map((it) => (it.children ? { ...it, children: it.children.filter((c) => !OWNER_ONLY_HREFS.has(c.href)) } : it))
+      .filter((it) => !it.children || it.children.length > 0)
+      .filter((it) => !it.href || !OWNER_ONLY_HREFS.has(it.href)),
+  }))
+}
 
 // Manager nav — see direct reports + own self-service.
 const MANAGER_NAV: NavSection[] = [
@@ -210,6 +230,7 @@ const MANAGER_NAV: NavSection[] = [
       { id: 'mgr-dashboard', label: 'My team', icon: 'home', href: '/dashboard' },
       { id: 'mgr-inbox', label: 'Inbox', icon: 'inbox', href: '/inbox' },
       { id: 'mgr-calendar', label: 'Calendar', icon: 'cal', href: '/calendar' },
+      PEOPLE_SELF_GROUP,
     ],
   },
   {
@@ -234,8 +255,6 @@ const MANAGER_NAV: NavSection[] = [
       { id: 'emp-leave', label: 'My leave', icon: 'cal', href: '/leave' },
       { id: 'emp-timesheet', label: 'My timesheet', icon: 'sheet', href: '/timesheets' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
-      // Round P R4 — the equipment issued to me (acknowledge receipt).
-      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],
@@ -250,6 +269,7 @@ const EMPLOYEE_NAV: NavSection[] = [
       { id: 'emp-home', label: 'Home', icon: 'home', href: '/dashboard' },
       { id: 'emp-inbox', label: 'Inbox', icon: 'inbox', href: '/inbox' },
       { id: 'emp-calendar', label: 'Calendar', icon: 'cal', href: '/calendar' },
+      PEOPLE_SELF_GROUP,
     ],
   },
   {
@@ -271,8 +291,6 @@ const EMPLOYEE_NAV: NavSection[] = [
     section: 'Personal',
     items: [
       { id: 'emp-profile', label: 'Profile', icon: 'user', href: '/profile' },
-      // Round P R4 — the equipment issued to me (acknowledge receipt).
-      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
       { id: 'emp-documents', label: 'Documents', icon: 'doc', href: '/documents' },
@@ -332,6 +350,7 @@ const FINANCE_NAV: NavSection[] = [
           { href: '/timesheets', label: 'Timesheets' },
         ],
       },
+      PEOPLE_SELF_GROUP,
     ],
   },
   {
@@ -340,8 +359,6 @@ const FINANCE_NAV: NavSection[] = [
       // /employees/org-chart carries no @Roles gate — every member can read it.
       { id: 'fin-org-chart', label: 'Org chart', icon: 'people', href: '/employees/org-chart' },
       { id: 'emp-profile', label: 'My profile', icon: 'user', href: '/profile' },
-      // Round P R4 — the equipment issued to me (acknowledge receipt).
-      { id: 'emp-assets', label: 'My assets', icon: 'laptop', href: '/assets/me' },
       // Round P R3 — the policies that apply to me ("Agreed on …" / "Read & agree").
       { id: 'emp-policies', label: 'Policies', icon: 'clipboard', href: '/policies' },
     ],
@@ -643,7 +660,8 @@ export function Sidebar({ variant = 'tenant' }: { variant?: SidebarVariant } = {
     // when granted.
     const withPolicies =
       role === 'OWNER' || role === 'HR_ADMIN' ? base : withGrantedPolicies(base, moduleAccess)
-    return withoutParkedCrm(withModuleAccess(withPolicies, moduleAccess))
+    const scoped = role === 'HR_ADMIN' ? withoutOwnerOnly(withPolicies) : withPolicies
+    return withoutParkedCrm(withModuleAccess(scoped, moduleAccess))
   }, [isFam, role, activeGrants, moduleAccess])
 
   // Live approvals badge — only meaningful for the *tenant* approver roles.

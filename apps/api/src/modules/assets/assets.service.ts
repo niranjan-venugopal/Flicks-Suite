@@ -258,6 +258,9 @@ const tagAllocationFailed = () =>
   });
 const assetAssigned = () => new ConflictException({ code: 'ASSET_ASSIGNED', message: 'Return the asset first' });
 
+/** Round Q: the employee's own equipment — People → Assets, "My assets" view. */
+export const MY_ASSETS_PATH = '/employees/assets?view=me';
+
 @Injectable()
 export class AssetsService {
   private readonly logger = new Logger(AssetsService.name);
@@ -1110,7 +1113,8 @@ export class AssetsService {
           employee.user_id,
           'asset.assigned',
           `${asset.name} (${asset.asset_tag}) was issued to you — please acknowledge receipt`,
-          '/assets/me',
+          // Round Q: My assets lives at People → Assets (/assets/me redirects).
+          MY_ASSETS_PATH,
           tenantId,
           { groupKey: `asset:${asset.id}` },
         );
@@ -1130,7 +1134,7 @@ export class AssetsService {
             assetName: asset.name,
             assetTag: asset.asset_tag,
             companyName: out.companyName,
-            link: `${this.appUrl()}/assets/me`,
+            link: `${this.appUrl()}${MY_ASSETS_PATH}`,
             issuedBy: out.issuedBy,
             issueCondition: assignment.issue_condition,
             notes: assignment.notes,

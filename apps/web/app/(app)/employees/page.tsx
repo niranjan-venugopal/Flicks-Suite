@@ -351,22 +351,29 @@ export default function EmployeesPage() {
                   {resendAllLabel}
                 </Btn>
               )}
-              <Btn
-                kind="secondary"
-                size="sm"
-                icon={<Icon.upload size={13} />}
-                onClick={() => setImportOpen(true)}
-              >
-                Import CSV
-              </Btn>
+              {/* Round Q: inviting and importing are Owner / HR actions (the
+                  API is @Roles('admin')) — a manager opening this page by URL
+                  no longer sees buttons that can only fail. */}
+              {canResend && (
+                <Btn
+                  kind="secondary"
+                  size="sm"
+                  icon={<Icon.upload size={13} />}
+                  onClick={() => setImportOpen(true)}
+                >
+                  Import CSV
+                </Btn>
+              )}
               <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
                 Export
               </Btn>
-              <Link href="/employees/add" style={{ textDecoration: 'none' }}>
-                <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
-                  Invite employee
-                </Btn>
-              </Link>
+              {canResend && (
+                <Link href="/employees/add" style={{ textDecoration: 'none' }}>
+                  <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
+                    Invite employee
+                  </Btn>
+                </Link>
+              )}
             </div>
           }
         />

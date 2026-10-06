@@ -614,9 +614,9 @@ export class UpdateLeavePolicyDto {
 
 // ─── Members (memberships / workspace access) ────────────────────────────────
 
+// Round Q: platform roles (fam / super_admin) are never assignable from a
+// workspace — an HR admin could previously make anyone a platform admin.
 const MEMBER_ROLE_VALUES = [
-  'fam',
-  'super_admin',
   'owner',
   'admin',
   'manager',

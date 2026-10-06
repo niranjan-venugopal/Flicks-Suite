@@ -83,6 +83,8 @@ export interface AdminOverview {
       designationTitle: string | null
       avatarUrl: string | null
       submittedAt: string | null
+      /** Round Q: set once it has waited over 24 hours and been escalated. */
+      escalatedAt?: string | null
     }>
     leaves: Array<{
       id: string
@@ -169,9 +171,12 @@ export function useAdminOverview(enabled = true, opts?: { pendingLimit?: number 
   })
 }
 
-export function useAdminActivity(limit = 20) {
+export function useAdminActivity(limit = 20, options?: { enabled?: boolean }) {
   return useInfiniteQuery({
     queryKey: ['dashboard', 'admin', 'activity', limit],
+    // Round Q: the feed is the audit trail — Owner / HR admin only (API
+    // `@Roles('admin')`); other seats on the admin dashboard skip the call.
+    enabled: options?.enabled ?? true,
     queryFn: ({ pageParam }) => {
       const qs = new URLSearchParams({ limit: String(limit) })
       if (pageParam) qs.set('before', pageParam)

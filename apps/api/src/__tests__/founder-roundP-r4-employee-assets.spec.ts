@@ -425,7 +425,7 @@ describe('R4 — asset-assigned template', () => {
     expect(html).not.toContain('from the sidebar');
   });
 
-  it('optional parts drop out cleanly: no company → "Your company"; no issuer / condition / notes → no dangling text; link defaults to /assets/me', () => {
+  it('optional parts drop out cleanly: no company → "Your company"; no issuer / condition / notes → no dangling text; link defaults to People → Assets (my view)', () => {
     const { subject, html } = render({ assetName: 'ID card', assetTag: 'AST-0010' });
     expect(subject).toBe("You've been issued ID card (AST-0010)");
     expect(html).toContain('<p>Your company issued you <strong>ID card</strong> (AST-0010).</p>');
@@ -434,7 +434,7 @@ describe('R4 — asset-assigned template', () => {
     expect(html).not.toContain('Notes:');
     expect(html).not.toContain('<strong></strong>');
     expect(html).not.toContain('()');
-    expect(html).toContain('href="https://app.test/assets/me"');
+    expect(html).toContain('href="https://app.test/employees/assets?view=me"');
   });
 
   it('company without issuer → bold company; issuer without company → bare issuer', () => {

@@ -15,6 +15,7 @@ import {
   isPendingInvite,
   useEmployee,
   useEmployees,
+  useCancelOffboarding,
   useRemovalPreview,
   useRemoveEmployee,
   useResendInvite,
@@ -228,13 +229,39 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
 
   // ── Offboard + Remove (founder round 21: "We had an option to delete the
   //    employee right?. Why it is not showing?") ─────────────────────────────
-  const [offboarding, setOffboarding] = useState(false)
+  // Round Q: 'start' = a fresh off-boarding (notice or immediate);
+  // 'end' = "End notice now" on someone already serving notice.
+  const [offboarding, setOffboarding] = useState<false | 'start' | 'end'>(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const cancelOff = useCancelOffboarding()
+  const onNotice = e.status === 'notice_period'
+  const separated = e.status === 'separated' || e.status === 'absconded'
+  // Off-boarding is for people who joined; someone still invited is removed.
+  const canOffboard = e.status === 'active' || e.status === 'on_leave'
+  const doCancelOffboarding = async () => {
+    try {
+      const r = await cancelOff.mutateAsync(e.id)
+      toast({
+        title: separated ? `${name} reinstated` : `Off-boarding cancelled for ${name}`,
+        description:
+          r.data.seat === 'invited'
+            ? 'They are active again. They never accepted their invite — use Resend invite so they can sign in.'
+            : 'They are active again and can sign in.',
+      })
+      setConfirmCancel(false)
+    } catch (err) {
+      toast({
+        title: separated ? 'Could not reinstate' : 'Could not cancel the off-boarding',
+        description: err instanceof Error ? err.message : 'Try again',
+        variant: 'destructive',
+      })
+    }
+  }
   // The preview decides the confirm copy: a mistake with no history is
   // deleted for good; anyone with records on the books is archived.
   const preview = useRemovalPreview(e.id, confirmRemove)
   const removeEmp = useRemoveEmployee()
-  const alreadyOff = e.status === 'separated' || e.status === 'absconded'
   const pv = preview.data?.data
   // Round P R4: equipment still out with the person blocks removal (the API
   // answers 409 ASSETS_ASSIGNED) — say so before the click, with the tags.
@@ -322,6 +349,29 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
           )}
           <span>Joined {fmtDate(e.dateOfJoining)}</span>
         </div>
+        {(onNotice || separated) && (
+          <div
+            data-testid="offboarding-state"
+            style={{
+              marginTop: 8,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              fontSize: 12,
+              fontWeight: 700,
+              color: onNotice ? 'var(--yellow)' : 'var(--text-2)',
+            }}
+          >
+            <Icon.out size={13} />
+            {onNotice
+              ? e.dateOfExit
+                ? `Serving notice · last working day ${fmtDate(e.dateOfExit)} — sign-in turns off after that day`
+                : 'Serving notice'
+              : e.dateOfExit
+                ? `Off-boarded on ${fmtDate(e.dateOfExit)} · sign-in turned off`
+                : 'Off-boarded · sign-in turned off'}
+          </div>
+        )}
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         {contactEmail && (
@@ -360,14 +410,37 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
             >
               Edit details
             </Btn>
-            {!alreadyOff && (
+            {canOffboard && (
               <Btn
                 kind="secondary"
                 size="sm"
                 icon={<Icon.out size={13} />}
-                onClick={() => setOffboarding(true)}
+                onClick={() => setOffboarding('start')}
+                data-testid="offboard-open"
               >
-                Offboard
+                Off-board
+              </Btn>
+            )}
+            {onNotice && (
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.out size={13} />}
+                onClick={() => setOffboarding('end')}
+                data-testid="offboard-end-notice"
+              >
+                End notice now
+              </Btn>
+            )}
+            {(onNotice || separated) && (
+              <Btn
+                kind="secondary"
+                size="sm"
+                icon={<Icon.swap size={13} />}
+                onClick={() => setConfirmCancel(true)}
+                data-testid="offboard-cancel"
+              >
+                {separated ? 'Reinstate' : 'Cancel off-boarding'}
               </Btn>
             )}
             <Btn
@@ -375,8 +448,9 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
               size="sm"
               icon={<Icon.trash size={13} />}
               onClick={() => setConfirmRemove(true)}
+              data-testid="employee-remove"
             >
-              Remove
+              {separated ? 'Delete employee' : 'Remove'}
             </Btn>
           </>
         )}
@@ -392,8 +466,25 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
         <OffboardDialog
           e={e}
           name={name}
-          open={offboarding}
+          open={offboarding !== false}
+          endNotice={offboarding === 'end'}
           onClose={() => setOffboarding(false)}
+        />
+      )}
+      {canEdit && (
+        <ConfirmDialog
+          open={confirmCancel}
+          onClose={() => setConfirmCancel(false)}
+          title={separated ? `Reinstate ${name}` : 'Cancel off-boarding'}
+          body={
+            separated
+              ? `${name} becomes an active employee again and their sign-in is turned back on.`
+              : `${name} stays an active employee — the notice period and last working day are cleared.`
+          }
+          confirmLabel={separated ? 'Reinstate' : 'Cancel off-boarding'}
+          loading={cancelOff.isPending}
+          loadingLabel="Saving…"
+          onConfirm={doCancelOffboarding}
         />
       )}
       {canEdit && !blockedByAssets && (
@@ -469,28 +560,54 @@ function EmployeeHeader({ e }: { e: EmployeeDetail }) {
   )
 }
 
-// Offboarding = the proper exit: separation type, last working day and a
-// reason, through the existing terminate flow. Removal (above) is for
-// mistakes; this is for people actually leaving.
+// Offboarding = the proper exit: separation type, reason and either an
+// immediate exit or a notice period (Round Q — founder: "a checkbox where, if
+// selected, the user is off-boarded and deactivated without notice period;
+// if not checked it starts the notice period"). Removal is for mistakes, and
+// for deleting someone once they have left.
+function todayISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function addDays(iso: string, n: number): string {
+  const d = new Date(`${iso}T00:00:00`)
+  d.setDate(d.getDate() + n)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function OffboardDialog({
   e,
   name,
   open,
+  endNotice = false,
   onClose,
 }: {
   e: EmployeeDetail
   name: string
   open: boolean
+  /** "End notice now": someone already serving notice leaves today. */
+  endNotice?: boolean
   onClose: () => void
 }) {
   const terminate = useTerminateEmployee()
   const { toast } = useToast()
+  const noticeDays = e.noticePeriodDays ?? 30
   const [reason, setReason] = useState('')
+  const [immediate, setImmediate] = useState(false)
   const [lastDay, setLastDay] = useState('')
   const [type, setType] = useState<'resigned' | 'terminated' | 'absconded' | 'retired' | 'end_of_contract'>('resigned')
+  // Fresh defaults each time it opens: the notice-period date is derived from
+  // their profile, "End notice now" is always immediate.
+  useEffect(() => {
+    if (!open) return
+    setReason(endNotice ? 'Notice period ended early' : '')
+    setImmediate(endNotice)
+    setLastDay(addDays(todayISO(), noticeDays))
+  }, [open, endNotice, noticeDays])
+  const leavesNow = endNotice || immediate
   // Round P R4: equipment still out with the person. Offboarding is never
-  // blocked (they work through notice and hand it back by the last day) —
-  // the list is a reminder with Return right here.
+  // blocked (they hand it back before they go) — the list is a reminder with
+  // Return right here. Removing / deleting them later needs it returned.
   const held = useEmployeeAssets(e.id, open)
   const outstanding = held.data?.data.current ?? []
   const [returning, setReturning] = useState<Asset | null>(null)
@@ -500,21 +617,37 @@ function OffboardDialog({
       toast({ title: 'A reason is required', variant: 'destructive' })
       return
     }
+    if (!leavesNow && (!lastDay || lastDay < todayISO())) {
+      toast({
+        title: 'Pick a last working day from today onwards',
+        description: 'Or tick “Off-board immediately” to skip the notice period.',
+        variant: 'destructive',
+      })
+      return
+    }
     try {
-      await terminate.mutateAsync({
+      const r = await terminate.mutateAsync({
         id: e.id,
         reason: reason.trim(),
         separationType: type,
-        ...(lastDay ? { lastWorkingDate: lastDay } : {}),
+        immediate: leavesNow,
+        ...(leavesNow ? {} : { lastWorkingDate: lastDay }),
       })
-      toast({
-        title: `${name} is being offboarded`,
-        description: lastDay ? `Last working day ${fmtDate(lastDay)}.` : undefined,
-      })
+      toast(
+        leavesNow
+          ? {
+              title: `${name} is off-boarded`,
+              description: 'Their sign-in is turned off. Delete them later from this page once their equipment is back.',
+            }
+          : {
+              title: `Notice period started for ${name}`,
+              description: `Last working day ${fmtDate(r.lastWorkingDate)} — they keep access until then and are off-boarded automatically after it.`,
+            },
+      )
       onClose()
     } catch (err) {
       toast({
-        title: 'Could not start offboarding',
+        title: 'Could not off-board',
         description: err instanceof Error ? err.message : 'Try again',
         variant: 'destructive',
       })
@@ -549,33 +682,26 @@ function OffboardDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Offboard {name}</DialogTitle>
+          <DialogTitle>{endNotice ? `End ${name}'s notice now` : `Off-board ${name}`}</DialogTitle>
         </DialogHeader>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 4 }}>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
-                Separation type
-              </label>
-              <select
-                className="input"
-                value={type}
-                onChange={(ev) => setType(ev.target.value as typeof type)}
-                style={{ width: '100%' }}
-              >
-                <option value="resigned">Resigned</option>
-                <option value="terminated">Terminated</option>
-                <option value="retired">Retired</option>
-                <option value="end_of_contract">End of contract</option>
-                <option value="absconded">Absconded</option>
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
-                Last working day
-              </label>
-              <DateField value={lastDay} onChange={setLastDay} />
-            </div>
+          <div>
+            <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+              Separation type
+            </label>
+            <select
+              className="input"
+              value={type}
+              onChange={(ev) => setType(ev.target.value as typeof type)}
+              style={{ width: '100%' }}
+              data-testid="offboard-type"
+            >
+              <option value="resigned">Resigned</option>
+              <option value="terminated">Terminated</option>
+              <option value="retired">Retired</option>
+              <option value="end_of_contract">End of contract</option>
+              <option value="absconded">Absconded</option>
+            </select>
           </div>
           <div>
             <label className="label" style={{ display: 'block', marginBottom: 6 }}>
@@ -586,11 +712,64 @@ function OffboardDialog({
               value={reason}
               onChange={(ev) => setReason(ev.target.value)}
               rows={3}
+              maxLength={1000}
               placeholder="e.g. Resigned — moving to a new role"
               style={{ width: '100%', resize: 'vertical', paddingTop: 8 }}
               autoFocus={!returning}
+              data-testid="offboard-reason"
             />
           </div>
+          {!endNotice && (
+            <label
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'flex-start',
+                cursor: 'pointer',
+                padding: '11px 13px',
+                borderRadius: 10,
+                background: immediate ? 'rgba(248,120,107,.08)' : 'var(--surf-1)',
+                border: `1px solid ${immediate ? 'rgba(248,120,107,.3)' : 'var(--bord)'}`,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={immediate}
+                onChange={(ev) => setImmediate(ev.target.checked)}
+                data-testid="offboard-immediate"
+                style={{ marginTop: 2, accentColor: 'var(--coral)', flexShrink: 0 }}
+              />
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.45 }}>
+                <strong style={{ color: 'var(--text)' }}>Off-board immediately — skip the notice period</strong>
+                <br />
+                {name} is off-boarded today and their sign-in is turned off right away.
+              </span>
+            </label>
+          )}
+          {!leavesNow && (
+            <div>
+              <label className="label" style={{ display: 'block', marginBottom: 6 }}>
+                Last working day
+              </label>
+              <DateField value={lastDay} onChange={setLastDay} />
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginTop: 6, lineHeight: 1.5 }}>
+                Notice period: {noticeDays} day{noticeDays === 1 ? '' : 's'} (from their profile). They keep
+                access until this day; the day after, they are off-boarded and their sign-in is turned off
+                automatically.
+              </div>
+            </div>
+          )}
+          {leavesNow && (
+            <div
+              data-testid="offboard-now-note"
+              style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}
+            >
+              {endNotice
+                ? `${name}'s notice ends today: they are off-boarded and signed out now.`
+                : 'Their last working day is recorded as today.'}{' '}
+              Their records stay; delete them later from this page if needed.
+            </div>
+          )}
           {outstanding.length > 0 && (
             <div
               style={{
@@ -604,7 +783,8 @@ function OffboardDialog({
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
                 <Icon.laptop size={15} style={{ color: 'var(--yellow)', flexShrink: 0, marginTop: 1 }} />
                 <div style={{ fontSize: 12.5, fontWeight: 800, lineHeight: 1.4 }}>
-                  {outstanding.length} asset{outstanding.length === 1 ? '' : 's'} still assigned — record the return before the last working day
+                  {outstanding.length} asset{outstanding.length === 1 ? '' : 's'} still assigned — record the return{' '}
+                  {leavesNow ? 'now' : 'before the last working day'}
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -620,18 +800,19 @@ function OffboardDialog({
               </div>
             </div>
           )}
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', lineHeight: 1.5 }}>
-            This records the exit and starts their notice — it does not delete
-            anything. Use Remove only for records added by mistake.
-          </div>
         </div>
         <ReturnAssetModal open={!!returning} onClose={() => setReturning(null)} asset={returning} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
           <Btn kind="ghost" onClick={onClose} disabled={terminate.isPending}>
             Cancel
           </Btn>
-          <Btn kind="primary" onClick={submit} disabled={terminate.isPending}>
-            {terminate.isPending ? 'Saving…' : 'Start offboarding'}
+          <Btn
+            kind={leavesNow ? 'danger' : 'primary'}
+            onClick={submit}
+            disabled={terminate.isPending}
+            data-testid="offboard-submit"
+          >
+            {terminate.isPending ? 'Saving…' : leavesNow ? 'Off-board now' : 'Start notice period'}
           </Btn>
         </div>
       </DialogContent>

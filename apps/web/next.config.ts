@@ -119,6 +119,9 @@ const config: NextConfig = {
       { source: '/notifications', destination: '/inbox', permanent: false },
       // /signup is the URL people type; the wizard lives at /onboarding.
       { source: '/signup', destination: '/onboarding', permanent: true },
+      // Round Q: "My assets" moved under People → Assets. Notifications and
+      // emails already sent still point at /assets/me.
+      { source: '/assets/me', destination: '/employees/assets?view=me', permanent: false },
     ]
   },
 }

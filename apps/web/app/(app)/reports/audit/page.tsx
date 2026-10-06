@@ -5,6 +5,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead, type PillTone } from '@/components/proto'
 import { useAuditLog, type AuditLogEntry } from '@/lib/api/queries/use-reports'
+import { useAuthStore } from '@/lib/stores/auth.store'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,33 @@ const PAGE_SIZE = 50
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function AuditLogReportPage() {
+  // Round Q: Owner-only (API @Roles('owner')). HR admins reaching the URL get
+  // a clear note instead of a failing table.
+  const role = useAuthStore((st) => st.currentUser?.role)
+  if (role && role !== 'OWNER' && role !== 'FAM') {
+    return (
+      <div className="relative min-h-full">
+        <div className="relative z-10 p-8 max-w-3xl mx-auto">
+          <SectionHead title="Audit log" sub="Full activity stream for compliance and security review." />
+          <div className="card" style={{ textAlign: 'center', padding: '34px 24px' }} data-testid="audit-owner-only">
+            <Icon.lock size={20} style={{ color: 'var(--text-faint)', marginBottom: 10 }} />
+            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>Only the Owner can open the audit log</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)' }}>
+              Your reports are under{' '}
+              <Link href="/reports" style={{ color: 'var(--blue)', fontWeight: 700 }}>
+                Insights → Reports
+              </Link>
+              .
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  return <AuditLogReport />
+}
+
+function AuditLogReport() {
   const [page, setPage] = useState(1)
   const [resourceType, setResourceType] = useState('')
   const [action, setAction] = useState('')

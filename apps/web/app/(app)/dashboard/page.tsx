@@ -96,7 +96,10 @@ export default function DashboardPage() {
 function AdminDashboard() {
   const { currentUser } = useAuthStore()
   const overview = useAdminOverview()
-  const activity = useAdminActivity(8)
+  // Round Q: the activity feed is the audit trail — Owner / HR admin only
+  // (finance also lands on this dashboard).
+  const canSeeActivity = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
+  const activity = useAdminActivity(8, { enabled: canSeeActivity })
   const qc = useQueryClient()
   const reviewLeave = useReviewLeave()
   const reviewReg = useReviewRegularization()
@@ -473,7 +476,8 @@ function AdminDashboard() {
         </div>
 
         {/* Activity feed + Onboarding pipeline */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: canSeeActivity ? 'minmax(0, 1.2fr) minmax(0, 1fr)' : 'minmax(0, 1fr)', gap: 18 }}>
+          {canSeeActivity && (
           <div className="card">
             <SectionHead
               title="Recent activity"
@@ -523,6 +527,7 @@ function AdminDashboard() {
               )}
             </div>
           </div>
+          )}
 
           <div className="card">
             <SectionHead

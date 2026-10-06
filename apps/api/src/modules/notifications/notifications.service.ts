@@ -707,7 +707,7 @@ export class NotificationsService {
         // manager). Every value is user-controlled (names, the summary line
         // built from leave-type names) → escaped. The button only OPENS the
         // item; nothing changes until the reviewer confirms in the app.
-        const { reviewerName, employeeName, kindLabel, summary, reasonText, levelLabel, reviewUrl } =
+        const { reviewerName, employeeName, kindLabel, summary, reasonText, levelLabel, reviewUrl, stillActs } =
           props as {
             reviewerName: string;
             employeeName: string;
@@ -716,6 +716,8 @@ export class NotificationsService {
             reasonText: string;
             levelLabel?: string;
             reviewUrl: string;
+            /** Round Q: who else can still act (onboarding: "HR can still approve it too"). */
+            stillActs?: string;
           };
         const plain = (v: unknown) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim();
         return {
@@ -732,7 +734,7 @@ export class NotificationsService {
               <p style="margin: 24px 0 8px;">
                 <a href="${this.esc(reviewUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review now</a>
               </p>
-              <p style="color: #666; font-size: 12px; margin: 0 0 20px;">Nothing changes until you confirm in the app. The reporting manager can still act too.</p>
+              <p style="color: #666; font-size: 12px; margin: 0 0 20px;">Nothing changes until you confirm in the app. ${this.esc(stillActs ?? 'The reporting manager can still act too.')}</p>
               <p style="color: #666; font-size: 12px; margin-top: 28px;">If the button doesn't work, sign in to ${appName} and open Inbox → Approvals.</p>
             </div>
           `,
@@ -914,7 +916,8 @@ export class NotificationsService {
       // Every value is tenant-typed (asset names/tags, the HR user's name,
       // free-text notes) → esc() in the body and line-break-stripped in the
       // plain-text subject, exactly like policy-published. `link` is the
-      // employee's own "My assets" page — usually the relative '/assets/me'
+      // employee's own "My assets" page — usually the relative
+      // '/employees/assets?view=me' (Round Q; the old '/assets/me' redirects there)
       // (prefixed with APP_URL here); an absolute https URL is used as-is.
       // The CTA only OPENS the page: acknowledging receipt happens in-app,
       // behind the sign-in gate.
@@ -932,7 +935,7 @@ export class NotificationsService {
         const base = this.configService
           .get<string>('APP_URL', 'http://localhost:3000')
           .replace(/\/$/, '');
-        const rawLink = String(link ?? '/assets/me');
+        const rawLink = String(link ?? '/employees/assets?view=me');
         const href = /^https?:\/\//i.test(rawLink)
           ? rawLink
           : `${base}${rawLink.startsWith('/') ? '' : '/'}${rawLink}`;
@@ -1164,20 +1167,31 @@ export class NotificationsService {
       }
 
       case 'onboarding-submitted': {
-        const { approverName, employeeName, reviewUrl } = props as {
+        // Round Q: names are typed by the joiner → escaped. `fyi` = the
+        // reporting manager cannot approve onboarding (only Owner / HR can):
+        // an information note instead of a button into a 403.
+        const { approverName, employeeName, reviewUrl, fyi } = props as {
           approverName: string;
           employeeName: string;
           reviewUrl: string;
+          fyi?: boolean;
         };
+        const plainName = String(employeeName ?? '').replace(/[\r\n\t]+/g, ' ').trim();
         return {
-          subject: `Onboarding submitted for review — ${String(employeeName)}`,
+          subject: fyi
+            ? `${plainName} finished self-onboarding`
+            : `Onboarding submitted for review — ${plainName}`,
           html: `
             <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
-              <h2 style="color: #1a1a2e;">Hi ${String(approverName)},</h2>
-              <p><strong>${String(employeeName)}</strong> has completed their self-onboarding and submitted it for your approval.</p>
+              <h2 style="color: #1a1a2e;">Hi ${this.esc(approverName)},</h2>
+              ${
+                fyi
+                  ? `<p><strong>${this.esc(employeeName)}</strong>, who reports to you, has completed their self-onboarding. HR will review and approve it — there is nothing you need to do.</p>`
+                  : `<p><strong>${this.esc(employeeName)}</strong> has completed their self-onboarding and submitted it for your approval.</p>
               <p style="margin: 24px 0;">
-                <a href="${String(reviewUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review onboarding</a>
-              </p>
+                <a href="${this.esc(reviewUrl)}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review onboarding</a>
+              </p>`
+              }
             </div>
           `,
         };

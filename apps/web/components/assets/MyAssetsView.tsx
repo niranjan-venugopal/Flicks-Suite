@@ -28,8 +28,11 @@ const CARD_GRID: React.CSSProperties = {
  * hire nobody has equipped yet. The one exception is a GUEST seat: the API's
  * guest allowlist does not include /assets, so the call 403s — that is shown
  * as an honest "not tracked for your seat" state, never a Retry loop.
+ *
+ * Round Q: lives at People → Assets (`/employees/assets?view=me`) for every
+ * seat; Owners / HR switch to the register with `headerExtra`'s toggle.
  */
-export default function MyAssetsPage() {
+export function MyAssetsView({ headerExtra }: { headerExtra?: React.ReactNode } = {}) {
   const my = useMyAssets()
   const ack = useAcknowledgeAsset()
   const qc = useQueryClient()
@@ -120,15 +123,18 @@ export default function MyAssetsPage() {
           title="My assets"
           sub="Company equipment issued to you"
           right={
-            pendingCount > 0 ? (
-              <Pill tone="coral" dot>
-                {pendingCount} to acknowledge
-              </Pill>
-            ) : items.length > 0 ? (
-              <Pill tone="green" icon={<Icon.check size={11} />}>
-                All acknowledged
-              </Pill>
-            ) : null
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {pendingCount > 0 ? (
+                <Pill tone="coral" dot>
+                  {pendingCount} to acknowledge
+                </Pill>
+              ) : items.length > 0 ? (
+                <Pill tone="green" icon={<Icon.check size={11} />}>
+                  All acknowledged
+                </Pill>
+              ) : null}
+              {headerExtra}
+            </div>
           }
         />
 

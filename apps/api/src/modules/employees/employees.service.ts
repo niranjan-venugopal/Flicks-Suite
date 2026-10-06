@@ -37,6 +37,7 @@ import {
   shiftTemplates,
   employeeShifts,
   employeeInvitations,
+  refreshTokens,
 } from '@flicks/db/schema';
 
 // Bump when the privacy policy / consent copy materially changes so we can
@@ -51,6 +52,14 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { MediaService } from '../media/media.service';
 import { R2Service } from '../../core/storage/r2.service';
+import {
+  actorSeatRoleTx,
+  assertMayActOnSeat,
+  assertNotLastOwnerTx,
+  isSeniorSeat as isSeniorSeatRole,
+} from '../../core/auth/seat-guards';
+import { addDaysISO } from '../../core/common/time';
+import { tenantTodayISOTx } from '../../core/common/workday';
 // Round P R4: equipment held by the person — plain tx helpers via the assets
 // module's public facade (house rule 3), run inside our own tenant tx.
 import {
@@ -2051,6 +2060,50 @@ export class EmployeesService {
     );
   }
 
+  /**
+   * Round Q: approve / send back act ONLY on someone still waiting — not
+   * joined yet (`inactive`), submitted, not removed, seat not switched off.
+   * Before this, an off-boarded person resurfaced as "waiting for approval"
+   * (the flag outlives approval) and Approve flipped them — and their sign-in
+   * — back on. The row is locked so an off-board can't interleave.
+   */
+  private async lockPendingOnboardingTx(db: Db, tenantId: string, employeeId: string) {
+    const [row] = await db
+      .select({
+        id: employees.id,
+        status: employees.status,
+        deleted_at: employees.deleted_at,
+        custom_fields: employees.custom_fields,
+        first_name: employees.first_name,
+        last_name: employees.last_name,
+      })
+      .from(employees)
+      .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+      .limit(1)
+      .for('update');
+    if (!row) throw new NotFoundException('Employee not found');
+    const name = `${row.first_name ?? ''} ${row.last_name ?? ''}`.trim() || 'This person';
+    const flag = (row.custom_fields as Record<string, unknown> | null)?.onboarding_submitted_for_review;
+    if (row.deleted_at || row.status !== 'inactive' || (flag !== true && flag !== 'true')) {
+      throw new ConflictException({
+        code: 'NOT_PENDING',
+        message: `${name} is no longer waiting for onboarding approval.`,
+      });
+    }
+    const [seat] = await db
+      .select({ status: memberships.status })
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.employee_id, employeeId)))
+      .limit(1);
+    if (seat?.status === 'deactivated') {
+      throw new ConflictException({
+        code: 'SEAT_DEACTIVATED',
+        message: `${name}'s access was switched off in Settings → Members — reactivate it there first.`,
+      });
+    }
+    return row;
+  }
+
   async getOnboardingQueue(tenantId: string, callerUserId: string) {
     const rows = await this.databaseService.withTenant(tenantId, async (db) => {
       const [caller] = await db
@@ -2093,6 +2146,8 @@ export class EmployeesService {
           // rule keys on.
           memberRole: memberships.role,
           submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
+          // Round Q: set once the 24-hour onboarding escalation has fired.
+          escalatedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_escalated_at'`,
         })
         .from(employees)
         .leftJoin(users, eq(employees.user_id, users.id))
@@ -2112,7 +2167,13 @@ export class EmployeesService {
           and(
             eq(employees.tenant_id, tenantId),
             sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
-            ne(employees.status, 'active'),
+            // Round Q: ONLY people who have not joined yet. The flag is never
+            // cleared on approval, so `status <> 'active'` brought every
+            // approved person back the moment they were off-boarded (notice /
+            // separated) — "waiting for approval, 37d ago" — and Approve then
+            // reactivated them. Removed (archived) rows never belong here.
+            eq(employees.status, 'inactive'),
+            isNull(employees.deleted_at),
             // Nobody reviews their own profile — hide the caller's row (a
             // second owner would otherwise see and approve himself). IS
             // DISTINCT FROM keeps invited rows (user_id NULL) visible.
@@ -2157,10 +2218,13 @@ export class EmployeesService {
 
     // Clear the review flag so the employee can edit + resubmit, and record
     // the reason in custom_fields for the wizard to surface.
-    const existing = (employee.customFields ?? {}) as Record<string, unknown>;
     const user = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
+        // Round Q: only someone still waiting may be sent back. The merge
+        // base is the locked row, not the read made before the tx.
+        const locked = await this.lockPendingOnboardingTx(db, tenantId, employeeId);
+        const existing = (locked.custom_fields ?? {}) as Record<string, unknown>;
         await db
           .update(employees)
           .set({
@@ -2169,10 +2233,13 @@ export class EmployeesService {
               onboarding_submitted_for_review: false,
               onboarding_rejection_reason: reason ?? null,
               onboarding_rejected_at: new Date().toISOString(),
+              // A resubmission starts a fresh 24-hour clock.
+              onboarding_escalated_at: null,
+              onboarding_escalated_to: null,
             },
             updated_at: new Date(),
           })
-          .where(eq(employees.id, employeeId));
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
 
         if (!employee.userId) return null;
         const [u] = await db
@@ -2681,6 +2748,10 @@ export class EmployeesService {
                 employeeName: sql<string>`trim(coalesce(${employees.first_name},'') || ' ' || coalesce(${employees.last_name},''))`,
                 managerEmail: mgrUser.email,
                 managerName: mgrUser.full_name,
+                // Round Q: can the manager act on it? Only Owner / HR seats
+                // approve onboarding — everyone else gets an FYI, not a
+                // "Review" button into a page that answers 403.
+                managerSeatRole: sql<string | null>`(SELECT m.role::text FROM memberships m WHERE m.tenant_id = ${tenantId} AND m.user_id = ${mgr.user_id} AND m.status = 'active' LIMIT 1)`,
               })
               .from(employees)
               .leftJoin(mgr, eq(employees.reporting_manager_id, mgr.id))
@@ -2700,6 +2771,7 @@ export class EmployeesService {
               approverName: info.managerName ?? 'there',
               employeeName: info.employeeName || 'A new hire',
               reviewUrl: `${appUrl}/employees/onboarding?employee=${employeeId}`,
+              fyi: !['owner', 'admin'].includes(info.managerSeatRole ?? ''),
             },
           );
         }
@@ -3293,11 +3365,15 @@ export class EmployeesService {
     const user = await this.databaseService.withTenant(
       tenantId,
       async (db) => {
+        // Round Q: only someone still waiting may be approved — never an
+        // off-boarded / removed person surfacing through a stale card.
+        await this.lockPendingOnboardingTx(db, tenantId, employeeId);
+
         // Activate employee
         await db
           .update(employees)
           .set({ status: 'active', updated_at: new Date() })
-          .where(eq(employees.id, employeeId));
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
 
         // Activate membership
         await db
@@ -3584,44 +3660,16 @@ export class EmployeesService {
             ),
           )
           .limit(1);
-        const [callerSeat] = await db
-          .select({ role: memberships.role })
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.tenant_id, tenantId),
-              eq(memberships.user_id, actorId),
-            ),
-          )
-          .limit(1);
-        if (
-          targetSeat &&
-          ['owner', 'admin'].includes(targetSeat.role) &&
-          callerSeat?.role !== 'owner'
-        ) {
-          throw new ForbiddenException(
-            'Only an owner can remove an owner or HR admin.',
-          );
-        }
-        if (targetSeat?.role === 'owner') {
-          // Never strand a workspace with nobody who can administer it.
-          const [others] = await db
-            .select({ n: sql<number>`count(*)::int` })
-            .from(memberships)
-            .where(
-              and(
-                eq(memberships.tenant_id, tenantId),
-                eq(memberships.role, 'owner'),
-                eq(memberships.status, 'active'),
-                ne(memberships.id, targetSeat.id),
-              ),
-            );
-          if ((others?.n ?? 0) === 0) {
-            throw new BadRequestException(
-              'This is the workspace’s only owner. Make someone else an owner first.',
-            );
-          }
-        }
+        // Round Q: the shared seat rules (core/auth/seat-guards) — the self
+        // case keeps its own message above.
+        assertMayActOnSeat({
+          actorRole: await actorSeatRoleTx(db, tenantId, actorId),
+          targetRole: targetSeat?.role,
+          isSelf: false,
+          verb: 'remove',
+        });
+        // Never strand a workspace with nobody who can administer it.
+        if (targetSeat) await assertNotLastOwnerTx(db, tenantId, targetSeat);
 
         const name = `${emp.first_name} ${emp.last_name}`.trim();
 
@@ -3777,61 +3825,595 @@ export class EmployeesService {
     return { data: { id: employeeId, restored: true, seat } };
   }
 
+  /** The workspace seat linked to an employee row (null when none). */
+  private async seatForEmployeeTx(db: Db, tenantId: string, employeeId: string, userId?: string | null) {
+    const cols = {
+      id: memberships.id,
+      role: memberships.role,
+      status: memberships.status,
+      accepted_at: memberships.accepted_at,
+      employee_id: memberships.employee_id,
+    };
+    const [linked] = await db
+      .select(cols)
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.employee_id, employeeId)))
+      .limit(1);
+    if (linked || !userId) return linked ?? null;
+    // A seat unlinked by an earlier removal still belongs to the same person.
+    const [byUser] = await db
+      .select(cols)
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, userId)))
+      .orderBy(asc(memberships.created_at))
+      .limit(1);
+    return byUser ?? null;
+  }
+
+  /**
+   * Sign the person out of THIS company: revoke the refresh tokens minted
+   * for it (their other companies keep working). The seat is already
+   * deactivated in the same request, so the live-seat RolesGuard refuses
+   * them on the next click even before the access token expires — this
+   * closes the 30-day refresh path too. Best-effort after commit.
+   */
+  private async revokeTenantSessions(userId: string, tenantId: string): Promise<void> {
+    try {
+      await this.dbAdmin
+        .update(refreshTokens)
+        .set({ revoked_at: new Date() })
+        .where(
+          and(
+            eq(refreshTokens.user_id, userId),
+            eq(refreshTokens.tenant_id, tenantId),
+            isNull(refreshTokens.revoked_at),
+          ),
+        );
+    } catch (err) {
+      this.logger.warn(
+        `session revoke for user ${userId} in tenant ${tenantId} failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  /**
+   * Off-board an employee (Round Q — founder 2026-10-06: "if a user is
+   * off-boarded it should automatically get off-boarded and deactivate the
+   * user … a checkbox: if ticked, off-boarded immediately, without notice;
+   * if not, the notice period starts").
+   *
+   *  immediate → status `separated`, date_of_exit today, seat deactivated and
+   *              this company's sessions revoked — signed out on the next click.
+   *  notice    → status `notice_period`, date_of_exit = the last working day
+   *              (default today + their notice period). They keep working;
+   *              SeparationJob finishes the off-boarding after that day.
+   *
+   * Calling it again with `immediate` on someone serving notice is "End
+   * notice now". Deleting stays a separate, later step (Remove). The seat
+   * rules (core/auth/seat-guards) apply: not yourself, Owner / HR-admin seats
+   * are the Owner's call, never the last Owner.
+   */
   async terminateEmployee(
     employeeId: string,
     dto: TerminateEmployeeDto,
     adminId: string,
     tenantId: string,
   ) {
-    const employee = await this.getEmployee(employeeId, tenantId);
+    const immediate = dto.immediate === true;
+    const result = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [emp] = await db
+          .select()
+          .from(employees)
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+          .limit(1)
+          .for('update');
+        if (!emp) throw new NotFoundException('Employee not found');
+        const name = `${emp.first_name} ${emp.last_name}`.trim();
+        if (emp.deleted_at) {
+          throw new ConflictException({
+            code: 'EMPLOYEE_REMOVED',
+            message: `${name} has been removed — restore them from People → Removed first.`,
+          });
+        }
+        if (emp.status === 'separated' || emp.status === 'absconded') {
+          throw new ConflictException({
+            code: 'ALREADY_OFFBOARDED',
+            message: `${name} has already been off-boarded.`,
+          });
+        }
+        if (emp.status === 'inactive') {
+          throw new ConflictException({
+            code: 'NOT_JOINED',
+            message: `${name} hasn't joined yet — use Remove instead of off-boarding.`,
+          });
+        }
+        if (!immediate && emp.status === 'notice_period') {
+          throw new ConflictException({
+            code: 'ALREADY_ON_NOTICE',
+            message: `${name} is already serving notice${emp.date_of_exit ? ` (last working day ${emp.date_of_exit})` : ''}. Use “End notice now” to off-board them immediately.`,
+          });
+        }
 
-    const lastWorkingDate =
-      dto.lastWorkingDate ?? new Date().toISOString().split('T')[0];
+        const seat = await this.seatForEmployeeTx(db, tenantId, employeeId);
+        assertMayActOnSeat({
+          actorRole: await actorSeatRoleTx(db, tenantId, adminId),
+          targetRole: seat?.role,
+          isSelf: !!emp.user_id && emp.user_id === adminId,
+          verb: 'off-board',
+        });
+        // An Owner on notice is deactivated when it ends — refuse up front.
+        if (seat) await assertNotLastOwnerTx(db, tenantId, seat);
 
-    await this.databaseService.withTenant(tenantId, async (db) => {
-      await db
-        .update(employees)
-        .set({
-          status: 'notice_period',
-          updated_at: new Date(),
-        })
-        .where(eq(employees.id, employeeId));
+        const today = await tenantTodayISOTx(db, tenantId);
+        let lastWorkingDate = today;
+        if (!immediate) {
+          lastWorkingDate = dto.lastWorkingDate ?? addDaysISO(today, emp.notice_period_days ?? 30);
+          if (lastWorkingDate < today) {
+            throw new BadRequestException(
+              'The last working day is in the past — tick “Off-board immediately” instead.',
+            );
+          }
+        }
+        const newStatus = immediate ? ('separated' as const) : ('notice_period' as const);
 
-      // Record in employment history
-      await db.insert(employmentHistory).values({
-        tenant_id: tenantId,
-        employee_id: employeeId,
-        change_type: 'separation',
-        effective_from: lastWorkingDate,
-        previous_value: {
-          designationId: employee.designationId,
-          status: employee.status,
-        },
-        new_value: { status: 'notice_period', separationType: dto.separationType },
-        reason: dto.reason,
-        changed_by: adminId,
-      });
-    });
+        await db
+          .update(employees)
+          .set({
+            status: newStatus,
+            date_of_exit: lastWorkingDate,
+            exit_reason: dto.reason,
+            updated_at: new Date(),
+          })
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
+
+        await db.insert(employmentHistory).values({
+          tenant_id: tenantId,
+          employee_id: employeeId,
+          change_type: 'separation',
+          effective_from: lastWorkingDate,
+          previous_value: {
+            designationId: emp.designation_id,
+            status: emp.status,
+            dateOfExit: emp.date_of_exit,
+          },
+          new_value: { status: newStatus, separationType: dto.separationType ?? null, immediate },
+          reason: dto.reason,
+          changed_by: adminId,
+        });
+
+        if (immediate && seat && seat.status !== 'deactivated') {
+          await db
+            .update(memberships)
+            .set({ status: 'deactivated' })
+            .where(and(eq(memberships.id, seat.id), eq(memberships.tenant_id, tenantId)));
+        }
+        return { name, previousStatus: emp.status, lastWorkingDate, newStatus, userId: emp.user_id };
+      },
+      adminId,
+    );
+
+    if (immediate && result.userId) await this.revokeTenantSessions(result.userId, tenantId);
 
     await this.auditService.log({
       tenantId,
       actorUserId: adminId,
-      action: 'employee.termination.initiated',
+      action: immediate ? 'employee.separated' : 'employee.termination.initiated',
       resourceType: 'employee',
       resourceId: employeeId,
       metadata: {
+        name: result.name,
         reason: dto.reason,
-        lastWorkingDate,
-        separationType: dto.separationType,
+        lastWorkingDate: result.lastWorkingDate,
+        separationType: dto.separationType ?? null,
+        immediate,
+        previousStatus: result.previousStatus,
       },
     });
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
 
     return {
       employeeId,
-      status: 'notice_period',
-      lastWorkingDate,
+      status: result.newStatus,
+      lastWorkingDate: result.lastWorkingDate,
+      immediate,
       reason: dto.reason,
     };
+  }
+
+  /**
+   * Undo an off-boarding (Round Q — "never leave a dead end"): someone
+   * serving notice, or already separated by mistake, goes back to active and
+   * gets their seat back. Same seat rules as off-boarding.
+   */
+  async cancelOffboarding(employeeId: string, adminId: string, tenantId: string) {
+    const result = await this.databaseService.withTenant(
+      tenantId,
+      async (db) => {
+        const [emp] = await db
+          .select()
+          .from(employees)
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)))
+          .limit(1)
+          .for('update');
+        if (!emp) throw new NotFoundException('Employee not found');
+        const name = `${emp.first_name} ${emp.last_name}`.trim();
+        if (emp.deleted_at) {
+          throw new ConflictException({
+            code: 'EMPLOYEE_REMOVED',
+            message: `${name} has been removed — restore them from People → Removed first.`,
+          });
+        }
+        if (emp.status !== 'notice_period' && emp.status !== 'separated') {
+          throw new ConflictException({
+            code: 'NOT_OFFBOARDING',
+            message: `${name} isn't being off-boarded.`,
+          });
+        }
+        const wasSeparated = emp.status === 'separated';
+        const seat = await this.seatForEmployeeTx(db, tenantId, employeeId, emp.user_id);
+        assertMayActOnSeat({
+          actorRole: await actorSeatRoleTx(db, tenantId, adminId),
+          targetRole: seat?.role,
+          isSelf: !!emp.user_id && emp.user_id === adminId,
+          verb: wasSeparated ? 'reinstate' : 'cancel the off-boarding of',
+        });
+
+        const today = await tenantTodayISOTx(db, tenantId);
+        await db
+          .update(employees)
+          .set({ status: 'active', date_of_exit: null, exit_reason: null, updated_at: new Date() })
+          .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
+        await db.insert(employmentHistory).values({
+          tenant_id: tenantId,
+          employee_id: employeeId,
+          change_type: wasSeparated ? 'rehire' : 'status_change',
+          effective_from: today,
+          previous_value: { status: emp.status, dateOfExit: emp.date_of_exit },
+          new_value: { status: 'active' },
+          reason: wasSeparated ? 'Reinstated after off-boarding' : 'Off-boarding cancelled',
+          changed_by: adminId,
+        });
+
+        let seatStatus: string | null = seat?.status ?? null;
+        if (seat && (seat.status === 'deactivated' || seat.employee_id !== employeeId)) {
+          seatStatus = seat.status === 'deactivated' ? (seat.accepted_at ? 'active' : 'invited') : seat.status;
+          await db
+            .update(memberships)
+            .set({ status: seatStatus as 'active' | 'invited', employee_id: employeeId })
+            .where(and(eq(memberships.id, seat.id), eq(memberships.tenant_id, tenantId)));
+        }
+        return { name, previousStatus: emp.status, seatStatus };
+      },
+      adminId,
+    );
+
+    await this.auditService.log({
+      tenantId,
+      actorUserId: adminId,
+      action: 'employee.offboarding.cancelled',
+      resourceType: 'employee',
+      resourceId: employeeId,
+      metadata: { name: result.name, previousStatus: result.previousStatus, seat: result.seatStatus },
+    });
+    this.eventEmitter.emit('employees.directory.changed', { tenantId });
+    return { data: { id: employeeId, status: 'active', seat: result.seatStatus } };
+  }
+
+  /**
+   * SeparationJob (hourly): finish every notice period whose last working day
+   * has passed in the company's own timezone — status `separated`, seat
+   * deactivated, this company's sessions revoked, Owners / HR told in-app.
+   * People put on notice before Round Q have no date_of_exit; their
+   * separation history row's date is used instead (null → left alone; HR can
+   * still use "End notice now"). Per-row tenant transactions with a re-check
+   * under FOR UPDATE, so a concurrent cancel always wins cleanly.
+   */
+  async completeDueSeparations(now: Date = new Date()) {
+    const out = { scanned: 0, separated: 0, failed: 0 };
+    // A cron has no tenant: the scan runs on dbAdmin and only yields ids; every
+    // decision and write below happens under withTenant(row.tenant_id).
+    const candidates = await this.dbAdmin
+      .select({ id: employees.id, tenantId: employees.tenant_id })
+      .from(employees)
+      .where(and(eq(employees.status, 'notice_period'), isNull(employees.deleted_at)))
+      .orderBy(asc(employees.tenant_id))
+      .limit(1000);
+    out.scanned = candidates.length;
+
+    for (const c of candidates) {
+      try {
+        const done = await this.databaseService.withTenant(c.tenantId, async (db) => {
+          const [emp] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.id, c.id), eq(employees.tenant_id, c.tenantId)))
+            .limit(1)
+            .for('update');
+          if (!emp || emp.deleted_at || emp.status !== 'notice_period') return null;
+          let lastDay = emp.date_of_exit;
+          if (!lastDay) {
+            const [h] = await db
+              .select({ d: employmentHistory.effective_from })
+              .from(employmentHistory)
+              .where(
+                and(
+                  eq(employmentHistory.tenant_id, c.tenantId),
+                  eq(employmentHistory.employee_id, c.id),
+                  eq(employmentHistory.change_type, 'separation'),
+                ),
+              )
+              .orderBy(desc(employmentHistory.created_at))
+              .limit(1);
+            lastDay = h?.d ?? null;
+          }
+          if (!lastDay) return null;
+          const today = await tenantTodayISOTx(db, c.tenantId, now);
+          if (!(lastDay < today)) return null;
+
+          await db
+            .update(employees)
+            .set({ status: 'separated', date_of_exit: lastDay, updated_at: new Date() })
+            .where(and(eq(employees.id, c.id), eq(employees.tenant_id, c.tenantId)));
+          const seat = await this.seatForEmployeeTx(db, c.tenantId, c.id);
+          if (seat && seat.status !== 'deactivated') {
+            await db
+              .update(memberships)
+              .set({ status: 'deactivated' })
+              .where(and(eq(memberships.id, seat.id), eq(memberships.tenant_id, c.tenantId)));
+          }
+          const admins = await db
+            .select({ userId: memberships.user_id })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.tenant_id, c.tenantId),
+                eq(memberships.status, 'active'),
+                inArray(memberships.role, ['owner', 'admin']),
+              ),
+            );
+          return {
+            name: `${emp.first_name} ${emp.last_name}`.trim(),
+            userId: emp.user_id,
+            lastDay,
+            notify: admins.map((a) => a.userId).filter((u): u is string => !!u && u !== emp.user_id),
+          };
+        });
+        if (!done) continue;
+        out.separated++;
+        if (done.userId) await this.revokeTenantSessions(done.userId, c.tenantId);
+        await this.auditService.log({
+          tenantId: c.tenantId,
+          action: 'employee.separated',
+          resourceType: 'employee',
+          resourceId: c.id,
+          metadata: { name: done.name, lastWorkingDate: done.lastDay, by: 'notice_period_end' },
+        });
+        for (const uid of done.notify) {
+          void this.notificationsService.createInAppNotification(
+            uid,
+            'employee.separated',
+            `${done.name}'s notice period ended — they're off-boarded and their sign-in is turned off.`,
+            `/employees/${c.id}`,
+            c.tenantId,
+          );
+        }
+        this.eventEmitter.emit('employees.directory.changed', { tenantId: c.tenantId });
+      } catch (err) {
+        out.failed++;
+        this.logger.warn(
+          `separation: employee ${c.id} (tenant ${c.tenantId}) failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Round Q — onboarding approvals waiting more than 24 hours (founder: "if
+   * the HR manager is not approving it for 24 hours, it should go to the
+   * higher reporting manager of the HR manager"). Decision 2026-10-06: the
+   * reporting manager of each active HR admin, when that person can already
+   * approve onboarding (an active Owner or HR admin); otherwise the Owners.
+   * No new permissions — the joiner's PAN / bank / address stay with HR and
+   * Owners. An HR admin's own onboarding is the Owners' call (round 18), so
+   * it escalates straight to them. One escalation per submission (a send-back
+   * and resubmission clears the marker); the onboarding cron calls this every
+   * 15 minutes.
+   */
+  async escalateStaleOnboarding(now: Date = new Date()) {
+    const out = { scanned: 0, escalated: 0, failed: 0 };
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // Cron scan on dbAdmin: ids only; every decision and write happens under
+    // withTenant(row.tenant_id). The regex guard keeps a malformed timestamp
+    // from failing the whole scan.
+    const submittedAt = sql`CASE WHEN ${employees.custom_fields}->>'onboarding_submitted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (${employees.custom_fields}->>'onboarding_submitted_at')::timestamptz END`;
+    const candidates = await this.dbAdmin
+      .select({ id: employees.id, tenantId: employees.tenant_id })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.status, 'inactive'),
+          isNull(employees.deleted_at),
+          sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
+          sql`${employees.custom_fields}->>'onboarding_escalated_at' IS NULL`,
+          sql`${submittedAt} < ${cutoff.toISOString()}::timestamptz`,
+        ),
+      )
+      .orderBy(asc(employees.tenant_id))
+      .limit(500);
+    out.scanned = candidates.length;
+
+    for (const c of candidates) {
+      try {
+        const done = await this.databaseService.withTenant(c.tenantId, async (db) => {
+          const [emp] = await db
+            .select()
+            .from(employees)
+            .where(and(eq(employees.id, c.id), eq(employees.tenant_id, c.tenantId)))
+            .limit(1)
+            .for('update');
+          if (!emp || emp.deleted_at || emp.status !== 'inactive') return null;
+          const cf = (emp.custom_fields ?? {}) as Record<string, unknown>;
+          const flag = cf.onboarding_submitted_for_review;
+          if ((flag !== true && flag !== 'true') || cf.onboarding_escalated_at) return null;
+          const sub = typeof cf.onboarding_submitted_at === 'string' ? Date.parse(cf.onboarding_submitted_at) : NaN;
+          if (!Number.isFinite(sub) || sub >= cutoff.getTime()) return null;
+
+          const targets = await this.onboardingEscalationTargetsTx(db, c.tenantId, emp);
+          await db
+            .update(employees)
+            .set({
+              custom_fields: {
+                ...cf,
+                onboarding_escalated_at: now.toISOString(),
+                onboarding_escalated_to: targets.people.map((t) => t.userId),
+              },
+              updated_at: new Date(),
+            })
+            .where(and(eq(employees.id, c.id), eq(employees.tenant_id, c.tenantId)));
+          return {
+            name: `${emp.first_name} ${emp.last_name}`.trim() || 'A new joiner',
+            submittedAt: new Date(sub),
+            ...targets,
+          };
+        });
+        if (!done) continue;
+        out.escalated++;
+        await this.auditService.log({
+          tenantId: c.tenantId,
+          action: 'employee.onboarding.escalated',
+          resourceType: 'employee',
+          resourceId: c.id,
+          metadata: {
+            name: done.name,
+            to: done.people.map((p) => p.userId),
+            via: done.via,
+          },
+        });
+        const appUrl = this.configService.get<string>('APP_URL', 'http://localhost:3000').replace(/\/$/, '');
+        const submitted = done.submittedAt.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'Asia/Kolkata',
+        });
+        for (const t of done.people) {
+          await this.notificationsService
+            .createInAppNotification(
+              t.userId,
+              'onboarding.escalated',
+              `${done.name}'s onboarding has waited over 24 hours for approval — please review it.`,
+              '/employees/onboarding',
+              c.tenantId,
+              { groupKey: `onboarding:${c.id}` },
+            )
+            .catch(() => undefined);
+          if (!t.email) continue;
+          await this.notificationsService
+            .sendEmail('approval-escalated', t.email, {
+              reviewerName: t.name || 'there',
+              employeeName: done.name,
+              kindLabel: 'onboarding',
+              summary: `Self-onboarding submitted on ${submitted}`,
+              reasonText: 'no action for 24 hours',
+              levelLabel: done.via === 'hr_manager' ? "as the HR admin's reporting manager" : 'as an Owner',
+              reviewUrl: `${appUrl}/employees/onboarding`,
+              stillActs: 'HR can still approve it too.',
+            })
+            .catch(() => undefined);
+        }
+      } catch (err) {
+        out.failed++;
+        this.logger.warn(
+          `onboarding-escalation: employee ${c.id} (tenant ${c.tenantId}) failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Who a stale onboarding escalates to (see escalateStaleOnboarding). Only
+   * people who may already approve onboarding — an active Owner or HR admin
+   * seat — and never the joiner. `via` says which rule applied.
+   */
+  private async onboardingEscalationTargetsTx(
+    db: Db,
+    tenantId: string,
+    joiner: { id: string; user_id: string | null },
+  ): Promise<{ via: 'hr_manager' | 'owners'; people: Array<{ userId: string; email: string | null; name: string }> }> {
+    const seatCols = {
+      userId: memberships.user_id,
+      role: memberships.role,
+      employeeId: memberships.employee_id,
+      email: users.email,
+      name: users.full_name,
+    };
+    const active = await db
+      .select(seatCols)
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.user_id))
+      .where(
+        and(
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.status, 'active'),
+          inArray(memberships.role, ['owner', 'admin']),
+          eq(users.status, 'active'),
+        ),
+      );
+    const notJoiner = (p: { userId: string | null; employeeId: string | null }) =>
+      !!p.userId && p.userId !== joiner.user_id && p.employeeId !== joiner.id;
+    const owners = active.filter((p) => p.role === 'owner' && notJoiner(p));
+    const toPeople = (rows: typeof active) =>
+      [...new Map(rows.map((r) => [r.userId!, { userId: r.userId!, email: r.email ?? null, name: r.name ?? '' }])).values()];
+
+    // The joiner's own seat: an HR admin's (or Owner's) file is the Owners'.
+    const [joinerSeat] = await db
+      .select({ role: memberships.role })
+      .from(memberships)
+      .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.employee_id, joiner.id)))
+      .limit(1);
+    if (joinerSeat && isSeniorSeatRole(joinerSeat.role)) {
+      return { via: 'owners', people: toPeople(owners) };
+    }
+
+    // Each HR admin's reporting manager, kept only when that person holds an
+    // active Owner / HR-admin seat (they can approve onboarding already).
+    const hrAdmins = active.filter((p) => p.role === 'admin' && notJoiner(p));
+    const managerIds = new Set<string>();
+    for (const hr of hrAdmins) {
+      let hrEmployeeId = hr.employeeId;
+      if (!hrEmployeeId) {
+        const [e] = await db
+          .select({ id: employees.id })
+          .from(employees)
+          .where(and(eq(employees.tenant_id, tenantId), eq(employees.user_id, hr.userId!), isNull(employees.deleted_at)))
+          .limit(1);
+        hrEmployeeId = e?.id ?? null;
+      }
+      if (!hrEmployeeId) continue;
+      const [row] = await db
+        .select({ managerId: employees.reporting_manager_id })
+        .from(employees)
+        .where(and(eq(employees.tenant_id, tenantId), eq(employees.id, hrEmployeeId)))
+        .limit(1);
+      if (row?.managerId) managerIds.add(row.managerId);
+    }
+    const managers: typeof active = [];
+    for (const managerId of managerIds) {
+      const [m] = await db
+        .select({ id: employees.id, userId: employees.user_id, deletedAt: employees.deleted_at, status: employees.status })
+        .from(employees)
+        .where(and(eq(employees.tenant_id, tenantId), eq(employees.id, managerId)))
+        .limit(1);
+      if (!m || m.deletedAt || !['active', 'on_leave', 'notice_period'].includes(m.status)) continue;
+      const seat = active.find((p) => p.employeeId === m.id || (!!m.userId && p.userId === m.userId));
+      if (seat && notJoiner(seat)) managers.push(seat);
+    }
+    if (managers.length > 0) return { via: 'hr_manager', people: toPeople(managers) };
+    return { via: 'owners', people: toPeople(owners) };
   }
 
   async getEmploymentHistory(employeeId: string, tenantId: string) {

@@ -417,6 +417,16 @@ export class EmployeesController {
     return this.employeesService.terminateEmployee(id, dto, user.sub, user.tenantId);
   }
 
+  // Round Q: undo an off-boarding — notice period cancelled, or a separated
+  // person reinstated with their seat. Owner-only for Owner / HR-admin seats
+  // (enforced in the service from the membership row).
+  @Post(':id/cancel-offboarding')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Cancel an off-boarding (notice period) or reinstate a separated employee' })
+  async cancelOffboarding(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.employeesService.cancelOffboarding(id, user.sub, user.tenantId);
+  }
+
   // ─── Removal (founder round 21) ───────────────────────────────────────────
   // The owner-only rule for an owner/admin target is enforced in the SERVICE,
   // from the membership row, not with @Roles here — the decision depends on

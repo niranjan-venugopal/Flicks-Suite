@@ -12,6 +12,13 @@ import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { AuditService } from '../../../modules/audit/audit.service';
 import { ModuleAccessService } from '../module-access.service';
 
+/**
+ * Account-level routes a person with a switched-off seat must still reach:
+ * /auth/* (me, refresh, logout, switch-company, preferences) and /me/companies
+ * (the My companies list the web falls back to).
+ */
+const SEAT_EXEMPT_PATH = /^\/api\/v1\/(auth|me)(\/|$)/;
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(
@@ -28,14 +35,21 @@ export class RolesGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
 
-    if (!requiredRoles || requiredRoles.length === 0) {
-      return true;
-    }
-
     const req = context
       .switchToHttp()
       .getRequest<Request & { user?: JwtPayload }>();
     const user = req.user;
+
+    if (!requiredRoles || requiredRoles.length === 0) {
+      // Round Q (founder: "off-boarded … deactivates the user"): unranked
+      // routes check the live seat too, so a switched-off seat (off-boarded
+      // immediately, deactivated, removed) is refused on its very next
+      // request instead of reading self-service data from an open tab until
+      // the 15-minute token expires. Sign-in / company-switch / My companies
+      // stay reachable so the person can recover into another company.
+      await this.refuseSwitchedOffSeat(req, user);
+      return true;
+    }
 
     if (!user) {
       throw new ForbiddenException('Access denied');
@@ -96,6 +110,25 @@ export class RolesGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /**
+   * Unranked routes: refuse a tenant session whose seat is no longer active.
+   * Skips public routes (no user), platform admins, tokens without a seat
+   * (API keys, platform-level) and the account / company-switching routes a
+   * person needs to leave a company they lost access to.
+   */
+  private async refuseSwitchedOffSeat(
+    req: Request & { user?: JwtPayload },
+    user: JwtPayload | undefined,
+  ): Promise<void> {
+    if (!this.access || !user || user.isPlatformAdmin || !user.tenantId || !user.membershipId) return;
+    const path = (req.originalUrl ?? req.url ?? '').split('?')[0] ?? '';
+    if (SEAT_EXEMPT_PATH.test(path)) return;
+    const seat = await this.access.liveSeat(user.tenantId, user.membershipId);
+    if (!seat || !seat.active) {
+      throw new ForbiddenException('Your access to this workspace is no longer active');
+    }
   }
 
   /**

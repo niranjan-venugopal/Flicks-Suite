@@ -1,13 +1,18 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Avatar, Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import {
+  isPendingInvite,
+  useEmployees,
   useOnboardingQueue,
   useApproveOnboarding,
+  useResendAllInvites,
+  useResendInvite,
+  type Employee,
   type OnboardingQueueRow,
 } from '@/lib/api/queries/use-employees'
 import { useToast } from '@/components/ui/use-toast'
@@ -125,6 +130,8 @@ function OnboardingQueueContent() {
                         {rowName(row)}
                       </Link>
                       <Pill tone="yellow" dot>Pending</Pill>
+                      {/* Round Q: escalated after 24 hours without a decision. */}
+                      {row.escalatedAt && <Pill tone="coral">Waiting 24h+</Pill>}
                       {(row.memberRole === 'admin' || row.memberRole === 'owner') && (
                         <Pill tone="blue">Owner approval</Pill>
                       )}
@@ -162,7 +169,130 @@ function OnboardingQueueContent() {
         </div>
       </div>
 
+      <div style={{ position: 'relative', zIndex: 1, maxWidth: 1100, margin: '28px auto 0' }}>
+        <InvitedNotStarted />
+      </div>
+
       <OnboardingReviewDialog employeeId={reviewing} onClose={closeReview} />
+    </div>
+  )
+}
+
+/**
+ * Round Q (founder: "HR should also have the Resend invite CTA to resend the
+ * onboarding") — the people invited who have not submitted yet, with Resend
+ * per row and for everyone, right where HR reviews onboarding. Same API and
+ * eligibility as the People list (60 s throttle, submitted / removed /
+ * switched-off seats skipped server-side).
+ */
+function InvitedNotStarted() {
+  const list = useEmployees({ status: 'inactive', limit: 100 })
+  const resend = useResendInvite()
+  const resendAll = useResendAllInvites()
+  const { toast } = useToast()
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const rows = (list.data?.employees ?? []).filter((e) => isPendingInvite(e.uiStatus))
+
+  const resendOne = async (e: Employee) => {
+    setBusyId(e.id)
+    try {
+      const r = await resend.mutateAsync(e.id)
+      toast(
+        r.emailSent
+          ? { title: `Invite re-sent to ${e.name}`, description: `${r.email} · earlier links still work.` }
+          : {
+              title: 'Invite saved but the email could not be sent — try Resend in a minute',
+              description: r.email,
+              variant: 'destructive',
+            },
+      )
+    } catch (err) {
+      toast({ title: 'Could not resend invite', description: err instanceof Error ? err.message : 'Try again', variant: 'destructive' })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const resendEveryone = async () => {
+    try {
+      const r = await resendAll.mutateAsync(undefined)
+      const skipped = r.skipped.length
+      toast({
+        title: `Re-sent ${r.sent} invite${r.sent === 1 ? '' : 's'}`,
+        description:
+          skipped === 0
+            ? 'Everyone still waiting has a fresh link in their inbox.'
+            : `${skipped} skipped — ${r.skipped
+                .slice(0, 3)
+                .map((x) => `${x.email || 'unknown'}: ${x.reason}`)
+                .join('; ')}${skipped > 3 ? '; …' : ''}`,
+        variant: r.sent === 0 && skipped > 0 ? 'destructive' : undefined,
+      })
+    } catch (err) {
+      toast({ title: 'Could not resend invites', description: err instanceof Error ? err.message : 'Try again', variant: 'destructive' })
+    }
+  }
+
+  if (list.isLoading || rows.length === 0) return null
+  return (
+    <div data-testid="invited-not-started">
+      <SectionHead
+        title="Invited — not started yet"
+        sub={`${rows.length} ${rows.length === 1 ? 'person has' : 'people have'} not finished self-onboarding`}
+        right={
+          <Btn
+            kind="secondary"
+            size="sm"
+            icon={<Icon.send size={13} />}
+            onClick={() => void resendEveryone()}
+            disabled={resendAll.isPending}
+            data-testid="resend-all-pending"
+          >
+            {resendAll.isPending ? 'Sending…' : `Resend all (${rows.length})`}
+          </Btn>
+        }
+      />
+      <div className="card" style={{ marginTop: 12, padding: 0, overflow: 'hidden' }}>
+        {rows.map((e, i) => (
+          <div
+            key={e.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              padding: '12px 18px',
+              borderTop: i === 0 ? 'none' : '1px solid var(--bord)',
+              flexWrap: 'wrap',
+            }}
+          >
+            <Avatar name={e.name || e.email} size="sm" src={e.avatarUrl} />
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Link href={`/employees/${e.id}`} style={{ fontSize: 13.5, fontWeight: 800 }} className="hover:underline">
+                  {e.name || e.email}
+                </Link>
+                <Pill tone={e.uiStatus === 'onboarding' ? 'blue' : ''} dot>
+                  {e.uiStatus === 'onboarding' ? 'Onboarding' : 'Invited'}
+                </Pill>
+                {e.employeeCode && <Pill>{e.employeeCode}</Pill>}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)', marginTop: 3 }}>
+                {[e.designation, e.department].filter(Boolean).join(' · ') || e.email}
+              </div>
+            </div>
+            <Btn
+              kind="secondary"
+              size="sm"
+              icon={<Icon.send size={13} />}
+              onClick={() => void resendOne(e)}
+              disabled={busyId === e.id || resendAll.isPending}
+              data-testid="resend-invite-row"
+            >
+              {busyId === e.id ? 'Sending…' : 'Resend invite'}
+            </Btn>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

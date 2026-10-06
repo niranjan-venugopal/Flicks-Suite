@@ -25,7 +25,9 @@ export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
   @Get('logs')
-  @Roles('admin')
+  // Round Q (founder 2026-10-06): HR admins get Insights → Reports only; the
+  // full audit trail is the Owner's.
+  @Roles('owner')
   @ApiOperation({ summary: 'Get audit logs', description: 'Paginated audit log search for current tenant.' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })

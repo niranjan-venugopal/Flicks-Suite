@@ -69,6 +69,8 @@ interface InboxItem {
   tone: PillTone
   /** Round L — null while the item is still with the reporting manager. */
   escalation: ApprovalEscalation | null
+  /** Round Q — an onboarding review that has waited over 24 hours. */
+  overdue?: boolean
   raw: LeaveRow | RegularizationRow | PendingTimesheetRow | OnboardingRow
 }
 
@@ -160,6 +162,7 @@ function buildItems(o: AdminOverview | undefined): InboxItem[] {
       reason: null,
       tone: 'yellow',
       escalation: null,
+      overdue: !!ob.escalatedAt,
       raw: ob,
     })
   }
@@ -518,6 +521,7 @@ export function ApprovalsTab({
                       <Pill tone={a.tone}>{KIND_LABEL[a.kind]}</Pill>
                       {/* Round L: everything listed here is routed to the caller. */}
                       <EscalationPill escalation={a.escalation} routedToMe />
+                      {a.overdue && <Pill tone="coral">Waiting 24h+</Pill>}
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 2 }}>
                       {a.what}
@@ -600,6 +604,7 @@ function ApprovalDetail({
             <Pill tone={item.tone}>{item.kind.toUpperCase()}</Pill>
             <Pill>{item.id.slice(0, 8)}</Pill>
             <EscalationPill escalation={item.escalation} routedToMe />
+            {item.overdue && <Pill tone="coral">Waiting 24h+</Pill>}
           </div>
           <div className="t-h2" style={{ fontSize: 18 }}>
             {item.who}

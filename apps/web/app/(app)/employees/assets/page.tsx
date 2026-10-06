@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Avatar, Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
+import { Avatar, Btn, Icon, Kpi, Pill, SectionHead, Segmented } from '@/components/proto'
 import { SkeletonCards, SkeletonRows } from '@/components/states'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -30,10 +30,18 @@ import { AssetFormModal } from '@/components/assets/AssetFormModal'
 import { AssignAssetModal } from '@/components/assets/AssignAssetModal'
 import { ReturnAssetModal } from '@/components/assets/ReturnAssetModal'
 import { AssetDrawer } from '@/components/assets/AssetDrawer'
+import { MyAssetsView } from '@/components/assets/MyAssetsView'
 import { assetMake, fmtAssetDate } from '@/components/assets/format'
 import { useDebounced } from '@/components/assets/useDebounced'
 
 /**
+ * Round Q — People → Assets for EVERY seat (founder: "instead of adding the
+ * assets as Personal separately … show it in the People menu, inside
+ * Assets"). Owners / HR admins get a "My assets | All assets" toggle
+ * (`?view=me` deep-links the first; old /assets/me links redirect here);
+ * everyone else only ever sees their own equipment — the register API stays
+ * admin-only either way.
+ *
  * Round P R4 — People → Assets: the company equipment register. KPIs,
  * filters, the table with per-row Assign / Return / Edit / Delete, a
  * right-side detail drawer, CSV export, and the ?assign=<employeeId> entry
@@ -88,16 +96,52 @@ function MenuItem({ onClick, danger, children, disabled, title }: { onClick: () 
   )
 }
 
-export default function AssetsRegisterPage() {
+export default function AssetsPage() {
   // useSearchParams() needs a Suspense boundary for Next's static export step.
   return (
     <Suspense fallback={null}>
-      <AssetsRegisterInner />
+      <AssetsPageInner />
     </Suspense>
   )
 }
 
-function AssetsRegisterInner() {
+type AssetsView = 'me' | 'all'
+const VIEW_OPTIONS: ReadonlyArray<{ key: AssetsView; label: string }> = [
+  { key: 'me', label: 'My assets' },
+  { key: 'all', label: 'All assets' },
+]
+
+function AssetsPageInner() {
+  const router = useRouter()
+  const sp = useSearchParams()
+  const role = useAuthStore((s) => s.currentUser?.role)
+  const canManage = role === 'OWNER' || role === 'HR_ADMIN' || role === 'FAM'
+  // A platform admin looking in holds no equipment of their own.
+  const hasOwnAssets = role !== 'FAM'
+  // The register is the default for Owners / HR (their working list); the
+  // ?assign= flow always needs it.
+  const view: AssetsView = !canManage
+    ? 'me'
+    : !hasOwnAssets || sp.get('assign') || sp.get('view') !== 'me'
+      ? 'all'
+      : 'me'
+  const toggle =
+    canManage && hasOwnAssets ? (
+      <Segmented
+        value={view}
+        onChange={(v) =>
+          router.replace(v === 'me' ? '/employees/assets?view=me' : '/employees/assets', { scroll: false })
+        }
+        options={VIEW_OPTIONS}
+        ariaLabel="Assets view"
+        testIdPrefix="assets-view"
+      />
+    ) : null
+  if (view === 'me') return <MyAssetsView headerExtra={toggle} />
+  return <AssetsRegister toggle={toggle} />
+}
+
+function AssetsRegister({ toggle }: { toggle: React.ReactNode }) {
   const router = useRouter()
   const sp = useSearchParams()
   const { toast } = useToast()
@@ -189,23 +233,6 @@ function AssetsRegisterInner() {
     }
   }
 
-  if (!canManage) {
-    return (
-      <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: 1280, margin: '0 auto' }}>
-          <SectionHead title="Assets" sub="Company equipment — who holds what, and when it came back." />
-          <div className="card" style={{ textAlign: 'center', padding: '34px 24px' }}>
-            <Icon.lock size={20} style={{ color: 'var(--text-faint)', marginBottom: 10 }} />
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>Owners and admins only</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-mute)' }}>
-              The register is managed by HR. Your own equipment is under My assets.
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   const forbidden = list.error instanceof APIError && list.error.status === 403
 
   return (
@@ -221,7 +248,8 @@ function AssetsRegisterInner() {
                 : 'Company equipment — who holds what, and when it came back.'
           }
           right={
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {toggle}
               {/* The export is the whole register, so it is gated on the summary, not the filtered list. */}
               <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />} onClick={() => void doExport()} disabled={exportCsv.isPending || (s ? s.total === 0 : total === 0)}>
                 {exportCsv.isPending ? 'Exporting…' : 'Export CSV'}

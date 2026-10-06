@@ -13,7 +13,9 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get('attendance')
-  @Roles('manager')
+  // Round Q: company-wide HR reports are Owner / HR admin data (Insights →
+  // Reports). Managers see their team on the team pages, not everyone here.
+  @Roles('admin')
   @Header('Cache-Control', 'private, max-age=60')
   @ApiOperation({
     summary: 'Attendance compliance report',
@@ -29,7 +31,7 @@ export class ReportsController {
   }
 
   @Get('leave')
-  @Roles('manager')
+  @Roles('admin')
   @Header('Cache-Control', 'private, max-age=60')
   @ApiOperation({
     summary: 'Leave consumption report',
@@ -45,7 +47,7 @@ export class ReportsController {
   }
 
   @Get('headcount')
-  @Roles('manager')
+  @Roles('admin')
   @Header('Cache-Control', 'private, max-age=60')
   @ApiOperation({
     summary: 'Headcount summary',

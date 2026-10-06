@@ -498,6 +498,8 @@ export class DashboardService {
                 avatarUrl: users.avatar_url,
                 avatarKey: users.avatar_key,
                 submittedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_submitted_at'`,
+                // Round Q: set by the 24-hour onboarding escalation.
+                escalatedAt: sql<string | null>`${employees.custom_fields}->>'onboarding_escalated_at'`,
               })
               .from(employees)
               .leftJoin(users, eq(employees.user_id, users.id))
@@ -509,7 +511,12 @@ export class DashboardService {
                 and(
                   eq(employees.tenant_id, tenantId),
                   sql`(${employees.custom_fields}->>'onboarding_submitted_for_review')::boolean = true`,
-                  ne(employees.status, 'active'),
+                  // Round Q: only people who have not joined yet, never an
+                  // off-boarded (notice / separated) or removed one — the flag
+                  // survives approval, so `status <> 'active'` resurfaced
+                  // every off-boarded person as "waiting for approval".
+                  eq(employees.status, 'inactive'),
+                  isNull(employees.deleted_at),
                   sql`${employees.user_id} IS DISTINCT FROM ${opts.callerUserId}`,
                   // Round 18: an owner/admin seat is the owners' to sign off —
                   // a peer admin holds the same powers, so it would be
@@ -553,6 +560,7 @@ export class DashboardService {
                 avatarUrl: string | null;
                 avatarKey: string | null;
                 submittedAt: string | null;
+                escalatedAt: string | null;
               }>,
             ),
       ]);

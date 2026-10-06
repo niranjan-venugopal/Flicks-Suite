@@ -9,6 +9,7 @@ import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { DashboardService } from './dashboard.service';
 import { ActivityQueryDto } from './dashboard.dto';
+import { Roles } from '../../core/auth/decorators/roles.decorator';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth('access-token')
@@ -60,6 +61,10 @@ export class DashboardController {
   }
 
   @Get('admin/activity')
+  // Round Q: this IS the audit trail (actor, action, resource) — any member
+  // could read it before. Owner / HR admin, the only seats whose dashboard
+  // shows it.
+  @Roles('admin')
   @ApiOperation({
     summary: 'Recent activity feed (audit log)',
     description:

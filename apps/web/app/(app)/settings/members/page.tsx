@@ -36,7 +36,11 @@ const ROLE_LABELS: Record<MembershipRole, string> = {
 
 // Roles a customer admin can assign (fam is Specflicks-internal only;
 // auditors are invited through the grant-scoped flow, not the role select).
-const ASSIGNABLE_ROLES: MembershipRole[] = ['owner', 'admin', 'manager', 'employee']
+// Round Q (founder): only an Owner hands out Owner / HR admin, and only an
+// Owner changes or switches off an Owner or HR-admin seat — the API enforces
+// the same rule; these lists just keep HR from picking what would 403.
+const OWNER_ASSIGNABLE_ROLES: MembershipRole[] = ['owner', 'admin', 'manager', 'finance', 'employee']
+const HR_ASSIGNABLE_ROLES: MembershipRole[] = ['manager', 'finance', 'employee']
 
 // Short labels for the auditor "Granted scope" pills.
 const GRANT_LABELS: Record<string, string> = {
@@ -389,7 +393,11 @@ export default function MembersSettingsPage() {
               {items.map((m, i, arr) => {
                 const isMe = m.userId === currentUser?.id
                 const name = displayName(m)
-                const canEdit = m.role !== 'fam' && m.role !== 'super_admin' && !isMe
+                const isOwnerViewer = currentUser?.role === 'OWNER'
+                const seniorSeat = m.role === 'owner' || m.role === 'admin'
+                const canEdit =
+                  m.role !== 'fam' && m.role !== 'super_admin' && !isMe && (isOwnerViewer || !seniorSeat)
+                const roleOptions = isOwnerViewer ? OWNER_ASSIGNABLE_ROLES : HR_ASSIGNABLE_ROLES
 
                 return (
                   <tr
@@ -426,7 +434,7 @@ export default function MembersSettingsPage() {
                           onChange={(e) => handleRoleChange(m, e.target.value as MembershipRole)}
                           disabled={updateRole.isPending}
                         >
-                          {ASSIGNABLE_ROLES.map((r) => (
+                          {(roleOptions.includes(m.role) ? roleOptions : [m.role, ...roleOptions]).map((r) => (
                             <option key={r} value={r}>{ROLE_LABELS[r]}</option>
                           ))}
                         </select>
@@ -458,6 +466,7 @@ export default function MembersSettingsPage() {
                           size="sm"
                           onClick={() => handleStatusToggle(m)}
                           disabled={!canEdit || deactivate.isPending || reactivate.isPending}
+                          title={!canEdit && seniorSeat && !isMe ? 'Only an owner can change an owner or HR admin' : undefined}
                         >
                           {m.status === 'deactivated' ? 'Reactivate' : 'Deactivate'}
                         </Btn>

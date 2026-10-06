@@ -544,21 +544,43 @@ export class TransferEmployeeDto {
   effectiveDate?: string;
 }
 
+export const SEPARATION_TYPES = [
+  'resigned',
+  'terminated',
+  'absconded',
+  'retired',
+  'end_of_contract',
+] as const;
+
 export class TerminateEmployeeDto {
-  @ApiProperty({ description: 'Reason for termination' })
+  @ApiProperty({ description: 'Reason for the off-boarding (shown in their history)' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(1000)
   reason: string;
 
-  @ApiPropertyOptional()
-  @IsString()
+  @ApiPropertyOptional({
+    description:
+      'Last working day (YYYY-MM-DD) for a notice-period off-boarding. Defaults to today + their notice period. Ignored when `immediate` is true.',
+  })
+  @IsDateString({ strict: true })
   @IsOptional()
   lastWorkingDate?: string;
 
-  @ApiPropertyOptional({ enum: ['resigned', 'terminated', 'absconded', 'retired', 'end_of_contract'] })
-  @IsString()
+  @ApiPropertyOptional({ enum: SEPARATION_TYPES })
+  @IsIn(SEPARATION_TYPES)
   @IsOptional()
   separationType?: string;
+
+  /**
+   * Round Q: true → off-boarded and signed out NOW (no notice period);
+   * false / omitted → the notice period starts and the separation job
+   * finishes it after the last working day.
+   */
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  @IsOptional()
+  immediate?: boolean;
 }
 
 export class EmployeeListQueryDto {

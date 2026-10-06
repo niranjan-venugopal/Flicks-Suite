@@ -34,6 +34,7 @@ import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { MediaService } from '../media/media.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { assertMayActOnSeat, assertMayGrantRole } from '../../core/auth/seat-guards';
 import type {
   CreateDepartmentDto,
   UpdateDepartmentDto,
@@ -1387,6 +1388,22 @@ export class SettingsService {
     return { data, total: data.length };
   }
 
+  /** The caller's ACTIVE seat role in this tenant (dbAdmin: explicit tenant predicate). */
+  private async actorSeatRole(tenantId: string, userId: string): Promise<string | null> {
+    const [row] = await this.dbAdmin
+      .select({ role: memberships.role })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.user_id, userId),
+          eq(memberships.status, 'active'),
+        ),
+      )
+      .limit(1);
+    return row?.role ?? null;
+  }
+
   async updateMemberRole(
     membershipId: string,
     tenantId: string,
@@ -1407,6 +1424,22 @@ export class SettingsService {
     if (!before) {
       throw new NotFoundException('Member not found');
     }
+
+    // Round Q (founder 2026-10-06): only an Owner controls Owner and HR-admin
+    // seats. Before this an HR admin could promote anyone — themselves
+    // included — to Owner (or, through the API, to the platform role `fam`),
+    // and demote an Owner. Platform roles are never assignable here.
+    // Defence in depth behind the DTO (a service-level caller skips it).
+    const requested: string = dto.role;
+    if (requested === 'fam' || requested === 'super_admin') {
+      throw new BadRequestException('Platform roles cannot be assigned from workspace settings.');
+    }
+    if (before.user_id === actorUserId) {
+      throw new BadRequestException('You cannot change your own role. Ask an owner.');
+    }
+    const actorRole = await this.actorSeatRole(tenantId, actorUserId);
+    assertMayActOnSeat({ actorRole, targetRole: before.role, isSelf: false, verb: 'change the role of' });
+    assertMayGrantRole({ actorRole, newRole: dto.role });
 
     // Safeguard: cannot demote the only Owner — every tenant needs at least one.
     if (before.role === 'owner' && dto.role !== 'owner') {
@@ -1472,6 +1505,15 @@ export class SettingsService {
     if (!before) {
       throw new NotFoundException('Member not found');
     }
+
+    // Round Q: the shared seat rules — nobody switches their own seat, and
+    // Owner / HR-admin seats are the Owner's call.
+    assertMayActOnSeat({
+      actorRole: await this.actorSeatRole(tenantId, actorUserId),
+      targetRole: before.role,
+      isSelf: before.user_id === actorUserId,
+      verb: status === 'deactivated' ? 'deactivate' : 'reactivate',
+    });
 
     if (status === 'deactivated' && before.role === 'owner') {
       const [{ value: ownerCount }] = await this.dbAdmin
