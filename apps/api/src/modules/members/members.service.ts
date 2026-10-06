@@ -394,7 +394,8 @@ export class MembersService {
     const before = await this.dbAdmin
       .select()
       .from(membershipGrants)
-      .where(eq(membershipGrants.membership_id, membershipId));
+      // dbAdmin bypasses RLS: carry the tenant predicate too (house rule 1).
+      .where(and(eq(membershipGrants.tenant_id, tenantId), eq(membershipGrants.membership_id, membershipId)));
 
     const grants = await this.replaceGrants(tenantId, membershipId, dto.grants);
 
@@ -432,12 +433,19 @@ export class MembersService {
     tenantId: string,
   ) {
     const membership = await this.assertGrantTarget(membershipId, tenantId);
+    if (membership.role === 'auditor' && module === 'policies' && dto.access_level !== 'none') {
+      throw new ConflictException(
+        'Company policies are not available to external auditors.',
+      );
+    }
 
     const [before] = await this.dbAdmin
       .select()
       .from(membershipGrants)
       .where(
         and(
+          // dbAdmin bypasses RLS: carry the tenant predicate too (house rule 1).
+          eq(membershipGrants.tenant_id, tenantId),
           eq(membershipGrants.membership_id, membershipId),
           eq(membershipGrants.module, module),
         ),
@@ -597,6 +605,11 @@ export class MembersService {
     actorUserId: string,
     tenantId: string,
   ) {
+    if (dto.defaults.some((d) => d.role === 'auditor' && d.module === 'policies' && d.access_level !== 'none')) {
+      throw new ConflictException(
+        'Company policies are not available to external auditors.',
+      );
+    }
     await this.db.withTenant(
       tenantId,
       async (tx) => {

@@ -491,3 +491,59 @@ describe('R5-4 — invalid values are refused at BOTH doors', () => {
     expect(bare.color).toBeUndefined();
   });
 });
+
+describe('R5-5 — security audit (2026-10-06): the sync door never leaks another workspace\'s project', () => {
+  let otherTenant: string;
+  let otherOwner: string;
+
+  beforeAll(async () => {
+    const [t] = await dbAdmin
+      .insert(tenants)
+      .values({ name: `RP5 Other ${rid()}`, slug: `rp5-other-${rid()}-${Date.now()}`, status: 'active', currency: 'INR' })
+      .returning();
+    otherTenant = t!.id;
+    const [u] = await dbAdmin
+      .insert(users)
+      .values({ email: `rp5-other-${rid()}@t.test`, full_name: 'RP5 Other owner', status: 'active' })
+      .returning();
+    otherOwner = u!.id;
+    trackedUsers.push(otherOwner);
+    await dbAdmin.insert(memberships).values({ tenant_id: otherTenant, user_id: otherOwner, role: 'owner', status: 'active' });
+    await teamsSvc.ensureWorkspace(otherTenant, otherOwner);
+  });
+
+  afterAll(async () => {
+    await dbAdmin.delete(domainEvents).where(eq(domainEvents.tenant_id, otherTenant));
+    await dbAdmin.delete(tenants).where(eq(tenants.id, otherTenant));
+  });
+
+  it('project.create re-using a project id from another workspace answers a generic E409 — no driver text, no existence detail — and the victim row is untouched', async () => {
+    const victim = await mkProject({ icon: 'lucide:rocket', color: '#DC2626' });
+    const before = await rowOf(victim.id);
+    const res = await executor.execute(otherTenant, otherOwner, [
+      { clientMutationId: crypto.randomUUID(), op: 'project.create' as const, id: victim.id, fields: { name: 'collide', icon: 'lucide:bug' } },
+      { clientMutationId: crypto.randomUUID(), op: 'project.update' as const, id: victim.id, fields: { name: 'pwned', icon: 'lucide:bug' } },
+    ]);
+    expect(res.results[0]).toMatchObject({ status: 'rejected', errorCode: 'E409:Already exists' });
+    expect(res.results[1]!.status).toBe('rejected');
+    for (const r of res.results) {
+      expect(r.errorCode).not.toMatch(/duplicate key|violates|constraint|pm_projects|invalid input syntax/);
+    }
+    expect(await rowOf(victim.id)).toEqual(before);
+    const leaked = await dbAdmin.select({ id: pmProjects.id }).from(pmProjects).where(and(eq(pmProjects.tenant_id, otherTenant), eq(pmProjects.name, 'collide')));
+    expect(leaked).toHaveLength(0);
+  });
+});
+
+describe('R5-6 — security audit (2026-10-06): a project can only link a deal of its own workspace', () => {
+  it('create with a deal id that is not a live deal of this workspace → 404 on both doors, nothing inserted', async () => {
+    const strangerDeal = crypto.randomUUID();
+    const name = `Deal link ${rid()}`;
+    await expect(projectsSvc.create(tenantId, ownerId, { name, team_ids: [teamId], deal_id: strangerDeal })).rejects.toThrow('Deal not found');
+    const res = await executor.execute(tenantId, ownerId, [
+      { clientMutationId: crypto.randomUUID(), op: 'project.create' as const, id: crypto.randomUUID(), fields: { name, team_ids: [teamId], deal_id: strangerDeal } },
+    ]);
+    expect(res.results[0]).toMatchObject({ status: 'rejected', errorCode: 'E404:Deal not found' });
+    expect(await dbAdmin.select({ id: pmProjects.id }).from(pmProjects).where(and(eq(pmProjects.tenant_id, tenantId), eq(pmProjects.name, name)))).toHaveLength(0);
+  });
+});

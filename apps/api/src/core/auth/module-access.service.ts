@@ -41,6 +41,15 @@ export const FULL_ACCESS_ROLES: Record<GrantModule, ReadonlySet<UserRole>> = {
 };
 
 /**
+ * Seats a module never opens to, whatever a grant row or a role default says
+ * (security audit 2026-10-06). External auditors (a CA firm) and project
+ * guests never see company policies — drafts, who signed, members' emails.
+ */
+export const MODULE_EXCLUDED_ROLES: Partial<Record<GrantModule, ReadonlySet<UserRole>>> = {
+  policies: new Set<UserRole>(['auditor', 'guest']),
+};
+
+/**
  * Access a role holds with NO rows anywhere — the shipped default. CRM and PM
  * are org-open for standard members (the SMB default); everything else —
  * including 'policies' (Round P R3) — is opt-in via a grant row.
@@ -234,6 +243,35 @@ export class ModuleAccessService {
     };
   }
 
+  /**
+   * Live seat for the ranked @Roles(...) gate (security audit 2026-10-06): the
+   * membership row — not the 15-minute access token — decides whether the
+   * caller still holds the seat and at which role, so a removal, a
+   * deactivation, an expiry or a demotion takes effect on the very next
+   * request instead of when the token runs out. Never cached. Service role
+   * with an explicit tenant predicate (house rule 1). Null when the token
+   * carries no membership (platform-level tokens).
+   */
+  async liveSeat(
+    tenantId: string,
+    membershipId: string,
+  ): Promise<{ active: boolean; role: UserRole | null } | null> {
+    const [m] = await this.dbAdmin
+      .select({
+        status: memberships.status,
+        expires: memberships.access_expires_at,
+        role: memberships.role,
+      })
+      .from(memberships)
+      .where(and(eq(memberships.id, membershipId), eq(memberships.tenant_id, tenantId)))
+      .limit(1);
+    if (!m) return { active: false, role: null };
+    return {
+      active: m.status === 'active' && (!m.expires || new Date(m.expires).getTime() > Date.now()),
+      role: (m.role as UserRole | undefined) ?? null,
+    };
+  }
+
   /** The member's grant row for one module — the only cached piece. */
   private async grantRow(
     tenantId: string,
@@ -297,6 +335,19 @@ export class ModuleAccessService {
   ): Promise<ResolvedAccess> {
     const ctx = await this.loadContext(tenantId, membershipId, module, userId);
     const effectiveRole = ctx.liveRole ?? role;
+
+    // Security audit 2026-10-06: some modules never open to some seats,
+    // whatever a grant row or role default says — external auditors and
+    // project guests never see company policies (drafts, who signed, emails).
+    if (MODULE_EXCLUDED_ROLES[module]?.has(effectiveRole)) {
+      return {
+        level: 'none',
+        capabilities: {},
+        source: 'role',
+        moduleEnabled: ctx.moduleEnabled,
+        membershipActive: ctx.membershipActive,
+      };
+    }
 
     if (FULL_ACCESS_ROLES[module].has(effectiveRole)) {
       return {

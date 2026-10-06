@@ -45,6 +45,8 @@ import {
 export abstract class ModuleGrantGuard implements CanActivate {
   protected abstract readonly module: GrantModule;
   protected abstract readonly moduleDisplayName: string;
+  /** Live roles this module never opens to, regardless of grants / defaults. */
+  protected readonly excludedRoles: readonly UserRole[] = [];
 
   constructor(
     protected readonly reflector: Reflector,
@@ -104,6 +106,13 @@ export abstract class ModuleGrantGuard implements CanActivate {
     // The membership row is the source of truth for the role: a demotion takes
     // effect immediately instead of waiting out the 15-minute access token.
     const role: UserRole = ctx.liveRole ?? user.role;
+
+    // Roles a module never opens to, whatever a grant row or role default
+    // says (e.g. external auditor seats never see company policies).
+    if (this.excludedRoles.includes(role)) {
+      await this.logDenied(req, user, 'role_excluded', requirement);
+      throw new ForbiddenException(`${this.moduleDisplayName} is not available to this seat`);
+    }
 
     let level: AccessLevel;
     let capabilities: Record<string, boolean> = {};

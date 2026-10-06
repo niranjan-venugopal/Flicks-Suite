@@ -3,18 +3,23 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import type { JwtPayload, UserRole } from '@flicks/shared/types';
 import { AuditService } from '../../../modules/audit/audit.service';
+import { ModuleAccessService } from '../module-access.service';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(
     private reflector: Reflector,
     private readonly audit: AuditService,
+    // Optional so hand-built guards in unit specs keep ranking the token role;
+    // in the app it is always injected (ModuleAccessModule is @Global).
+    @Optional() private readonly access?: ModuleAccessService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -61,7 +66,23 @@ export class RolesGuard implements CanActivate {
       guest: 0,
     };
 
-    const userLevel = roleHierarchy[user.role] ?? 0;
+    // Security audit 2026-10-06: rank the LIVE membership, not the role baked
+    // into the 15-minute access token. Before this, an HR admin removed or
+    // demoted at 10:00 kept every @Roles('admin') route (asset register, CSV
+    // exports, employee records) until the token expired. The module-grant
+    // guards (policies, projects, invoicing) already read the live seat; this
+    // brings every ranked route in line.
+    let role: UserRole = user.role;
+    if (this.access && user.tenantId && user.membershipId) {
+      const seat = await this.access.liveSeat(user.tenantId, user.membershipId);
+      if (!seat || !seat.active) {
+        await this.logDenied(req, user, requiredRoles);
+        throw new ForbiddenException('Your access to this workspace is no longer active');
+      }
+      role = seat.role ?? user.role;
+    }
+
+    const userLevel = roleHierarchy[role] ?? 0;
     const hasRole = requiredRoles.some((role) => {
       const requiredLevel = roleHierarchy[role] ?? 0;
       return userLevel >= requiredLevel;

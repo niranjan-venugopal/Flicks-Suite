@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, APIError } from '../client'
 import { resetAnalytics } from '@/lib/analytics/posthog'
+import { destroyAllPmDbs } from '@/lib/pm/idb'
 import { useToast } from '@/components/ui/use-toast'
 import {
   applyPreference,
@@ -371,7 +372,7 @@ export function useUpdateTheme() {
 }
 
 export function useLogout() {
-  const { logout } = useAuthStore()
+  const { logout, currentUser } = useAuthStore()
 
   return useMutation({
     mutationFn: () => api.post<void>('/api/v1/auth/logout'),
@@ -382,7 +383,12 @@ export function useLogout() {
     // refetch silently re-authenticating the user (the original bug). We
     // deliberately do NOT call queryClient.clear() here — that was what
     // triggered the re-auth refetch; the hard reload handles cache teardown.
-    onSettled: () => {
+    onSettled: async () => {
+      // Security audit 2026-10-06: wipe the offline Projects databases before
+      // leaving, so the next person on a shared PC finds nothing in IndexedDB.
+      // Bounded (1.5 s) and best-effort — logout always completes.
+      const fallback = currentUser ? [{ tenantId: currentUser.tenantId, userId: currentUser.id }] : []
+      await destroyAllPmDbs(1500, fallback).catch(() => undefined)
       logout()
       resetAnalytics()
       window.location.assign('/login')

@@ -26,6 +26,16 @@ const GUEST_ALLOWED_OPS = new Set([
   'comment.create',
 ]);
 
+/** Postgres unique violation (SQLSTATE 23505), looked up through drizzle's `cause` chain. */
+function isUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (typeof current === 'object' && (current as { code?: unknown }).code === '23505') return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /**
  * FSE mutation executor (PRD v6 §3.5). Per item: idempotency check against
  * sync_mutations → delegate to the SAME domain-service method the REST path
@@ -123,16 +133,26 @@ export class PmMutationExecutor {
         results.push({ clientMutationId: item.clientMutationId, status: 'applied', rows });
         anyApplied = true;
       } catch (err) {
-        const code =
-          err instanceof HttpException
-            ? `E${err.getStatus()}`
-            : 'E500';
         const message = err instanceof Error ? err.message : String(err);
+        // Only our own HttpExceptions carry client-safe copy. Anything else is
+        // a driver / runtime error whose text names constraints and internals
+        // (e.g. a project.create re-using an existing id answered
+        // `duplicate key value violates unique constraint "pm_projects_pkey"`,
+        // confirming the id exists in some workspace) — answer with a generic
+        // code and keep the raw text in the server log only. Same rule as the
+        // global HttpExceptionFilter's production masking.
+        const errorCode =
+          err instanceof HttpException
+            ? `E${err.getStatus()}:${message.slice(0, 140)}`
+            : isUniqueViolation(err)
+              ? 'E409:Already exists'
+              : 'E500:Something went wrong — try again';
+        const code = errorCode.slice(0, errorCode.indexOf(':'));
         await this.ledger(tenantId, userId, item.clientMutationId, 'rejected', code).catch(() => undefined);
         results.push({
           clientMutationId: item.clientMutationId,
           status: 'rejected',
-          errorCode: `${code}:${message.slice(0, 140)}`,
+          errorCode,
         });
         this.logger.warn(`pm mutate rejected op=${item.op} user=${userId}: ${message}`);
       }

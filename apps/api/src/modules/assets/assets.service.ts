@@ -1204,7 +1204,9 @@ export class AssetsService {
       const { current_assignment, ...asset } = await this.toAsset(r);
       if (!current_assignment) continue;
       data.push({
-        asset,
+        // Security audit 2026-10-06: what the company paid is HR's business,
+        // not the holder's — the self-service view never carries it.
+        asset: { ...asset, purchase_date: null, purchase_value: null },
         assignment: {
           id: current_assignment.id,
           assigned_at: current_assignment.assigned_at,

@@ -29,4 +29,9 @@ export class PoliciesGrantGuard extends ModuleGrantGuard {
 
   protected readonly module = 'policies' as const;
   protected readonly moduleDisplayName = 'Policies';
+  // Security audit 2026-10-06: external auditors (a CA firm) and project
+  // guests never manage or read company policies, even if a grant row or a
+  // role default says otherwise. Members' own self-service routes carry no
+  // @RequireGrant and are unaffected (they already return [] for these seats).
+  protected readonly excludedRoles = ['auditor', 'guest'] as const;
 }

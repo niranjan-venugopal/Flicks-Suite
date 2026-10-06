@@ -8,6 +8,8 @@ import {
   HttpStatus,
   Logger,
   Inject,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { eq, ne, and, inArray, desc, asc, sql, or, isNull, isNotNull, lte, gte, lt, gt } from 'drizzle-orm';
@@ -48,6 +50,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthService } from '../auth/auth.service';
 import { MediaService } from '../media/media.service';
+import { R2Service } from '../../core/storage/r2.service';
 // Round P R4: equipment held by the person — plain tx helpers via the assets
 // module's public facade (house rule 3), run inside our own tenant tx.
 import {
@@ -236,6 +239,9 @@ export class EmployeesService {
     // renders a face must go through this: the upload path writes ONLY
     // avatar_key, so the legacy avatar_url columns stay null forever.
     private readonly mediaService: MediaService,
+    // Signs employee-document GETs (security audit 2026-10-06). Optional and
+    // last so hand-built services in specs keep compiling; R2 is global.
+    @Optional() private readonly r2?: R2Service,
   ) {}
 
   // AES-256-GCM for sensitive at-rest columns (PAN, bank account number).
@@ -2870,6 +2876,12 @@ export class EmployeesService {
         ...(dto.identity.pan !== undefined
           ? { pan: this.fieldCipher.encrypt(dto.identity.pan) }
           : {}),
+        // Security audit 2026-10-06: the passport number rode the spread in
+        // plain text and the payload is kept after review — encrypt it like
+        // PAN and the bank account number.
+        ...(dto.identity.passportNumber !== undefined && dto.identity.passportNumber !== null
+          ? { passportNumber: this.fieldCipher.encrypt(String(dto.identity.passportNumber)) }
+          : {}),
       };
     }
     if (dto.bank) {
@@ -3008,7 +3020,7 @@ export class EmployeesService {
       // writer re-encrypts them into the employee columns.
       const payload = request.payload as {
         personalInfo?: Record<string, unknown>;
-        identity?: { pan?: string } & Record<string, unknown>;
+        identity?: { pan?: string; passportNumber?: string } & Record<string, unknown>;
         bank?: { bankAccountNumber?: string } & Record<string, unknown>;
       };
       const dto: Record<string, unknown> = { step: request.step };
@@ -3018,6 +3030,11 @@ export class EmployeesService {
           ...payload.identity,
           ...(payload.identity.pan !== undefined
             ? { pan: this.fieldCipher.decrypt(payload.identity.pan) }
+            : {}),
+          // decrypt() returns legacy plaintext rows (written before the
+          // 2026-10-06 audit) unchanged, so old requests still apply.
+          ...(typeof payload.identity.passportNumber === 'string'
+            ? { passportNumber: this.fieldCipher.decrypt(payload.identity.passportNumber) }
             : {}),
         };
       }
@@ -3883,14 +3900,17 @@ export class EmployeesService {
   }
 
   async generateSignedUrl(r2Key: string): Promise<{ url: string; expiresAt: Date }> {
-    // In production: generate pre-signed Cloudflare R2 URL
-    // For now, return a placeholder structure
-    const publicUrl = this.configService.get<string>('R2_PUBLIC_URL', '');
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-
+    // Security audit 2026-10-06: this used to return `${R2_PUBLIC_URL}/<key>` —
+    // a permanent, unsigned public link (and a made-up expiry). Employee
+    // documents are private: sign a 15-minute GET, never hand out a public URL.
+    if (!r2Key) throw new NotFoundException('Document file not found');
+    if (!this.r2?.isConfigured()) {
+      throw new ServiceUnavailableException('File storage is not configured on this server.');
+    }
+    const ttlSeconds = 15 * 60;
     return {
-      url: `${publicUrl}/${r2Key}`,
-      expiresAt,
+      url: await this.r2.signedGetUrl(r2Key, ttlSeconds),
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000),
     };
   }
 

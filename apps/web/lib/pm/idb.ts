@@ -83,6 +83,42 @@ export async function openPmDb(tenantId: string, userId: string): Promise<PmDb |
   }
 }
 
+/**
+ * Logout wipe (security audit 2026-10-06): delete EVERY offline Projects
+ * database this browser holds (`fs-pm-<tenant>-<user>`, any workspace, any
+ * person), so the next person on a shared office PC cannot read issue titles,
+ * updates or names through devtools. An open handle in this or another tab
+ * receives `versionchange` and closes itself (`blocking()` above), letting
+ * the delete through. Bounded by `timeoutMs` so logout never hangs; unsynced
+ * offline edits are discarded with the rest, as signing out implies.
+ * Browsers without `indexedDB.databases()` fall back to the given pairs.
+ */
+export async function destroyAllPmDbs(
+  timeoutMs = 1500,
+  fallback: Array<{ tenantId: string; userId: string }> = [],
+): Promise<void> {
+  if (typeof indexedDB === 'undefined') return
+  let names: string[] = []
+  try {
+    const list = typeof indexedDB.databases === 'function' ? await indexedDB.databases() : null
+    names = list
+      ? list.map((d) => d.name ?? '').filter((n) => n.startsWith('fs-pm-'))
+      : fallback.map((f) => dbName(f.tenantId, f.userId))
+  } catch {
+    names = fallback.map((f) => dbName(f.tenantId, f.userId))
+  }
+  if (!names.length) return
+  const deletions = names.map(
+    (name) =>
+      new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(name)
+        req.onsuccess = () => resolve()
+        req.onerror = () => resolve()
+      }),
+  )
+  await Promise.race([Promise.all(deletions), new Promise<void>((r) => setTimeout(r, timeoutMs))])
+}
+
 export async function destroyPmDb(tenantId: string, userId: string): Promise<void> {
   if (typeof indexedDB === 'undefined') return
   await new Promise<void>((resolve) => {

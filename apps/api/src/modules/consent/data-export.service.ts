@@ -35,6 +35,8 @@ import {
   pmProjects,
   pmLabels,
   pmCycles,
+  assets,
+  assetAssignments,
 } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
@@ -56,15 +58,52 @@ type PolicyOrgExport = {
   acknowledgements: Record<string, unknown>[];
 };
 
+/**
+ * One CSV cell. Security audit 2026-10-06: names, titles and notes are
+ * member-editable free text, and Excel / Sheets execute a cell that starts
+ * with = + - @ (or a tab / CR) as a formula when the Owner opens the export
+ * (CWE-1236). Such text gets a leading apostrophe, the same convention as the
+ * policies and assets CSVs. Plain numbers ("-500.00") are data, not formulas,
+ * and stay numeric so financial figures keep their sign.
+ */
+export function exportCsvCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  let s = v instanceof Date ? v.toISOString() : String(v);
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Columns the organisation export never carries (security audit 2026-10-06).
+ * The export is a ZIP behind an emailed 7-day link, so it must not hold live
+ * credentials: Razorpay OAuth tokens + webhook secret, customer mandate
+ * tokens, public invoice-view tokens. Application-encrypted columns (PAN,
+ * passport, bank account) are dropped too — without the server key they are
+ * unreadable ciphertext, and if the key were ever missing they would be the
+ * plain values. Storage keys are internal paths, not data.
+ */
+export const EXPORT_SECRET_COLUMN =
+  /(_encrypted$|token|secret|oauth_state|password|_hash$|^photo_key$|^logo_key$|^file_key$|_storage_key$)/i;
+
+export function stripExportSecrets<T extends Record<string, unknown[]>>(data: T): Record<string, unknown[]> {
+  const out: Record<string, unknown[]> = {};
+  for (const [name, rows] of Object.entries(data)) {
+    out[name] = (rows as Record<string, unknown>[]).map((row) => {
+      const clean: Record<string, unknown> = {};
+      for (const [col, value] of Object.entries(row)) {
+        if (!EXPORT_SECRET_COLUMN.test(col)) clean[col] = value;
+      }
+      return clean;
+    });
+  }
+  return out;
+}
+
 /** Flat rows → CSV with a UTF-8 BOM (Excel-friendly). */
 function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return '﻿';
   const cols = Object.keys(rows[0]);
-  const esc = (v: unknown) => {
-    if (v === null || v === undefined) return '';
-    const s = v instanceof Date ? v.toISOString() : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
+  const esc = exportCsvCell;
   return (
     '﻿' +
     [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join(
@@ -339,27 +378,31 @@ export class DataExportService {
 
   private async buildOrgExport(userId: string, tenantId: string) {
     // Every module read runs under the tenant context so RLS scopes it (§3.5
-    // acceptance: "org export is tenant-scoped, RLS-verified").
+    // acceptance: "org export is tenant-scoped, RLS-verified") AND carries an
+    // explicit tenant predicate (house rule 1, security audit 2026-10-06).
     const data = await this.db.withTenant(tenantId, async (tx) => ({
-      employees: await tx.select().from(employees),
-      attendance: await tx.select().from(attendanceRecords),
-      leave: await tx.select().from(leaveRequests),
-      timesheets: await tx.select().from(timesheetEntries),
-      customers: await tx.select().from(customers),
-      items: await tx.select().from(items),
-      invoices: await tx.select().from(invoices),
-      invoice_line_items: await tx.select().from(invoiceLineItems),
-      payments: await tx.select().from(invoicePayments),
-      credit_notes: await tx.select().from(creditNotes),
-      debit_notes: await tx.select().from(debitNotes),
-      subscriptions: await tx.select().from(invoiceSubscriptions),
-      settings: await tx.select().from(invoicingSettings),
+      employees: await tx.select().from(employees).where(eq(employees.tenant_id, tenantId)),
+      attendance: await tx.select().from(attendanceRecords).where(eq(attendanceRecords.tenant_id, tenantId)),
+      leave: await tx.select().from(leaveRequests).where(eq(leaveRequests.tenant_id, tenantId)),
+      timesheets: await tx.select().from(timesheetEntries).where(eq(timesheetEntries.tenant_id, tenantId)),
+      customers: await tx.select().from(customers).where(eq(customers.tenant_id, tenantId)),
+      items: await tx.select().from(items).where(eq(items.tenant_id, tenantId)),
+      invoices: await tx.select().from(invoices).where(eq(invoices.tenant_id, tenantId)),
+      invoice_line_items: await tx.select().from(invoiceLineItems).where(eq(invoiceLineItems.tenant_id, tenantId)),
+      payments: await tx.select().from(invoicePayments).where(eq(invoicePayments.tenant_id, tenantId)),
+      credit_notes: await tx.select().from(creditNotes).where(eq(creditNotes.tenant_id, tenantId)),
+      debit_notes: await tx.select().from(debitNotes).where(eq(debitNotes.tenant_id, tenantId)),
+      subscriptions: await tx.select().from(invoiceSubscriptions).where(eq(invoiceSubscriptions.tenant_id, tenantId)),
+      settings: await tx.select().from(invoicingSettings).where(eq(invoicingSettings.tenant_id, tenantId)),
       // PM (PRD v6 §19) — projects layer joins the org export.
-      pm_teams: await tx.select().from(pmTeams),
-      pm_issues: await tx.select().from(pmIssues),
-      pm_projects: await tx.select().from(pmProjects),
-      pm_labels: await tx.select().from(pmLabels),
-      pm_cycles: await tx.select().from(pmCycles),
+      pm_teams: await tx.select().from(pmTeams).where(eq(pmTeams.tenant_id, tenantId)),
+      pm_issues: await tx.select().from(pmIssues).where(eq(pmIssues.tenant_id, tenantId)),
+      pm_projects: await tx.select().from(pmProjects).where(eq(pmProjects.tenant_id, tenantId)),
+      pm_labels: await tx.select().from(pmLabels).where(eq(pmLabels.tenant_id, tenantId)),
+      pm_cycles: await tx.select().from(pmCycles).where(eq(pmCycles.tenant_id, tenantId)),
+      // Round P R4 — the equipment register and who held what.
+      assets: await tx.select().from(assets).where(eq(assets.tenant_id, tenantId)),
+      asset_assignments: await tx.select().from(assetAssignments).where(eq(assetAssignments.tenant_id, tenantId)),
     }));
 
     // Round P R3: company policies + every acknowledgement, via the policies
@@ -368,7 +411,7 @@ export class DataExportService {
     // policy_acknowledgements.{json,csv} next to the other modules.
     const policyExport = await this.policiesForTenant(tenantId);
     const allData: Record<string, unknown[]> = {
-      ...data,
+      ...stripExportSecrets(data),
       policies: policyExport.policies,
       policy_acknowledgements: policyExport.acknowledgements,
     };

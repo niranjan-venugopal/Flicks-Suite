@@ -73,6 +73,8 @@ const securityHeaders = [
 ]
 
 const config: NextConfig = {
+  // Security audit 2026-10-06: don't advertise the framework (X-Powered-By).
+  poweredByHeader: false,
   images: { domains: ['files.flickssuite.com'] },
   // No floating "N" dev-tools badge, ever — production builds never include it,
   // and hiding it in dev too keeps demo/screenshot sessions clean.

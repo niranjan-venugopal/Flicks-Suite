@@ -67,6 +67,22 @@ async function bootstrap() {
         'JWT_SECRET is shorter than 48 chars — rotate to a stronger key: `openssl rand -base64 48`',
       );
     }
+    // Security audit 2026-10-06: the field ciphers pass values through in
+    // PLAIN TEXT when their key is blank (PAN / passport / bank numbers, the
+    // Razorpay tokens), and a blank TOTP_SECRET switches platform-admin 2FA
+    // off. Shout on every boot so a missing Railway variable can't go
+    // unnoticed. (Not a hard stop yet: refusing to boot would take the API
+    // down on deploy if a key is missing today — confirm the keys first,
+    // then this can become a throw.) Names only; values are never logged.
+    const missingKeys = ['EMPLOYEE_DATA_ENC_KEY', 'TOTP_SECRET', 'INVOICING_SECRET_ENC_KEY'].filter(
+      (k) => (configService.get<string>(k) ?? '').length < 32,
+    );
+    if (missingKeys.length) {
+      logger.error(
+        `SECURITY: encryption key(s) missing or shorter than 32 characters: ${missingKeys.join(', ')} — ` +
+          'sensitive fields are being stored WITHOUT application encryption. Set them in Railway (openssl rand -hex 32).',
+      );
+    }
   }
 
   // Security headers. The API serves only JSON + Swagger UI (no app HTML), so

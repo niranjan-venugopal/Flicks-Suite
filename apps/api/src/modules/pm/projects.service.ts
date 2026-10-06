@@ -13,6 +13,7 @@ import {
   pmWorkflowStates,
   memberships,
   users,
+  deals,
 } from '@flicks/db/schema';
 import type { Db } from '@flicks/db';
 import {
@@ -533,6 +534,18 @@ export class PmProjectsService {
         const teamIds = [...new Set(input.team_ids ?? [])];
         await this.assertTeamsInTenant(tx, tenantId, teamIds);
         await this.assertActiveMember(tx, tenantId, input.lead_user_id ? [input.lead_user_id] : []);
+        // Security audit 2026-10-06 (house rule 2): deal_id has no FK and rides
+        // the REST DTO and the sync door — prove it is THIS workspace's live
+        // deal inside the tenant tx, so a project can never point at (and a
+        // future CRM echo can never act on) another company's deal.
+        if (input.deal_id) {
+          const [deal] = await tx
+            .select({ id: deals.id })
+            .from(deals)
+            .where(and(eq(deals.tenant_id, tenantId), eq(deals.id, input.deal_id), isNull(deals.deleted_at)))
+            .limit(1);
+          if (!deal) throw new NotFoundException('Deal not found');
+        }
         const [project] = await tx
           .insert(pmProjects)
           .values({

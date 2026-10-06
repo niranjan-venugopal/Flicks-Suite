@@ -488,10 +488,16 @@ describe('register, assign, acknowledge, return', () => {
   });
 
   it('/assets/me: the holder sees their open assignments; a seat without an employee record and a non-holder get []', async () => {
+    // Give the laptop a price so the "never reaches the holder" check below is real.
+    await dbAdmin.update(assets).set({ purchase_value: '149999.00', purchase_date: '2026-09-01' }).where(eq(assets.id, L1));
     const mine = await service.myAssets(tenantA, e1User);
+    await dbAdmin.update(assets).set({ purchase_value: null, purchase_date: null }).where(eq(assets.id, L1));
     expect(mine.data).toHaveLength(1);
     expect(mine.data[0]!.asset).toMatchObject({ id: L1, asset_tag: 'AST-0001', name: 'MacBook Pro 14', status: 'assigned' });
     expect((mine.data[0]!.asset as unknown as { current_assignment?: unknown }).current_assignment).toBeUndefined();
+    // Security audit 2026-10-06: what the company paid never reaches the holder.
+    expect(mine.data[0]!.asset.purchase_value).toBeNull();
+    expect(mine.data[0]!.asset.purchase_date).toBeNull();
     expect(mine.data[0]!.assignment).toMatchObject({ assigned_by_name: 'Harry HR', issue_condition: 'new', notes: 'with charger' });
     expect(mine.data[0]!.assignment.acknowledged_at).toBeTruthy();
     expect((await service.myAssets(tenantA, ownerA)).data).toEqual([]);
