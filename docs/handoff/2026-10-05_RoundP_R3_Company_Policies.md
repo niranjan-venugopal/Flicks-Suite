@@ -49,7 +49,7 @@ Founder's ask: *"One more client wanted to add the Company policies to their org
 
 1. Run **`docs/handoff/apply-0067.sql`** in the Supabase SQL editor (service role; idempotent).
 2. Push `production` (API), then `main` (web).
-3. Optional: set `NEXT_PUBLIC_FILES_FRAME_SRC` on Vercel to the R2 public host origin so PDFs show inline; without it the "Open PDF" link still works.
+3. Optional: set `NEXT_PUBLIC_FILES_FRAME_SRC` on Vercel to the API's `R2_ENDPOINT` value (signed links are served from that host, not the public files domain; the full value can be pasted — only its origin is used, since 2026-10-06), then redeploy the web so PDFs show inline; without it the "Open PDF" link still works.
 
 ## 5. Tests
 

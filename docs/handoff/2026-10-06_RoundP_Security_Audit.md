@@ -1,6 +1,6 @@
 # Round P · Security audit — "no leaks, encrypted, nobody from another company can see it"
 
-**Date:** 2026-10-06 · **Type:** security audit + fixes · **Migration:** none · **Ships on top of:** `release/round-p-r5` · **Status:** see §6
+**Date:** 2026-10-06 · **Type:** security audit + fixes · **Migration:** none · **Ships on top of:** `release/round-p-r5` · **Status:** released 2026-10-06 (API 07:23 UTC, web 07:28 UTC); key hard stop follow-up in §7
 
 Founder's ask: *"Check whether there are no leaks with the asset management. Everything should be encrypted and saved and another user cannot view it from another company. Everything should be secure."*
 
@@ -38,7 +38,7 @@ Scripts: session scratchpad `audit/cross-tenant.mjs` (live attack; **85 checks**
 | 8 | The **offline-sync door echoed raw database errors** — re-using another company's project id answered `duplicate key … pm_projects_pkey`, confirming the id exists. | minor | Database errors answer "Already exists" / "Something went wrong"; the detail stays in the server log. |
 | 9 | Smaller: `/assets/me` sent the purchase price to the employee; a project could store another company's deal id (nothing read it yet); two admin-only grant reads lacked the company filter; the web advertised its framework (`X-Powered-By`). | minor | Price stripped from the self-service view; deal ids checked inside the company's transaction; filters added; header removed. |
 
-Plus a **loud startup error** in production when an encryption key is missing (§5.1).
+Plus a **loud startup error** in production when an encryption key is missing — since §7 a **hard stop**: the API refuses to start without the keys.
 
 ## 4. Tests
 
@@ -48,7 +48,7 @@ Plus a **loud startup error** in production when an encryption key is missing (�
 
 ## 5. Needs your decision / action (not changed in code)
 
-1. **Check the encryption keys on Railway today.** If `EMPLOYEE_DATA_ENC_KEY` is missing, PAN / passport / bank numbers are stored *without* encryption, silently; if `TOTP_SECRET` is missing, platform-admin 2FA is off; `INVOICING_SECRET_ENC_KEY` protects the Razorpay tokens. Each should be at least 32 characters (`openssl rand -hex 32`). From this release the API logs `SECURITY: encryption key(s) missing…` at every boot if one is absent. Once you confirm all three are set, I will turn that warning into a hard stop so it can never happen silently. **Do not change an existing key** — data already encrypted with it would become unreadable (key rotation needs a planned migration).
+1. ~~**Check the encryption keys on Railway today.**~~ **Done 2026-10-06** — the founder confirmed all three are set (and the first boot of this release logged no warning); the warning is now a hard stop (§7). Background: if `EMPLOYEE_DATA_ENC_KEY` is missing, PAN / passport / bank numbers are stored *without* encryption, silently; if `TOTP_SECRET` is missing, platform-admin 2FA is off; `INVOICING_SECRET_ENC_KEY` protects the Razorpay tokens. Each should be at least 32 characters (`openssl rand -hex 32`). The audit release logged `SECURITY: encryption key(s) missing…` at boot if one was absent; since §7 the API refuses to start instead. **Do not change an existing key** — data already encrypted with it would become unreadable (key rotation needs a planned migration).
 2. **Sign-in tokens are also returned in the JSON body** of sign-in / refresh responses (they are already in secure httpOnly cookies, which is what the web uses). A cross-site-scripting bug, if one ever existed, could copy them. Fixing it touches every sign-in path, so it should be its own release with its own test pass. Recommended next.
 3. **Company export download link lasts 7 days** and is emailed to every owner and admin. Recommended: serve it through a signed-in download page with a 15-minute link. Also decide whether the export should include decrypted PAN / bank numbers for owners (today: neither, after this release).
 4. **Project images and avatars use 24-hour signed links** (assets and policies use 15 minutes). Shortening them is safe but makes images re-load more often; low risk as is.
@@ -70,3 +70,10 @@ Lower-priority hardening noted for later: a dedicated salt for IP hashes (today 
 | Web headers | `X-Powered-By` gone |
 
 The first run of the attack harness (before the fixes) was also clean on isolation — 76 / 76 — and surfaced the raw database error on the sync door (§3 item 8); the code reviews surfaced the rest.
+
+## 7. Follow-up (same day): encryption-key hard stop + paste-friendly PDF frame setting
+
+- **API** (`apps/api/src/main.ts`, `core/config/encryption-keys.ts`): in production the API now **refuses to start** when `EMPLOYEE_DATA_ENC_KEY`, `TOTP_SECRET` or `INVOICING_SECRET_ENC_KEY` is missing or shorter than 32 characters (names logged, never values; `process.exit(1)` rather than a throw, because Sentry's unhandled-rejection listener would keep a non-listening process alive). The check is byte-for-byte the predicate the boot warning used when the keys were confirmed, so the running keys keep passing. Railway's `/healthz` health check means a deployment that refuses to start never takes traffic — the previous one keeps serving and the deploy shows as failed. **Never change a key that is already in use** (data encrypted with it becomes unreadable).
+- **Web** (`apps/web/next.config.ts`): `NEXT_PUBLIC_FILES_FRAME_SRC` accepts a full URL — e.g. the API's `R2_ENDPOINT` pasted as-is, path or trailing slash included — and keeps only its origin; anything that is not a plain `https://host[:port]` after that (`;`, spaces, wildcards, other schemes) is still dropped. Signed PDF links are served from the `R2_ENDPOINT` host (path-style), so that is the right value. Unset → CSP unchanged.
+- **Tests:** `encryption-keys.spec.ts` (6: the three names, 31/32 boundary, blank/missing, no trimming, names only). Full gate green: API typecheck · nest build · **Jest 91 suites / 1 383 tests** · boundaries (359 modules, 0 violations) · web typecheck · web build · RLS `leak_with_bogus_context = 0`.
+- **Live:** the built API booted with `NODE_ENV=production` the way the Docker image runs it — all three keys blank → exit 1 naming all three; `TOTP_SECRET` at 31 characters → exit 1 naming only it; all three set → starts, `/healthz` 200. Web production build with `NEXT_PUBLIC_FILES_FRAME_SRC=https://<account>.r2.cloudflarestorage.com/<bucket>/` → `frame-src … https://<account>.r2.cloudflarestorage.com`; without it → `frame-src` identical to before. 14 parsing cases (paths, signed-URL query, ports, `;` injection, wildcard, `ftp:`/`javascript:`, bare host) behave as intended.

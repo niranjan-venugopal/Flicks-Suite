@@ -19,20 +19,28 @@ const localImg = allowLocalhost ? ' http://127.0.0.1:9000 http://localhost:9000'
 // differs per deployment, so it comes from NEXT_PUBLIC_FILES_FRAME_SRC
 // (comma-separated origins, read at BUILD time). Unset/empty leaves frame-src
 // byte-identical to before — the reader then falls back to "Open PDF".
-// Only bare https?://host[:port] origins are accepted: the value is spliced
-// into the CSP header, so a stray `;`, path or wildcard must never widen the
-// policy at build time — anything else is dropped loudly.
+// A full URL may be pasted (e.g. the API's R2_ENDPOINT, path and trailing
+// slash included) — only its origin is kept. The result must still be a bare
+// https?://host[:port]: the value is spliced into the CSP header, so a stray
+// `;`, space or wildcard must never widen the policy at build time — anything
+// else is dropped loudly.
 const FRAME_ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/
 const filesFrameSrc = (process.env.NEXT_PUBLIC_FILES_FRAME_SRC ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
-  .filter((origin) => {
-    if (FRAME_ORIGIN_RE.test(origin)) return true
+  .flatMap((entry) => {
+    let origin = entry
+    try {
+      origin = new URL(entry).origin
+    } catch {
+      // not a URL at all — the pattern below rejects it
+    }
+    if (FRAME_ORIGIN_RE.test(origin)) return [origin]
     console.warn(
-      `[next.config] NEXT_PUBLIC_FILES_FRAME_SRC entry "${origin}" is not a plain origin (https://host[:port]) — ignored.`,
+      `[next.config] NEXT_PUBLIC_FILES_FRAME_SRC entry "${entry}" is not an https://host[:port] address — ignored.`,
     )
-    return false
+    return []
   })
   .join(' ')
 

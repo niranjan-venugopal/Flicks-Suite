@@ -9,6 +9,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { assertTenantIsolation } from '@flicks/db';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './core/common/filters/http-exception.filter';
+import { missingEncryptionKeys } from './core/config/encryption-keys';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import helmet from 'helmet';
@@ -70,18 +71,19 @@ async function bootstrap() {
     // Security audit 2026-10-06: the field ciphers pass values through in
     // PLAIN TEXT when their key is blank (PAN / passport / bank numbers, the
     // Razorpay tokens), and a blank TOTP_SECRET switches platform-admin 2FA
-    // off. Shout on every boot so a missing Railway variable can't go
-    // unnoticed. (Not a hard stop yet: refusing to boot would take the API
-    // down on deploy if a key is missing today — confirm the keys first,
-    // then this can become a throw.) Names only; values are never logged.
-    const missingKeys = ['EMPLOYEE_DATA_ENC_KEY', 'TOTP_SECRET', 'INVOICING_SECRET_ENC_KEY'].filter(
-      (k) => (configService.get<string>(k) ?? '').length < 32,
-    );
+    // off. Hard stop since the founder confirmed all three are set in Railway
+    // (2026-10-06); Railway's /healthz check keeps the previous deployment
+    // serving if a new one exits here. process.exit, not throw: Sentry's
+    // unhandled-rejection listener would otherwise keep a non-listening
+    // process alive. Names only; values are never logged.
+    const missingKeys = missingEncryptionKeys((k) => configService.get<string>(k));
     if (missingKeys.length) {
       logger.error(
         `SECURITY: encryption key(s) missing or shorter than 32 characters: ${missingKeys.join(', ')} — ` +
-          'sensitive fields are being stored WITHOUT application encryption. Set them in Railway (openssl rand -hex 32).',
+          'refusing to start, sensitive fields would be stored WITHOUT application encryption. ' +
+          'Set them in Railway (openssl rand -hex 32). Never change a key that is already in use.',
       );
+      process.exit(1);
     }
   }
 
