@@ -1618,6 +1618,8 @@ export class NotificationsService {
           and(
             eq(notifications.user_id, userId),
             eq(notifications.group_key, opts.groupKey),
+            // Round R: a group key only ever bumps a row of the SAME company.
+            tenantId ? eq(notifications.tenant_id, tenantId) : isNull(notifications.tenant_id),
             isNull(notifications.read_at),
             isNull(notifications.archived_at),
           ),

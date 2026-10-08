@@ -25,6 +25,7 @@ import { PoliciesGrantGuard } from '../../core/auth/guards/policies-grant.guard'
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
+import { Roles } from '../../core/auth/decorators/roles.decorator';
 import { PoliciesService } from './policies.service';
 import { AcknowledgePolicyDto, CreatePolicyDto, PublishPolicyDto, UpdatePolicyDto } from './policies.dto';
 
@@ -96,6 +97,24 @@ export class PoliciesController {
     );
   }
 
+  // Round R: the ONLY way to open a policy PDF. Same visibility rule as GET
+  // /:id, then a 302 to a 60-second signed bucket URL — a forwarded link needs
+  // a sign-in to this company. Declared for the web's <iframe> / "Open PDF".
+  @Get(':id/file')
+  @ApiOperation({ summary: 'Open the policy PDF — 302 to a 60-second signed URL (404 when there is no file or it does not apply to you)' })
+  async file(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const url = await this.policies.fileRedirect(
+      { userId: user.sub, tenantId: user.tenantId, membershipId: user.membershipId, role: user.role },
+      id,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.redirect(302, url);
+  }
+
   @Patch(':id')
   @RequireGrant('policies', 'edit')
   @ApiOperation({ summary: 'Edit a policy (never moves the version — re-publish with the flag for that)' })
@@ -140,6 +159,18 @@ export class PoliciesController {
   @ApiOperation({ summary: 'Archive — disappears from everyone’s pending list; acknowledgements stay as history' })
   archive(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
     return this.policies.archive(user.tenantId, user.sub, id);
+  }
+
+  // Round R: Delete — Owner / HR admin only (ranked, like the asset register),
+  // on top of the edit grant. Soft delete; acknowledgements stay as proof.
+  @Post(':id/delete')
+  @Roles('admin')
+  @RequireGrant('policies', 'edit')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a policy (Owner / HR admin) — gone everywhere, PDF removed, who-agreed records kept, audited' })
+  @ApiResponse({ status: 200, description: '{ data: { id, deleted: true } }' })
+  remove(@CurrentUser() user: JwtPayload, @Param('id', ParseUUIDPipe) id: string) {
+    return this.policies.remove(user.tenantId, user.sub, id);
   }
 
   @Get(':id/acknowledgements')

@@ -3700,17 +3700,20 @@ export class EmployeesService {
           await db
             .delete(employees)
             .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
-          return { mode: 'delete' as const, name, footprint };
+          return { mode: 'delete' as const, name, footprint, userId: emp.user_id };
         }
 
         await db
           .update(employees)
           .set({ deleted_at: new Date(), updated_at: new Date() })
           .where(and(eq(employees.id, employeeId), eq(employees.tenant_id, tenantId)));
-        return { mode: 'archive' as const, name, footprint };
+        return { mode: 'archive' as const, name, footprint, userId: emp.user_id };
       },
       actorId,
     );
+    // Round R: a removed person is signed out of this company at once (seat
+    // deactivated above; sessions + sockets here) — not at token expiry.
+    if (result.userId) await this.revokeTenantSessions(result.userId, tenantId);
 
     await this.auditService.log({
       tenantId,
@@ -3858,6 +3861,8 @@ export class EmployeesService {
    * closes the 30-day refresh path too. Best-effort after commit.
    */
   private async revokeTenantSessions(userId: string, tenantId: string): Promise<void> {
+    // Round R: every open socket of this person in this company drops too.
+    this.eventEmitter.emit('seat.revoked', { tenantId, userId });
     try {
       await this.dbAdmin
         .update(refreshTokens)

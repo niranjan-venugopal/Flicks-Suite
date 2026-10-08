@@ -45,6 +45,8 @@ export interface FamFeedbackRow {
   created_at: string
   tenant_id: string
   tenant_name: string
+  /** Round R: signed company logo for the FAM inbox (null → initials). */
+  tenant_logo_url?: string | null
   user_id: string
   user_name: string | null
   /** Signed photo URL — optional: older API builds omit it. */

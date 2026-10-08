@@ -1,6 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { broadcastTenantSwitched } from '@/lib/tenant-sync'
 import { api } from '../client'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -141,6 +142,9 @@ export function useSwitchCompany() {
     mutationFn: ({ tenantId }: { tenantId: string; redirectTo?: string }) =>
       api.post<{ expiresIn: number }>('/api/v1/auth/switch-company', { tenantId }),
     onSuccess: (_data, vars) => {
+      // Round R: every other open tab reloads into the new company too — the
+      // cookie they share just changed under them.
+      broadcastTenantSwitched(vars.tenantId)
       window.location.assign(vars.redirectTo ?? '/dashboard')
     },
     onError: (err) => {

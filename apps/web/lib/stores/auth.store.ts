@@ -47,7 +47,11 @@ export interface CurrentTenant {
   name: string
   slug: string
   logoUrl?: string
+  /** Round R: the workspace-card line — "Trial · 5 days left", "Pro Plan", "Suspended"… (see lib/plan-label). */
   plan: string
+  /** tenants.status as /me reports it ('trialing' | 'active' | 'suspended' …). */
+  status?: string
+  billing?: import('@/lib/plan-label').TenantBilling | null
 }
 
 interface AuthState {

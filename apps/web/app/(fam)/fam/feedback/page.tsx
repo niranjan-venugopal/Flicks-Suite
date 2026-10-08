@@ -169,7 +169,7 @@ export default function FamFeedbackPage() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <Avatar name={r.tenant_name} size="sm" />
+                            <Avatar name={r.tenant_name} size="sm" src={r.tenant_logo_url ?? undefined} />
                             <div>
                               <div style={{ fontSize: 11.5, fontWeight: 800 }}>{r.tenant_name}</div>
                               <div style={{ fontSize: 10, color: 'var(--text-mute)', fontWeight: 600 }}>{r.user_name ?? '—'}</div>

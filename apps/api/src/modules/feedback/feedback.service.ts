@@ -274,6 +274,9 @@ export class FeedbackService {
         created_at: feedbackSubmissions.created_at,
         tenant_id: feedbackSubmissions.tenant_id,
         tenant_name: tenants.name,
+        // Round R: the inbox shows the company's logo next to its name.
+        tenant_logo_key: tenants.logo_key,
+        tenant_logo_url: tenants.logo_url,
         user_id: feedbackSubmissions.user_id,
         user_name: users.full_name,
         // Round N: the FAM inbox shows who wrote it — key stripped + signed below.
@@ -296,10 +299,11 @@ export class FeedbackService {
     // Contact-ok gates the email in the payload (D12: "contact-ok exposes email").
     return {
       data: await Promise.all(
-        rows.map(async ({ user_avatar_key, ...r }) => ({
+        rows.map(async ({ user_avatar_key, tenant_logo_key, ...r }) => ({
           ...r,
           user_email: r.contact_ok ? r.user_email : null,
           user_avatar_url: await this.signAvatar(user_avatar_key, r.user_avatar_url),
+          tenant_logo_url: await this.signAvatar(tenant_logo_key, r.tenant_logo_url),
         })),
       ),
     };

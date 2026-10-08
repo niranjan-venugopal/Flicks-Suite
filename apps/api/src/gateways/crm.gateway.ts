@@ -13,6 +13,7 @@ import { memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload } from '@flicks/shared/types';
 import { DatabaseService } from '../core/database/database.service';
 import { wsCors } from '../core/common/ws-cors';
+import { SEAT_REVOKED_EVENT, tenantUserRoom, type SeatRevokedPayload } from './rooms';
 
 interface BoardChangedPayload {
   tenantId: string;
@@ -64,9 +65,18 @@ export class CrmGateway implements OnGatewayConnection {
       }
       (client.data as { user?: JwtPayload }).user = payload;
       await client.join(`tenant:${payload.tenantId}`);
+      // Round R: per-person room so a revoked seat's sockets can be dropped.
+      await client.join(tenantUserRoom(payload.tenantId, payload.sub));
     } catch {
       client.disconnect(true);
     }
+  }
+
+  /** Round R: a switched-off seat stops receiving board pushes at once. */
+  @OnEvent(SEAT_REVOKED_EVENT)
+  handleSeatRevoked(payload: SeatRevokedPayload): void {
+    if (!payload?.tenantId || !payload?.userId) return;
+    this.server.in(tenantUserRoom(payload.tenantId, payload.userId)).disconnectSockets(true);
   }
 
   /** CRM module enabled for the tenant AND the membership still live. */

@@ -141,6 +141,43 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+// ─── Round R: the company this tab is in ─────────────────────────────────────
+// Sent as X-Flicks-Tenant on every call once /auth/me has told this page load
+// which company the session is scoped to. The API refuses a mismatch (409
+// TENANT_MISMATCH) — the sign-in cookie is shared across tabs, so a tab left
+// on company A after a switch to B elsewhere must never save into B. Only set
+// AFTER /me resolves: the persisted store could still name the previous
+// session's company, and sending that would reload-loop.
+let confirmedTenantId: string | null = null
+const MISMATCH_RELOAD_KEY = 'fs:tenant-mismatch-at'
+
+export function setConfirmedTenant(tenantId: string | null | undefined): void {
+  confirmedTenantId = tenantId || null
+}
+
+/** Header carrying the confirmed company (empty when none yet). */
+export function tenantHeaders(): Record<string, string> {
+  return confirmedTenantId ? { 'X-Flicks-Tenant': confirmedTenantId } : {}
+}
+
+/**
+ * The server said this tab's company no longer matches the session: reload
+ * so it re-reads /me and renders the company the cookie now points at. One
+ * reload per 10 s at most — a stuck mismatch must never spin.
+ */
+function handleTenantMismatch(): void {
+  confirmedTenantId = null
+  if (typeof window === 'undefined') return
+  try {
+    const last = Number(sessionStorage.getItem(MISMATCH_RELOAD_KEY) ?? 0)
+    if (Date.now() - last < 10_000) return
+    sessionStorage.setItem(MISMATCH_RELOAD_KEY, String(Date.now()))
+  } catch {
+    /* storage unavailable — reload anyway */
+  }
+  window.location.reload()
+}
+
 class APIError extends Error {
   constructor(
     public status: number,
@@ -159,6 +196,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   // read a non-simple CORS request and forces a preflight round-trip.
   const requestHeaders: Record<string, string> = {
     ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    ...tenantHeaders(),
     ...headers,
   }
 
@@ -215,6 +253,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ) {
       window.dispatchEvent(new CustomEvent('fs:billing-locked'))
     }
+    // Round R: this tab is showing a different company than the session —
+    // reload into the right one instead of failing every call from here on.
+    if (response.status === 409 && errorData?.code === 'TENANT_MISMATCH') {
+      handleTenantMismatch()
+    }
     throw new APIError(
       response.status,
       errorData?.message ?? `HTTP ${response.status}`,
@@ -269,7 +312,7 @@ async function download(
 
   const response = await fetch(`${BASE_URL}${path}`, {
     method,
-    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...tenantHeaders(), ...headers },
     credentials: 'include',
     body: body ? JSON.stringify(body) : undefined,
   })
@@ -286,6 +329,7 @@ async function download(
   if (!response.ok) {
     // Error responses are JSON even on binary endpoints (Nest's exception filter).
     const errorData = await response.json().catch(() => null)
+    if (response.status === 409 && errorData?.code === 'TENANT_MISMATCH') handleTenantMismatch()
     throw new APIError(
       response.status,
       errorData?.message ?? `HTTP ${response.status}`,
@@ -322,4 +366,4 @@ export { APIError }
 // fetch (the JSON client can't carry it), so it needs the SAME single-flight
 // refresh to recover from an expired 15-minute access cookie instead of
 // silently degrading the whole session to REST mode.
-export { silentRefresh }
+export { silentRefresh, handleTenantMismatch }

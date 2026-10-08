@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import {
   stateCodeFromGstin,
@@ -25,6 +26,7 @@ import {
   leaveTypes,
   leaveRequests,
   holidays,
+  refreshTokens,
 } from '@flicks/db';
 import {
   DB_TENANT,
@@ -34,6 +36,7 @@ import type { Db, DbAdmin } from '@flicks/db';
 import { AuditService } from '../audit/audit.service';
 import { MediaService } from '../media/media.service';
 import { DomainEventsService } from '../../core/events/domain-events.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { assertMayActOnSeat, assertMayGrantRole } from '../../core/auth/seat-guards';
 import type {
   CreateDepartmentDto,
@@ -61,6 +64,8 @@ export class SettingsService {
     private readonly auditService: AuditService,
     private readonly mediaService: MediaService,
     private readonly domainEvents: DomainEventsService,
+    // Optional so the hand-built service in specs keeps its 5-arg form.
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   // ─── Organization (tenant profile) ─────────────────────────────────────────
@@ -1581,6 +1586,24 @@ export class SettingsService {
     });
 
     if (status === 'deactivated') {
+      // Round R: switched off = signed out of this company now — refresh
+      // tokens minted for it revoked, open sockets dropped. Their other
+      // companies are untouched. Best-effort after the seat write.
+      try {
+        await this.dbAdmin
+          .update(refreshTokens)
+          .set({ revoked_at: new Date() })
+          .where(
+            and(
+              eq(refreshTokens.user_id, after.user_id),
+              eq(refreshTokens.tenant_id, tenantId),
+              isNull(refreshTokens.revoked_at),
+            ),
+          );
+      } catch (err) {
+        this.logger.warn(`session revoke on deactivate failed: ${err instanceof Error ? err.message : err}`);
+      }
+      this.eventEmitter?.emit('seat.revoked', { tenantId, userId: after.user_id });
       // PRD v5 §19.7 — the CRM offboarding-reassign guard subscribes to this.
       await this.domainEvents.publish({
         name: 'member.deactivated',

@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import type { JwtPayload } from '@flicks/shared/types';
 import { wsCors } from '../core/common/ws-cors';
+import { SEAT_REVOKED_EVENT, tenantRoom, tenantUserRoom, userRoom, type SeatRevokedPayload } from './rooms';
 
 interface NotificationCreatedPayload {
   userId: string;
@@ -65,7 +66,9 @@ export class NotificationsGateway
       await client.join(room);
 
       if (payload.tenantId) {
-        await client.join(`tenant:${payload.tenantId}`);
+        await client.join(tenantRoom(payload.tenantId));
+        // Round R: company-scoped pushes + the seat-revoked kick target.
+        await client.join(tenantUserRoom(payload.tenantId, payload.sub));
       }
 
       this.logger.log(
@@ -99,7 +102,9 @@ export class NotificationsGateway
       return;
     }
 
-    const room = `user:${payload.userId}`;
+    // Round R: a company's notification reaches only that company's session —
+    // a tab showing another company never receives its text.
+    const room = userRoom(payload.userId, payload.tenantId);
     this.server.to(room).emit('notification', {
       type: payload.type,
       message: payload.message,
@@ -108,6 +113,17 @@ export class NotificationsGateway
     });
 
     this.logger.debug(`Pushed notification to ${room} (type=${payload.type})`);
+  }
+
+  /**
+   * Round R: a seat was switched off (deactivated, off-boarded, removed) —
+   * drop every socket of that person in that company at once instead of
+   * letting them keep receiving pushes until they reconnect.
+   */
+  @OnEvent(SEAT_REVOKED_EVENT)
+  handleSeatRevoked(payload: SeatRevokedPayload): void {
+    if (!payload?.tenantId || !payload?.userId) return;
+    this.server.in(tenantUserRoom(payload.tenantId, payload.userId)).disconnectSockets(true);
   }
 
   /**

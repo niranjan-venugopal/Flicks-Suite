@@ -9,12 +9,14 @@ import { formatCurrency } from '@/lib/utils'
 
 const PLAN_COLOURS: Record<string, string> = {
   free: '#5C6477',
+  // The real plan code (PLATFORM_PLAN.code) — its MRR used to drop off the chart.
+  beta: '#3E7BFA',
   starter: '#3E7BFA',
   growth: '#9B7BFA',
   scale: '#27D280',
   enterprise: '#FED800',
 }
-const PLAN_ORDER = ['free', 'starter', 'growth', 'scale', 'enterprise']
+const PLAN_ORDER = ['free', 'beta', 'starter', 'growth', 'scale', 'enterprise']
 const MONTH_LABELS = ['Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May']
 
 function statusTone(s: string) {
@@ -416,7 +418,7 @@ export default function FamRevenuePage() {
                       alignItems: 'center',
                     }}
                   >
-                    <Avatar name={t.tenantName} size="sm" />
+                    <Avatar name={t.tenantName} size="sm" src={t.logoUrl ?? undefined} />
                     <Link
                       href={`/fam/tenants/${t.tenantId}`}
                       style={{ flex: 1, textDecoration: 'none', color: 'inherit', minWidth: 0 }}

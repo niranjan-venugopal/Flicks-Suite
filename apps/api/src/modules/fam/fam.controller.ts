@@ -289,6 +289,8 @@ export class FamController {
   }
 
   @Get('funnel/invoicing')
+  // Round R: platform-wide counts were readable by any signed-in customer.
+  @Roles('fam')
   @ApiOperation({ summary: 'Invoicing activation funnel F1–F5 (PRD v4 §6/D13)' })
   getInvoicingFunnel() {
     return this.famService.getInvoicingFunnel();

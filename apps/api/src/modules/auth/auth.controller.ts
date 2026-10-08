@@ -29,6 +29,7 @@ import { AuthService } from './auth.service';
 import { MediaService } from '../media/media.service';
 import { ModuleAccessService } from '../../core/auth/module-access.service';
 import { FlagEvalService } from '../../core/flags/flag-eval.service';
+import { BillingStateService } from '../../core/billing/billing-state.service';
 import {
   RequestOtpDto,
   VerifyOtpDto,
@@ -53,6 +54,8 @@ export class AuthController {
     private readonly mediaService: MediaService,
     private readonly moduleAccess: ModuleAccessService,
     private readonly flagEval: FlagEvalService,
+    // Round R: the workspace-card label reads the cached subscription summary.
+    private readonly billingState: BillingStateService,
   ) {}
 
   @Public()
@@ -385,6 +388,15 @@ export class AuthController {
               (raw.currentMembership as { tenantLogoUrl?: string | null }).tenantLogoUrl ?? null,
             ),
             tenantLogoKey: undefined,
+            // Round R: "Trial · N days left" / "Pro Plan" under the company
+            // name — from the same subscription row the paywall reads,
+            // cached 60 s, never a write (GET /billing writes on read).
+            // A guest seat is outside the company's plan — it gets no billing
+            // state at all (the card keeps saying "Guest access").
+            billing:
+              raw.currentMembership.role === 'guest'
+                ? null
+                : await this.billingState.summary(raw.currentMembership.tenantId).catch(() => null),
           }
         : raw.currentMembership,
     };

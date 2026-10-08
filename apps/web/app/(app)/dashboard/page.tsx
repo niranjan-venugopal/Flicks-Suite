@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/lib/stores/auth.store'
@@ -9,10 +8,9 @@ import { useToast } from '@/components/ui/use-toast'
 import { useEmployeeOnboardingStatus } from '@/lib/api/queries/use-employee-onboarding'
 import { useAdminOverview, useAdminActivity } from '@/lib/api/queries/use-dashboard'
 import type { AdminOverview } from '@/lib/api/queries/use-dashboard'
-import { useReviewLeave, useMyLeaveBalances, useHolidays } from '@/lib/api/queries/use-leave'
+import { useMyLeaveBalances, useHolidays } from '@/lib/api/queries/use-leave'
 import {
   useMyAttendanceToday,
-  useReviewRegularization,
   useTeamToday,
   type TeamMemberToday,
 } from '@/lib/api/queries/use-attendance'
@@ -28,6 +26,7 @@ import {
   Sparkline,
 } from '@/components/proto'
 import { ClockCard } from '@/components/attendance/ClockCard'
+import { AttentionQueue } from '@/components/dashboard/AttentionQueue'
 import { RowPresenceAvatar } from '@/components/presence/RowPresence'
 import { usePresence } from '@/lib/api/queries/use-presence'
 
@@ -100,54 +99,8 @@ function AdminDashboard() {
   // (finance also lands on this dashboard).
   const canSeeActivity = currentUser?.role === 'OWNER' || currentUser?.role === 'HR_ADMIN'
   const activity = useAdminActivity(8, { enabled: canSeeActivity })
-  const qc = useQueryClient()
-  const reviewLeave = useReviewLeave()
-  const reviewReg = useReviewRegularization()
-  const { toast } = useToast()
-
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
-  const pendingItems = useMemo(() => buildPendingList(data), [data])
-
-  const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
-
-  // Round P polish: a failed review used to vanish silently — the row stayed
-  // put and the admin clicked again. The API message (409 already reviewed,
-  // 403 not yours, …) is the explanation, so it is shown as-is.
-  const handleApprove = async (item: PendingItem) => {
-    try {
-      if (item.kind === 'leave') {
-        await reviewLeave.mutateAsync({ id: item.id, action: 'approve' })
-      } else {
-        await reviewReg.mutateAsync({ id: item.id, action: 'approve' })
-      }
-      refresh()
-      toast({ title: `Approved · ${item.who}` })
-    } catch (e) {
-      toast({
-        title: 'Could not approve',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
-  const handleReject = async (item: PendingItem) => {
-    try {
-      if (item.kind === 'leave') {
-        await reviewLeave.mutateAsync({ id: item.id, action: 'reject' })
-      } else {
-        await reviewReg.mutateAsync({ id: item.id, action: 'reject' })
-      }
-      refresh()
-      toast({ title: `Rejected · ${item.who}` })
-    } catch (e) {
-      toast({
-        title: 'Could not reject',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -236,126 +189,8 @@ function AdminDashboard() {
             marginBottom: 24,
           }}
         >
-          {/* Pending approvals */}
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div
-              style={{
-                padding: '18px 22px',
-                borderBottom: '1px solid var(--bord)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div>
-                <div className="t-h3">Needs your attention</div>
-                <div className="t-mute" style={{ fontSize: 12, marginTop: 2 }}>
-                  One-click approve where it's safe
-                </div>
-              </div>
-              <Link href="/inbox?tab=approvals" style={{ textDecoration: 'none' }}>
-                <Btn kind="ghost" size="sm" iconRight={<Icon.arrow size={13} />}>
-                  Open inbox
-                </Btn>
-              </Link>
-            </div>
-            <div>
-              {pendingItems.length === 0 && (
-                <div
-                  style={{
-                    padding: '40px 22px',
-                    textAlign: 'center',
-                    color: 'var(--text-mute)',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  {overview.isLoading ? 'Loading…' : 'All caught up. No pending approvals.'}
-                </div>
-              )}
-              {pendingItems.slice(0, 5).map((a, i) => (
-                <div
-                  key={`${a.kind}-${a.id}`}
-                  style={{
-                    padding: '14px 22px',
-                    borderBottom:
-                      i < Math.min(4, pendingItems.length - 1)
-                        ? '1px solid var(--bord)'
-                        : 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 14,
-                  }}
-                >
-                  <Avatar name={a.who} size="sm" src={a.avatarUrl ?? undefined} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: '-0.01em' }}>
-                        {a.who}
-                      </span>
-                      <Pill tone={a.tone} dot>
-                        {a.kind === 'leave' ? 'Leave' : 'Regularize'}
-                      </Pill>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: 'var(--text-2)',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {a.what}{' '}
-                      <span style={{ color: 'var(--text-faint)' }}>· {a.when}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <Btn
-                      kind="secondary"
-                      size="sm"
-                      icon={<Icon.x size={12} />}
-                      onClick={() => handleReject(a)}
-                      disabled={reviewLeave.isPending || reviewReg.isPending}
-                      aria-label="Reject"
-                    />
-                    <Btn
-                      kind="primary"
-                      size="sm"
-                      icon={<Icon.check size={12} />}
-                      onClick={() => handleApprove(a)}
-                      disabled={reviewLeave.isPending || reviewReg.isPending}
-                    >
-                      Approve
-                    </Btn>
-                  </div>
-                </div>
-              ))}
-              {pendingItems.length > 5 && (
-                <div
-                  style={{
-                    padding: '12px 22px',
-                    background: 'var(--surf-1)',
-                    display: 'flex',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Link
-                    href="/inbox?tab=approvals"
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 800,
-                      color: 'var(--blue)',
-                      textDecoration: 'none',
-                    }}
-                  >
-                    + {pendingItems.length - 5} more pending →
-                  </Link>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Round R: every pending kind, per-row busy, totals from the server. */}
+          <AttentionQueue overview={overview} variant="admin" />
 
           {/* Today's pulse */}
           <div className="card">
@@ -795,54 +630,6 @@ function ActivityRow({
 
 // ─── Pending list normalisation ────────────────────────────────────────────
 
-interface PendingItem {
-  kind: 'leave' | 'regularization'
-  id: string
-  who: string
-  what: string
-  when: string
-  tone: PillTone
-  /** Signed photo off the approval row; null → initials. */
-  avatarUrl: string | null
-}
-
-function buildPendingList(o: AdminOverview | undefined): PendingItem[] {
-  if (!o) return []
-  const items: PendingItem[] = []
-  for (const l of o.pending.leaves) {
-    items.push({
-      kind: 'leave',
-      id: l.id,
-      who: l.employeeName,
-      what: `${l.leaveTypeCode ?? l.leaveTypeName ?? 'Leave'} · ${l.totalDays}d (${fmtRange(l.startDate, l.endDate)})`,
-      when: relativeTime(l.appliedAt),
-      tone: 'blue',
-      avatarUrl: l.avatarUrl ?? null,
-    })
-  }
-  for (const r of o.pending.regularizations) {
-    items.push({
-      kind: 'regularization',
-      id: r.id,
-      who: r.employeeName,
-      what: `${r.requestType} · ${r.attendanceDate}`,
-      when: relativeTime(r.requestedAt),
-      tone: 'coral',
-      avatarUrl: r.avatarUrl ?? null,
-    })
-  }
-  return items
-}
-
-function fmtRange(start: string, end: string): string {
-  if (start === end) {
-    return new Date(start).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
-  }
-  const s = new Date(start).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
-  const e = new Date(end).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })
-  return `${s} – ${e}`
-}
-
 /** Clocked in AND on time — the API's `present` includes the late arrivals. */
 function onTimeCount(o: AdminOverview | undefined): number {
   if (!o) return 0
@@ -935,14 +722,8 @@ function ManagerDashboard() {
   const { currentUser } = useAuthStore()
   const overview = useAdminOverview()
   const teamToday = useTeamToday()
-  const qc = useQueryClient()
-  const reviewLeave = useReviewLeave()
-  const reviewReg = useReviewRegularization()
-  const { toast } = useToast()
-
   const firstName = currentUser?.name?.split(' ')[0] ?? 'there'
   const data = overview.data
-  const pending = useMemo(() => buildPendingList(data), [data])
   // Memoised: an inline `?? []` is a fresh array every render, which would
   // make the presence id array below recompute on each one.
   const roster = useMemo(() => teamToday.data ?? [], [teamToday.data])
@@ -955,27 +736,6 @@ function ManagerDashboard() {
       [roster],
     ),
   )
-
-  const refresh = () => qc.invalidateQueries({ queryKey: ['dashboard'] })
-
-  const handleApprove = async (item: PendingItem) => {
-    try {
-      if (item.kind === 'leave') {
-        await reviewLeave.mutateAsync({ id: item.id, action: 'approve' })
-      } else {
-        await reviewReg.mutateAsync({ id: item.id, action: 'approve' })
-      }
-      refresh()
-      toast({ title: `Approved · ${item.who}` })
-    } catch (e) {
-      // Round P polish: never swallow — the API message says why.
-      toast({
-        title: 'Could not approve',
-        description: e instanceof Error ? e.message : 'Try again',
-        variant: 'destructive',
-      })
-    }
-  }
 
   return (
     <div style={{ padding: '28px 32px 64px', position: 'relative' }}>
@@ -1132,77 +892,8 @@ function ManagerDashboard() {
             )}
           </div>
 
-          {/* Approvals queue — live data */}
-          <div className="card">
-            <SectionHead title="Approvals queue" />
-            {pending.length === 0 ? (
-              <div
-                style={{
-                  padding: '24px 0',
-                  textAlign: 'center',
-                  color: 'var(--text-mute)',
-                  fontSize: 13,
-                  fontWeight: 600,
-                }}
-              >
-                {overview.isLoading ? 'Loading…' : 'All caught up.'}
-              </div>
-            ) : (
-              pending.slice(0, 5).map((a, i) => (
-                <div
-                  key={`${a.kind}-${a.id}`}
-                  style={{
-                    padding: '10px 0',
-                    borderBottom: i < Math.min(4, pending.length - 1) ? '1px solid var(--bord)' : 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                  }}
-                >
-                  <Avatar name={a.who} size="sm" src={a.avatarUrl ?? undefined} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 800,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {a.who} · {a.what}
-                    </div>
-                    <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                      {a.when}
-                    </div>
-                  </div>
-                  <Btn
-                    kind="primary"
-                    size="sm"
-                    icon={<Icon.check size={11} />}
-                    onClick={() => handleApprove(a)}
-                    disabled={reviewLeave.isPending || reviewReg.isPending}
-                  />
-                </div>
-              ))
-            )}
-            {pending.length > 5 && (
-              <Link
-                href="/inbox?tab=approvals"
-                style={{
-                  display: 'block',
-                  marginTop: 12,
-                  textAlign: 'center',
-                  fontSize: 12,
-                  fontWeight: 800,
-                  color: 'var(--blue)',
-                  textDecoration: 'none',
-                }}
-              >
-                + {pending.length - 5} more →
-              </Link>
-            )}
-          </div>
+          {/* Round R: shared with the Owner / HR dashboard (per-row busy, every kind). */}
+          <AttentionQueue overview={overview} variant="manager" />
         </div>
       </div>
     </div>

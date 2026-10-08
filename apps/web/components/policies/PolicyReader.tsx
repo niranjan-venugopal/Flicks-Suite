@@ -8,6 +8,18 @@ import { APIError } from '@/lib/api/client'
 import { useAcknowledgePolicy, type PolicyKind } from '@/lib/api/queries/use-policies'
 import { formatDate } from '@/lib/utils'
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
+
+/**
+ * Round R: the API hands back its own file route (`/api/v1/policies/:id/file`,
+ * a 60-second signed redirect behind the sign-in) rather than a bucket URL —
+ * resolve it against the API origin. An absolute URL (older API) is used as-is.
+ */
+export function resolveFileUrl(url: string | null): string | null {
+  if (!url) return null
+  return url.startsWith('/') ? `${API_BASE}${url}` : url
+}
+
 /**
  * Round P (R3) — the employee-facing policy reader shared by the blocking
  * PolicyGate, the /policies page and the self-onboarding step.
@@ -94,13 +106,6 @@ const RENDER_FALLBACK_MS = 6_000
 // moment later so a transient outage heals without a reload.
 const ACK_FAILURE_RESYNC_MS = 3_000
 
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return new URL(a).origin === new URL(b).origin
-  } catch {
-    return false
-  }
-}
 
 export function PolicyReader({
   policy,
@@ -135,7 +140,7 @@ export function PolicyReader({
   const resyncTimerRef = useRef<number | null>(null)
 
   const isPdf = policy.kind === 'pdf'
-  const fileUrl = policy.file_url
+  const fileUrl = resolveFileUrl(policy.file_url)
   const bodyMd = policy.body_md ?? ''
   const pdfUnavailable = isPdf && !fileUrl
 
@@ -208,7 +213,8 @@ export function PolicyReader({
     const handler = (e: SecurityPolicyViolationEvent) => {
       const directive = e.effectiveDirective || e.violatedDirective || ''
       if (!directive.startsWith('frame-src') && !directive.startsWith('child-src')) return
-      if (e.blockedURI && !sameOrigin(e.blockedURI, fileUrl) && e.blockedURI !== fileUrl) return
+      // Either hop can be refused: the API route or the bucket it redirects
+      // to. Any frame-src refusal while this reader is up means ours.
       markBlocked()
     }
     document.addEventListener('securitypolicyviolation', handler)

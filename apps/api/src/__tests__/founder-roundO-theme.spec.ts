@@ -73,7 +73,7 @@ const authService = new AuthService(
 );
 // The controller only needs AuthService for the preferences route; the media /
 // module-access / flag services are untouched by it.
-const controller = new AuthController(authService, {} as never, {} as never, {} as never);
+const controller = new AuthController(authService, {} as never, {} as never, {} as never, {} as never);
 
 // The global pipe exactly as main.ts configures it.
 const pipe = new ValidationPipe({

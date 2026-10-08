@@ -158,7 +158,7 @@ export default function FamSystemHealthPage() {
                       borderBottom: '1px solid var(--bord)',
                     }}
                   >
-                    <Avatar name={t.tenantName} size="sm" />
+                    <Avatar name={t.tenantName} size="sm" src={t.logoUrl ?? undefined} />
                     <Link
                       href={`/fam/tenants/${t.tenantId}`}
                       style={{ flex: 1, textDecoration: 'none', color: 'inherit', minWidth: 0 }}

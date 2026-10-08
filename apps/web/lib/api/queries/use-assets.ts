@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, APIError, loginHref, silentRefresh } from '../client'
+import { api, APIError, handleTenantMismatch, loginHref, silentRefresh, tenantHeaders } from '../client'
 import type { IconKey } from '@/components/proto'
 import type { PillTone } from '@/components/proto'
 
@@ -319,7 +319,7 @@ async function uploadAssetPhoto(assetId: string, blob: Blob): Promise<{ data: As
   const form = new FormData()
   form.append('file', blob, 'photo.webp')
   const send = () =>
-    fetch(`${BASE_URL}/api/v1/assets/${assetId}/photo`, { method: 'POST', credentials: 'include', body: form })
+    fetch(`${BASE_URL}/api/v1/assets/${assetId}/photo`, { method: 'POST', credentials: 'include', headers: tenantHeaders(), body: form })
   let res = await send()
   if (res.status === 401 && (await silentRefresh())) res = await send()
   if (res.status === 401) {
@@ -328,7 +328,8 @@ async function uploadAssetPhoto(assetId: string, blob: Blob): Promise<{ data: As
     }
     throw new APIError(401, 'Your session expired — sign in again to upload.')
   }
-  const json = (await res.json().catch(() => ({}))) as { message?: string | string[]; data?: AssetDetail }
+  const json = (await res.json().catch(() => ({}))) as { message?: string | string[]; code?: string; data?: AssetDetail }
+  if (res.status === 409 && json.code === 'TENANT_MISMATCH') handleTenantMismatch()
   if (!res.ok) {
     const message = Array.isArray(json.message) ? json.message.join(', ') : json.message
     const friendly = res.status === 429 ? 'Too many uploads — wait a minute and try again.' : message

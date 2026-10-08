@@ -375,7 +375,7 @@ describe('register, assign, acknowledge, return', () => {
       e1User,
       'asset.assigned',
       'MacBook Pro 14 (AST-0001) was issued to you — please acknowledge receipt',
-      '/employees/assets?view=me',
+      `/employees/assets?view=me&company=${tenantA}`,
       tenantA,
       { groupKey: `asset:${L1}` },
     ]);
@@ -386,7 +386,7 @@ describe('register, assign, acknowledge, return', () => {
     expect(props).toMatchObject({
       assetName: 'MacBook Pro 14',
       assetTag: 'AST-0001',
-      link: 'http://localhost:3000/employees/assets?view=me',
+      link: `http://localhost:3000/employees/assets?view=me&company=${tenantA}`,
       issuedBy: 'Harry HR',
       issueCondition: 'new',
       notes: 'with charger',

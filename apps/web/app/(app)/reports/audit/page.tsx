@@ -21,6 +21,7 @@ const RESOURCE_TYPES = [
   'employee',
   'leave_request',
   'attendance_regularization',
+  'company_policy',
 ] as const
 
 function fmtTimestamp(t: string): string {

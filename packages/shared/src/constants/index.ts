@@ -399,6 +399,8 @@ export const TRIAL_DAYS = 7;
  */
 export const PLATFORM_PLAN = {
   code: 'beta',
+  /** What customers see ("Pro Plan") — Round R, founder decision. */
+  name: 'Pro',
   pricePaise: 49_900, // ₹499 / seat / month
   priceRupees: 499,
   currency: 'INR' as const,

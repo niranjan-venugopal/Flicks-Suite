@@ -30,7 +30,10 @@ export class DashboardController {
     description:
       'How many pending leaves / regularizations to list (1–50, default 5). Counts are unaffected; the Inbox asks for 50.',
   })
-  @Header('Cache-Control', 'private, max-age=15')
+  // Round R: never browser-cached — after an approve the stale copy kept the
+  // row on the dashboard (a second click then 400'd), and for 15 s after a
+  // company switch the previous company's queue could paint.
+  @Header('Cache-Control', 'private, no-store')
   async getAdminOverview(
     @CurrentUser() user: JwtPayload,
     @Query('pendingLimit') pendingLimit?: string,

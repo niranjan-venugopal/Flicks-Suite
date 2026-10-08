@@ -18,6 +18,7 @@ import {
   type LiveActivity,
 } from '../modules/presence/presence.service';
 import { wsCors } from '../core/common/ws-cors';
+import { SEAT_REVOKED_EVENT, tenantUserRoom, type SeatRevokedPayload } from './rooms';
 
 /**
  * Presence gateway (PRD v4 §5) — socket.io namespace /presence.
@@ -111,11 +112,20 @@ export class PresenceGateway
       }
       (client.data as { user?: JwtPayload }).user = payload;
       await client.join(`tenant:${payload.tenantId}`);
+      // Round R: per-person room so a revoked seat's sockets can be dropped.
+      await client.join(tenantUserRoom(payload.tenantId, payload.sub));
       await this.touch(payload.tenantId, payload.sub);
       await this.broadcast(payload.tenantId, payload.sub);
     } catch {
       client.disconnect(true);
     }
+  }
+
+  /** Round R: a switched-off seat's presence sockets go at once (the disconnect path marks them offline). */
+  @OnEvent(SEAT_REVOKED_EVENT)
+  handleSeatRevoked(payload: SeatRevokedPayload): void {
+    if (!payload?.tenantId || !payload?.userId) return;
+    this.server.in(tenantUserRoom(payload.tenantId, payload.userId)).disconnectSockets(true);
   }
 
   async handleDisconnect(client: Socket): Promise<void> {

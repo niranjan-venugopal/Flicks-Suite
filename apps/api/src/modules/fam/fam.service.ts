@@ -1288,6 +1288,8 @@ export class FamService {
         mrr: subscriptions.mrr_amount,
         userCount: subscriptions.user_count,
         status: subscriptions.status,
+        logoKey: tenants.logo_key,
+        logoUrlLegacy: tenants.logo_url,
       })
       .from(subscriptions)
       .innerJoin(tenants, eq(tenants.id, subscriptions.tenant_id))
@@ -1309,15 +1311,20 @@ export class FamService {
         mrr: Number(r.mrr ?? 0),
       })),
       byStatus: byStatus.map((r) => ({ status: r.status, n: Number(r.n) })),
-      topPaying: topPaying.map((r) => ({
-        tenantId: r.tenantId,
-        tenantName: r.tenantName,
-        slug: r.slug,
-        planCode: r.planCode,
-        mrr: Number(r.mrr ?? 0),
-        userCount: Number(r.userCount ?? 0),
-        status: r.status,
-      })),
+      // Round R: the console's Top tenants showed initials only — the logo
+      // the company uploaded in Settings → Organization now rides along.
+      topPaying: await Promise.all(
+        topPaying.map(async (r) => ({
+          tenantId: r.tenantId,
+          tenantName: r.tenantName,
+          slug: r.slug,
+          planCode: r.planCode,
+          mrr: Number(r.mrr ?? 0),
+          userCount: Number(r.userCount ?? 0),
+          status: r.status,
+          logoUrl: await this.mediaService.servedUrl(r.logoKey, r.logoUrlLegacy, 64),
+        })),
+      ),
     };
   }
 
@@ -1451,6 +1458,8 @@ export class FamService {
       tenant_id: string;
       tenant_name: string;
       slug: string;
+      logo_key: string | null;
+      logo_url: string | null;
       attendance_users: number;
       leave_users: number;
       timesheet_users: number;
@@ -1460,6 +1469,8 @@ export class FamService {
         t.id           AS tenant_id,
         t.name         AS tenant_name,
         t.slug,
+        t.logo_key,
+        t.logo_url,
         (SELECT COUNT(DISTINCT a.employee_id)::int
            FROM attendance_punches a
           WHERE a.tenant_id = t.id AND a.punched_at >= ${since.toISOString()}) AS attendance_users,
@@ -1483,21 +1494,24 @@ export class FamService {
 
     return {
       windowDays: 30,
-      tenants:
+      tenants: await Promise.all(
         ((rows as unknown as Array<{
           tenant_id: string;
           tenant_name: string;
           slug: string;
+          logo_key: string | null;
+          logo_url: string | null;
           attendance_users: number;
           leave_users: number;
           timesheet_users: number;
           employee_count: number;
-        }>) ?? []).map((r) => {
+        }>) ?? []).map(async (r) => {
           const empl = Number(r.employee_count ?? 0) || 1;
           return {
             tenantId: r.tenant_id,
             tenantName: r.tenant_name,
             slug: r.slug,
+            logoUrl: await this.mediaService.servedUrl(r.logo_key, r.logo_url, 64),
             employeeCount: Number(r.employee_count ?? 0),
             attendance: {
               users: Number(r.attendance_users ?? 0),
@@ -1513,6 +1527,7 @@ export class FamService {
             },
           };
         }),
+      ),
     };
   }
 
@@ -1546,11 +1561,13 @@ export class FamService {
       tenant_id: string;
       tenant_name: string;
       slug: string;
+      logo_key: string | null;
+      logo_url: string | null;
       signal: string;
       health_score: number | null;
       support_tickets_open: number;
     }>(sql`
-      SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug,
+      SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug, t.logo_key, t.logo_url,
              h.signal, h.health_score, h.support_tickets_open
       FROM tenants t
       JOIN LATERAL (
@@ -1569,22 +1586,26 @@ export class FamService {
 
     return {
       buckets,
-      atRiskTenants:
+      atRiskTenants: await Promise.all(
         ((atRisk as unknown as Array<{
           tenant_id: string;
           tenant_name: string;
           slug: string;
+          logo_key: string | null;
+          logo_url: string | null;
           signal: string;
           health_score: number | null;
           support_tickets_open: number;
-        }>) ?? []).map((r) => ({
+        }>) ?? []).map(async (r) => ({
           tenantId: r.tenant_id,
           tenantName: r.tenant_name,
           slug: r.slug,
+          logoUrl: await this.mediaService.servedUrl(r.logo_key, r.logo_url, 64),
           signal: r.signal,
           healthScore: r.health_score != null ? Number(r.health_score) : null,
           supportTicketsOpen: Number(r.support_tickets_open ?? 0),
         })),
+      ),
     };
   }
 

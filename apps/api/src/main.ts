@@ -115,7 +115,11 @@ async function bootstrap() {
     origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-device-id'],
+    // Round R: X-Flicks-Tenant carries the company the tab believes it is in
+    // (TenantHeaderGuard refuses a mismatch). A custom header makes every
+    // call preflighted, so the preflight verdict is cached for an hour.
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-device-id', 'X-Flicks-Tenant'],
+    maxAge: 3600,
     // Round P R4: let the cross-origin web read the server's filename on CSV /
     // PDF downloads (assets-<date>.csv, policy-acknowledgements.csv, invoice
     // PDFs) instead of falling back to a generic name.

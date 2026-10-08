@@ -320,6 +320,8 @@ export interface FamRevenue {
     tenantId: string
     tenantName: string
     slug: string
+    /** Round R: signed company logo (null → initials). */
+    logoUrl?: string | null
     planCode: string
     mrr: number
     userCount: number
@@ -367,6 +369,7 @@ export interface FamFeatureUsage {
     tenantId: string
     tenantName: string
     slug: string
+    logoUrl?: string | null
     employeeCount: number
     attendance: { users: number; adoption: number }
     leave: { users: number; adoption: number }
@@ -396,6 +399,7 @@ export interface FamSystemHealth {
     tenantId: string
     tenantName: string
     slug: string
+    logoUrl?: string | null
     signal: string
     healthScore: number | null
     supportTicketsOpen: number

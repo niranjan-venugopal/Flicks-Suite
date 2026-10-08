@@ -7,8 +7,9 @@ import {
   timestamp,
   index,
   unique,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { tenants, users } from './platform';
 import { employees } from './employees';
 
@@ -55,12 +56,20 @@ export const companyPolicies = pgTable(
     published_by: uuid('published_by').references(() => users.id, { onDelete: 'set null' }),
     archived_at: timestamp('archived_at', { withTimezone: true }),
     last_reminded_at: timestamp('last_reminded_at', { withTimezone: true }),
+    // 0069 (Round R): Owner / HR deleted it — hidden everywhere, PDF removed;
+    // the acknowledgement rows stay as the company's proof.
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
     created_by: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     updated_by: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('idx_company_policies_tenant_status').on(t.tenant_id, t.status)],
+  (t) => [
+    index('idx_company_policies_tenant_status').on(t.tenant_id, t.status),
+    index('idx_company_policies_tenant_live').on(t.tenant_id).where(sql`${t.deleted_at} IS NULL`),
+    // Target of the composite FK below (0069).
+    unique('company_policies_tenant_id_id_key').on(t.tenant_id, t.id),
+  ],
 );
 
 export const policyAcknowledgements = pgTable(
@@ -90,6 +99,13 @@ export const policyAcknowledgements = pgTable(
       t.user_id,
     ),
     index('idx_policy_acknowledgements_user').on(t.tenant_id, t.user_id),
+    // 0069 (Round R): FK checks bypass RLS — tie the acknowledgement to a
+    // policy of the SAME company at the database level.
+    foreignKey({
+      name: 'policy_acknowledgements_tenant_policy_fkey',
+      columns: [t.tenant_id, t.policy_id],
+      foreignColumns: [companyPolicies.tenant_id, companyPolicies.id],
+    }).onDelete('cascade'),
   ],
 );
 

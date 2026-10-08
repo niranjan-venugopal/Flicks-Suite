@@ -65,11 +65,13 @@ export function CompanySwitcher({ collapsed = false }: { collapsed?: boolean }) 
       )}
     </div>
   )
+  // Round R: "Trial · N days left" / "Pro Plan" / "Payment due" / "Suspended"
+  // — from the subscription /me reports (lib/plan-label), never a constant.
   const subtitle = isAuditor
     ? `Auditor · ${linked.length || 1} ${linked.length === 1 ? 'company' : 'companies'}`
     : isGuest
       ? 'Guest access'
-      : (currentTenant?.plan ?? 'free')
+      : (currentTenant?.plan ?? 'Workspace')
 
   // Close on outside click.
   useEffect(() => {

@@ -12,6 +12,7 @@ import { PolicyGate } from '@/components/policies/PolicyGate'
 import { TrustDevicePrompt } from '@/components/auth/TrustDevicePrompt'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
 import { NotificationsSocket } from '@/lib/notifications/NotificationsSocket'
+import { TenantSync } from '@/components/layout/TenantSync'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NpsCard } from '@/components/feedback/NpsCard'
@@ -333,6 +334,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <PresenceProvider />
       {/* Real-time notifications: push the bell instead of waiting on the poll */}
       <NotificationsSocket />
+      {/* Round R: other tabs' company switch / sign-out reload this one; a
+          ?company= link lands in that company. */}
+      <TenantSync />
       {/* PRD v4 §6: consent-gated module_opened capture */}
       <ModuleOpenedTracker />
       {/* PRD v4 §7: menu-triggered feedback panel + NPS micro-card (no pill) */}

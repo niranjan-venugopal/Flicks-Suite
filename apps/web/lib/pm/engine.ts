@@ -1,6 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 import { rankBetween } from '@flicks/shared/pm'
-import { api, silentRefresh } from '@/lib/api/client'
+import { api, handleTenantMismatch, silentRefresh, tenantHeaders } from '@/lib/api/client'
 import { PmStore } from './store'
 import { openPmDb, destroyPmDb, loadSnapshot, persistTables, persistPending, type PmDb } from './idb'
 import type { PendingMutation, PmIssueRow, PmProjectRow, PmRelationRow, PmUpdateRow } from './types'
@@ -203,13 +203,19 @@ export class PmSyncEngine {
   // ─── bootstrap / delta ───────────────────────────────────────────────────
 
   private async bootstrap(): Promise<void> {
-    let res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include' })
+    let res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include', headers: tenantHeaders() })
     // Round E — an expired 15-minute access cookie made this raw fetch 401,
     // and the throw silently downgraded the whole session to REST mode (no
     // board, slower everything). Redeem the refresh cookie once and retry,
     // exactly like every JSON request already does.
     if (res.status === 401 && (await silentRefresh())) {
-      res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include' })
+      res = await fetch(`${BASE_URL}/api/v1/pm/sync/bootstrap`, { credentials: 'include', headers: tenantHeaders() })
+    }
+    // Round R: this tab is in another company than the session — reload
+    // rather than pull the other company's board into this one.
+    if (res.status === 409) {
+      handleTenantMismatch()
+      throw new Error('TENANT_MISMATCH')
     }
     if (res.status === 400) throw new Error('SYNC_DISABLED')
     if (!res.ok) throw new Error(`bootstrap failed: ${res.status}`)

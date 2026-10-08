@@ -25,7 +25,11 @@ const localImg = allowLocalhost ? ' http://127.0.0.1:9000 http://localhost:9000'
 // `;`, space or wildcard must never widen the policy at build time — anything
 // else is dropped loudly.
 const FRAME_ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/
-const filesFrameSrc = (process.env.NEXT_PUBLIC_FILES_FRAME_SRC ?? '')
+// Round R: policy PDFs open through the API (GET /policies/:id/file → 302 to
+// the bucket), so the API origin is framed too; the bucket host still comes
+// from NEXT_PUBLIC_FILES_FRAME_SRC (CSP checks the redirect target as well).
+const filesFrameSrc = [process.env.NEXT_PUBLIC_API_URL ?? '', process.env.NEXT_PUBLIC_FILES_FRAME_SRC ?? '']
+  .join(',')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)

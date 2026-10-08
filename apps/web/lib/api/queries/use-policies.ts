@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, APIError, loginHref, silentRefresh } from '../client'
+import { api, APIError, handleTenantMismatch, loginHref, silentRefresh, tenantHeaders } from '../client'
 import { useModuleAccess } from './use-auth'
 import { useAuthStore } from '@/lib/stores/auth.store'
 
@@ -49,7 +49,11 @@ export interface Policy {
 
 export interface PolicyDetail extends Policy {
   body_md: string | null
-  /** 15-minute signed GET for PDF policies; null for rich text / unconfigured storage. */
+  /**
+   * Where to open the PDF: the API's own route (`/api/v1/policies/:id/file`,
+   * a signed redirect behind the sign-in — Round R); null for rich text /
+   * unconfigured storage. PolicyReader resolves it against the API origin.
+   */
   file_url: string | null
 }
 
@@ -216,6 +220,8 @@ async function uploadPolicyPdf(policyId: string, file: File): Promise<{ data: Po
     fetch(`${BASE_URL}/api/v1/policies/${policyId}/file`, {
       method: 'POST',
       credentials: 'include',
+      // Round R: company-bound like every JSON call (no Content-Type — FormData boundary)
+      headers: tenantHeaders(),
       body: form,
     })
   let res = await send()
@@ -233,6 +239,7 @@ async function uploadPolicyPdf(policyId: string, file: File): Promise<{ data: Po
     code?: string
     data?: PolicyDetail
   }
+  if (res.status === 409 && json.code === 'TENANT_MISMATCH') handleTenantMismatch()
   if (!res.ok) {
     const message = Array.isArray(json.message) ? json.message.join(', ') : json.message
     // The route is @Throttle(5/min); Nest answers with a bare
@@ -264,6 +271,22 @@ export function usePublishPolicy() {
       }),
     onSuccess: (res) => {
       qc.setQueryData(['policies', 'detail', res.data.id], { data: res.data })
+      invalidatePolicies(qc)
+    },
+  })
+}
+
+/**
+ * Round R — Delete (Owner / HR admin). The policy is gone everywhere and its
+ * PDF removed; the record of who agreed is kept; the deletion is audited.
+ */
+export function useDeletePolicy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ data: { id: string; deleted: true } }>(`/api/v1/policies/${id}/delete`, {}),
+    onSuccess: (res) => {
+      qc.removeQueries({ queryKey: ['policies', 'detail', res.data.id] })
       invalidatePolicies(qc)
     },
   })

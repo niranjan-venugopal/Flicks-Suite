@@ -1,6 +1,7 @@
 'use client'
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { handleTenantMismatch, tenantHeaders } from '../client'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
@@ -13,12 +14,18 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 async function uploadFile(path: string, blob: Blob): Promise<{ data: { avatar_url?: string; logo_url?: string } }> {
   const form = new FormData()
   form.append('file', blob, 'image.webp')
+  // Round R: multipart requests carry X-Flicks-Tenant like every JSON call,
+  // so a tab that drifted to another company is refused (409) and reloads
+  // instead of saving into the wrong company. No Content-Type — FormData
+  // sets its own boundary.
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     credentials: 'include',
+    headers: tenantHeaders(),
     body: form,
   })
   const json = await res.json().catch(() => ({}))
+  if (res.status === 409 && (json as { code?: string })?.code === 'TENANT_MISMATCH') handleTenantMismatch()
   if (!res.ok) {
     throw new Error(
       (json as { message?: string | string[] })?.message?.toString() ??
@@ -29,9 +36,10 @@ async function uploadFile(path: string, blob: Blob): Promise<{ data: { avatar_ur
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE', credentials: 'include' })
+  const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE', credentials: 'include', headers: tenantHeaders() })
   if (!res.ok) {
     const json = await res.json().catch(() => ({}))
+    if (res.status === 409 && (json as { code?: string })?.code === 'TENANT_MISMATCH') handleTenantMismatch()
     throw new Error(
       (json as { message?: string })?.message ?? `Remove failed (${res.status})`,
     )
@@ -141,9 +149,11 @@ export function useRemoveProjectLogo(projectId: string) {
       const res = await fetch(`${BASE_URL}/api/v1/pm/projects/${projectId}/logo/remove`, {
         method: 'POST',
         credentials: 'include',
+        headers: tenantHeaders(),
       })
       if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as { message?: string }
+        const json = (await res.json().catch(() => ({}))) as { message?: string; code?: string }
+        if (res.status === 409 && json?.code === 'TENANT_MISMATCH') handleTenantMismatch()
         throw new Error(json?.message ?? `Remove failed (${res.status})`)
       }
     },

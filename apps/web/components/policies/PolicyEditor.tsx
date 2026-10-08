@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
+import { resolveFileUrl } from '@/components/policies/PolicyReader'
 import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { Btn, Icon, Modal, Pill, Toggle } from '@/components/proto'
@@ -19,6 +20,7 @@ import {
   type PolicyKind,
   type PolicyTargetRole,
   type UpdatePolicyPayload,
+  useDeletePolicy,
 } from '@/lib/api/queries/use-policies'
 
 // ─────────────────────────────────────────────────────────
@@ -138,9 +140,13 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
   const upload = useUploadPolicyFile(policy.id)
   const publish = usePublishPolicy()
   const archive = useArchivePolicy()
+  const del = useDeletePolicy()
 
   const archived = policy.status === 'archived'
   const editable = canEdit && !archived
+  // Round R: deleting is the Owner's / HR admin's call (ranked on the API),
+  // whatever the status — an archived policy can be deleted too.
+  const canDelete = myRole === 'OWNER' || myRole === 'HR_ADMIN'
 
   const [form, setForm] = useState<FormState>(() => toForm(policy))
   const baselineRef = useRef<FormState>(toForm(policy))
@@ -264,10 +270,11 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
     void pickFile(e.dataTransfer?.files?.[0])
   }
 
-  // "Open" the PDF. The detail's file_url is a 15-minute signed link and the
-  // editor is a long-lived page with no focus refetch, so the cached one may
-  // have expired. Open the tab synchronously (popup blockers want the user
-  // gesture), fetch a fresh detail, then point the tab at the fresh URL.
+  // "Open" the PDF. file_url is the API route (GET /policies/:id/file → a
+  // 60-second signed redirect behind the sign-in), relative to the API
+  // origin — resolve it, never the web origin. Open the tab synchronously
+  // (popup blockers want the user gesture), confirm the detail is fresh,
+  // then point the tab at the route.
   const [opening, setOpening] = useState(false)
   const openPdf = async (e: MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
@@ -279,7 +286,7 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
     try {
       const fresh = await api.get<{ data: PolicyDetail }>(`/api/v1/policies/${policy.id}`)
       qc.setQueryData(['policies', 'detail', policy.id], fresh)
-      const url = fresh.data.file_url
+      const url = resolveFileUrl(fresh.data.file_url)
       if (!url) throw new Error('The PDF link is not available right now — try again in a moment.')
       if (win) win.location.href = url
       else window.open(url, '_blank', 'noopener,noreferrer')
@@ -364,7 +371,27 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
     }
   }
 
-  const busy = update.isPending || publish.isPending || archive.isPending || upload.isPending
+  // ── Delete (Round R) ────────────────────────────────────────────────────
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const confirmDelete = async () => {
+    try {
+      await del.mutateAsync(policy.id)
+      setDeleteOpen(false)
+      toast({
+        title: 'Policy deleted',
+        description: `${policy.title} is gone for everyone. The record of who agreed is kept.`,
+      })
+      router.push('/settings/policies')
+    } catch (err) {
+      toast({
+        title: 'Could not delete',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const busy = update.isPending || publish.isPending || archive.isPending || upload.isPending || del.isPending
 
   return (
     <>
@@ -541,7 +568,7 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
                   <div style={{ display: 'flex', gap: 8 }}>
                     {policy.file_url && (
                       <a
-                        href={policy.file_url}
+                        href={resolveFileUrl(policy.file_url) ?? undefined}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="btn btn-ghost btn-sm"
@@ -666,6 +693,18 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
                   : 'Up to date.'}
           </span>
           <div style={{ flex: 1 }} />
+          {canDelete && (
+            <Btn
+              kind="danger"
+              size="sm"
+              icon={<Icon.trash size={13} />}
+              onClick={() => setDeleteOpen(true)}
+              disabled={busy}
+              data-testid="policy-delete"
+            >
+              Delete
+            </Btn>
+          )}
           {editable && (
             <>
               <Btn kind="ghost" size="sm" onClick={() => setArchiveOpen(true)} disabled={busy}>
@@ -750,6 +789,36 @@ export function PolicyEditor({ policy, canEdit }: PolicyEditorProps) {
               Your unsaved changes are saved first.
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* Delete confirm (Round R) */}
+      <Modal
+        open={deleteOpen}
+        onClose={() => !del.isPending && setDeleteOpen(false)}
+        title="Delete this policy?"
+        sub={policy.title}
+        width={460}
+        footer={
+          <>
+            <Btn kind="ghost" onClick={() => setDeleteOpen(false)} disabled={del.isPending}>
+              Cancel
+            </Btn>
+            <Btn kind="danger" icon={<Icon.trash size={14} />} onClick={() => void confirmDelete()} disabled={del.isPending} data-testid="policy-delete-confirm">
+              {del.isPending ? 'Deleting…' : 'Delete policy'}
+            </Btn>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>
+          <p style={{ margin: 0 }}>
+            Employees will no longer see it, and it can&apos;t be read or agreed to again.
+            {policy.kind === 'pdf' ? ' The PDF is removed from storage.' : ''}
+          </p>
+          <p style={{ margin: 0 }}>
+            The record of <b style={{ color: 'var(--text)' }}>who agreed and when</b> is kept, and the
+            deletion is written to the audit log. This cannot be undone.
+          </p>
         </div>
       </Modal>
 

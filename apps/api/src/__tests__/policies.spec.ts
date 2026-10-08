@@ -44,6 +44,7 @@ import { PoliciesController } from '../modules/policies/policies.controller';
 import { PoliciesPublicService } from '../modules/policies/public';
 import { AcknowledgePolicyDto, CreatePolicyDto, UpdatePolicyDto } from '../modules/policies/policies.dto';
 import { REQUIRE_GRANT_KEY, type GrantRequirement } from '../core/auth/decorators/require-grant.decorator';
+import { ROLES_KEY } from '../core/auth/decorators/roles.decorator';
 import { cleanMarkdown } from '../modules/pm/public';
 
 const rid = () => crypto.randomBytes(4).toString('hex');
@@ -250,12 +251,14 @@ describe('publish + pending + acknowledge', () => {
     expect(notifiedUsers).toEqual(new Set([ownerA, employeeA, managerA, financeA]));
     expect(notifiedUsers.has(hrA)).toBe(false);
     expect(createInAppNotification.mock.calls[0]![1]).toBe('policy.published');
-    expect(createInAppNotification.mock.calls[0]![3]).toBe('/policies');
+    // Round R: links carry the company so a person with several companies
+    // lands in the right one (TenantSync switches on ?company=).
+    expect(createInAppNotification.mock.calls[0]![3]).toBe(`/policies?company=${tenantA}`);
     expect(new Set(emailTemplates())).toEqual(new Set(['policy-published']));
     expect(emailRecipients()).toHaveLength(4);
     const props = sendEmail.mock.calls[0]![2] as Record<string, unknown>;
     expect(props.policyTitle).toBe(draft.title);
-    expect(String(props.link)).toBe('http://localhost:3000/policies');
+    expect(String(props.link)).toBe(`http://localhost:3000/policies?company=${tenantA}`);
     expect(typeof props.companyName).toBe('string');
     expect(auditActions()).toContain('policy.published');
 
@@ -762,8 +765,10 @@ describe('PDF upload', () => {
     expect(res.data.kind).toBe('pdf'); // uploading a PDF switches the kind
     expect(res.data.file_name).toBe('Employee Handbook.pdf');
     expect(res.data.file_size_bytes).toBe(PDF.length);
-    expect(res.data.file_url).toBe(`https://signed.test/${key1}`);
-    expect(signedGetUrl).toHaveBeenCalledWith(key1, 15 * 60);
+    // Round R: the web opens PDFs through the API route (a 60-s signed
+    // redirect behind the sign-in); nothing is signed on upload.
+    expect(res.data.file_url).toBe(`/api/v1/policies/${draft.id}/file`);
+    expect(signedGetUrl).not.toHaveBeenCalled();
     expect((await row(draft.id))!.file_sha256).toBe(crypto.createHash('sha256').update(PDF).digest('hex'));
     expect(deleteObjects).not.toHaveBeenCalled();
     expect(auditActions()).toContain('policy.file_uploaded');
@@ -779,7 +784,11 @@ describe('PDF upload', () => {
     expect(published.data.status).toBe('published');
     const pending = (await service.pendingForUser(tenantA, employeeA)).data.find((p) => p.id === draft.id)!;
     expect(pending.kind).toBe('pdf');
-    expect(pending.file_url).toBe(`https://signed.test/${key2}`);
+    expect(pending.file_url).toBe(`/api/v1/policies/${draft.id}/file`);
+    // Opening it: visibility rule, then a 60-second signed URL.
+    const url = await service.fileRedirect({ userId: employeeA, tenantId: tenantA, role: 'employee' }, draft.id);
+    expect(url).toBe(`https://signed.test/${key2}`);
+    expect(signedGetUrl).toHaveBeenCalledWith(key2, 60);
     await service.archive(tenantA, hrA, draft.id);
   });
 
@@ -795,11 +804,13 @@ describe('PDF upload', () => {
       .catch((e: unknown) => e);
     expect(missing).toBeInstanceOf(NotFoundException);
     expect(putObject).not.toHaveBeenCalled();
-    // signing failures degrade to null, never a 500 on a read path
+    // a signing failure on open is a clean 503, never a 500
+    await service.uploadFile(tenantA, hrA, draft.id, { buffer: PDF, originalname: 'h.pdf' });
     signedGetUrl.mockImplementationOnce(async () => {
       throw new Error('sig down');
     });
-    await service.uploadFile(tenantA, hrA, draft.id, { buffer: PDF, originalname: 'h.pdf' });
+    const sigDown = await service.fileRedirect({ userId: hrA, tenantId: tenantA, role: 'admin' }, draft.id).catch((e: unknown) => e);
+    expect(sigDown).toBeInstanceOf(ServiceUnavailableException);
     await service.archive(tenantA, hrA, draft.id);
   });
 });
@@ -917,5 +928,100 @@ describe('PoliciesController grant placement', () => {
     }
     const guards = (Reflect.getMetadata('__guards__', PoliciesController) ?? []) as Array<{ name: string }>;
     expect(guards.map((g) => g.name)).toContain('PoliciesGrantGuard');
+  });
+});
+
+// ─── Round R: delete + the file route + the company-bound FK ───────────────
+
+describe('Round R — delete, file route, company-bound acknowledgements', () => {
+  const PDF_R = Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n');
+
+  it('the file route applies the visibility rule: HR any status, an employee only a published policy that applies, another company 404, no file 404', async () => {
+    const { data: draft } = await service.create(tenantA, hrA, { title: 'Travel policy', kind: 'rich_text' });
+    const noFile = await service.fileRedirect({ userId: hrA, tenantId: tenantA, role: 'admin' }, draft.id).catch((e: unknown) => e);
+    expect(noFile).toBeInstanceOf(NotFoundException);
+    await service.uploadFile(tenantA, hrA, draft.id, { buffer: PDF_R, originalname: 't.pdf' });
+    const key = putObject.mock.calls.at(-1)![0];
+    // draft: HR yes, employee no
+    expect(await service.fileRedirect({ userId: hrA, tenantId: tenantA, role: 'admin' }, draft.id)).toBe(`https://signed.test/${key}`);
+    const emp = await service.fileRedirect({ userId: employeeA, tenantId: tenantA, role: 'employee' }, draft.id).catch((e: unknown) => e);
+    expect(emp).toBeInstanceOf(NotFoundException);
+    await service.publish(tenantA, hrA, draft.id, {});
+    expect(await service.fileRedirect({ userId: employeeA, tenantId: tenantA, role: 'employee' }, draft.id)).toBe(`https://signed.test/${key}`);
+    // another company's owner, same id → 404 (no existence leak)
+    const foreign = await service.fileRedirect({ userId: ownerB, tenantId: tenantB, role: 'owner' }, draft.id).catch((e: unknown) => e);
+    expect(foreign).toBeInstanceOf(NotFoundException);
+    // targeted at managers only → an employee can no longer open it
+    await service.update(tenantA, hrA, draft.id, { applies_to_roles: ['manager'] });
+    const notMine = await service.fileRedirect({ userId: employeeA, tenantId: tenantA, role: 'employee' }, draft.id).catch((e: unknown) => e);
+    expect(notMine).toBeInstanceOf(NotFoundException);
+    await service.archive(tenantA, hrA, draft.id);
+  });
+
+  it('delete: gone from list / detail / pending / roster, PDF removed, acknowledgements kept, audited; second delete and other company → 404', async () => {
+    const { data: draft } = await service.create(tenantA, hrA, { title: 'Dress code', kind: 'rich_text', body_md: 'Smart casual.' });
+    await service.uploadFile(tenantA, hrA, draft.id, { buffer: PDF_R, originalname: 'dress.pdf' });
+    const key = putObject.mock.calls.at(-1)![0];
+    await service.publish(tenantA, hrA, draft.id, {});
+    await service.acknowledge(tenantA, employeeA, draft.id, { version: 1 });
+    expect((await service.pendingForUser(tenantA, managerA)).data.some((p) => p.id === draft.id)).toBe(true);
+
+    const foreign = await service.remove(tenantB, ownerB, draft.id).catch((e: unknown) => e);
+    expect(foreign).toBeInstanceOf(NotFoundException);
+
+    deleteObjects.mockClear();
+    const res = await service.remove(tenantA, hrA, draft.id);
+    expect(res.data).toEqual({ id: draft.id, deleted: true });
+    expect(deleteObjects).toHaveBeenCalledWith([key]);
+    expect(auditActions()).toContain('policy.deleted');
+    const audited = auditLog.mock.calls.map((c) => c[0] as { action: string; metadata?: Record<string, unknown> }).find((d) => d.action === 'policy.deleted')!;
+    expect(audited.metadata).toMatchObject({ title: 'Dress code', version: 1, acknowledgements_kept: 1, file_removed: true });
+
+    expect((await service.list(tenantA, hrA)).data.some((p) => p.id === draft.id)).toBe(false);
+    const gone = await service.get({ userId: hrA, tenantId: tenantA, role: 'admin' }, draft.id).catch((e: unknown) => e);
+    expect(gone).toBeInstanceOf(NotFoundException);
+    expect((await service.pendingForUser(tenantA, managerA)).data.some((p) => p.id === draft.id)).toBe(false);
+    const roster = await service.acknowledgements(tenantA, draft.id, hrA).catch((e: unknown) => e);
+    expect(roster).toBeInstanceOf(NotFoundException);
+    const file = await service.fileRedirect({ userId: hrA, tenantId: tenantA, role: 'admin' }, draft.id).catch((e: unknown) => e);
+    expect(file).toBeInstanceOf(NotFoundException);
+    // the proof survives: the acknowledgement row and the member's history
+    const acks = await dbAdmin.select().from(policyAcknowledgements).where(eq(policyAcknowledgements.policy_id, draft.id));
+    expect(acks).toHaveLength(1);
+    expect((await service.myHistory(tenantA, employeeA)).data.some((h) => h.policy_id === draft.id && h.version === 1)).toBe(true);
+    expect((await row(draft.id))!.deleted_at).not.toBeNull();
+    // the org export still lists it, marked deleted
+    const org = await pub.exportForTenant(tenantA);
+    expect(org.policies.find((p) => p.id === draft.id)?.deleted_at).toBeTruthy();
+    // again → 404; archive / publish / update after delete → 404
+    const again = await service.remove(tenantA, hrA, draft.id).catch((e: unknown) => e);
+    expect(again).toBeInstanceOf(NotFoundException);
+    const pub2 = await service.publish(tenantA, hrA, draft.id, {}).catch((e: unknown) => e);
+    expect(pub2).toBeInstanceOf(NotFoundException);
+    // a deleted policy keeps status 'published' for the proof — it must never
+    // take a NEW agreement (PolicyGate still open, or a crafted POST)
+    const ackAfter = await service.acknowledge(tenantA, managerA, draft.id, { version: 1 }).catch((e: unknown) => e);
+    expect(ackAfter).toBeInstanceOf(NotFoundException);
+    expect(await dbAdmin.select().from(policyAcknowledgements).where(eq(policyAcknowledgements.policy_id, draft.id))).toHaveLength(1);
+    expect(auditActions().filter((a) => a === 'policy.acknowledged')).toHaveLength(1);
+  });
+
+  it('the controller ranks delete to Owner / HR admin on top of the edit grant, and exposes the file route', () => {
+    const proto = PoliciesController.prototype as unknown as Record<string, object>;
+    expect(Reflect.getMetadata(ROLES_KEY, proto.remove!)).toEqual(['admin']);
+    expect(Reflect.getMetadata(REQUIRE_GRANT_KEY, proto.remove!)).toMatchObject({ module: 'policies', level: 'edit' } as GrantRequirement);
+    expect(typeof proto.file).toBe('function');
+    expect(Reflect.getMetadata(ROLES_KEY, proto.file!)).toBeUndefined();
+  });
+
+  it("the database refuses an acknowledgement that points at another company's policy (composite FK, 0069)", async () => {
+    const { data: draft } = await service.create(tenantA, hrA, { title: 'FK probe', kind: 'rich_text', body_md: 'x' });
+    const err = await dbAdmin
+      .insert(policyAcknowledgements)
+      .values({ tenant_id: tenantB, policy_id: draft.id, policy_version: 1, user_id: employeeB })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(String((err as { cause?: { code?: string } }).cause?.code ?? (err as { code?: string }).code ?? err)).toMatch(/23503|foreign key/i);
+    await service.archive(tenantA, hrA, draft.id);
   });
 });

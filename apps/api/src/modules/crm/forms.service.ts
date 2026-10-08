@@ -112,7 +112,8 @@ export class FormsService {
           .values({
             tenant_id: tenantId,
             name: dto.name.trim(),
-            token: randomBytes(5).toString('hex'), // hex — same reasoning as the BCC dropbox
+            // Round R: 128-bit tokens (was 40). Existing links keep working.
+            token: randomBytes(16).toString('hex'), // hex — same reasoning as the BCC dropbox
             title: dto.title?.trim() || 'Talk to sales',
             intro: dto.intro ?? null,
             fields,

@@ -203,7 +203,7 @@ export default function FamFeatureUsagePage() {
                     <tr key={t.tenantId}>
                       <td style={{ padding: '5px 8px', fontWeight: 800, fontSize: 11, fontFamily: 'var(--font)' }}>
                         <Link href={`/fam/tenants/${t.tenantId}`} style={{ display: 'inline-flex', gap: 8, alignItems: 'center', textDecoration: 'none', color: 'inherit' }}>
-                          <Avatar name={t.tenantName} size="sm" />
+                          <Avatar name={t.tenantName} size="sm" src={t.logoUrl ?? undefined} />
                           <span>{t.tenantName}</span>
                         </Link>
                       </td>

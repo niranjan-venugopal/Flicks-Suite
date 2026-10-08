@@ -3,13 +3,15 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Btn, Icon, Pill, SectionHead, Skeleton } from '@/components/proto'
+import { Btn, Icon, Modal, Pill, SectionHead, Skeleton } from '@/components/proto'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { SettingsLayout } from '@/components/layout/SettingsLayout'
 import { useToast } from '@/components/ui/use-toast'
 import { policyKindPill, policyStatusPill } from '@/components/policies/PolicyEditor'
 import {
   policyAudienceLabel,
   useCreatePolicy,
+  useDeletePolicy,
   usePolicies,
   usePoliciesAccess,
   type Policy,
@@ -66,6 +68,25 @@ export default function PoliciesSettingsPage() {
   const { data, isLoading, isError, refetch } = usePolicies(access.canView)
   const create = useCreatePolicy()
   const [creating, setCreating] = useState(false)
+  // Round R: Delete — Owner / HR admin only (the API ranks it the same way).
+  const role = useAuthStore((s) => s.currentUser?.role)
+  const canDelete = role === 'OWNER' || role === 'HR_ADMIN'
+  const del = useDeletePolicy()
+  const [deleting, setDeleting] = useState<Policy | null>(null)
+  const confirmDelete = async () => {
+    if (!deleting) return
+    try {
+      await del.mutateAsync(deleting.id)
+      toast({ title: 'Policy deleted', description: `${deleting.title} is gone for everyone. The record of who agreed is kept.` })
+      setDeleting(null)
+    } catch (err) {
+      toast({
+        title: 'Could not delete',
+        description: err instanceof Error ? err.message : 'Please try again.',
+        variant: 'destructive',
+      })
+    }
+  }
 
   const items = data?.data ?? []
   const publishedCount = items.filter((p) => p.status === 'published').length
@@ -221,8 +242,22 @@ export default function PoliciesSettingsPage() {
                     <td className="t-mute" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
                       {formatDate(p.updated_at)}
                     </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Icon.chevR size={14} style={{ color: 'var(--text-faint)' }} />
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {canDelete && (
+                        <Btn
+                          kind="ghost"
+                          size="sm"
+                          icon={<Icon.trash size={13} />}
+                          aria-label={`Delete ${p.title}`}
+                          title="Delete policy"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleting(p)
+                          }}
+                          data-testid="policy-row-delete"
+                        />
+                      )}
+                      <Icon.chevR size={14} style={{ color: 'var(--text-faint)', verticalAlign: 'middle' }} />
                     </td>
                   </tr>
                 ))}
@@ -231,6 +266,31 @@ export default function PoliciesSettingsPage() {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!deleting}
+        onClose={() => !del.isPending && setDeleting(null)}
+        title="Delete this policy?"
+        sub={deleting?.title}
+        width={460}
+        footer={
+          <>
+            <Btn kind="ghost" onClick={() => setDeleting(null)} disabled={del.isPending}>
+              Cancel
+            </Btn>
+            <Btn kind="danger" icon={<Icon.trash size={14} />} onClick={() => void confirmDelete()} disabled={del.isPending} data-testid="policy-delete-confirm">
+              {del.isPending ? 'Deleting…' : 'Delete policy'}
+            </Btn>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-2)', lineHeight: 1.55 }}>
+          Employees will no longer see it and it can&apos;t be agreed to again
+          {deleting?.kind === 'pdf' ? '; the PDF is removed from storage' : ''}. The record of{' '}
+          <b style={{ color: 'var(--text)' }}>who agreed and when</b> is kept, and the deletion is written
+          to the audit log. This cannot be undone.
+        </p>
+      </Modal>
 
       <div className="t-caption" style={{ textTransform: 'none', letterSpacing: 0 }}>
         Published policies that require agreement block the next sign-in until the person agrees,

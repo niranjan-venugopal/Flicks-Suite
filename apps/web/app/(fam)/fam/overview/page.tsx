@@ -148,11 +148,11 @@ export default function FamOverviewPage() {
                     <span>{s.label}</span>
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                       <strong>{s.count}</strong>{' '}
-                      <span style={{ color: 'var(--text-mute)' }}>· {Math.round(s.rate * 100)}%</span>
+                      <span style={{ color: 'var(--text-mute)' }}>· {Math.round(s.rate)}%</span>
                     </span>
                   </div>
                   <div style={{ height: 8, borderRadius: 99, background: 'var(--surf-2)', overflow: 'hidden' }}>
-                    <div style={{ width: `${Math.round(s.rate * 100)}%`, height: '100%', background: FUNNEL_COLOURS[i % FUNNEL_COLOURS.length], borderRadius: 99 }} />
+                    <div style={{ width: `${Math.min(100, Math.max(0, Math.round(s.rate)))}%`, height: '100%', background: FUNNEL_COLOURS[i % FUNNEL_COLOURS.length], borderRadius: 99 }} />
                   </div>
                 </div>
               ))
@@ -177,7 +177,7 @@ export default function FamOverviewPage() {
                     textDecoration: 'none', color: 'inherit',
                   }}
                 >
-                  <Avatar name={t.tenantName} size="sm" />
+                  <Avatar name={t.tenantName} size="sm" src={t.logoUrl ?? undefined} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.tenantName}</div>
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>

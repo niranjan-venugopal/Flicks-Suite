@@ -147,7 +147,7 @@ function TenantInvoicingRow({ tenant }: { tenant: FamTenantRow }) {
     <tr>
       <td>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Avatar name={tenant.name} size="sm" />
+          <Avatar name={tenant.name} size="sm" src={tenant.logoUrl ?? undefined} />
           <div style={{ fontWeight: 800 }}>{tenant.name}</div>
         </div>
       </td>

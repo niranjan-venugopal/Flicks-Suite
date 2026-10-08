@@ -260,6 +260,8 @@ const assetAssigned = () => new ConflictException({ code: 'ASSET_ASSIGNED', mess
 
 /** Round Q: the employee's own equipment — People → Assets, "My assets" view. */
 export const MY_ASSETS_PATH = '/employees/assets?view=me';
+/** Round R: the link names the company so a multi-company person lands in the right one. */
+export const myAssetsPath = (tenantId: string) => `${MY_ASSETS_PATH}&company=${tenantId}`;
 
 @Injectable()
 export class AssetsService {
@@ -1114,7 +1116,7 @@ export class AssetsService {
           'asset.assigned',
           `${asset.name} (${asset.asset_tag}) was issued to you — please acknowledge receipt`,
           // Round Q: My assets lives at People → Assets (/assets/me redirects).
-          MY_ASSETS_PATH,
+          myAssetsPath(tenantId),
           tenantId,
           { groupKey: `asset:${asset.id}` },
         );
@@ -1134,7 +1136,7 @@ export class AssetsService {
             assetName: asset.name,
             assetTag: asset.asset_tag,
             companyName: out.companyName,
-            link: `${this.appUrl()}${MY_ASSETS_PATH}`,
+            link: `${this.appUrl()}${myAssetsPath(tenantId)}`,
             issuedBy: out.issuedBy,
             issueCondition: assignment.issue_condition,
             notes: assignment.notes,

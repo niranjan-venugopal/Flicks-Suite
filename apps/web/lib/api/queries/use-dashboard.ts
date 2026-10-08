@@ -156,13 +156,12 @@ export function useAdminOverview(enabled = true, opts?: { pendingLimit?: number 
   const pendingLimit = opts?.pendingLimit
   return useQuery({
     queryKey: ['dashboard', 'admin', 'overview', pendingLimit ?? null],
-    // The route answers with `Cache-Control: private, max-age=15`. The Inbox
-    // variant deep-links to requests that were filed seconds ago, so its
-    // fetches carry a cache-buster and always reach the API (a request
-    // header would force a CORS preflight on every read).
+    // Round R: the route answers `Cache-Control: private, no-store`, so every
+    // fetch reaches the API — no cache-buster needed (a stable URL also lets
+    // the browser reuse the CORS preflight).
     queryFn: () =>
       api.get<AdminOverview>(
-        `/api/v1/dashboard/admin/overview${pendingLimit ? `?pendingLimit=${pendingLimit}&_=${Date.now()}` : ''}`,
+        `/api/v1/dashboard/admin/overview${pendingLimit ? `?pendingLimit=${pendingLimit}` : ''}`,
       ),
     staleTime: 30_000,
     // Round H: callers pass their role gate — guests (project-scoped seats)

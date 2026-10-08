@@ -4,6 +4,7 @@ import {
   WebSocketServer,
   OnGatewayConnection,
 } from '@nestjs/websockets';
+import { OnEvent } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
@@ -12,6 +13,7 @@ import { memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload } from '@flicks/shared/types';
 import { DatabaseService } from '../core/database/database.service';
 import { wsCors } from '../core/common/ws-cors';
+import { SEAT_REVOKED_EVENT, tenantUserRoom, type SeatRevokedPayload } from './rooms';
 
 /**
  * FSE realtime gateway (PRD v6 §3.6) — socket.io namespace /sync, room per
@@ -58,9 +60,18 @@ export class PmSyncGateway implements OnGatewayConnection {
       }
       (client.data as { user?: JwtPayload }).user = payload;
       await client.join(`tenant:${payload.tenantId}`);
+      // Round R: per-person room so a revoked seat's sockets can be dropped.
+      await client.join(tenantUserRoom(payload.tenantId, payload.sub));
     } catch {
       client.disconnect(true);
     }
+  }
+
+  /** Round R: a switched-off seat stops receiving seq pings at once. */
+  @OnEvent(SEAT_REVOKED_EVENT)
+  handleSeatRevoked(payload: SeatRevokedPayload): void {
+    if (!payload?.tenantId || !payload?.userId) return;
+    this.server?.in(tenantUserRoom(payload.tenantId, payload.userId)).disconnectSockets(true);
   }
 
   /** Called by the mutation executor directly after commit. */

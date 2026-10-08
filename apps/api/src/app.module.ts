@@ -20,6 +20,7 @@ import { HealthController } from './health.controller';
 import { TenantMiddleware } from './core/tenant/tenant.middleware';
 import { JwtStrategy } from './core/auth/strategies/jwt.strategy';
 import { JwtAuthGuard } from './core/auth/guards/jwt-auth.guard';
+import { TenantHeaderGuard } from './core/auth/guards/tenant-header.guard';
 import { RolesGuard } from './core/auth/guards/roles.guard';
 import { GuestScopeGuard } from './core/auth/guards/guest-scope.guard';
 import { RequestIdInterceptor } from './core/common/interceptors/request-id.interceptor';
@@ -214,6 +215,10 @@ import { PmJobs } from './jobs/pm.jobs';
     // /login — see ExplicitThrottlerGuard's doc comment.
     { provide: APP_GUARD, useClass: ExplicitThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Round R: a tab that still believes it is in company A (X-Flicks-Tenant)
+    // while the shared cookie now points at company B is refused (409
+    // TENANT_MISMATCH) — nothing it saves can land in the wrong company.
+    { provide: APP_GUARD, useClass: TenantHeaderGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     // Round H: guest seats are project-scoped — deny-by-default allowlist for
     // the guest role (RolesGuard only ranks routes that carry @Roles).

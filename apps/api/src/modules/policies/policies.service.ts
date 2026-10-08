@@ -134,7 +134,13 @@ export interface PolicyUpload {
 }
 
 export const POLICY_FILE_MAX_BYTES = 10 * 1024 * 1024;
-export const POLICY_FILE_URL_TTL_S = 15 * 60;
+/**
+ * Round R: PDFs are opened through GET /policies/:id/file, which answers a
+ * 302 to a signed bucket URL that lives this long — just enough for the
+ * browser to follow it. A forwarded link therefore needs a sign-in to THIS
+ * company; the bucket URL itself is never shown to anyone.
+ */
+export const POLICY_FILE_URL_TTL_S = 60;
 export const POLICY_REMIND_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Seats that are never asked to agree (and never see /policies/pending). */
@@ -234,15 +240,15 @@ export class PoliciesService {
     return (this.config.get<string>('APP_URL') ?? 'http://localhost:3000').replace(/\/+$/, '');
   }
 
-  /** 15-minute signed GET for a PDF key; null when storage is unconfigured or signing fails (read paths never 503). */
-  private async signedFileUrl(row: Pick<PolicyRow, 'kind' | 'file_key'>): Promise<string | null> {
+  /**
+   * Where the web opens the PDF: the API's own file route (a 60-second signed
+   * redirect behind the sign-in — see fileRedirect), never a raw bucket URL.
+   * null when there is no file or storage is unconfigured (read paths never
+   * 503; the reader then offers nothing to open and the gate skips it).
+   */
+  private fileUrlFor(row: Pick<PolicyRow, 'id' | 'kind' | 'file_key'>): string | null {
     if (row.kind !== 'pdf' || !row.file_key || !this.r2.isConfigured()) return null;
-    try {
-      return await this.r2.signedGetUrl(row.file_key, POLICY_FILE_URL_TTL_S);
-    } catch (err) {
-      this.logger.warn(`Signing policy file ${row.file_key} failed: ${err instanceof Error ? err.message : err}`);
-      return null;
-    }
+    return `/api/v1/policies/${row.id}/file`;
   }
 
   /**
@@ -289,7 +295,9 @@ export class PoliciesService {
     const outer = (col: 'id' | 'version' | 'tenant_id' | 'applies_to_roles') =>
       sql.raw(`"company_policies"."${col}"`);
     const applicable = sql`coalesce(${outer('applies_to_roles')}, ${STANDARD_ROLES_SQL})`;
-    const where = extra ? and(eq(companyPolicies.tenant_id, tenantId), extra) : eq(companyPolicies.tenant_id, tenantId);
+    // Round R: deleted policies are gone from every list and count.
+    const live = and(eq(companyPolicies.tenant_id, tenantId), isNull(companyPolicies.deleted_at));
+    const where = extra ? and(live, extra) : live;
     return tx
       .select({
         row: companyPolicies,
@@ -355,7 +363,7 @@ export class PoliciesService {
     return {
       ...this.toPolicy(hit.row, hit.applicable, hit.signed),
       body_md: hit.row.body_md,
-      file_url: await this.signedFileUrl(hit.row),
+      file_url: this.fileUrlFor(hit.row),
     };
   }
 
@@ -366,7 +374,8 @@ export class PoliciesService {
       .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id)))
       .limit(1)
       .for('update');
-    if (!row) throw new NotFoundException('Policy not found');
+    // A deleted policy reads as gone (no existence leak, no resurrection).
+    if (!row || row.deleted_at) throw new NotFoundException('Policy not found');
     return row;
   }
 
@@ -438,7 +447,9 @@ export class PoliciesService {
     companyName: string,
   ): Promise<number> {
     if (!recipients.length) return 0;
-    const link = `${this.appUrl()}/policies`;
+    // Round R: the link names the company, so a person who belongs to several
+    // companies lands in the right one (never "whichever is active").
+    const link = `${this.appUrl()}/policies?company=${tenantId}`;
     const inAppType = kind === 'reminder' ? 'policy.reminder' : 'policy.published';
     const message =
       kind === 'published'
@@ -457,7 +468,7 @@ export class PoliciesService {
       await Promise.all(
         chunk.map(async (r) => {
           try {
-            await this.notifications.createInAppNotification(r.user_id, inAppType, message, '/policies', tenantId, {
+            await this.notifications.createInAppNotification(r.user_id, inAppType, message, `/policies?company=${tenantId}`, tenantId, {
               groupKey: `policy:${policy.id}`,
             });
           } catch (err) {
@@ -515,9 +526,104 @@ export class PoliciesService {
       data: {
         ...this.toPolicy(hit.row, hit.applicable, hit.signed),
         body_md: hit.row.body_md,
-        file_url: await this.signedFileUrl(hit.row),
+        file_url: this.fileUrlFor(hit.row),
       },
     };
+  }
+
+  /**
+   * Round R: the PDF is served ONLY through the API. GET /policies/:id/file
+   * applies exactly get()'s visibility rule (a manage-grant holder: any
+   * status; anyone else: published + applies to their LIVE role; deleted:
+   * never) and then answers a 302 to a 60-second signed bucket URL. So a
+   * forwarded link is worthless without a sign-in to THIS company.
+   */
+  async fileRedirect(actor: PolicyActor, id: string): Promise<string> {
+    const level = await this.manageLevel(actor);
+    const row = await this.db.withTenant(
+      actor.tenantId,
+      async (tx) => {
+        const [found] = await tx
+          .select()
+          .from(companyPolicies)
+          .where(and(eq(companyPolicies.tenant_id, actor.tenantId), eq(companyPolicies.id, id), isNull(companyPolicies.deleted_at)))
+          .limit(1);
+        if (!found) return null;
+        if (level !== 'none') return found;
+        const m = await this.callerMembershipTx(tx, actor.tenantId, actor.userId);
+        if (!isLiveMembership(m)) return null;
+        if (found.status !== 'published' || !policyAppliesToRole(found, m!.role)) return null;
+        return found;
+      },
+      actor.userId,
+    );
+    if (!row || row.kind !== 'pdf' || !row.file_key) throw new NotFoundException('Policy file not found');
+    if (!this.r2.isConfigured()) {
+      throw new ServiceUnavailableException('File storage is not configured on this server');
+    }
+    try {
+      return await this.r2.signedGetUrl(row.file_key, POLICY_FILE_URL_TTL_S);
+    } catch (err) {
+      this.logger.warn(`Signing policy file ${row.file_key} failed: ${err instanceof Error ? err.message : err}`);
+      throw new ServiceUnavailableException('The policy file could not be opened right now — try again in a moment');
+    }
+  }
+
+  /**
+   * Round R — Delete (Owner / HR). The policy disappears everywhere (lists,
+   * the pending gate, the reader, the roster) and its PDF is removed from
+   * storage; the acknowledgement rows are KEPT — who agreed to which version
+   * and when is the company's proof — and the deletion is audited. Soft
+   * delete (deleted_at) so that proof keeps its foreign key.
+   */
+  async remove(tenantId: string, userId: string, id: string): Promise<{ data: { id: string; deleted: true } }> {
+    const out = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const before = await this.loadForWriteTx(tx, tenantId, id);
+        const [acks] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(policyAcknowledgements)
+          .where(and(eq(policyAcknowledgements.tenant_id, tenantId), eq(policyAcknowledgements.policy_id, id)));
+        await tx
+          .update(companyPolicies)
+          .set({ deleted_at: new Date(), updated_by: userId, updated_at: new Date() })
+          .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id)));
+        return { before, acknowledgements: Number(acks?.n ?? 0) };
+      },
+      userId,
+    );
+    // The file goes after commit, best-effort: a storage hiccup must never
+    // undo the delete the Owner just confirmed.
+    if (out.before.file_key && this.r2.isConfigured()) {
+      try {
+        await this.r2.deleteObjects([out.before.file_key]);
+      } catch (err) {
+        this.logger.warn(`Deleting policy file ${out.before.file_key} failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    await this.logAudit({
+      tenantId,
+      actorUserId: userId,
+      action: 'policy.deleted',
+      resourceType: 'company_policy',
+      resourceId: id,
+      beforeState: {
+        title: out.before.title,
+        status: out.before.status,
+        version: out.before.version,
+        kind: out.before.kind,
+        file_name: out.before.file_name,
+      },
+      afterState: { deleted: true },
+      metadata: {
+        title: out.before.title,
+        version: out.before.version,
+        acknowledgements_kept: out.acknowledgements,
+        file_removed: !!out.before.file_key,
+      },
+    });
+    return { data: { id, deleted: true } };
   }
 
   async create(tenantId: string, userId: string, dto: CreatePolicyDto): Promise<{ data: PolicyDetail }> {
@@ -835,7 +941,7 @@ export class PoliciesService {
         const [policy] = await tx
           .select()
           .from(companyPolicies)
-          .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id)))
+          .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id), isNull(companyPolicies.deleted_at)))
           .limit(1);
         if (!policy) throw new NotFoundException('Policy not found');
         const roster = await this.rosterTx(tx, tenantId, policy);
@@ -931,6 +1037,7 @@ export class PoliciesService {
           .where(
             and(
               eq(companyPolicies.tenant_id, tenantId),
+              isNull(companyPolicies.deleted_at),
               eq(companyPolicies.status, 'published'),
               eq(companyPolicies.requires_acknowledgement, true),
               sql`(${companyPolicies.applies_to_roles} IS NULL OR ${m!.role}::text = ANY(${companyPolicies.applies_to_roles}))`,
@@ -963,7 +1070,7 @@ export class PoliciesService {
         version: row.version,
         published_at: iso(row.published_at),
         body_md: row.body_md,
-        file_url: await this.signedFileUrl(row),
+        file_url: this.fileUrlFor(row),
       });
     }
     return { data };
@@ -989,12 +1096,14 @@ export class PoliciesService {
         if (!isLiveMembership(m) || SELF_SERVICE_EXCLUDED_ROLES.has(m!.role)) {
           throw new NotFoundException('Policy not found');
         }
+        // Round R: a deleted policy keeps status 'published' (the proof of who
+        // agreed stays readable) — it must never take a NEW agreement.
         const [policy] = await tx
           .select()
           .from(companyPolicies)
-          .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id)))
+          .where(and(eq(companyPolicies.tenant_id, tenantId), eq(companyPolicies.id, id), isNull(companyPolicies.deleted_at)))
           .limit(1);
-        if (!policy || policy.status !== 'published' || !policyAppliesToRole(policy, m!.role)) {
+        if (!policy || policy.deleted_at || policy.status !== 'published' || !policyAppliesToRole(policy, m!.role)) {
           throw new NotFoundException('Policy not found');
         }
         if (dto.version !== policy.version) {
@@ -1132,6 +1241,7 @@ export class PoliciesService {
           file_name: p.file_name,
           published_at: iso(p.published_at),
           archived_at: iso(p.archived_at),
+          deleted_at: iso(p.deleted_at),
           created_at: iso(p.created_at),
           updated_at: iso(p.updated_at),
           body_md: p.body_md,

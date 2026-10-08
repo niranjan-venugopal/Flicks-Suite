@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, APIError } from '../client'
+import { api, APIError, setConfirmedTenant } from '../client'
 import { resetAnalytics } from '@/lib/analytics/posthog'
 import { destroyAllPmDbs } from '@/lib/pm/idb'
 import { useToast } from '@/components/ui/use-toast'
@@ -17,6 +17,8 @@ import {
   type CurrentTenant,
   type UserRole,
 } from '@/lib/stores/auth.store'
+import { planLabel, type TenantBilling } from '@/lib/plan-label'
+import { broadcastSignedOut } from '@/lib/tenant-sync'
 
 interface RequestOtpPayload {
   email: string
@@ -64,6 +66,8 @@ interface ApiMembership {
   status: string
   employeeId?: string | null
   designationTitle?: string | null
+  /** Round R: subscription summary for the workspace-card label (absent on older APIs). */
+  billing?: TenantBilling | null
 }
 
 // Returned by /verify-otp and /magic-link
@@ -173,7 +177,10 @@ function adaptTenant(
     // §4 media pipeline: /me serves a signed URL from tenants.logo_key with a
     // legacy logo_url fallback.
     logoUrl: (membership as { tenantLogoUrl?: string | null }).tenantLogoUrl ?? undefined,
-    plan: 'free',
+    // Round R: the real plan / trial state, never a constant.
+    plan: planLabel(membership.billing, membership.tenantStatus),
+    status: membership.tenantStatus,
+    billing: membership.billing ?? null,
   }
 }
 
@@ -197,6 +204,9 @@ export function useCurrentUser() {
     queryFn: async () => {
       const data = await api.get<MeResponse>('/api/v1/auth/me')
       const membership = data.currentMembership ?? data.memberships?.[0] ?? null
+      // Round R: from here on every call carries this company (X-Flicks-
+      // Tenant) and the API refuses a tab that drifted to another one.
+      setConfirmedTenant(data.currentMembership?.tenantId ?? null)
       setUser(adaptUser(data, membership))
       const tenant = adaptTenant(membership)
       if (tenant) setTenant(tenant)
@@ -391,6 +401,8 @@ export function useLogout() {
       await destroyAllPmDbs(1500, fallback).catch(() => undefined)
       logout()
       resetAnalytics()
+      // Round R: every other open tab of this browser goes to /login too.
+      broadcastSignedOut()
       window.location.assign('/login')
     },
   })
