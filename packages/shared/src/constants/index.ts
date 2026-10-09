@@ -422,6 +422,8 @@ export const BILLING_GRACE_DAYS = 7;
 export const DOMAIN_EVENTS = [
   // CRM (published from Sprint 25 onward)
   'crm.lead.created', 'crm.lead.converted', 'crm.lead.discarded',
+  // Round R R3 — closed things are editable
+  'crm.lead.updated', 'crm.lead.restored', 'crm.activity.updated', 'crm.activity.reopened',
   'crm.contact.created', 'crm.contact.updated', 'crm.contact.merged',
   'crm.company.created', 'crm.company.updated', 'crm.company.merged',
   'crm.deal.created', 'crm.deal.updated', 'crm.deal.stage_changed',

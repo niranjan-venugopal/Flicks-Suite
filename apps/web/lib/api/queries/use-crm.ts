@@ -47,11 +47,12 @@ interface Paged<T> {
 }
 
 // ─── Companies ────────────────────────────────────────────────────────────────
-export function useCompanies(q?: string) {
+export function useCompanies(q?: string, enabled = true) {
   return useQuery({
     queryKey: ['crm', 'companies', q ?? ''],
     queryFn: () =>
       api.get<Paged<DirectoryCompany>>(`/api/v1/crm/companies${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    enabled,
   })
 }
 
@@ -97,7 +98,7 @@ export function useDeleteCompany() {
 }
 
 // ─── Contacts (people) ──────────────────────────────────────────────────────
-export function useContacts(opts?: { q?: string; company_id?: string }) {
+export function useContacts(opts?: { q?: string; company_id?: string }, enabled = true) {
   const params = new URLSearchParams()
   if (opts?.q) params.set('q', opts.q)
   if (opts?.company_id) params.set('company_id', opts.company_id)
@@ -105,6 +106,7 @@ export function useContacts(opts?: { q?: string; company_id?: string }) {
   return useQuery({
     queryKey: ['crm', 'contacts', opts?.q ?? '', opts?.company_id ?? ''],
     queryFn: () => api.get<Paged<DirectoryPerson>>(`/api/v1/crm/contacts${qs ? `?${qs}` : ''}`),
+    enabled,
   })
 }
 
@@ -461,28 +463,54 @@ export function useMoveDeal() {
   })
 }
 
+/**
+ * Everything a deal's verdict / fields touch: the board, the Closed view, the
+ * detail, the forecast, reports — and the deal lists on company / contact
+ * pages (a company or primary-contact change moves the deal between them).
+ */
+function invalidateDealScopes(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ['crm', 'board'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
+  qc.invalidateQueries({ queryKey: ['crm', 'forecast'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'reports'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'company'] })
+  qc.invalidateQueries({ queryKey: ['crm', 'contact'] })
+}
+
 export function useUpdateDeal() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch<{ data: DealCard }>(`/api/v1/crm/deals/${id}`, body),
-    onSuccess: (_r, { id }) => {
-      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
-      qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
-    },
+    // Round R R3: closed deals are editable too — the Closed view and the
+    // forecast carry title / owner / value, so they refresh as well.
+    onSuccess: (_r, { id }) => invalidateDealScopes(qc, id),
   })
 }
 
+/** Round R R3: reopen into a CHOSEN open stage (no stage → the first one). */
 export function useReopenDeal() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/reopen`, {}),
-    onSuccess: (_r, id) => {
-      qc.invalidateQueries({ queryKey: ['crm', 'deal', id] })
-      qc.invalidateQueries({ queryKey: ['crm', 'board'] })
-      // Round I: reopening removes the deal from the Closed view.
-      qc.invalidateQueries({ queryKey: ['crm', 'deals'] })
-      qc.invalidateQueries({ queryKey: ['crm', 'forecast'] })
-    },
+    mutationFn: ({ id, stageId }: { id: string; stageId?: string }) =>
+      api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/reopen`, stageId ? { stage_id: stageId } : {}),
+    onSuccess: (_r, { id }) => invalidateDealScopes(qc, id),
+  })
+}
+
+/** Round R R3: won ↔ lost, the lost reason / note, the won / lost date — manager and above. */
+export interface DealOutcomeBody {
+  outcome: 'won' | 'lost'
+  lost_reason_id?: string | null
+  lost_reason_note?: string | null
+  closed_at?: string | null
+}
+export function useSetDealOutcome() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: DealOutcomeBody }) =>
+      api.post<{ data: DealCard }>(`/api/v1/crm/deals/${id}/outcome`, body),
+    onSuccess: (_r, { id }) => invalidateDealScopes(qc, id),
   })
 }
 
@@ -699,6 +727,34 @@ export function useDeleteActivity() {
   })
 }
 
+/** Round R R3: edit an activity in place (subject, notes, due, assignee, type, outcome). */
+export interface UpdateActivityBody {
+  type?: string
+  subject?: string
+  body?: string | null
+  due_at?: string | null
+  assignee_user_id?: string
+  outcome?: string | null
+}
+export function useUpdateActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateActivityBody; dealId?: string | null }) =>
+      api.patch<{ data: Activity }>(`/api/v1/crm/activities/${id}`, body),
+    onSuccess: (_r, { dealId }) => invalidateActivityScopes(qc, dealId),
+  })
+}
+
+/** Round R R3: "mark not done" — a completed task / call / meeting goes back to the queue. */
+export function useReopenActivity() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string; dealId?: string | null }) =>
+      api.post<{ data: Activity }>(`/api/v1/crm/activities/${id}/reopen`, {}),
+    onSuccess: (_r, { dealId }) => invalidateActivityScopes(qc, dealId),
+  })
+}
+
 // ─── Email Phase A (§7.1, C9–C11) ─────────────────────────────────────────────
 export interface EmailMessage {
   id: string
@@ -907,6 +963,34 @@ export function useDiscardLead() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.post(`/api/v1/crm/leads/${id}/discard`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
+  })
+}
+
+/** Round R R3: edit a lead still in play — contact fields, owner, new ↔ working. */
+export interface UpdateLeadBody {
+  first_name?: string
+  last_name?: string | null
+  company_name?: string | null
+  email?: string | null
+  phone?: string | null
+  note?: string | null
+  owner_user_id?: string | null
+  status?: 'new' | 'working'
+}
+export function useUpdateLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateLeadBody }) => api.patch<{ data: Lead }>(`/api/v1/crm/leads/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
+  })
+}
+
+/** Round R R3: a discarded lead comes back to the inbox. */
+export function useRestoreLead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.post<{ data: Lead }>(`/api/v1/crm/leads/${id}/restore`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm', 'leads'] }),
   })
 }

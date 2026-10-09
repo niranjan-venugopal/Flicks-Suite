@@ -6,14 +6,19 @@ import { Btn, Icon, Modal, Pill, SectionHead } from '@/components/proto'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState, OwnerAv } from '@/components/crm/kit'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import {
   useLeads,
   useCreateLead,
   useDeleteLead,
   useDiscardLead,
   useConvertLead,
+  useUpdateLead,
+  useRestoreLead,
   usePipelines,
+  useReps,
   type Lead,
+  type UpdateLeadBody,
 } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -47,10 +52,12 @@ export default function LeadsPage() {
   const { data, isLoading } = useLeads(tab)
   const discard = useDiscardLead()
   const deleteLead = useDeleteLead()
+  const restore = useRestoreLead()
   const { toast } = useToast()
   const [addOpen, setAddOpen] = useState(false)
   const [convertFor, setConvertFor] = useState<Lead | null>(null)
   const [deleting, setDeleting] = useState<Lead | null>(null)
+  const [editing, setEditing] = useState<Lead | null>(null)
   const rows = data?.data ?? []
   const counts = data?.counts ?? {}
 
@@ -122,6 +129,8 @@ export default function LeadsPage() {
                     {(l.status === 'new' || l.status === 'working') ? (
                       <div style={{ display: 'inline-flex', gap: 6 }}>
                         <Btn kind="primary" size="sm" icon={<Icon.check size={12} />} onClick={() => setConvertFor(l)}>Convert</Btn>
+                        {/* Round R R3 — a lead in play is editable. */}
+                        <Btn kind="ghost" size="sm" icon={<Icon.edit size={12} />} onClick={() => setEditing(l)} data-testid={`lead-edit-${l.id}`}>Edit</Btn>
                         <Btn kind="ghost" size="sm" icon={<Icon.x size={12} />} disabled={discard.isPending}
                           onClick={() => discard.mutate(l.id, { onSuccess: () => toast({ title: 'Lead discarded' }) })}>Discard</Btn>
                         <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
@@ -131,7 +140,16 @@ export default function LeadsPage() {
                       <Link href={`/crm/deals/${l.converted_deal_id}`} style={{ color: 'var(--blue)', fontSize: 11.5, fontWeight: 800, textDecoration: 'none' }}>View deal →</Link>
                     ) : (
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span className="t-caption">kept for source analytics</span>
+                        {l.status === 'discarded' ? (
+                          /* Round R R3 — a discarded lead can come back to the inbox. */
+                          <Btn kind="secondary" size="sm" icon={<Icon.refresh size={12} />} disabled={restore.isPending} data-testid={`lead-restore-${l.id}`}
+                            onClick={() => restore.mutate(l.id, {
+                              onSuccess: (r) => toast({ title: 'Lead restored', description: `Back in ${r.data.status === 'working' ? 'Working' : 'New'}.` }),
+                              onError: (err) => toast({ title: 'Could not restore', description: err instanceof Error ? err.message : undefined, variant: 'destructive' }),
+                            })}>Restore</Btn>
+                        ) : (
+                          <span className="t-caption">kept for source analytics</span>
+                        )}
                         <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} disabled={deleteLead.isPending}
                           onClick={() => setDeleting(l)} />
                       </div>
@@ -146,6 +164,7 @@ export default function LeadsPage() {
       <div className="t-caption" style={{ marginTop: 10 }}>A lead is a lightweight triage row — converting creates or links the company and contact, plus a deal. Discard needs no reason.</div>
 
       {addOpen && <AddLeadModal onClose={() => setAddOpen(false)} />}
+      {editing && <EditLeadModal lead={editing} onClose={() => setEditing(null)} />}
       {convertFor && <ConvertModal lead={convertFor} onClose={() => setConvertFor(null)} />}
       <ConfirmDialog
         open={!!deleting}
@@ -196,6 +215,83 @@ function AddLeadModal({ onClose }: { onClose: () => void }) {
         <div><div className="label">Email</div><input className="input" type="email" value={form.email} onChange={set('email')} style={{ width: '100%' }} /></div>
         <div><div className="label">Phone</div><input className="input" value={form.phone} onChange={set('phone')} style={{ width: '100%' }} /></div>
         <div style={{ gridColumn: '1/-1' }}><div className="label">Company</div><input className="input" value={form.company_name} onChange={set('company_name')} placeholder="Optional" style={{ width: '100%' }} /></div>
+        <div style={{ gridColumn: '1/-1' }}><div className="label">Note</div><textarea className="input" value={form.note} onChange={set('note')} style={{ width: '100%', height: 70, padding: 10, resize: 'vertical' }} /></div>
+      </div>
+    </Modal>
+  )
+}
+
+// Round R R3 — edit a lead still in play: contact fields, owner, new ↔ working.
+function EditLeadModal({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+  const update = useUpdateLead()
+  const reps = useReps()
+  const { toast } = useToast()
+  const me = useAuthStore((s) => s.currentUser)
+  const [form, setForm] = useState({
+    first_name: lead.first_name,
+    last_name: lead.last_name ?? '',
+    company_name: lead.company_name ?? '',
+    email: lead.email ?? '',
+    phone: lead.phone ?? '',
+    note: lead.note ?? '',
+    owner_user_id: lead.owner_user_id ?? '',
+    status: (lead.status === 'working' ? 'working' : 'new') as 'new' | 'working',
+  })
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }))
+  // Owner and status imply each other (the API's rules, made visible here):
+  // naming an owner means Working, "Unassigned" means New, and Working with
+  // nobody on it is mine.
+  const setOwner = (uid: string) => setForm((f) => ({ ...f, owner_user_id: uid, status: uid ? 'working' : 'new' }))
+  const setStatus = (status: 'new' | 'working') =>
+    setForm((f) => ({ ...f, status, owner_user_id: status === 'working' && !f.owner_user_id ? (me?.id ?? '') : f.owner_user_id }))
+  const submit = async () => {
+    const body: UpdateLeadBody = {
+      first_name: form.first_name.trim(),
+      last_name: form.last_name.trim() || null,
+      company_name: form.company_name.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      note: form.note.trim() || null,
+      owner_user_id: form.owner_user_id || null,
+      status: form.status,
+    }
+    try {
+      await update.mutateAsync({ id: lead.id, body })
+      toast({ title: 'Lead updated' })
+      onClose()
+    } catch (err) {
+      toast({ title: 'Could not save the lead', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+  return (
+    <Modal open onClose={onClose} width={520} title="Edit lead" sub="Fix the details, hand it to someone, or move it between New and Working"
+      footer={<>
+        <Btn kind="ghost" onClick={onClose} disabled={update.isPending}>Cancel</Btn>
+        <Btn kind="primary" icon={<Icon.check size={14} />} disabled={!form.first_name.trim() || update.isPending} onClick={() => void submit()} data-testid="lead-edit-save">
+          {update.isPending ? 'Saving…' : 'Save'}
+        </Btn>
+      </>}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }} data-testid="lead-edit-modal">
+        <div><div className="label">First name</div><input autoFocus className="input" value={form.first_name} onChange={set('first_name')} style={{ width: '100%' }} /></div>
+        <div><div className="label">Last name</div><input className="input" value={form.last_name} onChange={set('last_name')} style={{ width: '100%' }} /></div>
+        <div><div className="label">Email</div><input className="input" type="email" value={form.email} onChange={set('email')} style={{ width: '100%' }} /></div>
+        <div><div className="label">Phone</div><input className="input" value={form.phone} onChange={set('phone')} style={{ width: '100%' }} /></div>
+        <div style={{ gridColumn: '1/-1' }}><div className="label">Company</div><input className="input" value={form.company_name} onChange={set('company_name')} placeholder="Optional" style={{ width: '100%' }} /></div>
+        <div>
+          <div className="label">Owner</div>
+          <select className="input" value={form.owner_user_id} onChange={(e) => setOwner(e.target.value)} style={{ height: 38, width: '100%' }} data-testid="lead-edit-owner">
+            <option value="">Unassigned</option>
+            {(reps.data?.data ?? []).map((r) => <option key={r.user_id} value={r.user_id}>{r.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <div className="label">Status</div>
+          <select className="input" value={form.status} onChange={(e) => setStatus(e.target.value === 'working' ? 'working' : 'new')} style={{ height: 38, width: '100%' }} data-testid="lead-edit-status">
+            <option value="new">New</option>
+            <option value="working">Working</option>
+          </select>
+        </div>
         <div style={{ gridColumn: '1/-1' }}><div className="label">Note</div><textarea className="input" value={form.note} onChange={set('note')} style={{ width: '100%', height: 70, padding: 10, resize: 'vertical' }} /></div>
       </div>
     </Modal>

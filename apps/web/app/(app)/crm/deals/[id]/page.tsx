@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useMemo, useState } from 'react'
+import { use, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api/client'
@@ -11,6 +11,8 @@ import { DateField } from '@/components/ui/date-picker'
 import { useToast } from '@/components/ui/use-toast'
 import { TagChip, OwnerAv, CurVal, fmtCur } from '@/components/crm/kit'
 import { WonDialog, LostDialog } from '@/components/crm/deal-dialogs'
+import { OutcomeDialog, ReopenDialog, type OutcomeMode } from '@/components/crm/outcome-dialogs'
+import { useAuthStore } from '@/lib/stores/auth.store'
 import { PendingDot } from '@/components/pm/glyphs'
 import { ACT_META, ScheduleActivityModal, useCompleteWithNext, dueLabel } from '@/components/crm/activity-widgets'
 import { EmailsTab } from '@/components/crm/EmailsTab'
@@ -25,7 +27,10 @@ import {
   useDetachTag,
   useMoveDeal,
   useReopenDeal,
+  useSetDealOutcome,
   useUpdateDeal,
+  useReps,
+  useCompanies,
   useCreateInvoiceFromDeal,
   useCreateQuoteFromDeal,
   useAddDealProduct,
@@ -41,6 +46,7 @@ import {
   useDeleteDeal,
   type DealDetail,
   type Activity,
+  type DealOutcomeBody,
 } from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
@@ -68,6 +74,13 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
   const lostReasons = useLostReasons()
   const move = useMoveDeal()
   const reopen = useReopenDeal()
+  const setOutcome = useSetDealOutcome()
+  const { currentUser } = useAuthStore()
+  // Round R R3: a closed deal's verdict is a manager's call (mirrors the API's
+  // @Roles on /outcome and /reopen) — web roles are UPPERCASE, admin = HR_ADMIN.
+  const canManageOutcome = ['OWNER', 'HR_ADMIN', 'MANAGER'].includes(currentUser?.role ?? '')
+  const [outcomeMode, setOutcomeMode] = useState<OutcomeMode | null>(null)
+  const [reopenOpen, setReopenOpen] = useState(false)
   const createInvoice = useCreateInvoiceFromDeal()
   const createQuote = useCreateQuoteFromDeal()
 
@@ -119,6 +132,27 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
     } catch (err) {
       toast({ title: 'Could not move', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
       return false
+    }
+  }
+
+  // Round R R3 — change the verdict / reason / date of a closed deal.
+  const onOutcome = async (body: DealOutcomeBody) => {
+    try {
+      await setOutcome.mutateAsync({ id, body })
+      const what = outcomeMode === 'to-won' ? 'Marked as won' : outcomeMode === 'to-lost' ? 'Marked as lost' : outcomeMode === 'edit-reason' ? 'Lost reason updated' : 'Date updated'
+      toast({ title: what })
+      setOutcomeMode(null)
+    } catch (err) {
+      toast({ title: 'Could not change the outcome', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+  const onReopen = async (stageId: string) => {
+    try {
+      await reopen.mutateAsync({ id, stageId })
+      toast({ title: 'Deal reopened', description: `Back on the board in ${openStages.find((s) => s.id === stageId)?.name ?? 'its stage'}.` })
+      setReopenOpen(false)
+    } catch (err) {
+      toast({ title: 'Could not reopen', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
   }
 
@@ -198,9 +232,23 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
             ) : (
               <>
                 <span data-testid="deal-outcome-pill"><Pill tone={d.status === 'won' ? 'green' : 'coral'}>{d.status === 'won' ? '🏆 Won' : 'Lost'}</Pill></span>
-                <Btn kind="secondary" size="sm" icon={<Icon.refresh size={13} />} onClick={() => reopen.mutate(id)} disabled={reopen.isPending} title="Manager and above">
-                  Reopen
-                </Btn>
+                {canManageOutcome ? (
+                  <>
+                    {/* Round R R3 — closed deals are editable: verdict, reason, date, reopen into a chosen stage. */}
+                    <Btn kind="secondary" size="sm" icon={<Icon.swap size={13} />} onClick={() => setOutcomeMode(d.status === 'won' ? 'to-lost' : 'to-won')} disabled={setOutcome.isPending} data-testid="deal-change-outcome">
+                      {d.status === 'won' ? 'Mark lost…' : 'Mark won'}
+                    </Btn>
+                    {d.status === 'lost' && (
+                      <Btn kind="secondary" size="sm" icon={<Icon.edit size={13} />} onClick={() => setOutcomeMode('edit-reason')} data-testid="deal-edit-reason">Edit reason</Btn>
+                    )}
+                    <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} onClick={() => setOutcomeMode('edit-date')} data-testid="deal-edit-date">Edit date</Btn>
+                    <Btn kind="secondary" size="sm" icon={<Icon.refresh size={13} />} onClick={() => setReopenOpen(true)} disabled={reopen.isPending} data-testid="deal-reopen">
+                      Reopen…
+                    </Btn>
+                  </>
+                ) : (
+                  <span className="t-caption" title="Only a manager, admin or owner can change a closed deal">Manager and above can change the outcome</span>
+                )}
               </>
             )}
             <Btn kind="ghost" size="sm" icon={<Icon.trash size={13} />} disabled={deleteDeal.isPending} title="Manager and above"
@@ -246,6 +294,13 @@ export default function DealDetailPage({ params }: { params: Promise<{ id: strin
               </>
             )}
           </div>
+        )}
+        {outcomeMode && (
+          <OutcomeDialog open mode={outcomeMode} deal={d} reasons={lostReasons.data?.data ?? []} busy={setOutcome.isPending}
+            onClose={() => setOutcomeMode(null)} onConfirm={(body) => void onOutcome(body)} />
+        )}
+        {reopenOpen && (
+          <ReopenDialog open deal={d} stages={openStages} busy={reopen.isPending} onClose={() => setReopenOpen(false)} onConfirm={(sid) => void onReopen(sid)} />
         )}
 
         {/* Linked billing documents (§4.4 echo) */}
@@ -494,7 +549,9 @@ function TimelineTab({ deal, stages, activities, onComplete, onLog }: {
     setPendingNotes((x) => [{ key, text }, ...x])
     setNote('')
     createActivity.mutate(
-      { deal_id: deal.id, type: 'note', subject: text, completed: true },
+      // A note is born completed server-side; `completed` is not a field the
+      // API accepts (the validation pipe refuses unknown keys).
+      { deal_id: deal.id, type: 'note', subject: text },
       { onSettled: () => setPendingNotes((x) => x.filter((n) => n.key !== key)) },
     )
   }
@@ -742,22 +799,41 @@ function DetailsTab({ deal, pipelineName, stageName, stageProb }: { deal: DealDe
     })
   }
 
+  // Round R R3: every field the API lets us change is editable here — on open
+  // AND closed deals (title, owner, source, company, primary contact, value,
+  // expected close). The verdict itself is edited from the header.
+  const save = (body: Record<string, unknown>, label: string) =>
+    update.mutate({ id: deal.id, body }, {
+      onSuccess: (r) => {
+        // The API drops a primary contact that belonged to the previous company.
+        const contactDropped = 'company_id' in body && !!deal.primary_person_id && r.data.primary_person_id === null
+        toast({ title: `${label} saved`, description: contactDropped ? 'The primary contact belonged to the previous company — pick one again.' : undefined })
+      },
+      onError: (err) => toast({ title: `Could not save ${label.toLowerCase()}`, description: err instanceof Error ? err.message : undefined, variant: 'destructive' }),
+    })
+  const primaryName = deal.people.find((p) => p.person_id === deal.primary_person_id)?.name ?? null
+
   return (
     <div className="card">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <Field label="Title" value={deal.title} onSave={(v) => { if (!v.trim()) return false; save({ title: v.trim() }, 'Title') }} />
+        <OwnerSelect value={deal.owner_user_id} onChange={(uid) => save({ owner_user_id: uid }, 'Owner')} />
         <Field label="Pipeline" value={pipelineName ?? '—'} readOnly />
         <Field label="Stage" value={stageName ? `${stageName} · ${stageProb}%` : '—'} readOnly />
-        <Field label="Source" value={deal.source ?? 'manual'} readOnly />
-        <Field label="Owner" value={deal.owner_name ?? '—'} readOnly />
+        <RefPicker kind="company" label="Company" currentLabel={deal.company?.name ?? null} hasValue={!!deal.company_id}
+          onPick={(id) => save({ company_id: id }, 'Company')} />
+        <RefPicker kind="contact" label="Primary contact" currentLabel={primaryName ?? (deal.primary_person_id ? 'Linked contact' : null)} hasValue={!!deal.primary_person_id}
+          companyId={deal.company_id} onPick={(id) => save({ primary_person_id: id }, 'Primary contact')} />
+        <Field label="Source" value={deal.source ?? 'manual'} onSave={(v) => save({ source: v.trim() || 'manual' }, 'Source')} />
         <Field label="Expected close" value={deal.expected_close_date ?? ''} type="date"
-          onSave={(v) => update.mutate({ id: deal.id, body: { expected_close_date: v || null } })} />
+          onSave={(v) => save({ expected_close_date: v || null }, 'Expected close')} />
         <Field label={`Value (${deal.currency})`} value={deal.value_amount} type="number"
-          onSave={(v) => { const n = parseFloat(v); if (Number.isFinite(n) && n >= 0) update.mutate({ id: deal.id, body: { value_amount: n } }) }} />
+          onSave={(v) => { const n = parseFloat(v); if (Number.isFinite(n) && n >= 0) save({ value_amount: n }, 'Value') }} />
         {deal.status !== 'open' && (
-          <Field label="Closed on" readOnly value={(() => { const iso = deal.status === 'won' ? deal.won_at : deal.lost_at; return iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' })()} />
+          <Field label="Closed on · edit from the header" readOnly value={(() => { const iso = deal.status === 'won' ? deal.won_at : deal.lost_at; return iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' })()} />
         )}
         {deal.status === 'lost' && (
-          <Field label="Lost reason" readOnly value={`${deal.lost_reason_label ?? (deal.lost_reason_note ? 'Other' : '—')}${deal.lost_reason_note ? ` · ${deal.lost_reason_note}` : ''}`} />
+          <Field label="Lost reason · edit from the header" readOnly value={`${deal.lost_reason_label ?? (deal.lost_reason_note ? 'Other' : '—')}${deal.lost_reason_note ? ` · ${deal.lost_reason_note}` : ''}`} />
         )}
         {(customFields.data?.data ?? []).map((f) => (
           f.field_type === 'select' ? (
@@ -789,10 +865,98 @@ function DetailsTab({ deal, pipelineName, stageName, stageProb }: { deal: DealDe
   )
 }
 
+// Round R R3 — owner picker for the Details tab (active members, from /crm/reps).
+function OwnerSelect({ value, onChange }: { value: string; onChange: (userId: string) => void }) {
+  const reps = useReps()
+  const list = reps.data?.data ?? []
+  return (
+    <div>
+      <div className="label">Owner</div>
+      <select className="input" value={value} onChange={(e) => { if (e.target.value && e.target.value !== value) onChange(e.target.value) }} data-testid="deal-owner-select" style={{ height: 38, fontSize: 12.5, width: '100%' }}>
+        {!list.some((r) => r.user_id === value) && <option value={value}>Current owner</option>}
+        {list.map((r) => <option key={r.user_id} value={r.user_id}>{r.name}</option>)}
+      </select>
+    </div>
+  )
+}
+
+// Round R R3 — search-as-you-type picker for the company / primary contact
+// (the directory can be thousands of rows; a plain select would be a dead end).
+function RefPicker({ kind, label, currentLabel, hasValue, companyId, onPick }: {
+  kind: 'company' | 'contact'
+  label: string
+  currentLabel: string | null
+  hasValue: boolean
+  companyId?: string | null
+  onPick: (id: string | null) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [q, setQ] = useState('')
+  const close = () => { setEditing(false); setQ('') }
+  return (
+    <div style={{ position: 'relative' }}>
+      <div className="label">{label}</div>
+      {editing ? (
+        <div>
+          <input autoFocus className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder={kind === 'company' ? 'Search companies…' : 'Search contacts…'}
+            onKeyDown={(e) => { if (e.key === 'Escape') close() }} data-testid={`ref-picker-${kind}-input`} style={{ height: 38, fontSize: 12.5, width: '100%' }} />
+          <div style={{ position: 'absolute', zIndex: 60, left: 0, right: 0, marginTop: 4, background: 'var(--surf-pop)', border: '1px solid var(--bord-2)', borderRadius: 10, padding: 6, boxShadow: 'var(--e2)', maxHeight: 220, overflowY: 'auto' }}>
+            {/* Mounted only while open: nothing is fetched until the picker is used. */}
+            <RefOptions kind={kind} q={q} companyId={companyId} onPick={(id) => { onPick(id); close() }} />
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', padding: '6px 4px 2px', borderTop: '1px solid var(--bord)', marginTop: 4 }}>
+              {hasValue && <Btn kind="ghost" size="sm" onClick={() => { onPick(null); close() }}>Clear</Btn>}
+              <Btn kind="ghost" size="sm" onClick={close}>Cancel</Btn>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setEditing(true)} data-testid={`ref-picker-${kind}`} className="input"
+          style={{ height: 38, fontSize: 12.5, width: '100%', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer', color: currentLabel ? 'var(--text)' : 'var(--text-faint)' }}>
+          {kind === 'company' ? <Icon.building size={13} style={{ color: 'var(--text-mute)', flexShrink: 0 }} /> : <Icon.user size={13} style={{ color: 'var(--text-mute)', flexShrink: 0 }} />}
+          <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{currentLabel ?? `Set ${label.toLowerCase()}…`}</span>
+          <Icon.edit size={12} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** The search results of a RefPicker — its own component so the queries only exist while the picker is open; typing is debounced. */
+function RefOptions({ kind, q, companyId, onPick }: { kind: 'company' | 'contact'; q: string; companyId?: string | null; onPick: (id: string) => void }) {
+  const [term, setTerm] = useState(q)
+  useEffect(() => { const t = setTimeout(() => setTerm(q), 250); return () => clearTimeout(t) }, [q])
+  const companies = useCompanies(kind === 'company' ? term : undefined, kind === 'company')
+  const contacts = useContacts(kind === 'contact' ? { q: term, company_id: companyId ?? undefined } : undefined, kind === 'contact')
+  const options: Array<{ id: string; primary: string; secondary?: string | null }> = kind === 'company'
+    ? (companies.data?.data ?? []).map((c) => ({ id: c.id, primary: c.name, secondary: c.city }))
+    : (contacts.data?.data ?? []).map((p) => ({ id: p.id, primary: p.display_name ?? p.email ?? '—', secondary: p.email }))
+  const loading = (kind === 'company' ? companies.isFetching : contacts.isFetching) || term !== q
+  return (
+    <>
+      {loading && <div className="t-mute" style={{ padding: 8, fontSize: 11.5 }}>Searching…</div>}
+      {!loading && options.length === 0 && <div className="t-mute" style={{ padding: 8, fontSize: 11.5 }}>No match{q ? ` for “${q}”` : ''}.</div>}
+      {!loading && options.slice(0, 8).map((o) => (
+        <button key={o.id} type="button" onClick={() => onPick(o.id)} data-testid={`ref-picker-${kind}-option`}
+          style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 8px', borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surf-2)')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{o.primary}</span>
+          {o.secondary && <span className="t-mute" style={{ fontSize: 10.5 }}>{o.secondary}</span>}
+        </button>
+      ))}
+    </>
+  )
+}
+
 function Field({ label, value, type = 'text', readOnly, custom, onSave }: {
-  label: string; value: string; type?: string; readOnly?: boolean; custom?: boolean; onSave?: (v: string) => void
+  label: string; value: string; type?: string; readOnly?: boolean; custom?: boolean
+  /** Return false to refuse the value — the field reverts to what the server has. */
+  onSave?: (v: string) => void | false
 }) {
   const [v, setV] = useState(value)
+  // The server may normalise what was typed (a cleared source becomes
+  // "manual"); follow the refetched value instead of keeping a stale draft.
+  useEffect(() => { setV(value) }, [value])
   return (
     <div>
       <div className="label">{label} {custom && <span style={{ color: 'var(--text-faint)' }}>· custom</span>}</div>
@@ -805,7 +969,7 @@ function Field({ label, value, type = 'text', readOnly, custom, onSave }: {
       ) : (
         <input className="input" type={type} value={v} readOnly={readOnly}
           onChange={(e) => setV(e.target.value)}
-          onBlur={() => { if (!readOnly && onSave && v !== value) onSave(v) }}
+          onBlur={() => { if (!readOnly && onSave && v !== value && onSave(v) === false) setV(value) }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
           style={{ height: 38, fontSize: 12.5, width: '100%', opacity: readOnly ? 0.75 : 1 }} />
       )}

@@ -1,6 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -23,6 +23,16 @@ class CreateActivityDto {
 class CompleteActivityDto {
   @IsOptional() @IsString() outcome?: string;
   @IsOptional() @IsString() @MaxLength(2000) note?: string;
+}
+
+/** Round R R3 — edit an activity in place. */
+class UpdateActivityDto {
+  @IsOptional() @IsIn(['task', 'call', 'meeting', 'note']) type?: string;
+  @IsOptional() @IsString() @MaxLength(200) subject?: string;
+  @IsOptional() @IsString() @MaxLength(5000) body?: string | null;
+  @IsOptional() @IsString() due_at?: string | null;
+  @IsOptional() @IsUUID() assignee_user_id?: string;
+  @IsOptional() @IsString() outcome?: string | null;
 }
 
 class PurgeActivitiesDto {
@@ -74,6 +84,20 @@ export class ActivitiesController {
   @ApiOperation({ summary: 'Complete an activity (idempotent; optional call outcome + note)' })
   complete(@Param('id') id: string, @Body() dto: CompleteActivityDto, @CurrentUser() user: JwtPayload) {
     return this.activities.complete(user.tenantId, user.sub, id, dto);
+  }
+
+  @Patch('activities/:id')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Edit an activity: subject, notes, due time, assignee, type, outcome (Round R R3)' })
+  update(@Param('id') id: string, @Body() dto: UpdateActivityDto, @CurrentUser() user: JwtPayload) {
+    return this.activities.update(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('activities/:id/reopen')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Mark a completed activity not done (Round R R3)' })
+  reopen(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.activities.reopen(user.tenantId, user.sub, id);
   }
 
   @Delete('activities/:id')

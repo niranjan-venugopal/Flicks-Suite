@@ -6,14 +6,25 @@ import { Btn, Icon, Pill } from '@/components/proto'
 import { Sk } from '@/components/states'
 import { useToast } from '@/components/ui/use-toast'
 import { OwnerAv, EmptyState, fmtCur } from '@/components/crm/kit'
-import { useClosedDeals, useReopenDeal, type ClosedDealRow } from '@/lib/api/queries/use-crm'
+import { OutcomeDialog, ReopenDialog, type OutcomeMode } from '@/components/crm/outcome-dialogs'
+import {
+  useClosedDeals,
+  useReopenDeal,
+  useSetDealOutcome,
+  usePipelines,
+  useLostReasons,
+  type ClosedDealRow,
+  type DealOutcomeBody,
+} from '@/lib/api/queries/use-crm'
 
 // ─────────────────────────────────────────────────────────
 // Round I — the "Closed" view on the deals page. The kanban only ever
 // renders open deals, so a deal vanished from the CRM the moment it was
 // won or lost. This table lists won + lost deals with the outcome, the
 // close date and the lost reason, filtered by the page's owner/search/
-// pipeline, and offers Reopen (manager and above) straight from the row.
+// pipeline. Round R R3: a closed deal is editable straight from the row —
+// reopen into a chosen stage, flip the verdict, edit the lost reason
+// (manager and above, mirroring the API's @Roles).
 // ─────────────────────────────────────────────────────────
 
 export type ClosedOutcome = 'closed' | 'won' | 'lost'
@@ -27,7 +38,7 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
   pipelineId?: string
   ownerUserId?: string | null
   search: string
-  /** Manager and above — the reopen route is @Roles('owner','admin','manager'). */
+  /** Manager and above — reopen / outcome routes are @Roles('owner','admin','manager'). */
   canReopen: boolean
   onOpen: (id: string) => void
 }) {
@@ -44,6 +55,11 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
     limit,
   })
   const reopen = useReopenDeal()
+  const setDealOutcome = useSetDealOutcome()
+  const pipelines = usePipelines()
+  const lostReasons = useLostReasons()
+  const [reopenFor, setReopenFor] = useState<ClosedDealRow | null>(null)
+  const [outcomeFor, setOutcomeFor] = useState<{ row: ClosedDealRow; mode: OutcomeMode } | null>(null)
   const rows = list.data?.data ?? []
   const base = list.data?.base_currency ?? 'INR'
   const pagination = list.data?.pagination
@@ -51,13 +67,28 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
   const totalPages = pagination?.totalPages ?? 1
 
   const pick = (o: ClosedOutcome) => { setOutcome(o); setPage(1) }
+  const openStagesFor = (row: ClosedDealRow) =>
+    (pipelines.data?.data.find((p) => p.id === row.pipeline_id)?.stages ?? [])
+      .filter((s) => s.stage_type === 'open')
+      .slice()
+      .sort((a, b) => a.display_order - b.display_order)
 
-  const doReopen = async (d: ClosedDealRow) => {
+  const doReopen = async (d: ClosedDealRow, stageId: string) => {
     try {
-      await reopen.mutateAsync(d.id)
-      toast({ title: 'Deal reopened', description: `${d.title} is back on the board.` })
+      await reopen.mutateAsync({ id: d.id, stageId })
+      toast({ title: 'Deal reopened', description: `${d.title} is back on the board in ${openStagesFor(d).find((s) => s.id === stageId)?.name ?? 'its stage'}.` })
+      setReopenFor(null)
     } catch (err) {
       toast({ title: 'Could not reopen', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+    }
+  }
+  const doOutcome = async (d: ClosedDealRow, mode: OutcomeMode, body: DealOutcomeBody) => {
+    try {
+      await setDealOutcome.mutateAsync({ id: d.id, body })
+      toast({ title: mode === 'to-won' ? `${d.title} marked as won` : mode === 'to-lost' ? `${d.title} marked as lost` : mode === 'edit-reason' ? 'Lost reason updated' : 'Date updated' })
+      setOutcomeFor(null)
+    } catch (err) {
+      toast({ title: 'Could not change the outcome', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
     }
   }
 
@@ -152,9 +183,16 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
                       ) : <span style={{ color: 'var(--text-faint)' }}>—</span>}
                     </td>
                     {canReopen && (
-                      <td style={{ ...td, textAlign: 'right' }}>
-                        <Btn kind="ghost" size="sm" icon={<Icon.refresh size={12} />} disabled={reopen.isPending} onClick={() => void doReopen(d)} title="Back to the first open stage">
-                          Reopen
+                      <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <Btn kind="ghost" size="sm" icon={<Icon.swap size={12} />} disabled={setDealOutcome.isPending} onClick={() => setOutcomeFor({ row: d, mode: d.status === 'won' ? 'to-lost' : 'to-won' })}
+                          title={d.status === 'won' ? 'Mark as lost instead' : 'Mark as won instead'} data-testid={`closed-outcome-${d.id}`}>
+                          {d.status === 'won' ? 'Mark lost' : 'Mark won'}
+                        </Btn>
+                        {d.status === 'lost' && (
+                          <Btn kind="ghost" size="sm" icon={<Icon.edit size={12} />} onClick={() => setOutcomeFor({ row: d, mode: 'edit-reason' })} title="Edit the lost reason" data-testid={`closed-reason-${d.id}`} />
+                        )}
+                        <Btn kind="ghost" size="sm" icon={<Icon.refresh size={12} />} disabled={reopen.isPending} onClick={() => setReopenFor(d)} title="Reopen into a stage you choose" data-testid={`closed-reopen-${d.id}`}>
+                          Reopen…
                         </Btn>
                       </td>
                     )}
@@ -171,6 +209,15 @@ export function ClosedDealsTable({ pipelineId, ownerUserId, search, canReopen, o
             </div>
           )}
         </div>
+      )}
+
+      {reopenFor && (
+        <ReopenDialog open deal={reopenFor} stages={openStagesFor(reopenFor)} busy={reopen.isPending}
+          onClose={() => setReopenFor(null)} onConfirm={(sid) => void doReopen(reopenFor, sid)} />
+      )}
+      {outcomeFor && (
+        <OutcomeDialog open mode={outcomeFor.mode} deal={outcomeFor.row} reasons={lostReasons.data?.data ?? []} busy={setDealOutcome.isPending}
+          onClose={() => setOutcomeFor(null)} onConfirm={(body) => void doOutcome(outcomeFor.row, outcomeFor.mode, body)} />
       )}
     </div>
   )

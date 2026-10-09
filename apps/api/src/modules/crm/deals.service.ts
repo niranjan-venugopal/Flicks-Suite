@@ -54,6 +54,17 @@ export interface ListDealsQuery {
  * deal_stage_history, maintain stage_entered_at, apply won/lost semantics, and
  * publish domain events + a socket broadcast for the live board.
  */
+/** Who may reopen a closed deal, change its outcome or move it off its terminal stage. */
+const MANAGER_UP = ['owner', 'admin', 'manager'];
+
+export interface DealOutcomeInput {
+  outcome: 'won' | 'lost';
+  lost_reason_id?: string | null;
+  lost_reason_note?: string | null;
+  /** The real won / lost moment (ISO) — corrects the date reports and history use. */
+  closed_at?: string | null;
+}
+
 @Injectable()
 export class DealsService {
   constructor(
@@ -580,6 +591,19 @@ export class DealsService {
         const allowed = ['title', 'company_id', 'primary_person_id', 'owner_user_id', 'expected_close_date', 'source', 'custom'];
         for (const k of allowed) if (k in dto) patch[k] = dto[k];
 
+        // Review (R3): moving the deal to another company must not leave a
+        // primary contact of the OLD company behind (invoices, quotes and
+        // sequences would keep addressing them). Cleared when the contact's
+        // company is known and differs; a contact with no company stays.
+        if ('company_id' in dto && !('primary_person_id' in dto) && existing.primary_person_id && dto.company_id) {
+          const [p] = await tx
+            .select({ company_id: directoryPeople.company_id })
+            .from(directoryPeople)
+            .where(and(eq(directoryPeople.id, existing.primary_person_id), eq(directoryPeople.tenant_id, tenantId)))
+            .limit(1);
+          if (p?.company_id && p.company_id !== dto.company_id) patch.primary_person_id = null;
+        }
+
         // Value/currency change → re-snapshot to base.
         if ('value_amount' in dto || 'currency' in dto) {
           const base = await this.baseCurrency(tx, tenantId);
@@ -605,11 +629,40 @@ export class DealsService {
   }
 
   // ─── Stage move (the kanban drag-drop) ───────────────────────────────────────
+  /**
+   * Lost stages: a reason is optional (a free-text note alone — the dialog's
+   * "Other" — is fine), but a SUPPLIED reason id must be one of this tenant's.
+   * lost_reason_id has no FK at all, so nothing else would stop a stray or
+   * cross-tenant id from being stored (house rule 2).
+   */
+  private async resolveLostReason(
+    tx: Db,
+    tenantId: string,
+    dto: { lost_reason_id?: string | null; lost_reason_note?: string | null },
+  ): Promise<{ lostReasonId: string | null; lostReasonNote: string | null }> {
+    const lostReasonNote = (dto.lost_reason_note ?? '').trim().slice(0, 500) || null;
+    let lostReasonId: string | null = null;
+    if (dto.lost_reason_id) {
+      const [reason] = await tx
+        .select({ id: lostReasons.id })
+        .from(lostReasons)
+        .where(and(eq(lostReasons.tenant_id, tenantId), eq(lostReasons.id, dto.lost_reason_id)))
+        .limit(1);
+      if (!reason) throw new BadRequestException('lost_reason_id does not belong to this workspace');
+      lostReasonId = reason.id;
+    }
+    return { lostReasonId, lostReasonNote };
+  }
+
   async moveStage(
     tenantId: string,
     userId: string,
     id: string,
     dto: { stage_id: string; lost_reason_id?: string; lost_reason_note?: string },
+    // Round R R3: the HTTP route passes the caller's role so a CLOSED deal can
+    // only be moved by a manager or above (the same rank reopen / outcome
+    // demand). Internal callers (automation, quote acceptance) pass nothing.
+    opts: { role?: string } = {},
   ) {
     const result = await this.db.withTenant(
       tenantId,
@@ -624,30 +677,19 @@ export class DealsService {
           .limit(1)
           .for('update');
         if (!d) throw new NotFoundException('Deal not found');
+        if (d.status !== 'open' && opts.role && !MANAGER_UP.includes(opts.role)) {
+          throw new ForbiddenException('Only managers and above can move a closed deal — ask them to reopen it or change its outcome');
+        }
         const target = await this.loadStage(tx, tenantId, dto.stage_id);
         if (target.pipeline_id !== d.pipeline_id) {
           throw new BadRequestException('Stage belongs to a different pipeline');
         }
         if (target.id === d.stage_id) return { deal: d, moved: false, target };
 
-        // Lost stages: a reason is optional (a free-text note alone — the
-        // dialog's "Other" — is fine), but a SUPPLIED reason id must be one of
-        // this tenant's. lost_reason_id has no FK at all, so nothing else would
-        // stop a stray or cross-tenant id from being stored (house rule 2).
-        let lostReasonId: string | null = null;
-        let lostReasonNote: string | null = null;
-        if (target.stage_type === 'lost') {
-          lostReasonNote = (dto.lost_reason_note ?? '').trim().slice(0, 500) || null;
-          if (dto.lost_reason_id) {
-            const [reason] = await tx
-              .select({ id: lostReasons.id })
-              .from(lostReasons)
-              .where(and(eq(lostReasons.tenant_id, tenantId), eq(lostReasons.id, dto.lost_reason_id)))
-              .limit(1);
-            if (!reason) throw new BadRequestException('lost_reason_id does not belong to this workspace');
-            lostReasonId = reason.id;
-          }
-        }
+        const { lostReasonId, lostReasonNote } =
+          target.stage_type === 'lost'
+            ? await this.resolveLostReason(tx, tenantId, dto)
+            : { lostReasonId: null, lostReasonNote: null };
 
         const now = new Date();
         const secondsInPrev = Math.floor(
@@ -723,8 +765,12 @@ export class DealsService {
   }
 
   // ─── Reopen (won/lost → open) — manager-and-up, enforced at controller ───────
-  async reopen(tenantId: string, user: JwtPayload, id: string) {
-    if (!['owner', 'admin', 'manager'].includes(user.role)) {
+  /**
+   * Round R R3: `stage_id` picks the open stage to reopen INTO (any open stage
+   * of the deal's pipeline); without it the deal goes back to the first one.
+   */
+  async reopen(tenantId: string, user: JwtPayload, id: string, dto: { stage_id?: string } = {}) {
+    if (!MANAGER_UP.includes(user.role)) {
       throw new ForbiddenException('Only managers and above can reopen a deal');
     }
     const result = await this.db.withTenant(
@@ -738,16 +784,23 @@ export class DealsService {
           .for('update');
         if (!d) throw new NotFoundException('Deal not found');
         if (d.status === 'open') return { deal: d, moved: false };
-        // Move back to the first open stage of the pipeline. Refuse to reopen a
-        // pipeline that has no open stage rather than strand the deal on the
-        // won/lost column it currently sits in.
-        const [firstOpen] = await tx
-          .select()
-          .from(pipelineStages)
-          .where(and(eq(pipelineStages.pipeline_id, d.pipeline_id), eq(pipelineStages.stage_type, 'open'), isNull(pipelineStages.deleted_at)))
-          .orderBy(asc(pipelineStages.display_order))
-          .limit(1);
-        if (!firstOpen) throw new BadRequestException('This pipeline has no open stage to reopen into');
+        // The chosen open stage, else the first open stage of the pipeline.
+        // Refuse to reopen a pipeline that has no open stage rather than
+        // strand the deal on the won/lost column it currently sits in.
+        let target: typeof pipelineStages.$inferSelect | undefined;
+        if (dto.stage_id) {
+          target = await this.loadStage(tx, tenantId, dto.stage_id);
+          if (target.pipeline_id !== d.pipeline_id) throw new BadRequestException('Stage belongs to a different pipeline');
+          if (target.stage_type !== 'open') throw new BadRequestException('Pick an open stage to reopen into');
+        } else {
+          [target] = await tx
+            .select()
+            .from(pipelineStages)
+            .where(and(eq(pipelineStages.pipeline_id, d.pipeline_id), eq(pipelineStages.stage_type, 'open'), isNull(pipelineStages.deleted_at)))
+            .orderBy(asc(pipelineStages.display_order))
+            .limit(1);
+        }
+        if (!target) throw new BadRequestException('This pipeline has no open stage to reopen into');
 
         const now = new Date();
         const secondsInPrev = Math.floor(
@@ -758,17 +811,20 @@ export class DealsService {
           tenant_id: tenantId,
           deal_id: id,
           from_stage_id: d.stage_id,
-          to_stage_id: firstOpen.id,
+          to_stage_id: target.id,
           changed_by: user.sub,
           seconds_in_previous_stage: secondsInPrev,
         });
         const [updated] = await tx
           .update(deals)
-          .set({ status: 'open', won_at: null, lost_at: null, lost_reason_id: null, lost_reason_note: null, stage_id: firstOpen.id, stage_entered_at: now, updated_by: user.sub, updated_at: now })
+          .set({ status: 'open', won_at: null, lost_at: null, lost_reason_id: null, lost_reason_note: null, stage_id: target.id, stage_entered_at: now, updated_by: user.sub, updated_at: now })
           .where(eq(deals.id, id))
           .returning();
-        await this.audit.log({ tenantId, actorUserId: user.sub, action: 'crm.deal.reopen', resourceType: 'deal', resourceId: id });
-        await this.domainEvents.publish({ name: 'crm.deal.reopened', tenantId, actorUserId: user.sub, payload: { deal_id: id } }, tx);
+        await this.audit.log({
+          tenantId, actorUserId: user.sub, action: 'crm.deal.reopen', resourceType: 'deal', resourceId: id,
+          metadata: { from: d.stage_id, to: target.id, previous_status: d.status },
+        });
+        await this.domainEvents.publish({ name: 'crm.deal.reopened', tenantId, actorUserId: user.sub, payload: { deal_id: id, to_stage: target.id } }, tx);
         return { deal: updated!, moved: true };
       },
       user.sub,
@@ -780,6 +836,142 @@ export class DealsService {
         pipelineId: result.deal.pipeline_id,
         dealId: id,
         stageId: result.deal.stage_id,
+      });
+    }
+    return { data: result.deal };
+  }
+
+  // ─── Outcome (Round R R3) — a closed deal's verdict is editable ──────────────
+  /**
+   * Switch won ↔ lost, change the lost reason / note, or correct the won / lost
+   * date — manager-and-up. Switching is a real stage move onto the pipeline's
+   * won / lost stage (history row, stage_changed + won / lost events, board
+   * push) so reports, automations and notifications see exactly what a drag
+   * would have produced. Editing the reason or the date of the SAME outcome
+   * is a plain update: no second won / lost event (nothing should be
+   * celebrated or counted twice).
+   */
+  async setOutcome(tenantId: string, user: JwtPayload, id: string, dto: DealOutcomeInput) {
+    if (!MANAGER_UP.includes(user.role)) {
+      throw new ForbiddenException("Only managers and above can change a closed deal's outcome");
+    }
+    if (dto.outcome !== 'won' && dto.outcome !== 'lost') throw new BadRequestException('outcome must be won or lost');
+    let closedAt: Date | null = null;
+    if (dto.closed_at) {
+      closedAt = new Date(dto.closed_at);
+      if (Number.isNaN(closedAt.getTime())) throw new BadRequestException('closed_at is not a valid date');
+      if (closedAt.getTime() > Date.now() + 60_000) throw new BadRequestException('The won / lost date cannot be in the future');
+    }
+
+    const result = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [d] = await tx
+          .select()
+          .from(deals)
+          .where(and(eq(deals.id, id), isNull(deals.deleted_at)))
+          .limit(1)
+          .for('update');
+        if (!d) throw new NotFoundException('Deal not found');
+        if (d.status === 'open') {
+          throw new BadRequestException('This deal is still open — close it from its stage first, then its outcome can be changed');
+        }
+        // A date BEFORE the deal was entered is allowed on purpose: deals are
+        // often typed in after the fact (imports, backfilled history) — the
+        // reports clamp a negative cycle time to zero.
+        const now = new Date();
+        const switching = dto.outcome !== d.status;
+
+        // The reason only ever belongs to a lost outcome. When switching TO lost
+        // the dialog supplies it; when editing a lost deal, only the keys that
+        // were sent change (so correcting the date keeps the reason).
+        let lostReasonId = d.lost_reason_id;
+        let lostReasonNote = d.lost_reason_note;
+        if (dto.outcome === 'lost') {
+          if (switching || 'lost_reason_id' in dto || 'lost_reason_note' in dto) {
+            const resolved = await this.resolveLostReason(tx, tenantId, {
+              lost_reason_id: 'lost_reason_id' in dto ? dto.lost_reason_id : (switching ? null : d.lost_reason_id),
+              lost_reason_note: 'lost_reason_note' in dto ? dto.lost_reason_note : (switching ? null : d.lost_reason_note),
+            });
+            lostReasonId = resolved.lostReasonId;
+            lostReasonNote = resolved.lostReasonNote;
+          }
+        } else {
+          lostReasonId = null;
+          lostReasonNote = null;
+        }
+
+        const patch: Record<string, unknown> = {
+          lost_reason_id: lostReasonId,
+          lost_reason_note: lostReasonNote,
+          updated_by: user.sub,
+          updated_at: now,
+        };
+        let target: typeof pipelineStages.$inferSelect | undefined;
+        if (switching) {
+          [target] = await tx
+            .select()
+            .from(pipelineStages)
+            .where(and(eq(pipelineStages.pipeline_id, d.pipeline_id), eq(pipelineStages.stage_type, dto.outcome), isNull(pipelineStages.deleted_at)))
+            .orderBy(asc(pipelineStages.display_order))
+            .limit(1);
+          if (!target) throw new BadRequestException(`This pipeline has no ${dto.outcome} stage`);
+          const secondsInPrev = Math.floor(
+            (now.getTime() - new Date(d.stage_entered_at as unknown as string).getTime()) / 1000,
+          );
+          await tx.insert(dealStageHistory).values({
+            tenant_id: tenantId,
+            deal_id: id,
+            from_stage_id: d.stage_id,
+            to_stage_id: target.id,
+            changed_by: user.sub,
+            seconds_in_previous_stage: secondsInPrev,
+          });
+          patch.stage_id = target.id;
+          patch.stage_entered_at = now;
+          patch.status = dto.outcome;
+          // The verdict's own moment: the supplied date, else the previous
+          // close date (the deal did close then — only the verdict was wrong).
+          const when = closedAt ?? d.won_at ?? d.lost_at ?? now;
+          patch.won_at = dto.outcome === 'won' ? when : null;
+          patch.lost_at = dto.outcome === 'lost' ? when : null;
+        } else if (closedAt) {
+          if (dto.outcome === 'won') patch.won_at = closedAt;
+          else patch.lost_at = closedAt;
+        }
+
+        const [updated] = await tx.update(deals).set(patch).where(eq(deals.id, id)).returning();
+        await this.audit.log({
+          tenantId, actorUserId: user.sub,
+          action: switching ? 'crm.deal.outcome_change' : 'crm.deal.outcome_update',
+          resourceType: 'deal', resourceId: id,
+          beforeState: { status: d.status, won_at: d.won_at, lost_at: d.lost_at, lost_reason_id: d.lost_reason_id, lost_reason_note: d.lost_reason_note },
+          afterState: { status: updated!.status, won_at: updated!.won_at, lost_at: updated!.lost_at, lost_reason_id: updated!.lost_reason_id, lost_reason_note: updated!.lost_reason_note },
+        });
+        if (switching && target) {
+          await this.domainEvents.publish(
+            { name: 'crm.deal.stage_changed', tenantId, actorUserId: user.sub, payload: { deal_id: id, to_stage: target.id, status: dto.outcome } },
+            tx,
+          );
+          if (dto.outcome === 'won') {
+            await this.domainEvents.publish({ name: 'crm.deal.won', tenantId, actorUserId: user.sub, payload: { deal_id: id, value_base: parseFloat(updated!.value_base_amount) } }, tx);
+          } else {
+            await this.domainEvents.publish({ name: 'crm.deal.lost', tenantId, actorUserId: user.sub, payload: { deal_id: id, lost_reason_id: lostReasonId } }, tx);
+          }
+        } else {
+          await this.domainEvents.publish({ name: 'crm.deal.updated', tenantId, actorUserId: user.sub, payload: { deal_id: id } }, tx);
+        }
+        return { deal: updated!, switched: switching, target };
+      },
+      user.sub,
+    );
+
+    if (result.switched && result.target) {
+      this.eventEmitter.emit('crm.board.changed', {
+        tenantId,
+        pipelineId: result.deal.pipeline_id,
+        dealId: id,
+        stageId: result.target.id,
       });
     }
     return { data: result.deal };

@@ -202,6 +202,119 @@ export class LeadsService {
   }
 
   /**
+   * Round R R3 — edit a lead that is still in play (new / working): the
+   * contact fields, the owner, and new ↔ working. A converted lead lives on as
+   * a contact (edit it there); a discarded one must be restored first.
+   */
+  async update(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: {
+      first_name?: string;
+      last_name?: string | null;
+      company_name?: string | null;
+      email?: string | null;
+      phone?: string | null;
+      note?: string | null;
+      source?: string;
+      owner_user_id?: string | null;
+      status?: 'new' | 'working';
+    },
+  ) {
+    if (dto.status && !['new', 'working'].includes(dto.status)) {
+      throw new BadRequestException('status can only be new or working here — convert or discard the lead for the rest');
+    }
+    // Review (R3): "Working" + an explicit "nobody" is a contradiction — say so
+    // rather than quietly making the editor the owner (that rule is for a
+    // status change that names no owner at all).
+    if (dto.status === 'working' && 'owner_user_id' in dto && !dto.owner_user_id) {
+      throw new BadRequestException('A lead in Working needs an owner — pick one, or move it to New');
+    }
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [lead] = await tx
+          .select()
+          .from(leads)
+          .where(and(eq(leads.id, id), eq(leads.tenant_id, tenantId), isNull(leads.deleted_at)))
+          .limit(1)
+          .for('update');
+        if (!lead) throw new NotFoundException('Lead not found');
+        if (lead.status === 'converted') throw new BadRequestException('This lead was converted — edit the contact it became');
+        if (lead.status === 'discarded') throw new BadRequestException('This lead was discarded — restore it first');
+        if (dto.owner_user_id) await this.assertMember(tx, tenantId, dto.owner_user_id);
+
+        const patch: Record<string, unknown> = { updated_at: new Date() };
+        if ('first_name' in dto) {
+          const first = (dto.first_name ?? '').trim();
+          if (!first) throw new BadRequestException('A lead needs a first name');
+          patch.first_name = first;
+        }
+        if ('last_name' in dto) patch.last_name = dto.last_name?.trim() || null;
+        if ('company_name' in dto) patch.company_name = dto.company_name?.trim() || null;
+        if ('email' in dto) patch.email = dto.email?.trim().toLowerCase() || null;
+        if ('phone' in dto) patch.phone = dto.phone?.trim() || null;
+        if ('note' in dto) patch.note = dto.note ?? null;
+        if ('source' in dto && dto.source) patch.source = dto.source;
+        if ('owner_user_id' in dto) patch.owner_user_id = dto.owner_user_id ?? null;
+        if (dto.status) patch.status = dto.status;
+        // Taking an owner is what "working" means; dropping the owner of a
+        // working lead sends it back to the inbox.
+        if (!dto.status && 'owner_user_id' in dto) patch.status = dto.owner_user_id ? 'working' : 'new';
+        // …and a lead set to "working" with nobody on it is the editor's (same
+        // as claim), so no unowned working lead can exist.
+        const nextOwner = 'owner_user_id' in dto ? (dto.owner_user_id ?? null) : lead.owner_user_id;
+        if (patch.status === 'working' && !nextOwner) patch.owner_user_id = userId;
+        const next = { ...lead, ...patch } as typeof lead;
+        patch.score = scoreLead({
+          email: next.email, phone: next.phone, company_name: next.company_name, note: next.note,
+          source: next.source, utm: next.utm as Record<string, string>,
+        });
+
+        const [row] = await tx.update(leads).set(patch).where(and(eq(leads.id, id), eq(leads.tenant_id, tenantId))).returning();
+        await this.audit.log({
+          tenantId, actorUserId: userId, action: 'crm.lead.update', resourceType: 'lead', resourceId: id,
+          beforeState: { status: lead.status, owner_user_id: lead.owner_user_id },
+          afterState: { status: row!.status, owner_user_id: row!.owner_user_id },
+        });
+        await this.domainEvents.publish(
+          { name: 'crm.lead.updated', tenantId, actorUserId: userId, payload: { lead_id: id, status: row!.status, owner_user_id: row!.owner_user_id } },
+          tx,
+        );
+        return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  /** Round R R3 — a discarded lead comes back to the inbox (working when it still has an owner). */
+  async restore(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [row] = await tx
+          .update(leads)
+          .set({ status: sql`CASE WHEN ${leads.owner_user_id} IS NULL THEN 'new' ELSE 'working' END`, updated_at: new Date() })
+          .where(and(eq(leads.id, id), eq(leads.tenant_id, tenantId), isNull(leads.deleted_at), eq(leads.status, 'discarded')))
+          .returning();
+        if (!row) {
+          const [exists] = await tx.select({ status: leads.status }).from(leads).where(and(eq(leads.id, id), isNull(leads.deleted_at))).limit(1);
+          if (!exists) throw new NotFoundException('Lead not found');
+          throw new BadRequestException('Only a discarded lead can be restored');
+        }
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.lead.restore', resourceType: 'lead', resourceId: id });
+        await this.domainEvents.publish(
+          { name: 'crm.lead.restored', tenantId, actorUserId: userId, payload: { lead_id: id, source: row.source, status: row.status } },
+          tx,
+        );
+        return { data: row };
+      },
+      userId,
+    );
+  }
+
+  /**
    * Delete (round 9) — soft, like every other CRM entity. Works from any
    * status: deleting a converted lead does NOT touch the person/company/deal
    * it created (their FKs are SET NULL on the lead side, and the soft delete

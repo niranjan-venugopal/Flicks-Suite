@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsEmail, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEmail, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { CrmGrantGuard } from '../../core/auth/guards/crm-grant.guard';
 import { RequireGrant } from '../../core/auth/decorators/require-grant.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
@@ -17,6 +17,19 @@ class CreateLeadDto {
   @IsOptional() @IsString() @MaxLength(4000) note?: string;
   @IsOptional() @IsString() @MaxLength(60) source?: string;
   @IsOptional() @IsString() owner_user_id?: string;
+}
+
+/** Round R R3 — edit a lead still in play. */
+class UpdateLeadDto {
+  @IsOptional() @IsString() @MaxLength(120) first_name?: string;
+  @IsOptional() @IsString() @MaxLength(120) last_name?: string | null;
+  @IsOptional() @IsString() @MaxLength(200) company_name?: string | null;
+  @IsOptional() @IsEmail() email?: string | null;
+  @IsOptional() @IsString() @MaxLength(40) phone?: string | null;
+  @IsOptional() @IsString() @MaxLength(4000) note?: string | null;
+  @IsOptional() @IsString() @MaxLength(60) source?: string;
+  @IsOptional() @IsUUID() owner_user_id?: string | null;
+  @IsOptional() @IsIn(['new', 'working']) status?: 'new' | 'working';
 }
 
 class ConvertLeadDto {
@@ -61,6 +74,20 @@ export class LeadsController {
   @RequireGrant('crm', 'edit')
   discard(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.leads.discard(user.tenantId, user.sub, id);
+  }
+
+  @Patch('leads/:id')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Edit a lead still in play: contact fields, owner, new ↔ working (Round R R3)' })
+  update(@Param('id') id: string, @Body() dto: UpdateLeadDto, @CurrentUser() user: JwtPayload) {
+    return this.leads.update(user.tenantId, user.sub, id, dto);
+  }
+
+  @Post('leads/:id/restore')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Bring a discarded lead back to the inbox (Round R R3)' })
+  restore(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.leads.restore(user.tenantId, user.sub, id);
   }
 
   @Delete('leads/:id')

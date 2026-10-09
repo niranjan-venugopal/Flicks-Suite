@@ -107,6 +107,10 @@ export class RolesGuard implements CanActivate {
         throw new ForbiddenException('Your access to this workspace is no longer active');
       }
       role = seat.role ?? user.role;
+      // Round R R3: hand the LIVE role to the handler as well, so a
+      // service-level "manager and above" check never ranks a role the
+      // person lost minutes ago.
+      user.role = role;
     }
 
     const userLevel = roleHierarchy[role] ?? 0;
@@ -145,6 +149,9 @@ export class RolesGuard implements CanActivate {
     if (!seat || !seat.active) {
       throw new ForbiddenException('Your access to this workspace is no longer active');
     }
+    // Round R R3: unranked routes that still rank inside the service (a rep
+    // moving a CLOSED deal, for one) see the live role, not the token's.
+    if (seat.role) user.role = seat.role;
   }
 
   /**

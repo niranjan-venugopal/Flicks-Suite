@@ -34,9 +34,22 @@ class CreateDealDto {
 }
 
 class MoveStageDto {
-  @IsString() stage_id!: string;
-  @IsOptional() @IsString() lost_reason_id?: string;
+  @IsUUID() stage_id!: string;
+  @IsOptional() @IsUUID() lost_reason_id?: string;
   @IsOptional() @IsString() @MaxLength(500) lost_reason_note?: string;
+}
+
+/** Round R R3 — reopen into a chosen open stage (default: the first one). */
+class ReopenDealDto {
+  @IsOptional() @IsUUID() stage_id?: string;
+}
+
+/** Round R R3 — change a closed deal's verdict, reason or date. */
+class DealOutcomeDto {
+  @IsIn(['won', 'lost']) outcome!: 'won' | 'lost';
+  @IsOptional() @IsUUID() lost_reason_id?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) lost_reason_note?: string | null;
+  @IsOptional() @IsString() closed_at?: string | null;
 }
 
 /** Round I — closed-deals list. `closed` (default) = won + lost. */
@@ -148,14 +161,24 @@ export class DealsController {
   @RequireGrant('crm', 'edit')
   @ApiOperation({ summary: 'Move a deal to a stage (won/lost applied on terminal stages)' })
   move(@Param('id') id: string, @Body() dto: MoveStageDto, @CurrentUser() user: JwtPayload) {
-    return this.deals.moveStage(user.tenantId, user.sub, id, dto);
+    // Round R R3: a closed deal only moves for a manager or above.
+    return this.deals.moveStage(user.tenantId, user.sub, id, dto, { role: user.role });
   }
 
   @Post('deals/:id/reopen')
   @Roles('owner', 'admin', 'manager')
   @RequireGrant('crm', 'edit')
-  reopen(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
-    return this.deals.reopen(user.tenantId, user, id);
+  @ApiOperation({ summary: 'Reopen a won/lost deal into a chosen open stage (default: the first)' })
+  reopen(@Param('id') id: string, @Body() dto: ReopenDealDto, @CurrentUser() user: JwtPayload) {
+    return this.deals.reopen(user.tenantId, user, id, dto ?? {});
+  }
+
+  @Post('deals/:id/outcome')
+  @Roles('owner', 'admin', 'manager')
+  @RequireGrant('crm', 'edit')
+  @ApiOperation({ summary: 'Change a closed deal: won ↔ lost, the lost reason / note, the won / lost date' })
+  setOutcome(@Param('id') id: string, @Body() dto: DealOutcomeDto, @CurrentUser() user: JwtPayload) {
+    return this.deals.setOutcome(user.tenantId, user, id, dto);
   }
 
   @Post('deals/:id/create-invoice')

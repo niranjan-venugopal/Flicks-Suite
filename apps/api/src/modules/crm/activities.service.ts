@@ -395,6 +395,110 @@ export class ActivitiesService {
   }
 
   /**
+   * Round R R3 — edit an activity: subject, notes, due time, assignee, type,
+   * call outcome. The deal's next / last stamps follow a changed due time; a
+   * new assignee gets the usual DND-aware ping.
+   */
+  async update(
+    tenantId: string,
+    userId: string,
+    id: string,
+    dto: {
+      type?: string;
+      subject?: string;
+      body?: string | null;
+      due_at?: string | null;
+      assignee_user_id?: string;
+      outcome?: string | null;
+    },
+  ) {
+    if (dto.type && !TYPES.includes(dto.type as never)) throw new BadRequestException('Invalid activity type');
+    if (dto.outcome && !CALL_OUTCOMES.includes(dto.outcome as never)) throw new BadRequestException('Invalid call outcome');
+    if ('subject' in dto && !dto.subject?.trim()) throw new BadRequestException('Subject is required');
+    const res = await this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [a] = await tx.select().from(activities).where(and(eq(activities.id, id), isNull(activities.deleted_at))).limit(1).for('update');
+        if (!a) throw new NotFoundException('Activity not found');
+        const nextType = dto.type ?? a.type;
+        // A note is born done; a task / call / meeting is a scheduled thing.
+        // Crossing that line would leave an "open note" or a done task with no
+        // completion — not a type change, a different record.
+        if (dto.type && (dto.type === 'note') !== (a.type === 'note')) {
+          throw new BadRequestException(a.type === 'note' ? 'A note stays a note — schedule a new task instead' : 'A scheduled activity cannot become a note — log a note instead');
+        }
+        const nextDue = 'due_at' in dto ? (dto.due_at ? new Date(dto.due_at) : null) : a.due_at;
+        if (nextDue && Number.isNaN(nextDue.getTime())) throw new BadRequestException('due_at is not a valid date');
+        if (nextType !== 'note' && !nextDue) throw new BadRequestException('Tasks, calls and meetings need a due time');
+        let assigneeChanged = false;
+        if (dto.assignee_user_id && dto.assignee_user_id !== a.assignee_user_id) {
+          const [m] = await tx
+            .select({ id: memberships.id })
+            .from(memberships)
+            .where(and(eq(memberships.tenant_id, tenantId), eq(memberships.user_id, dto.assignee_user_id), eq(memberships.status, 'active')))
+            .limit(1);
+          if (!m) throw new BadRequestException('assignee is not an active member of this workspace');
+          assigneeChanged = true;
+        }
+        const patch: Record<string, unknown> = { updated_at: new Date() };
+        if (dto.type) patch.type = nextType;
+        if ('subject' in dto) patch.subject = dto.subject!.trim();
+        if ('body' in dto) patch.body = dto.body ?? null;
+        if ('due_at' in dto) patch.due_at = nextDue;
+        if (assigneeChanged) patch.assignee_user_id = dto.assignee_user_id;
+        if ('outcome' in dto) patch.outcome = dto.outcome ?? null;
+        const [row] = await tx.update(activities).set(patch).where(eq(activities.id, id)).returning();
+        if (a.deal_id) await this.syncDealStamps(tx, a.deal_id);
+        await this.audit.log({
+          tenantId, actorUserId: userId, action: 'crm.activity.update', resourceType: 'activity', resourceId: id,
+          beforeState: { subject: a.subject, due_at: a.due_at, assignee_user_id: a.assignee_user_id, type: a.type },
+          afterState: { subject: row!.subject, due_at: row!.due_at, assignee_user_id: row!.assignee_user_id, type: row!.type },
+        });
+        await this.domainEvents.publish(
+          { name: 'crm.activity.updated', tenantId, actorUserId: userId, payload: { activity_id: id, type: row!.type, deal_id: a.deal_id ?? null } },
+          tx,
+        );
+        // A finished item is a record, not work: re-attributing it never
+        // tells the new person "assigned to you".
+        return { data: row!, assigneeChanged: assigneeChanged && !a.completed_at };
+      },
+      userId,
+    );
+    if (res.assigneeChanged) void this.pingAssignee(tenantId, res.data.assignee_user_id, userId, res.data);
+    return { data: res.data };
+  }
+
+  /**
+   * Round R R3 — "mark not done": a completed task / call / meeting goes back
+   * to the open queue (the deal's next-activity stamp follows). A logged note
+   * is born done and stays that way.
+   */
+  async reopen(tenantId: string, userId: string, id: string) {
+    return this.db.withTenant(
+      tenantId,
+      async (tx) => {
+        const [a] = await tx.select().from(activities).where(and(eq(activities.id, id), isNull(activities.deleted_at))).limit(1).for('update');
+        if (!a) throw new NotFoundException('Activity not found');
+        if (a.type === 'note') throw new BadRequestException('A note is a record of something that happened — edit or delete it instead');
+        if (!a.completed_at) return { data: a }; // idempotent
+        const [row] = await tx
+          .update(activities)
+          .set({ completed_at: null, completed_by: null, updated_at: new Date() })
+          .where(eq(activities.id, id))
+          .returning();
+        if (a.deal_id) await this.syncDealStamps(tx, a.deal_id);
+        await this.audit.log({ tenantId, actorUserId: userId, action: 'crm.activity.reopen', resourceType: 'activity', resourceId: id });
+        await this.domainEvents.publish(
+          { name: 'crm.activity.reopened', tenantId, actorUserId: userId, payload: { activity_id: id, type: a.type, deal_id: a.deal_id ?? null } },
+          tx,
+        );
+        return { data: row! };
+      },
+      userId,
+    );
+  }
+
+  /**
    * Bulk cleanup (round 9): count what a purge WOULD remove, so the Data
    * hygiene card can show "1,240 activities" before anyone commits.
    */

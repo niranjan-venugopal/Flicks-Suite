@@ -25,8 +25,8 @@ import {
 
 const SCOPES = ['crm:read', 'crm:write', 'directory:read', 'directory:write', 'webhooks:manage']
 const COMMON_EVENTS = [
-  'crm.lead.created', 'crm.lead.converted', 'crm.deal.created', 'crm.deal.stage_changed',
-  'crm.deal.won', 'crm.deal.lost', 'crm.form.submitted', 'crm.email.replied',
+  'crm.lead.created', 'crm.lead.converted', 'crm.lead.restored', 'crm.deal.created', 'crm.deal.stage_changed',
+  'crm.deal.won', 'crm.deal.lost', 'crm.deal.reopened', 'crm.form.submitted', 'crm.email.replied',
   'invoice.created', 'invoice.paid', 'invoice.quote_accepted',
 ]
 
