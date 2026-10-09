@@ -12,6 +12,9 @@ import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import type Redis from 'ioredis';
 import type { JwtPayload } from '@flicks/shared/types';
+import type { DbAdmin } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../core/database/database.module';
+import { socketSessionProblem, tenantIsSuspended } from './socket-session';
 import { REDIS_CLIENT } from '../core/redis/redis.module';
 import {
   PresenceService,
@@ -58,6 +61,9 @@ export class PresenceGateway
     private readonly configService: ConfigService,
     private readonly presence: PresenceService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    // Round R R2: challenge tokens and suspended companies are refused here
+    // exactly as on the HTTP side.
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
   ) {}
 
   private liveKey(tenantId: string, userId: string): string {
@@ -106,7 +112,15 @@ export class PresenceGateway
         issuer: this.configService.get<string>('JWT_ISSUER'),
         audience: this.configService.get<string>('JWT_AUDIENCE'),
       });
+      if (socketSessionProblem(payload)) {
+        client.disconnect(true);
+        return;
+      }
       if (!payload.tenantId) {
+        client.disconnect(true);
+        return;
+      }
+      if (!payload.isPlatformAdmin && (await tenantIsSuspended(this.dbAdmin, payload.tenantId))) {
         client.disconnect(true);
         return;
       }

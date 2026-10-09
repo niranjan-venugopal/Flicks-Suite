@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
 import {
   useFamFeatureFlags,
@@ -79,14 +80,11 @@ export default function FamFeatureFlagsPage() {
           title="Feature flags"
           sub="Per-tenant rollout · changes propagate to clients on next /me refresh"
           right={
-            <div style={{ display: 'flex', gap: 8 }}>
+            <Link href="/fam/audit?category=flags" style={{ textDecoration: 'none' }}>
               <Btn kind="secondary" size="sm" icon={<Icon.shield size={13} />}>
                 Audit changes
               </Btn>
-              <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
-                New flag
-              </Btn>
-            </div>
+            </Link>
           }
         />
 

@@ -6,8 +6,10 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { and, count, desc, eq, gt, notInArray, sql } from 'drizzle-orm';
+import * as crypto from 'crypto';
 import {
   auditLogPlatform,
   couponCodes,
@@ -26,6 +28,12 @@ import { AuditService } from '../audit/audit.service';
 import { AnalyticsService } from '../../core/analytics/analytics.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RazorpayPlatformService } from './razorpay-platform.service';
+
+export interface FreeMonthsGrant {
+  months: number;
+  code: string;
+  trialEndsAt: string | null;
+}
 
 const SPECFLICKS_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 /**
@@ -167,6 +175,9 @@ export class BillingService {
       .from(couponRedemptions)
       .innerJoin(couponCodes, eq(couponCodes.id, couponRedemptions.coupon_id))
       .where(eq(couponRedemptions.tenant_id, tenantId))
+      // Round R R2: a company can hold several redemptions (FAM grants) —
+      // the Owner's page shows the latest, like the console does.
+      .orderBy(desc(couponRedemptions.redeemed_at))
       .limit(1);
 
     const history = sub
@@ -369,8 +380,10 @@ export class BillingService {
         'Coupons apply before subscribing — this workspace already has a payment subscription.',
       );
     }
-    // One coupon EVER per tenant — friendly pre-check (the UNIQUE constraint
-    // inside the transaction is the real enforcement).
+    // One self-service coupon EVER per tenant — friendly pre-check; the real
+    // enforcement is the re-check under the per-tenant lock inside the
+    // transaction below (Round R R2: the table's UNIQUE(tenant_id) went away
+    // so support can grant free months more than once).
     const [already] = await this.dbAdmin
       .select({ id: couponRedemptions.id })
       .from(couponRedemptions)
@@ -381,11 +394,21 @@ export class BillingService {
     }
 
     // Claim + redemption + trial extension are ONE transaction: a crash can't
-    // burn a redemption without granting the months, and a same-tenant race
-    // rolls the claim back automatically via the UNIQUE(tenant_id) violation.
+    // burn a redemption without granting the months, and two racing redeems
+    // from the same tenant serialise on the advisory lock — the second one
+    // sees the first one's row and is refused before it claims anything.
     let claimed;
     try {
       claimed = await this.dbAdmin.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`);
+        const [raced] = await tx
+          .select({ id: couponRedemptions.id })
+          .from(couponRedemptions)
+          .where(eq(couponRedemptions.tenant_id, tenantId))
+          .limit(1);
+        if (raced) {
+          throw new ConflictException('This workspace has already redeemed a coupon');
+        }
         // Atomic claim: the guarded UPDATE is the only way the count
         // increments, so two racing redeems of a last-use code can't both win.
         const [c] = await tx
@@ -432,7 +455,7 @@ export class BillingService {
       if (err instanceof HttpException) throw err;
       const pgCode = (err as { code?: string })?.code;
       if (pgCode === '23505') {
-        // UNIQUE(tenant_id) — raced another redeem from the same tenant.
+        // UNIQUE(tenant_id, coupon_id) — the same code twice for one tenant.
         throw new ConflictException('This workspace has already redeemed a coupon');
       }
       throw err;
@@ -483,6 +506,136 @@ export class BillingService {
         trial_ends_at: subAfter?.trial_ends_at ?? null,
       },
     };
+  }
+
+  // ─── Round R R2 — FAM support: give free months ─────────────────────────────
+
+  /**
+   * Specflicks grants a company N free months (support goodwill, a lost
+   * invoice, a founder promise). Mints a private one-use coupon so the grant
+   * shows up everywhere a coupon does (plan history, the Owner's "coupon
+   * applied" notice, GET /billing), then applies the same calendar-month
+   * extension the self-service redeem uses — from today or the current trial
+   * end, whichever is later. Unlike self-service there is no "one coupon ever"
+   * rule and no attempt throttle; a paying (Razorpay) workspace is still
+   * refused because trial runway means nothing to it.
+   */
+  async grantFreeMonths(
+    tenantId: string,
+    actorUserId: string,
+    input: { months: number; reason: string; ip?: string; userAgent?: string },
+  ): Promise<FreeMonthsGrant> {
+    const months = Math.floor(Number(input.months));
+    if (!Number.isFinite(months) || months < 1 || months > 12) {
+      throw new BadRequestException('Free months must be between 1 and 12');
+    }
+    await this.ensureRow(tenantId);
+    const [sub] = await this.dbAdmin
+      .select({ id: subscriptions.id, razorpayId: subscriptions.razorpay_subscription_id })
+      .from(subscriptions)
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .limit(1);
+    if (!sub) throw new NotFoundException('Tenant not found');
+    if (sub.razorpayId) {
+      throw new BadRequestException(
+        'This workspace already pays through Razorpay — free months only extend a trial. Credit it in Razorpay instead.',
+      );
+    }
+    const code = `FAM-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const claimed = await this.dbAdmin.transaction(async (tx) => {
+      const [c] = await tx
+        .insert(couponCodes)
+        .values({
+          code,
+          campaign: 'fam-support',
+          months,
+          max_redemptions: 1,
+          redemption_count: 1,
+          expires_at: new Date(),
+          active: false,
+          created_by: actorUserId,
+        })
+        .returning();
+      await tx.insert(couponRedemptions).values({
+        coupon_id: c!.id,
+        tenant_id: tenantId,
+        redeemed_by: actorUserId,
+        months,
+      });
+      await tx
+        .update(subscriptions)
+        .set({
+          applied_coupon_id: c!.id,
+          trial_ends_at: sql`GREATEST(coalesce(trial_ends_at, now()), now()) + (${months} || ' months')::interval`,
+          updated_at: new Date(),
+        })
+        .where(eq(subscriptions.tenant_id, tenantId));
+      await tx
+        .update(tenants)
+        .set({
+          trial_ends_at: sql`GREATEST(coalesce(trial_ends_at, now()), now()) + (${months} || ' months')::interval`,
+        })
+        .where(eq(tenants.id, tenantId));
+      return c!;
+    });
+    const [after] = await this.dbAdmin
+      .select({ trial_ends_at: subscriptions.trial_ends_at })
+      .from(subscriptions)
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .limit(1);
+    const trialEndsAt = after?.trial_ends_at ?? null;
+    // The plan history is the CUSTOMER's (GET /billing shows it verbatim):
+    // the support reason and the staff id stay on the platform audit log.
+    await this.event(tenantId, sub.id, 'coupon.redeemed', {
+      code: claimed.code,
+      campaign: 'fam-support',
+      months,
+    });
+    await this.audit.logPlatform({
+      actorUserId,
+      action: 'fam.free_months_granted',
+      targetTenantId: tenantId,
+      metadata: { months, reason: input.reason, code: claimed.code, trialEndsAt: trialEndsAt?.toISOString() ?? null },
+      ipAddress: input.ip,
+      userAgent: input.userAgent,
+    });
+    await this.notifyCouponRedeemed(tenantId, claimed.code, months, trialEndsAt);
+    this.billingState.invalidate(tenantId);
+    return { months, code: claimed.code, trialEndsAt: trialEndsAt?.toISOString() ?? null };
+  }
+
+  /** The latest coupon applied to a company (self-service or FAM grant). */
+  async couponForTenant(tenantId: string) {
+    const [row] = await this.dbAdmin
+      .select({
+        code: couponCodes.code,
+        campaign: couponCodes.campaign,
+        months: couponRedemptions.months,
+        redeemedAt: couponRedemptions.redeemed_at,
+      })
+      .from(couponRedemptions)
+      .innerJoin(couponCodes, eq(couponCodes.id, couponRedemptions.coupon_id))
+      .where(eq(couponRedemptions.tenant_id, tenantId))
+      .orderBy(desc(couponRedemptions.redeemed_at))
+      .limit(1);
+    return row
+      ? { code: row.code, campaign: row.campaign, months: row.months, redeemedAt: row.redeemedAt.toISOString() }
+      : null;
+  }
+
+  /** Billable seats right now (no write) — the same rule recountSeats applies. */
+  async billableSeats(tenantId: string): Promise<number> {
+    const [{ n }] = await this.dbAdmin
+      .select({ n: count() })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.tenant_id, tenantId),
+          eq(memberships.status, 'active'),
+          notInArray(memberships.role, NON_BILLABLE_ROLES as never),
+        ),
+      );
+    return Math.max(1, Number(n));
   }
 
   // ─── Cancel / resume ────────────────────────────────────────────────────────
@@ -593,9 +746,14 @@ export class BillingService {
             updated_at: new Date(),
           })
           .where(eq(subscriptions.id, sub.id));
+        // Round R R2: a mandate activating never lifts a Specflicks
+        // suspension — the saved pre-suspend status becomes 'active' instead.
         await this.dbAdmin
           .update(tenants)
-          .set({ status: 'active' })
+          .set({
+            status: sql`CASE WHEN status = 'suspended' THEN status ELSE 'active'::tenant_status END`,
+            status_before_suspend: sql`CASE WHEN status = 'suspended' THEN 'active'::tenant_status ELSE status_before_suspend END`,
+          })
           .where(eq(tenants.id, tenantId));
         await this.event(tenantId, sub.id, 'subscription.activated', { seats });
         void this.analytics.track({

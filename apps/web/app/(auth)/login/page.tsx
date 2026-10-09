@@ -151,6 +151,9 @@ function LoginPageInner() {
         window.location.assign('/totp-setup')
         return
       }
+      // Round R R2: a company Specflicks suspended is skipped at sign-in; when
+      // it was their only one the (app) layout shows the "suspended" screen
+      // (it reads the seat's tenantStatus from /me) rather than the wizard.
       // The (app) layout re-routes guests / platform staff / joiners from
       // wherever they land, so a deep link is safe to honour here.
       window.location.assign(nextPath ?? '/dashboard')

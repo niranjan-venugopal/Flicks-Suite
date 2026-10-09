@@ -25,8 +25,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  validate(payload: JwtPayload): JwtPayload {
+  validate(payload: JwtPayload & { scope?: string }): JwtPayload {
     if (!payload.sub) {
+      throw new UnauthorizedException('Invalid token payload');
+    }
+    // Round R R2: the 5-minute TOTP challenge token is signed with the same
+    // key, issuer and audience — it must never authenticate a request.
+    if (payload.scope) {
       throw new UnauthorizedException('Invalid token payload');
     }
     // §9: Sentry user context is the opaque id ONLY — no email/name/role.

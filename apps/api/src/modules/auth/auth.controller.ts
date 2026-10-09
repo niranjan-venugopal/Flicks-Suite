@@ -354,7 +354,7 @@ export class AuthController {
     const deviceId =
       (req.cookies?.['fs_device_id'] as string | undefined) ??
       (req.headers['x-device-id'] as string | undefined);
-    const raw = await this.authService.getMe(user.sub, user.tenantId, deviceId);
+    const raw = await this.authService.getMe(user.sub, user.tenantId, deviceId, { mfa: user.mfa === true });
     // §4 media pipeline — serialization-level swap: signed URL from *_key,
     // legacy *_url fallback; the raw keys never reach the client.
     const { avatarKey, ...rest } = raw as typeof raw & { avatarKey?: string | null };
@@ -492,7 +492,9 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const deviceId = this.authService.ensureDeviceId(req, res);
-    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId);
+    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId, {
+      mfa: user.mfa === true,
+    });
     this.authService.setAuthCookies(
       res,
       result.accessToken,
@@ -521,7 +523,9 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const deviceId = this.authService.ensureDeviceId(req, res);
-    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId);
+    const result = await this.authService.selectTenant(user.sub, dto.tenantId, deviceId, {
+      mfa: user.mfa === true,
+    });
     this.authService.setAuthCookies(
       res,
       result.accessToken,

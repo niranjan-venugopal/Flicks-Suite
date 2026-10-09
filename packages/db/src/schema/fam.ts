@@ -214,9 +214,11 @@ export const couponRedemptions = pgTable(
     coupon_id: uuid('coupon_id')
       .notNull()
       .references(() => couponCodes.id),
+    // Round R R2 (0070): one redemption per (tenant, coupon). Self-service
+    // keeps "one coupon ever per tenant" in billing.service; FAM support may
+    // grant free months more than once.
     tenant_id: uuid('tenant_id')
       .notNull()
-      .unique() // one coupon EVER per tenant (§8B.3)
       .references(() => tenants.id, { onDelete: 'cascade' }),
     redeemed_by: uuid('redeemed_by').references(() => users.id, { onDelete: 'set null' }),
     months: integer('months').notNull(),
@@ -224,8 +226,40 @@ export const couponRedemptions = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index('idx_coupon_redemptions_coupon').on(t.coupon_id)],
+  (t) => [
+    index('idx_coupon_redemptions_coupon').on(t.coupon_id),
+    uniqueIndex('coupon_redemptions_tenant_coupon_unique').on(t.tenant_id, t.coupon_id),
+  ],
 );
+
+// ─── fam_tenant_notes (Round R R2 / 0070) ────────────────────────────────────
+// Specflicks support notes about a company. FAM-only: FORCE RLS with a
+// deny-all policy and no app-role grant — read and written through dbAdmin
+// with an explicit tenant predicate (house rule 1); the tenant never sees them.
+
+export const famTenantNotes = pgTable(
+  'fam_tenant_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenant_id: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    author_user_id: uuid('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    pinned: boolean('pinned').notNull().default(false),
+    created_at: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deleted_at: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [index('idx_fam_tenant_notes_tenant_created').on(t.tenant_id, t.created_at.desc())],
+);
+
+export type FamTenantNote = typeof famTenantNotes.$inferSelect;
+export type NewFamTenantNote = typeof famTenantNotes.$inferInsert;
 
 export type CouponCode = typeof couponCodes.$inferSelect;
 export type CouponRedemption = typeof couponRedemptions.$inferSelect;

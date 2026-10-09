@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -10,6 +10,9 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
 import type { JwtPayload } from '@flicks/shared/types';
+import type { DbAdmin } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../core/database/database.module';
+import { socketSessionProblem, tenantIsSuspended } from './socket-session';
 import { wsCors } from '../core/common/ws-cors';
 import { SEAT_REVOKED_EVENT, tenantRoom, tenantUserRoom, userRoom, type SeatRevokedPayload } from './rooms';
 
@@ -37,6 +40,9 @@ export class NotificationsGateway
   constructor(
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    // Round R R2: challenge tokens and suspended companies are refused here
+    // exactly as on the HTTP side.
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
   ) {}
 
   /**
@@ -58,6 +64,10 @@ export class NotificationsGateway
         issuer: this.configService.get<string>('JWT_ISSUER'),
         audience: this.configService.get<string>('JWT_AUDIENCE'),
       });
+      if (socketSessionProblem(payload)) {
+        client.disconnect(true);
+        return;
+      }
 
       // Stash the payload for later lookups
       (client.data as { user?: JwtPayload }).user = payload;
@@ -65,6 +75,10 @@ export class NotificationsGateway
       const room = `user:${payload.sub}`;
       await client.join(room);
 
+      if (payload.tenantId && !payload.isPlatformAdmin && (await tenantIsSuspended(this.dbAdmin, payload.tenantId))) {
+        client.disconnect(true);
+        return;
+      }
       if (payload.tenantId) {
         await client.join(tenantRoom(payload.tenantId));
         // Round R: company-scoped pushes + the seat-revoked kick target.

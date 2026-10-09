@@ -49,7 +49,10 @@ export class BillingGuard implements CanActivate {
     // No authenticated tenant context → nothing to meter (JwtAuthGuard has
     // already decided whether the request may proceed at all).
     if (!user?.tenantId) return true;
-    if (user.role === 'fam' || user.role === 'super_admin') return true;
+    // Round R R2: a platform admin's token carries the role of whatever
+    // company they are currently scoped to (often 'owner' of their own) —
+    // the flag, not the role, is what makes them platform staff.
+    if (user.isPlatformAdmin || user.role === 'fam' || user.role === 'super_admin') return true;
 
     // Reads stay open — the lock is a wall, not a blackout (§8B.5: users can
     // still see their data; exports and billing actions have exemptions).

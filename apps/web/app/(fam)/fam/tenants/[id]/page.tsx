@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { Fragment, Suspense, useMemo, useState } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 import {
@@ -23,9 +23,20 @@ import {
   useExtendTrial,
   useVerifyTenant,
   useStartImpersonation,
+  useGrantFreeMonths,
+  useFamTenantActivity,
+  downloadTenantActivityCsv,
+  useResendMemberInvite,
+  useSignOutMember,
+  useFamTenantNotes,
+  useAddTenantNote,
+  useUpdateTenantNote,
+  useDeleteTenantNote,
   type FamTenantMember,
+  type TenantActivityFilters,
 } from '@/lib/api/queries/use-fam'
 import { ImpersonateModal } from '@/components/fam/ImpersonateModal'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { formatCurrency, formatDate, timeAgo } from '@/lib/utils'
 import {
   Dialog,
@@ -35,16 +46,18 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
-type TabKey = 'overview' | 'members' | 'usage' | 'billing' | 'audit' | 'settings'
+type TabKey = 'overview' | 'members' | 'support' | 'usage' | 'billing' | 'audit' | 'settings'
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'overview', label: 'Overview' },
   { key: 'members',  label: 'Members' },
+  { key: 'support',  label: 'Support' },
   { key: 'usage',    label: 'Usage' },
   { key: 'billing',  label: 'Billing' },
   { key: 'audit',    label: 'Audit' },
   { key: 'settings', label: 'Settings' },
 ]
+const TAB_KEYS = new Set<string>(TABS.map((t) => t.key))
 
 function statusTone(s: string) {
   switch (s) {
@@ -87,10 +100,28 @@ function memberStatusTone(s: string) {
 }
 
 export default function FamTenantDetailPage() {
+  // useSearchParams needs a Suspense boundary in the app router.
+  return (
+    <Suspense fallback={null}>
+      <FamTenantDetailInner />
+    </Suspense>
+  )
+}
+
+function FamTenantDetailInner() {
   const params = useParams<{ id: string }>()
   const id = params?.id ?? null
   const tenant = useFamTenant(id)
-  const [tab, setTab] = useState<TabKey>('overview')
+  const router = useRouter()
+  const sp = useSearchParams()
+  // Round R R2: ?tab= so search results, audit rows and emails can deep-link
+  // straight to Support / Billing.
+  const wanted = sp.get('tab')
+  const [tab, setTabState] = useState<TabKey>(wanted && TAB_KEYS.has(wanted) ? (wanted as TabKey) : 'overview')
+  const setTab = (t: TabKey) => {
+    setTabState(t)
+    router.replace(`/fam/tenants/${id}?tab=${t}`, { scroll: false })
+  }
 
   if (tenant.isLoading) {
     return (
@@ -168,7 +199,7 @@ export default function FamTenantDetailPage() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} onClick={() => setTab('settings')}>
+              <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} onClick={() => setTab('billing')}>
                 Extend trial
               </Btn>
               <Btn kind="secondary" size="sm" icon={<Icon.shield size={13} />} onClick={() => setTab('settings')}>
@@ -220,8 +251,9 @@ export default function FamTenantDetailPage() {
 
         {tab === 'overview' && <OverviewTab tenant={t} setTab={setTab} />}
         {tab === 'members'  && id && <MembersTab tenantId={id} />}
+        {tab === 'support'  && id && <SupportTab tenantId={id} />}
         {tab === 'usage'    && id && <UsageTab tenantId={id} currency={t.currency} />}
-        {tab === 'billing'  && id && <BillingTab tenantId={id} currency={t.currency} />}
+        {tab === 'billing'  && id && <BillingTab tenantId={id} currency={t.currency} tenant={t} />}
         {tab === 'audit'    && id && <AuditTab tenantId={id} />}
         {tab === 'settings' && id && (
           <SettingsTab tenantId={id} tenant={t} />
@@ -509,7 +541,7 @@ function OverviewTab({
             <DialogTitle>Suspend {t.name}</DialogTitle>
           </DialogHeader>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
-            All logins for this workspace will be blocked. The action is recorded in the platform audit log. Reversible.
+            Everyone is signed out and nobody can sign in until it is lifted; the Owners are emailed the reason. Recorded in the platform audit log with your IP. Reversible.
           </p>
           <label className="label" style={{ display: 'block', marginBottom: 6 }}>
             Reason <span style={{ color: 'var(--coral)' }}>*</span>
@@ -547,8 +579,8 @@ function OverviewTab({
           </DialogHeader>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 16 }}>
             {dialog === 'verify' && 'Records the verification on the platform audit log. This cannot be undone from this surface.'}
-            {dialog === 'extend' && 'Adds 14 days to the existing trial end date (or starts a trial today if none is set). The change is recorded in the platform audit log.'}
-            {dialog === 'reactivate' && 'Flips the tenant back to active and unblocks all logins. The change is recorded in the platform audit log.'}
+            {dialog === 'extend' && 'Adds 14 days from today or the current trial end, whichever is later — an expired trial comes back on. Recorded in the platform audit log.'}
+            {dialog === 'reactivate' && 'Restores the status the suspension interrupted (a trial stays a trial) and lets everyone sign in again. Recorded in the platform audit log.'}
           </p>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Btn kind="ghost" onClick={close} disabled={busy}>Cancel</Btn>
@@ -584,7 +616,11 @@ function MembersTab({ tenantId }: { tenantId: string }) {
   const { toast } = useToast()
   const members = useFamTenantMembers(tenantId)
   const startImpMut = useStartImpersonation()
+  const resendMut = useResendMemberInvite()
+  const signOutMut = useSignOutMember()
   const [target, setTarget] = useState<FamTenantMember | null>(null)
+  const [signOutTarget, setSignOutTarget] = useState<FamTenantMember | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const rows: FamTenantMember[] = members.data?.data ?? []
 
   const handleImpersonate = async (payload: { reason: string; ticket?: string }) => {
@@ -613,6 +649,37 @@ function MembersTab({ tenantId }: { tenantId: string }) {
     }
   }
 
+  // Round R R2 — support actions on a seat.
+  const resend = (m: FamTenantMember) => {
+    setBusyId(m.membershipId)
+    resendMut.mutate(
+      { tenantId, membershipId: m.membershipId },
+      {
+        onSuccess: (r) =>
+          toast({
+            title: r.data.emailSent ? 'Invite re-sent' : 'Invite recorded (email not sent)',
+            description: `${r.data.email} · sent ${r.data.resentCount} time${r.data.resentCount === 1 ? '' : 's'}`,
+          }),
+        onError: (e) => toast({ title: 'Could not resend', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+        onSettled: () => setBusyId(null),
+      },
+    )
+  }
+  const signOut = () => {
+    if (!signOutTarget) return
+    const m = signOutTarget
+    signOutMut.mutate(
+      { tenantId, membershipId: m.membershipId },
+      {
+        onSuccess: (r) => {
+          setSignOutTarget(null)
+          toast({ title: 'Signed out of this company', description: `${m.email ?? m.fullName} · ${r.sessionsRevoked} session${r.sessionsRevoked === 1 ? '' : 's'} ended.` })
+        },
+        onError: (e) => toast({ title: 'Could not sign them out', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' }),
+      },
+    )
+  }
+
   if (members.isLoading) {
     return (
       <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-mute)' }}>
@@ -637,29 +704,24 @@ function MembersTab({ tenantId }: { tenantId: string }) {
               <th>Member</th>
               <th>Role</th>
               <th>Status</th>
-              <th>Invited</th>
-              <th>Accepted</th>
+              <th>Last sign-in</th>
+              <th>Joined</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {rows.map((m) => {
-              // Owners are the only role we let FAM impersonate by default
-              // (clean read of "the customer view"). Employees / managers
-              // are reachable too — useful for reproducing a reported bug.
-              // membershipId is the row's PK so we don't need a userId
-              // sanity check here anymore — the server resolves user_id
-              // from the membership row.
               const canImpersonate = m.status === 'active' && m.role !== 'fam'
+              const busy = busyId === m.membershipId
               return (
-                <tr key={m.membershipId}>
+                <tr key={m.membershipId} data-testid="member-row">
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
                       <Avatar name={m.fullName ?? m.email ?? '?'} size="sm" src={m.avatarUrl ?? undefined} />
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 800 }}>
+                        <Link href={`/fam/users/${m.userId}`} style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)', textDecoration: 'none' }}>
                           {m.fullName ?? '—'}
-                        </div>
+                        </Link>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-mute)' }}>
                           {m.email ?? '—'}
                         </div>
@@ -677,12 +739,22 @@ function MembersTab({ tenantId }: { tenantId: string }) {
                     </Pill>
                   </td>
                   <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                    {m.invitedAt ? timeAgo(m.invitedAt) : '—'}
+                    {m.lastLoginAt ? timeAgo(m.lastLoginAt) : 'never'}
                   </td>
                   <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>
-                    {m.acceptedAt ? timeAgo(m.acceptedAt) : '—'}
+                    {m.acceptedAt ? timeAgo(m.acceptedAt) : m.invitedAt ? `invited ${timeAgo(m.invitedAt)}` : '—'}
                   </td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {m.status === 'invited' && m.employeeId && (
+                      <Btn kind="ghost" size="sm" icon={<Icon.mail size={12} />} disabled={busy} onClick={() => resend(m)} data-testid="member-resend">
+                        {busy ? 'Sending…' : 'Resend invite'}
+                      </Btn>
+                    )}
+                    {m.status === 'active' && m.role !== 'fam' && (
+                      <Btn kind="ghost" size="sm" icon={<Icon.out size={12} />} onClick={() => setSignOutTarget(m)} data-testid="member-sign-out">
+                        Sign out
+                      </Btn>
+                    )}
                     <Btn
                       kind="ghost"
                       size="sm"
@@ -707,7 +779,210 @@ function MembersTab({ tenantId }: { tenantId: string }) {
         onConfirm={handleImpersonate}
         isPending={startImpMut.isPending}
       />
+      <ConfirmDialog
+        open={!!signOutTarget}
+        onClose={() => setSignOutTarget(null)}
+        title={`Sign ${signOutTarget?.fullName ?? signOutTarget?.email ?? 'this member'} out of this company?`}
+        body="Their sessions in this company are ended — a screen they still have open drops within 15 minutes, when its short-lived token expires. Their other companies keep working, and they can sign in again right away."
+        confirmLabel="Sign out"
+        danger
+        loading={signOutMut.isPending}
+        loadingLabel="Signing out…"
+        onConfirm={signOut}
+      />
     </>
+  )
+}
+
+// ─── Support tab (Round R R2) ────────────────────────────────────────────────
+
+function SupportTab({ tenantId }: { tenantId: string }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, alignItems: 'start' }}>
+      <ActivityLog tenantId={tenantId} />
+      <SupportNotes tenantId={tenantId} />
+    </div>
+  )
+}
+
+const RESOURCE_TYPES = ['', 'employee', 'leave_request', 'attendance_regularization', 'timesheet_period', 'invoice', 'company_policy', 'asset', 'membership', 'user', 'rbac'] as const
+
+function ActivityLog({ tenantId }: { tenantId: string }) {
+  const { toast } = useToast()
+  const [page, setPage] = useState(1)
+  const [action, setAction] = useState('')
+  const [resourceType, setResourceType] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [open, setOpen] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const limit = 25
+  const filters = useMemo<TenantActivityFilters>(() => {
+    const f: TenantActivityFilters = {}
+    if (action.trim()) f.action = action.trim()
+    if (resourceType) f.resourceType = resourceType
+    if (from) f.from = new Date(`${from}T00:00:00`).toISOString()
+    if (to) f.to = new Date(`${to}T23:59:59`).toISOString()
+    return f
+  }, [action, resourceType, from, to])
+  const log = useFamTenantActivity(tenantId, page, limit, filters)
+  const rows = log.data?.data ?? []
+  const total = log.data?.pagination.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+
+  const exportCsv = async () => {
+    setExporting(true)
+    try {
+      await downloadTenantActivityCsv(tenantId, filters)
+    } catch (e) {
+      toast({ title: 'Export failed', description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }} data-testid="support-activity">
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--bord)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>Company activity</div>
+          <div className="t-mute" style={{ fontSize: 11.5 }}>The company's own audit log — exactly what its Owner sees · {total} entries</div>
+        </div>
+        <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />} onClick={() => void exportCsv()} disabled={exporting} data-testid="activity-export">
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </Btn>
+      </div>
+      <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--bord)', background: 'var(--bg-2)', display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 8 }}>
+        <input className="input" placeholder="Action, e.g. employee.terminated" value={action} onChange={(e) => { setAction(e.target.value); setPage(1) }} data-testid="activity-action" />
+        <select className="input" value={resourceType} onChange={(e) => { setResourceType(e.target.value); setPage(1) }}>
+          {RESOURCE_TYPES.map((r) => <option key={r} value={r}>{r ? r.replace(/_/g, ' ') : 'Any record'}</option>)}
+        </select>
+        <input className="input" type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1) }} aria-label="From" />
+        <input className="input" type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1) }} aria-label="To" />
+      </div>
+      {log.isLoading ? (
+        <div style={{ padding: 30, textAlign: 'center', color: 'var(--text-mute)' }}><Loader2 className="w-4 h-4 animate-spin" style={{ display: 'inline-block' }} /></div>
+      ) : rows.length === 0 ? (
+        <div className="t-mute" style={{ padding: 30, textAlign: 'center', fontSize: 12.5 }}>Nothing matches.</div>
+      ) : (
+        <table className="tbl" style={{ width: '100%' }}>
+          <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Record</th><th>From</th><th /></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <Fragment key={r.id}>
+                <tr data-testid="activity-row">
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-mute)', whiteSpace: 'nowrap' }} title={r.createdAt}>{timeAgo(r.createdAt)}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Avatar name={r.actorName ?? r.actorEmail ?? 'System'} size="sm" src={r.avatarUrl ?? undefined} />
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 800 }}>{r.actorName ?? 'System'}</div>
+                        {r.actorEmail && <div style={{ fontSize: 10.5, color: 'var(--text-mute)' }}>{r.actorEmail}</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 800, color: /deleted|terminated|rejected|revoked|denied/.test(r.action) ? 'var(--coral)' : 'var(--blue)' }}>{r.action}</td>
+                  <td style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>{r.resourceType.replace(/_/g, ' ')}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-mute)' }} title={r.userAgent ?? undefined}>{r.ipAddress ?? '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {(r.beforeState || r.afterState) && (
+                      <Btn kind="ghost" size="sm" icon={<Icon.eye size={12} />} onClick={() => setOpen(open === r.id ? null : r.id)} aria-label="Show changes" />
+                    )}
+                  </td>
+                </tr>
+                {open === r.id && (
+                  <tr>
+                    <td colSpan={6} style={{ background: 'var(--bg-2)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
+                        <div><div className="t-caption">Before</div><pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{r.beforeState ? JSON.stringify(r.beforeState, null, 2) : '—'}</pre></div>
+                        <div><div className="t-caption">After</div><pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{r.afterState ? JSON.stringify(r.afterState, null, 2) : '—'}</pre></div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderTop: '1px solid var(--bord)', background: 'var(--bg-2)' }}>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>Page {page} of {totalPages}</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Btn kind="ghost" size="sm" icon={<Icon.chevL size={12} />} disabled={page <= 1 || log.isFetching} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</Btn>
+            <Btn kind="ghost" size="sm" iconRight={<Icon.chevR size={12} />} disabled={page >= totalPages || log.isFetching} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SupportNotes({ tenantId }: { tenantId: string }) {
+  const { toast } = useToast()
+  const notes = useFamTenantNotes(tenantId)
+  const add = useAddTenantNote()
+  const update = useUpdateTenantNote()
+  const del = useDeleteTenantNote()
+  const [draft, setDraft] = useState('')
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const rows = notes.data?.data ?? []
+  const fail = (title: string) => (e: unknown) => toast({ title, description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
+
+  const submit = () => {
+    if (!draft.trim()) return
+    add.mutate({ tenantId, body: draft.trim() }, { onSuccess: () => setDraft(''), onError: fail('Could not add the note') })
+  }
+
+  return (
+    <div className="card" style={{ padding: 18 }} data-testid="support-notes">
+      <SectionHead title="Support notes" sub="Specflicks-only · never visible to the company" />
+      <textarea
+        className="input"
+        rows={3}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="What did they ask, what did we do, what's pending…"
+        maxLength={4000}
+        style={{ width: '100%', padding: 10, fontSize: 12.5, marginTop: 10 }}
+        data-testid="note-draft"
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+        <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />} onClick={submit} disabled={!draft.trim() || add.isPending} data-testid="note-add">
+          {add.isPending ? 'Saving…' : 'Add note'}
+        </Btn>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', marginTop: 10 }}>
+        {notes.isLoading ? (
+          <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-mute)' }}><Loader2 className="w-4 h-4 animate-spin" style={{ display: 'inline-block' }} /></div>
+        ) : rows.length === 0 ? (
+          <div className="t-mute" style={{ padding: '14px 0', fontSize: 12.5 }}>No notes yet.</div>
+        ) : rows.map((n, i) => (
+          <div key={n.id} style={{ padding: '12px 0', borderBottom: i < rows.length - 1 ? '1px solid var(--bord)' : 'none' }} data-testid="note-row">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              {n.pinned && <Pill tone="yellow" dot>pinned</Pill>}
+              <span style={{ fontSize: 12, fontWeight: 800 }}>{n.author}</span>
+              <span className="t-mute" style={{ fontSize: 11 }} title={n.createdAt}>· {timeAgo(n.createdAt)}</span>
+              <div style={{ flex: 1 }} />
+              <Btn kind="ghost" size="sm" icon={<Icon.flag size={12} />} aria-label={n.pinned ? 'Unpin' : 'Pin'} title={n.pinned ? 'Unpin' : 'Pin to top'} onClick={() => update.mutate({ tenantId, noteId: n.id, pinned: !n.pinned }, { onError: fail('Could not update') })} />
+              <Btn kind="ghost" size="sm" icon={<Icon.trash size={12} />} aria-label="Delete note" onClick={() => setDeleting(n.id)} />
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-2)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.body}</div>
+          </div>
+        ))}
+      </div>
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="Delete this note?"
+        body="It disappears from the support tab; the deletion is recorded in the platform audit log."
+        confirmLabel="Delete note"
+        danger
+        loading={del.isPending}
+        loadingLabel="Deleting…"
+        onConfirm={() => deleting && del.mutate({ tenantId, noteId: deleting }, { onSuccess: () => setDeleting(null), onError: fail('Could not delete') })}
+      />
+    </div>
   )
 }
 
@@ -811,92 +1086,167 @@ function billingEventAmount(metadata: Record<string, unknown> | null, currency: 
   return mrr != null ? `${formatCurrency(mrr, currency)} MRR` : null
 }
 
-function BillingTab({ tenantId, currency }: { tenantId: string; currency: string }) {
+function BillingTab({
+  tenantId,
+  currency,
+  tenant,
+}: {
+  tenantId: string
+  currency: string
+  tenant: NonNullable<ReturnType<typeof useFamTenant>['data']>
+}) {
+  const { toast } = useToast()
   const billing = useFamTenantBilling(tenantId)
+  const extendMut = useExtendTrial()
+  const grantMut = useGrantFreeMonths()
+  const [dialog, setDialog] = useState<'extend' | 'months' | null>(null)
+  const [days, setDays] = useState(14)
+  const [months, setMonths] = useState(1)
+  const [reason, setReason] = useState('')
   const data = billing.data
+  const fail = (title: string) => (e: unknown) =>
+    toast({ title, description: e instanceof Error ? e.message : 'Try again', variant: 'destructive' })
 
-  if (billing.isLoading) return <CenteredSpinner label="Loading billing…" />
-  if (!data?.subscription) {
-    return (
-      <EmptyCard
-        icon={<Icon.chart size={22} />}
-        message="No subscription on file for this tenant."
-      />
+  const submitExtend = () => {
+    if (!days || days < 1 || days > 180) return
+    extendMut.mutate(
+      { id: tenantId, days, reason: reason.trim() || undefined },
+      {
+        onSuccess: (r) => {
+          setDialog(null)
+          setReason('')
+          toast({ title: `Trial extended by ${days} days`, description: r.trialEndsAt ? `Now ends ${formatDate(r.trialEndsAt)}.` : undefined })
+        },
+        onError: fail('Could not extend the trial'),
+      },
     )
   }
-  const s = data.subscription
+  const submitMonths = () => {
+    if (!reason.trim()) return
+    grantMut.mutate(
+      { id: tenantId, months, reason: reason.trim() },
+      {
+        onSuccess: (r) => {
+          setDialog(null)
+          setReason('')
+          toast({ title: `${months} free month${months === 1 ? '' : 's'} given`, description: `Coupon ${r.code} applied${r.trialEndsAt ? ` · trial now ends ${formatDate(r.trialEndsAt)}` : ''}. The Owners have been told.` })
+        },
+        onError: fail('Could not give free months'),
+      },
+    )
+  }
+
+  if (billing.isLoading) return <CenteredSpinner label="Loading billing…" />
+  const s = data?.subscription ?? null
+  const toolbar = (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+      <Btn kind="secondary" size="sm" icon={<Icon.cal size={13} />} onClick={() => { setReason(''); setDialog('extend') }} disabled={!!s?.razorpaySubscriptionId && s.status !== 'canceled'} title={s?.razorpaySubscriptionId && s.status !== 'canceled' ? 'Paying through Razorpay — its dates are decided there' : undefined} data-testid="billing-extend">
+        Extend trial
+      </Btn>
+      <Btn kind="primary" size="sm" icon={<Icon.zap size={13} />} onClick={() => { setReason(''); setDialog('months') }} disabled={!!s?.razorpaySubscriptionId} title={s?.razorpaySubscriptionId ? 'Already paying through Razorpay — credit it there' : undefined} data-testid="billing-free-months">
+        Give free months
+      </Btn>
+    </div>
+  )
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>
-          Subscription
-        </div>
-        <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '170px 1fr', rowGap: 10, columnGap: 14, fontSize: 12.5 }}>
-          <DetailRow k="Plan"          v={<span style={{ textTransform: 'capitalize', fontWeight: 800 }}>{s.planCode}</span>} />
-          <DetailRow k="Status"        v={<Pill tone={statusTone(s.status)} dot>{s.status.replace('_', ' ')}</Pill>} />
-          <DetailRow k="Billing cycle" v={s.billingCycle} />
-          <DetailRow k="Per user"      v={formatCurrency(s.perUserPrice, currency)} />
-          <DetailRow k="Users"         v={String(s.userCount)} />
-          <DetailRow k="MRR"           v={<strong style={{ fontFamily: 'var(--font-mono)' }}>{formatCurrency(s.mrr, currency)}</strong>} />
-          <DetailRow
-            k="Current period"
-            v={
-              s.currentPeriodStart && s.currentPeriodEnd
-                ? `${formatDate(s.currentPeriodStart)} → ${formatDate(s.currentPeriodEnd)}`
-                : '—'
-            }
-          />
-          <DetailRow k="Trial ends"     v={s.trialEndsAt ? formatDate(s.trialEndsAt) : '—'} />
-          <DetailRow k="Razorpay sub"   v={s.razorpaySubscriptionId ?? '—'} />
-          {s.cancelAtPeriodEnd && (
-            <DetailRow k="" v={<span style={{ color: 'var(--coral)', fontWeight: 700 }}>Will cancel at period end</span>} />
-          )}
-        </dl>
-      </div>
+    <>
+      {toolbar}
+      {!s ? (
+        <EmptyCard icon={<Icon.chart size={22} />} message="No subscription on file for this tenant — extending the trial creates one." />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
+          <div className="card" style={{ padding: 20 }} data-testid="billing-panel">
+            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-2)', marginBottom: 14 }}>Subscription</div>
+            <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '170px 1fr', rowGap: 10, columnGap: 14, fontSize: 12.5 }}>
+              <DetailRow k="Plan"          v={<span style={{ textTransform: 'capitalize', fontWeight: 800 }}>{s.planCode}</span>} />
+              <DetailRow k="Status"        v={<Pill tone={statusTone(s.status)} dot>{s.status.replace('_', ' ')}</Pill>} />
+              <DetailRow k="Billing cycle" v={s.billingCycle} />
+              <DetailRow k="Per seat"      v={formatCurrency(s.perUserPrice, currency)} />
+              <DetailRow k="Billable seats" v={<span>{String(s.seats ?? s.userCount)}{s.monthlyEstimate != null && <span className="t-mute" style={{ fontWeight: 600 }}> · would be {formatCurrency(s.monthlyEstimate, currency)}/mo</span>}</span>} />
+              <DetailRow k="MRR"           v={<span><strong style={{ fontFamily: 'var(--font-mono)' }}>{formatCurrency(s.mrr, currency)}</strong>{s.status !== 'active' && <span className="t-mute" style={{ fontWeight: 600 }}> · counts once paying</span>}</span>} />
+              <DetailRow
+                k="Current period"
+                v={s.currentPeriodStart && s.currentPeriodEnd ? `${formatDate(s.currentPeriodStart)} → ${formatDate(s.currentPeriodEnd)}` : '—'}
+              />
+              <DetailRow k="Trial ends"     v={s.trialEndsAt ? formatDate(s.trialEndsAt) : '—'} />
+              {s.graceEndsAt && <DetailRow k="Grace ends" v={formatDate(s.graceEndsAt)} />}
+              <DetailRow k="Coupon"        v={s.coupon ? <span><span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800 }}>{s.coupon.code}</span> <span className="t-mute" style={{ fontWeight: 600 }}>· {s.coupon.months} month{s.coupon.months === 1 ? '' : 's'} · {s.coupon.campaign} · {formatDate(s.coupon.redeemedAt)}</span></span> : '—'} />
+              <DetailRow k="Razorpay sub"   v={s.razorpaySubscriptionId ?? '—'} />
+              {s.cancelAtPeriodEnd && (
+                <DetailRow k="" v={<span style={{ color: 'var(--coral)', fontWeight: 700 }}>Will cancel at period end</span>} />
+              )}
+            </dl>
+          </div>
 
-      <div className="card" style={{ padding: 20 }}>
-        <SectionHead title="Plan history" sub={`${data.events.length} event${data.events.length === 1 ? '' : 's'}`} />
-        {data.events.length === 0 ? (
-          <div style={{ padding: '20px 0', fontSize: 12, color: 'var(--text-mute)' }}>
-            No subscription events yet.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {data.events.map((e, i) => {
-              const sub = billingEventSub(e.metadata)
-              const amount = billingEventAmount(e.metadata, currency)
-              return (
-                <div
-                  key={e.id}
-                  style={{
-                    display: 'flex',
-                    gap: 14,
-                    padding: '12px 0',
-                    borderBottom: i < data.events.length - 1 ? '1px solid var(--bord)' : 'none',
-                    alignItems: 'flex-start',
-                  }}
-                >
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 800, color: 'var(--text-mute)', width: 92, paddingTop: 1, flexShrink: 0 }}>
-                    {formatDate(e.createdAt)}
-                  </div>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--blue)', marginTop: 5, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 2, textTransform: 'capitalize' }}>
-                      {e.eventType.replace(/[_.]/g, ' ')}
+          <div className="card" style={{ padding: 20 }}>
+            <SectionHead title="Plan history" sub={`${data!.events.length} event${data!.events.length === 1 ? '' : 's'}`} />
+            {data!.events.length === 0 ? (
+              <div style={{ padding: '20px 0', fontSize: 12, color: 'var(--text-mute)' }}>No subscription events yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {data!.events.map((e, i) => {
+                  const sub = billingEventSub(e.metadata)
+                  const amount = billingEventAmount(e.metadata, currency)
+                  return (
+                    <div key={e.id} style={{ display: 'flex', gap: 14, padding: '12px 0', borderBottom: i < data!.events.length - 1 ? '1px solid var(--bord)' : 'none', alignItems: 'flex-start' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 800, color: 'var(--text-mute)', width: 92, paddingTop: 1, flexShrink: 0 }}>{formatDate(e.createdAt)}</div>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--blue)', marginTop: 5, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 2, textTransform: 'capitalize' }}>{e.eventType.replace(/[_.]/g, ' ')}</div>
+                        {sub && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>{sub}</div>}
+                      </div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, color: amount ? 'var(--green)' : 'var(--text-faint)', flexShrink: 0 }}>{amount ?? '—'}</div>
                     </div>
-                    {sub && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-mute)' }}>{sub}</div>}
-                  </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 12, color: amount ? 'var(--green)' : 'var(--text-faint)', flexShrink: 0 }}>
-                    {amount ?? '—'}
-                  </div>
-                </div>
-              )
-            })}
+                  )
+                })}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+
+      <Dialog open={dialog === 'extend'} onOpenChange={(o) => !o && setDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Extend trial for {tenant.name}</DialogTitle></DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
+            Adds N days from today or the current trial end, whichever is later — an expired trial comes back on immediately.
+            {tenant.trialEndsAt ? ` Current end: ${formatDate(tenant.trialEndsAt)}.` : ''}
+          </p>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>Days (1–180)</label>
+          <input className="input" type="number" min={1} max={180} value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 120, padding: 10, fontSize: 13, marginBottom: 12 }} data-testid="extend-days" />
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>Reason (optional)</label>
+          <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. finalising contract" maxLength={500} style={{ width: '100%', padding: 10, fontSize: 12.5 }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <Btn kind="ghost" onClick={() => setDialog(null)} disabled={extendMut.isPending}>Cancel</Btn>
+            <Btn kind="primary" onClick={submitExtend} disabled={extendMut.isPending || !days || days < 1 || days > 180} data-testid="extend-confirm">
+              {extendMut.isPending ? 'Extending…' : `Extend by ${days} days`}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === 'months'} onOpenChange={(o) => !o && setDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Give {tenant.name} free months</DialogTitle></DialogHeader>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
+            A private coupon is applied on the company's behalf: calendar months are added from today or the current trial end, whichever is later. The Owners get the usual "coupon applied" note; the grant is recorded in the plan history and the platform audit log.
+          </p>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>Months</label>
+          <select className="input" value={months} onChange={(e) => setMonths(Number(e.target.value))} style={{ width: 140, marginBottom: 12 }} data-testid="months-select">
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m} month{m === 1 ? '' : 's'}</option>)}
+          </select>
+          <label className="label" style={{ display: 'block', marginBottom: 6 }}>Reason <span style={{ color: 'var(--coral)' }}>*</span></label>
+          <textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. lost invoice — founder goodwill" maxLength={500} style={{ width: '100%', padding: 10, fontSize: 12.5 }} data-testid="months-reason" />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <Btn kind="ghost" onClick={() => setDialog(null)} disabled={grantMut.isPending}>Cancel</Btn>
+            <Btn kind="primary" onClick={submitMonths} disabled={grantMut.isPending || !reason.trim()} data-testid="months-confirm">
+              {grantMut.isPending ? 'Applying…' : `Give ${months} free month${months === 1 ? '' : 's'}`}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
@@ -1069,8 +1419,8 @@ function SettingsTab({
           title={isSuspended ? 'Lift suspension' : 'Suspend workspace'}
           desc={
             isSuspended
-              ? 'This tenant is currently suspended. Lifting the suspension flips them back to active and unblocks logins.'
-              : 'Suspending freezes all customer logins and writes a platform audit entry. Reversible.'
+              ? 'This company is suspended: nobody can sign in. Lifting it restores the status the suspension interrupted (a trial stays a trial).'
+              : 'Suspending signs everyone out, blocks every sign-in and emails the Owners the reason. Recorded in the platform audit log. Reversible.'
           }
           action={
             isSuspended ? (
@@ -1131,7 +1481,7 @@ function SettingsTab({
             <DialogTitle>Suspend {tenant.name}</DialogTitle>
           </DialogHeader>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
-            All logins for this workspace will be blocked. The action is recorded in the platform audit log.
+            Everyone is signed out and nobody can sign in until it is lifted; the Owners are emailed the reason. Recorded in the platform audit log with your IP.
           </p>
           <label className="label" style={{ display: 'block', marginBottom: 6 }}>
             Reason <span style={{ color: 'var(--coral)' }}>*</span>
@@ -1163,7 +1513,7 @@ function SettingsTab({
             <DialogTitle>Extend trial for {tenant.name}</DialogTitle>
           </DialogHeader>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 12 }}>
-            Adds N days to the existing trial end date (or starts the trial today if none is set). Both tenants.trial_ends_at and subscriptions.current_period_end slide forward.
+            Adds N days from today or the current trial end, whichever is later — an expired trial comes back on immediately. Recorded in the plan history and the platform audit log.
           </p>
           <label className="label" style={{ display: 'block', marginBottom: 6 }}>
             Days (1–180)

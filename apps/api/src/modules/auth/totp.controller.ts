@@ -13,6 +13,7 @@ import { AuthService } from './auth.service';
 import { TotpCodeDto, TotpEnrollDto, TotpVerifyDto } from './auth.dto';
 import { Public } from '../../core/auth/decorators/public.decorator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
+import { clientMeta } from '../../core/common/request-meta';
 import type { JwtPayload } from '@flicks/shared/types';
 
 @ApiTags('Auth')
@@ -38,8 +39,39 @@ export class TotpController {
   async confirm(
     @Body() dto: TotpCodeDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.confirmTotpEnrollment(user.sub, dto.code);
+    const result = await this.authService.confirmTotpEnrollment(user.sub, dto.code);
+    // Round R R2: the session now counts as two-factor — re-issue it so the
+    // FAM console opens without a fresh sign-in.
+    const { ip, userAgent } = clientMeta(req);
+    const deviceId = this.authService.ensureDeviceId(req, res);
+    const tokens = await this.authService.issueMfaSession(user, deviceId, ip, userAgent);
+    this.authService.setAuthCookies(res, tokens.accessToken, tokens.refreshToken, tokens.refreshTtlMs);
+    return result;
+  }
+
+  @Post('step-up')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Finish two-factor for an already signed-in platform admin',
+    description:
+      'Round R R2: a session issued without the second factor (signed in before enforcement, or before this release) proves the authenticator code here and is re-issued with the mfa claim — no sign-out needed.',
+  })
+  async stepUp(
+    @Body() dto: TotpCodeDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { ip, userAgent } = clientMeta(req);
+    const deviceId = this.authService.ensureDeviceId(req, res);
+    const result = await this.authService.stepUpTotp(user.sub, dto.code, { ip, userAgent, deviceId });
+    const tokens = await this.authService.issueMfaSession(user, deviceId, ip, userAgent);
+    this.authService.setAuthCookies(res, tokens.accessToken, tokens.refreshToken, tokens.refreshTtlMs);
+    return result;
   }
 
   @Public()

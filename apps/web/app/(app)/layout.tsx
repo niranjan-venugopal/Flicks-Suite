@@ -13,6 +13,7 @@ import { TrustDevicePrompt } from '@/components/auth/TrustDevicePrompt'
 import { PresenceProvider } from '@/lib/presence/PresenceProvider'
 import { NotificationsSocket } from '@/lib/notifications/NotificationsSocket'
 import { TenantSync } from '@/components/layout/TenantSync'
+import { SuspendedWorkspace } from '@/components/layout/SuspendedWorkspace'
 import { ModuleOpenedTracker } from '@/lib/analytics/ModuleOpenedTracker'
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NpsCard } from '@/components/feedback/NpsCard'
@@ -210,6 +211,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const activeMemberships = (meData?.memberships ?? []).filter(
     (m) => m.status === 'active',
   )
+  // Round R R2: a seat in a company Specflicks suspended is live but unusable
+  // — never auto-switch into it (the switch is refused), and when it is all
+  // the person has, show them why instead of the "create a company" wizard.
+  const usableMemberships = activeMemberships.filter((m) => m.tenantStatus !== 'suspended')
+  const suspendedOnly =
+    !!meData &&
+    !isImpersonating &&
+    !isPlatformAdmin &&
+    !currentMembership &&
+    activeMemberships.length > 0 &&
+    usableMemberships.length === 0
   // Only meaningful once /me has resolved; impersonation + platform admins +
   // joining employees are handled by their own redirects below.
   const currentTenantRevoked =
@@ -246,9 +258,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       return
     }
     // Recover from a revoked/expired current tenant exactly once per load.
-    if (currentTenantRevoked && !recoveryFired.current) {
+    if (currentTenantRevoked && !suspendedOnly && !recoveryFired.current) {
       recoveryFired.current = true
-      const soleActive = activeMemberships.length === 1 ? activeMemberships[0] : null
+      const soleActive = usableMemberships.length === 1 ? usableMemberships[0] : null
       const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       if (soleActive && uuid.test(soleActive.tenantId ?? '')) {
         // Re-scope the JWT into the only company they can still use.
@@ -275,7 +287,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     isPlatformAdmin,
     needsOnboarding,
     currentTenantRevoked,
-    activeMemberships,
+    suspendedOnly,
+    usableMemberships,
     freshRole,
     isImpersonating,
     pathname,
@@ -300,6 +313,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
   if (!isAuthenticated || isLoading || !meData) {
     return <AppShellSkeleton />
+  }
+  // Round R R2: every company this person belongs to is suspended — nothing to
+  // switch into, so say so instead of looping on a refused switch.
+  if (suspendedOnly) {
+    const first = activeMemberships[0]!
+    return (
+      <SuspendedWorkspace
+        tenantName={first.tenantName ?? 'Your workspace'}
+        tenantLogoUrl={first.tenantLogoUrl ?? null}
+        others={[]}
+      />
+    )
+  }
+  // Round R R2: Specflicks suspended the current company — every tenant route
+  // would answer 403, so show why and the way out instead of the shell.
+  if (!isImpersonating && !isPlatformAdmin && currentMembership?.tenantStatus === 'suspended') {
+    return (
+      <SuspendedWorkspace
+        tenantName={currentMembership.tenantName ?? 'This workspace'}
+        tenantLogoUrl={currentMembership.tenantLogoUrl ?? null}
+        others={activeMemberships
+          .filter((m) => m.tenantId !== currentMembership.tenantId && m.tenantStatus !== 'suspended')
+          .map((m) => ({ tenantId: m.tenantId, tenantName: m.tenantName ?? 'Company' }))}
+      />
+    )
   }
 
   return (

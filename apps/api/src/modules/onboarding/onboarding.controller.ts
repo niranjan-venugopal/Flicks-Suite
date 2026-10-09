@@ -72,6 +72,7 @@ export class OnboardingController {
     // workspace must land in it, not back in the workspace they came from.
     const refreshed = await this.authService.refreshAuthForUser(user.sub, res, {
       preferTenantId: result.id,
+      mfa: user.mfa === true,
     });
     return { ...result, refreshed };
   }

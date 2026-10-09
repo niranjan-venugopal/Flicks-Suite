@@ -57,6 +57,8 @@ interface ApiUser {
 }
 
 interface ApiMembership {
+  // Round R R2: the suspended-workspace screen shows the company logo.
+  tenantLogoUrl?: string | null
   id: string
   tenantId: string
   tenantName: string
@@ -86,6 +88,8 @@ interface VerifyAuthResponse {
   // Platform admin who hasn't enrolled TOTP yet — session is issued, but the
   // FAM shell routes them to /totp-setup.
   requiresTotpEnrollment?: boolean
+  // Round R R2: companies skipped at sign-in because Specflicks suspended them.
+  suspendedTenants?: string[]
 }
 
 export type ModuleAccessLevel = 'none' | 'view' | 'edit'
@@ -104,6 +108,9 @@ interface MeResponse extends ApiUser {
   deviceTrusted?: boolean
   // users.last_login_at — the profile's Security card shows it (round K).
   lastLoginAt?: string | null
+  // Round R R2 — FAM second factor: enforced for this account, enrolled, and
+  // whether THIS session cleared it (the console refuses it otherwise).
+  totp?: { enforced: boolean; enrolled: boolean; satisfied: boolean }
   locale?: string
   timezone?: string
   currentMembership: ApiMembership | null
@@ -463,6 +470,17 @@ export function useConfirmTotp() {
   return useMutation({
     mutationFn: (code: string) =>
       api.post<{ ok: true; backupCodes: string[] }>('/api/v1/auth/totp/confirm', { code }),
+  })
+}
+
+/**
+ * Round R R2 — step-up: an enrolled platform admin whose session was issued
+ * without the second factor proves the code in place; the server re-issues
+ * the session with the mfa claim (no sign-out, no redirect).
+ */
+export function useStepUpTotp() {
+  return useMutation({
+    mutationFn: (code: string) => api.post<{ ok: true }>('/api/v1/auth/totp/step-up', { code }),
   })
 }
 

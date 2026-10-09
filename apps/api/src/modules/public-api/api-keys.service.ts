@@ -1,16 +1,18 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import { apiKeys } from '@flicks/db/schema';
+import { apiKeys, tenants } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import { API_KEY_SCOPES, type ApiKeyScope } from '@flicks/shared/constants';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import { AuditService } from '../audit/audit.service';
+import { TENANT_SUSPENDED } from '../../core/auth/guards/roles.guard';
 
 /**
  * Public-API keys (PRD v5 §11). Key = 'flk_live_' + 32 random bytes
@@ -123,11 +125,17 @@ export class ApiKeysService {
         tenant_id: apiKeys.tenant_id,
         scopes: apiKeys.scopes,
         revoked_at: apiKeys.revoked_at,
+        tenant_status: tenants.status,
       })
       .from(apiKeys)
+      .innerJoin(tenants, eq(tenants.id, apiKeys.tenant_id))
       .where(eq(apiKeys.key_hash, this.hash(rawKey)))
       .limit(1);
     if (!row || row.revoked_at) return null;
+    // Round R R2: a suspended company's integrations stop too — the same
+    // answer every signed-in route gives, so the integration can tell
+    // "suspended" from "bad key".
+    if (row.tenant_status === 'suspended') throw new ForbiddenException(TENANT_SUSPENDED);
 
     // Stamp last_used_at at most once a minute per key (avoid hot-path writes).
     const now = Date.now();

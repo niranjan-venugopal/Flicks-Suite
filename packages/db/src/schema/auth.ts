@@ -32,6 +32,9 @@ export const authEventTypeEnum = pgEnum('auth_event_type', [
   'password_changed',
   'account_locked',
   'account_unlocked',
+  // Round R R2 (0070): written on every company switch since Sprint 8 — the
+  // label was missing from the database type, so the rows were lost.
+  'tenant_selected',
 ]);
 
 // ─── auth_otps ────────────────────────────────────────────────────────────────
@@ -91,6 +94,10 @@ export const refreshTokens = pgTable(
     // ~180-day expiry after explicit user consent; rotation reads this to
     // preserve the window (migration 0050).
     trusted: boolean('trusted').notNull().default(false),
+    // Round R R2 (0070): the session cleared the FAM second factor (TOTP).
+    // Carried through rotation; the FAM console refuses sessions without it
+    // when enforcement is on.
+    mfa: boolean('mfa').notNull().default(false),
     created_at: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

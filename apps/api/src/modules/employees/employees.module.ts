@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { EmployeesController } from './employees.controller';
 import { EmployeesService } from './employees.service';
+import { EmployeesPublicService } from './public';
 import { SeparationJob } from './separation.job';
 import { OnboardingEscalationJob } from './onboarding-escalation.job';
 import { AuditModule } from '../audit/audit.module';
@@ -13,7 +14,7 @@ import { MediaModule } from '../media/media.module';
   controllers: [EmployeesController],
   // Round Q: SeparationJob ends notice periods hourly; OnboardingEscalationJob
   // moves onboarding approvals waiting over 24 hours up a level.
-  providers: [EmployeesService, SeparationJob, OnboardingEscalationJob],
-  exports: [EmployeesService],
+  providers: [EmployeesService, SeparationJob, OnboardingEscalationJob, EmployeesPublicService],
+  exports: [EmployeesService, EmployeesPublicService],
 })
 export class EmployeesModule {}

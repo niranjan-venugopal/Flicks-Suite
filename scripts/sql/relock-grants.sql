@@ -62,4 +62,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='github_webhook_events') THEN
     EXECUTE format('REVOKE ALL ON github_webhook_events FROM %I', r);                   -- 0046 service-role only
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='fam_tenant_notes') THEN
+    EXECUTE format('REVOKE ALL ON fam_tenant_notes FROM %I', r);                        -- 0070 FAM-only support notes
+  END IF;
 END $$;

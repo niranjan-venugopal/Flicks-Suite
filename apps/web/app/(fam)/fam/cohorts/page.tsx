@@ -1,7 +1,7 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
-import { Btn, Icon, Pill, SectionHead } from '@/components/proto'
+import { Icon, Pill, SectionHead } from '@/components/proto'
 import { useFamCohorts } from '@/lib/api/queries/use-fam'
 import { timeAgo } from '@/lib/utils'
 
@@ -18,11 +18,6 @@ export default function FamCohortsPage() {
         <SectionHead
           title="Beta cohorts"
           sub="Group tenants for staged rollouts, announcements, and per-cohort metrics."
-          right={
-            <Btn kind="primary" size="sm" icon={<Icon.plus size={13} />}>
-              New cohort
-            </Btn>
-          }
         />
 
         {cohorts.isLoading ? (
@@ -56,7 +51,6 @@ export default function FamCohortsPage() {
                             Created {timeAgo(c.createdAt)}
                           </div>
                         </div>
-                        <Btn kind="ghost" size="sm" icon={<Icon.more size={13} />} />
                       </div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', lineHeight: 1.5 }}>
                         {c.description ?? 'No description.'}
@@ -118,18 +112,6 @@ export default function FamCohortsPage() {
                             +{c.tenantIds.length - 6} more
                           </span>
                         )}
-                      </div>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <Btn kind="secondary" size="sm" icon={<Icon.send size={12} />}>
-                          Announce
-                        </Btn>
-                        <Btn kind="ghost" size="sm" icon={<Icon.people size={12} />}>
-                          View tenants
-                        </Btn>
-                        <div style={{ flex: 1 }} />
-                        <Btn kind="ghost" size="sm" icon={<Icon.cog size={12} />}>
-                          Edit
-                        </Btn>
                       </div>
                     </div>
                   </div>

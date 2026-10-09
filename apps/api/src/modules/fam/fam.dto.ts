@@ -180,3 +180,70 @@ export class VerifyTenantDto {
   @MaxLength(2000)
   notes?: string;
 }
+
+// ─── Round R R2 — support console ─────────────────────────────────────────────
+
+export class FamSearchQueryDto {
+  @ApiProperty({ description: 'Email, name, company name, slug or GSTIN fragment (2+ chars)' })
+  @IsString()
+  @MaxLength(120)
+  q!: string;
+}
+
+export class GrantFreeMonthsDto {
+  @ApiProperty({ example: 2, description: 'Calendar months of free runway (1–12)' })
+  @IsNumber()
+  @Min(1)
+  @Max(12)
+  @Type(() => Number)
+  months!: number;
+
+  @ApiProperty({ example: 'Lost invoice — founder goodwill' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+}
+
+export class TenantNoteDto {
+  @ApiProperty({ description: 'Support note (Specflicks-only)' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4000)
+  body!: string;
+}
+
+export class UpdateTenantNoteDto {
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(4000)
+  body?: string;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  pinned?: boolean;
+}
+
+/** Filters shared by the platform audit log and the per-company platform audit tab. */
+export class FamAuditQueryDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(120) action?: string;
+  @ApiPropertyOptional({ description: 'Actor email fragment' }) @IsString() @IsOptional() @MaxLength(120) actor?: string;
+  @ApiPropertyOptional() @IsUUID() @IsOptional() tenantId?: string;
+  @ApiPropertyOptional({ description: 'ISO date-time, inclusive' }) @IsString() @IsOptional() from?: string;
+  @ApiPropertyOptional({ description: 'ISO date-time, inclusive' }) @IsString() @IsOptional() to?: string;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Min(1) @Type(() => Number) page?: number = 1;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Min(1) @Type(() => Number) limit?: number = 50;
+}
+
+/** The company's OWN audit log (what its Owner sees under Reports → Audit log). */
+export class TenantActivityQueryDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(120) action?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() @MaxLength(80) resourceType?: string;
+  @ApiPropertyOptional() @IsUUID() @IsOptional() actorUserId?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() from?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() to?: string;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Min(1) @Type(() => Number) page?: number = 1;
+  @ApiPropertyOptional() @IsNumber() @IsOptional() @Min(1) @Type(() => Number) limit?: number = 50;
+}

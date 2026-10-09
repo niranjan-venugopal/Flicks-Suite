@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -11,6 +11,9 @@ import { Server, Socket } from 'socket.io';
 import { and, eq } from 'drizzle-orm';
 import { memberships, tenantModuleToggles } from '@flicks/db/schema';
 import type { JwtPayload } from '@flicks/shared/types';
+import type { DbAdmin } from '@flicks/db';
+import { DB_SERVICE_ROLE } from '../core/database/database.module';
+import { socketSessionProblem, tenantIsSuspended } from './socket-session';
 import { DatabaseService } from '../core/database/database.service';
 import { wsCors } from '../core/common/ws-cors';
 import { SEAT_REVOKED_EVENT, tenantUserRoom, type SeatRevokedPayload } from './rooms';
@@ -38,6 +41,9 @@ export class CrmGateway implements OnGatewayConnection {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly db: DatabaseService,
+    // Round R R2: challenge tokens and suspended companies are refused here
+    // exactly as on the HTTP side.
+    @Inject(DB_SERVICE_ROLE) private readonly dbAdmin: DbAdmin,
   ) {}
 
   async handleConnection(client: Socket): Promise<void> {
@@ -52,7 +58,15 @@ export class CrmGateway implements OnGatewayConnection {
         issuer: this.configService.get<string>('JWT_ISSUER'),
         audience: this.configService.get<string>('JWT_AUDIENCE'),
       });
+      if (socketSessionProblem(payload)) {
+        client.disconnect(true);
+        return;
+      }
       if (!payload.tenantId) {
+        client.disconnect(true);
+        return;
+      }
+      if (!payload.isPlatformAdmin && (await tenantIsSuspended(this.dbAdmin, payload.tenantId))) {
         client.disconnect(true);
         return;
       }

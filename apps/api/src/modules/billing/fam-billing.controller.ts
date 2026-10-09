@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
@@ -26,6 +27,7 @@ import {
 } from 'class-validator';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
+import { FamMfaGuard } from '../../core/auth/guards/fam-mfa.guard';
 import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import type { JwtPayload } from '@flicks/shared/types';
 import { FamBillingService } from './fam-billing.service';
@@ -74,6 +76,7 @@ class CouponUpdateDto {
 @ApiBearerAuth('access-token')
 @BillingExempt()
 @Roles('fam')
+@UseGuards(FamMfaGuard)
 @Controller('fam')
 export class FamBillingController {
   constructor(private readonly famBilling: FamBillingService) {}

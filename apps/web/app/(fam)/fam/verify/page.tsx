@@ -81,16 +81,6 @@ function FamVerifyContent() {
         <SectionHead
           title="Verification queue"
           sub={`${rows.length} tenant${rows.length === 1 ? '' : 's'} pending review · GSTIN + PAN checks`}
-          right={
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Btn kind="secondary" size="sm" icon={<Icon.filter size={13} />}>
-                Filter
-              </Btn>
-              <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
-                Export queue
-              </Btn>
-            </div>
-          }
         />
 
         {queue.isLoading ? (
@@ -117,8 +107,6 @@ function FamVerifyContent() {
                 }}
               >
                 <FilterChip active>All · {rows.length}</FilterChip>
-                <FilterChip>High</FilterChip>
-                <FilterChip>Med</FilterChip>
               </div>
               <div style={{ maxHeight: 640, overflow: 'auto' }}>
                 {rows.map((q) => {
@@ -301,16 +289,7 @@ function FamVerifyContent() {
                       style={{ resize: 'vertical', marginBottom: 12, width: '100%', padding: 10 }}
                     />
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <Btn kind="ghost" size="sm" icon={<Icon.send size={13} />} disabled>
-                        Email tenant for clarification
-                      </Btn>
                       <div style={{ flex: 1 }} />
-                      <Btn kind="secondary" size="sm" disabled>
-                        Snooze · 24h
-                      </Btn>
-                      <Btn kind="ghost" size="sm" style={{ color: 'var(--coral)' }} disabled>
-                        Reject
-                      </Btn>
                       <Btn
                         kind="primary"
                         size="sm"

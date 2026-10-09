@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
+import { TotpStepUp } from '@/components/fam/TotpStepUp'
 import { useAuthStore } from '@/lib/stores/auth.store'
 import { useCurrentUser } from '@/lib/api/queries/use-auth'
 import { APIError } from '@/lib/api/client'
@@ -47,10 +48,23 @@ export default function FamLayout({ children }: { children: React.ReactNode }) {
       // A non-platform-admin somehow reached /fam — bounce them to the
       // customer shell. The (app) layout will then onward-route as needed.
       router.replace('/dashboard')
+      return
+    }
+    // Round R R2: with TOTP enforcement on, the console only opens to a
+    // session that finished the second factor. Not enrolled → set it up;
+    // enrolled but this session skipped it → the step-up card below (never a
+    // "sign in again" bounce: the sign-in page sends an authenticated person
+    // straight back here, which would loop).
+    if (meData?.totp?.enforced && !meData.totp.satisfied && !meData.totp.enrolled) {
+      window.location.assign('/totp-setup')
     }
   }, [isLoading, authRejected, isAuthenticated, meData, isPlatformAdmin, router])
 
-  if (!isAuthenticated || isLoading || !meData || !isPlatformAdmin) {
+  const totpBlocked = !!meData?.totp?.enforced && !meData.totp.satisfied
+  if (isAuthenticated && meData && isPlatformAdmin && totpBlocked && meData.totp?.enrolled) {
+    return <TotpStepUp onDone={() => void me.refetch()} />
+  }
+  if (!isAuthenticated || isLoading || !meData || !isPlatformAdmin || totpBlocked) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-brand-bg">
         <Loader2 className="w-7 h-7 animate-spin text-brand-muted" />

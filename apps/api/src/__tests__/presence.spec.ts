@@ -193,6 +193,7 @@ describe('Presence liveness store — Redis (PRD v4 §5.2)', () => {
       {} as never, // configService — not used by buildActivity
       presence,
       redis as never,
+      {} as never, // dbAdmin — Round R R2 handshake check, not used by buildActivity
     );
     const ts = Date.now() - 5_000;
     redis.store.set('presence:last:t1:alice', String(ts));
@@ -210,7 +211,7 @@ describe('Presence liveness store — Redis (PRD v4 §5.2)', () => {
         throw new Error('ECONNREFUSED');
       },
     };
-    const gateway = new PresenceGateway({} as never, {} as never, presence, broken as never);
+    const gateway = new PresenceGateway({} as never, {} as never, presence, broken as never, {} as never);
     const map = await gateway.buildActivity('t1', ['alice']);
     expect(map.size).toBe(0);
   });

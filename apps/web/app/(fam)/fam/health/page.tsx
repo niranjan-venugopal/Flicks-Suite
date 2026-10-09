@@ -2,7 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { Avatar, Btn, Donut, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
+import { Avatar, Donut, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
 import { useFamSystemHealth } from '@/lib/api/queries/use-fam'
 
 const SIGNAL_COLOURS: Record<string, string> = {
@@ -46,9 +46,6 @@ export default function FamSystemHealthPage() {
               <Pill tone={buckets.churning > 0 ? 'coral' : 'green'} dot>
                 {buckets.churning > 0 ? `${buckets.churning} churning` : 'All tenants healthy'}
               </Pill>
-              <Btn kind="secondary" size="sm" icon={<Icon.zap size={13} />}>
-                Run synthetic check
-              </Btn>
             </div>
           }
         />

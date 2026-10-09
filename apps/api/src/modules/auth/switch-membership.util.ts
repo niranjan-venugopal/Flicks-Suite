@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import { memberships, type Membership } from '@flicks/db/schema';
+import { memberships, tenants, type Membership } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 
 const logger = new Logger('SwitchMembership');
@@ -49,6 +49,19 @@ export async function resolveSwitchMembership(
       `switch rejected: no membership row for user ${userId.slice(0, 8)}… + tenant ${tenantId.slice(0, 8)}…`,
     );
     throw new BadRequestException('No active membership found for this tenant');
+  }
+  // Round R R2: a company suspended by Specflicks cannot be switched into.
+  const [tenant] = await dbAdmin
+    .select({ status: tenants.status })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
+  if (tenant?.status === 'suspended') {
+    logger.warn(`switch rejected: tenant ${tenantId.slice(0, 8)}… is suspended`);
+    throw new ForbiddenException({
+      code: 'TENANT_SUSPENDED',
+      message: 'This workspace is suspended — contact support',
+    });
   }
   if (membership.status === 'deactivated') {
     logger.warn(

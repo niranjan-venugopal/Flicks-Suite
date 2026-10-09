@@ -98,6 +98,8 @@ export const tenants = pgTable(
     logo_updated_at: timestamp('logo_updated_at', { withTimezone: true }),
     brand_color: text('brand_color'),
     status: tenantStatusEnum('status').notNull().default('trialing'),
+    // Round R R2 (0070): what a suspension interrupted, restored on reactivate.
+    status_before_suspend: tenantStatusEnum('status_before_suspend'),
     trial_ends_at: timestamp('trial_ends_at', { withTimezone: true }),
     verified_at: timestamp('verified_at', { withTimezone: true }),
     verified_by_user_id: uuid('verified_by_user_id'),

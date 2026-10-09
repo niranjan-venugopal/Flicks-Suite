@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -25,6 +26,7 @@ import {
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
+import { FamMfaGuard } from '../../core/auth/guards/fam-mfa.guard';
 import type { JwtPayload } from '@flicks/shared/types';
 import { FeedbackService } from './feedback.service';
 
@@ -105,6 +107,7 @@ export class FeedbackController {
   // ─── FAM (D12/D13) ──────────────────────────────────────────────────────────
 
   @Get('fam/feedback')
+  @UseGuards(FamMfaGuard)
   @Roles('fam')
   @ApiOperation({ summary: 'FAM feedback inbox (filters: category/status/tenant)' })
   famList(
@@ -116,6 +119,7 @@ export class FeedbackController {
   }
 
   @Patch('fam/feedback/:id')
+  @UseGuards(FamMfaGuard)
   @Roles('fam')
   @ApiOperation({ summary: 'Update feedback status / internal note (audited)' })
   famUpdate(
@@ -127,6 +131,7 @@ export class FeedbackController {
   }
 
   @Get('fam/nps-summary')
+  @UseGuards(FamMfaGuard)
   @Roles('fam')
   @ApiOperation({ summary: 'NPS tile: score + P/P/D distribution (D13)' })
   npsSummary() {

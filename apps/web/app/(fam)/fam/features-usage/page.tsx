@@ -2,7 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { Avatar, Btn, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
+import { Avatar, Icon, Kpi, Pill, SectionHead } from '@/components/proto'
 import { useFamFeatureUsage } from '@/lib/api/queries/use-fam'
 
 const MODULES = [
@@ -49,11 +49,6 @@ export default function FamFeatureUsagePage() {
         <SectionHead
           title="Feature usage"
           sub={`Adoption % across ${tenants.length} active tenant${tenants.length === 1 ? '' : 's'} · last ${d?.windowDays ?? 30} days`}
-          right={
-            <Btn kind="secondary" size="sm" icon={<Icon.download size={13} />}>
-              Export CSV
-            </Btn>
-          }
         />
 
         {/* KPIs */}

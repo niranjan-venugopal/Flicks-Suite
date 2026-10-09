@@ -217,6 +217,9 @@ type EmailTemplate =
   | 'account-deletion-confirmation'
   // Platform
   | 'impersonation-started'
+  // Round R R2 — Specflicks suspended / reinstated the workspace
+  | 'workspace-suspended'
+  | 'workspace-reactivated'
   // PM Inbox (PRD v6 §11)
   | 'pm-inbox-urgent'
   | 'pm-inbox-digest'
@@ -1119,6 +1122,40 @@ export class NotificationsService {
               </table>
               <p>Every action this staff member performs is recorded in your workspace's audit log and on Specflicks's platform audit log. You can review it under Settings → Audit log.</p>
               <p style="color: #666; font-size: 12px; margin-top: 32px;">If you didn't request support and this looks wrong, reply to this email or contact your workspace admin immediately.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'workspace-suspended': {
+        const { recipientName, tenantName, reason } = props as {
+          recipientName: string;
+          tenantName: string;
+          reason: string;
+        };
+        return {
+          subject: `${this.esc(tenantName)} on ${appName} has been suspended`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${this.esc(recipientName)},</h2>
+              <p>Specflicks has suspended the <b>${this.esc(tenantName)}</b> workspace on ${appName}. Nobody in the company can sign in to it until it is reinstated; your data is untouched.</p>
+              <table style="width: 100%; border-collapse: collapse; margin: 20px 0; background: #f4f6fa; border-radius: 8px;">
+                <tr><td style="padding: 12px 14px; color: #666; width: 130px;">Reason</td><td style="padding: 12px 14px;">${this.esc(reason)}</td></tr>
+              </table>
+              <p>Reply to this email or contact Specflicks support to sort it out.</p>
+            </div>
+          `,
+        };
+      }
+
+      case 'workspace-reactivated': {
+        const { recipientName, tenantName } = props as { recipientName: string; tenantName: string };
+        return {
+          subject: `${this.esc(tenantName)} on ${appName} is back`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+              <h2 style="color: #1a1a2e;">Hi ${this.esc(recipientName)},</h2>
+              <p>The suspension on the <b>${this.esc(tenantName)}</b> workspace has been lifted — everyone can sign in again.</p>
             </div>
           `,
         };

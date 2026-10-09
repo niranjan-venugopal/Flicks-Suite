@@ -8,12 +8,15 @@ import {
   Body,
   Param,
   Query,
+  Req,
   Res,
+  Header,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
   UseGuards,
 } from '@nestjs/common';
-import { Response as ExpressResponse } from 'express';
+import { Request, Response as ExpressResponse } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import {
   ApiTags,
@@ -22,7 +25,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { FamService } from './fam.service';
+import { FamService, type FamActor } from './fam.service';
 import { AuthService } from '../auth/auth.service';
 import {
   SuspendTenantDto,
@@ -33,15 +36,36 @@ import {
   TenantListQueryDto,
   ToggleModuleDto,
   VerifyTenantDto,
+  FamSearchQueryDto,
+  GrantFreeMonthsDto,
+  TenantNoteDto,
+  UpdateTenantNoteDto,
+  FamAuditQueryDto,
+  TenantActivityQueryDto,
 } from './fam.dto';
 import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
 import { Roles } from '../../core/auth/decorators/roles.decorator';
+import { BillingExempt } from '../../core/auth/decorators/billing-exempt.decorator';
 import { FamGuard } from '../../core/auth/guards/fam.guard';
+import { FamMfaGuard } from '../../core/auth/guards/fam-mfa.guard';
+import { clientMeta } from '../../core/common/request-meta';
 import { ApprovalEscalationJob } from '../approvals/public';
 import type { JwtPayload } from '@flicks/shared/types';
 
+/** Who is acting, from where — every FAM write audits this (Round R R2). */
+function actorOf(user: JwtPayload, req: Request): FamActor {
+  const { ip, userAgent } = clientMeta(req);
+  return { userId: user.sub, ip, userAgent };
+}
+
 @ApiTags('FAM')
 @ApiBearerAuth('access-token')
+// Round R R2: platform staff are never behind a customer paywall (their token
+// carries the role of whatever company they are scoped to), and when TOTP
+// enforcement is on, only a session that finished the second factor may use
+// the console.
+@BillingExempt()
+@UseGuards(FamMfaGuard)
 @Controller('fam')
 export class FamController {
   constructor(
@@ -78,6 +102,77 @@ export class FamController {
     return this.famService.getPlatformOverview();
   }
 
+  // ─── Round R R2: find anyone ───────────────────────────────────────────────
+
+  @Get('search')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Find a person (email / name) or a company (name / slug / GSTIN)' })
+  async search(@Query() q: FamSearchQueryDto) {
+    return this.famService.search(q.q ?? '');
+  }
+
+  // ─── Round R R2: a person across companies ─────────────────────────────────
+
+  @Get('users/:id')
+  @Roles('fam')
+  @ApiOperation({ summary: 'A person: profile, companies, lockout state, live sessions, trusted devices' })
+  async getUser(@Param('id', ParseUUIDPipe) id: string) {
+    return this.famService.getUser(id);
+  }
+
+  @Get('users/:id/auth-events')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Sign-in history of a person (newest first)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async getUserAuthEvents(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.famService.getUserAuthEvents(id, {
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 50,
+    });
+  }
+
+  @Post('users/:id/clear-lockout')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Clear every sign-in lockout (OTP quota, failed-code counter, TOTP lock)' })
+  async clearUserLockout(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.clearUserLockout(id, actorOf(user, req));
+  }
+
+  @Post('users/:id/send-sign-in-link')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ short: { limit: 10, ttl: 60000 } })
+  @ApiOperation({ summary: 'Email the person a 30-minute sign-in link (bypasses the OTP quota)' })
+  async sendUserSignInLink(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.sendUserSignInLink(id, actorOf(user, req));
+  }
+
+  @Post('users/:id/sign-out-everywhere')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Retire every live session and trusted device of a person' })
+  async signOutUserEverywhere(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.signOutUserEverywhere(id, actorOf(user, req));
+  }
+
   // ─── Tenants ───────────────────────────────────────────────────────────────
 
   @Get('tenants')
@@ -99,27 +194,55 @@ export class FamController {
   @Post('tenants/:id/suspend')
   @Roles('fam')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Suspend a tenant' })
+  @ApiOperation({ summary: 'Suspend a tenant — blocks every sign-in, retires live sessions, tells the Owners' })
   @ApiResponse({ status: 200, description: 'Tenant suspended' })
   async suspendTenant(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SuspendTenantDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    return this.famService.suspendTenant(id, user.sub, dto);
+    return this.famService.suspendTenant(id, actorOf(user, req), dto);
+  }
+
+  @Post('tenants/:id/reactivate')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Lift a suspension — restores the status the suspension interrupted' })
+  @ApiResponse({ status: 200, description: 'Tenant reactivated' })
+  async reactivateTenant(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.reactivateTenant(id, actorOf(user, req));
   }
 
   @Post('tenants/:id/extend-trial')
   @Roles('fam')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Extend tenant trial by N days' })
+  @ApiOperation({ summary: 'Extend tenant trial by N days from today or the current end, whichever is later' })
   @ApiResponse({ status: 200, description: 'Trial extended' })
   async extendTrial(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ExtendTrialDto,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    return this.famService.extendTrial(id, user.sub, dto);
+    return this.famService.extendTrial(id, actorOf(user, req), dto);
+  }
+
+  @Post('tenants/:id/free-months')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Give free months (a private coupon applied on the company’s behalf)' })
+  async grantFreeMonths(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: GrantFreeMonthsDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.grantFreeMonths(id, actorOf(user, req), dto);
   }
 
   @Get('tenants/:id/health')
@@ -142,6 +265,32 @@ export class FamController {
     return this.famService.listTenantMembers(id);
   }
 
+  @Post('tenants/:id/members/:membershipId/resend-invite')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Re-send the invite email to a seat that has not joined yet' })
+  async resendMemberInvite(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('membershipId', ParseUUIDPipe) membershipId: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.resendMemberInvite(id, membershipId, actorOf(user, req));
+  }
+
+  @Post('tenants/:id/members/:membershipId/sign-out')
+  @Roles('fam')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign one member out of this company (their other companies keep working)' })
+  async signOutMember(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('membershipId', ParseUUIDPipe) membershipId: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.signOutMember(id, membershipId, actorOf(user, req));
+  }
+
   @Get('tenants/:id/usage')
   @Roles('fam')
   @ApiOperation({ summary: 'Per-tenant activity rollups (last 30d)' })
@@ -152,38 +301,108 @@ export class FamController {
 
   @Get('tenants/:id/billing')
   @Roles('fam')
-  @ApiOperation({ summary: 'Subscription + recent billing events for a tenant' })
+  @ApiOperation({ summary: 'Subscription (seats, MRR, coupon, grace) + recent billing events' })
   @ApiResponse({ status: 200, description: 'Billing payload' })
   async getTenantBilling(@Param('id') id: string) {
     return this.famService.getTenantBilling(id);
   }
 
-  @Get('tenants/:id/audit')
+  // ─── Round R R2: the company's own activity log (support tab) ──────────────
+
+  @Get('tenants/:id/activity')
   @Roles('fam')
-  @ApiOperation({ summary: 'Platform audit log entries scoped to a tenant' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  async getTenantAudit(
-    @Param('id') id: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.famService.getTenantAudit(id, {
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 50,
-    });
+  @ApiOperation({ summary: "The company's own audit log, paged and filtered (what its Owner sees)" })
+  async getTenantActivity(@Param('id', ParseUUIDPipe) id: string, @Query() q: TenantActivityQueryDto) {
+    return this.famService.getTenantActivity(id, q);
   }
 
-  @Post('tenants/:id/reactivate')
+  @Get('tenants/:id/activity.csv')
+  @Roles('fam')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="company-activity.csv"')
+  @ApiOperation({ summary: "CSV of the company's own audit log (same filters)" })
+  async exportTenantActivity(@Param('id', ParseUUIDPipe) id: string, @Query() q: TenantActivityQueryDto) {
+    return this.famService.exportTenantActivityCsv(id, q);
+  }
+
+  @Get('tenants/:id/notes')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Specflicks support notes about a company (never visible to the company)' })
+  async listTenantNotes(@Param('id', ParseUUIDPipe) id: string) {
+    return this.famService.listTenantNotes(id);
+  }
+
+  @Post('tenants/:id/notes')
+  @Roles('fam')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Add a support note' })
+  async addTenantNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: TenantNoteDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.addTenantNote(id, actorOf(user, req), dto.body);
+  }
+
+  @Patch('tenants/:id/notes/:noteId')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Edit or pin a support note' })
+  async updateTenantNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @Body() dto: UpdateTenantNoteDto,
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+  ) {
+    return this.famService.updateTenantNote(id, noteId, actorOf(user, req), dto);
+  }
+
+  @Delete('tenants/:id/notes/:noteId')
   @Roles('fam')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Lift a suspension and flip the tenant back to active' })
-  @ApiResponse({ status: 200, description: 'Tenant reactivated' })
-  async reactivateTenant(
-    @Param('id') id: string,
+  @ApiOperation({ summary: 'Remove a support note' })
+  async deleteTenantNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('noteId', ParseUUIDPipe) noteId: string,
     @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
   ) {
-    return this.famService.reactivateTenant(id, user.sub);
+    return this.famService.deleteTenantNote(id, noteId, actorOf(user, req));
+  }
+
+  // ─── Platform audit (per company + platform-wide), with filters + CSV ──────
+
+  @Get('tenants/:id/audit')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform audit log entries scoped to a tenant (filters: action, actor, from, to)' })
+  async getTenantAudit(@Param('id', ParseUUIDPipe) id: string, @Query() q: FamAuditQueryDto) {
+    return this.famService.getTenantAudit(id, q);
+  }
+
+  @Get('tenants/:id/audit.csv')
+  @Roles('fam')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="platform-audit.csv"')
+  @ApiOperation({ summary: 'CSV of the platform audit log entries scoped to a tenant' })
+  async exportTenantAudit(@Param('id', ParseUUIDPipe) id: string, @Query() q: FamAuditQueryDto) {
+    return this.famService.exportPlatformAuditCsv(q, id);
+  }
+
+  @Get('audit')
+  @Roles('fam')
+  @ApiOperation({ summary: 'Platform-wide audit log (filters: action, actor, tenantId, from, to)' })
+  async getPlatformAudit(@Query() q: FamAuditQueryDto) {
+    return this.famService.getPlatformAudit(q);
+  }
+
+  @Get('audit.csv')
+  @Roles('fam')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="platform-audit.csv"')
+  @ApiOperation({ summary: 'CSV of the platform-wide audit log (same filters, up to 5 000 rows)' })
+  async exportPlatformAudit(@Query() q: FamAuditQueryDto) {
+    return this.famService.exportPlatformAuditCsv(q);
   }
 
   // ─── Impersonation ─────────────────────────────────────────────────────────
@@ -272,7 +491,7 @@ export class FamController {
     return this.famService.upsertCohort(user.sub, dto);
   }
 
-  // ─── C5: Revenue / Funnel / Feature usage / System health / Verify / Audit ─
+  // ─── C5: Revenue / Funnel / Feature usage / System health / Verify ─────────
 
   @Get('revenue')
   @Roles('fam')
@@ -327,21 +546,6 @@ export class FamController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.famService.verifyTenant(id, user.sub, dto?.notes);
-  }
-
-  @Get('audit')
-  @Roles('fam')
-  @ApiOperation({ summary: 'Platform-wide audit log' })
-  @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'limit', required: false, type: Number })
-  async getPlatformAudit(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.famService.getPlatformAudit({
-      page: page ? Number(page) : 1,
-      limit: limit ? Number(limit) : 50,
-    });
   }
 
   // ─── Invoicing v3: module toggles, auditor registry, seats, metrics (§10) ──

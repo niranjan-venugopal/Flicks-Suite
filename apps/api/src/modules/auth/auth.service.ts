@@ -15,7 +15,7 @@ import { REDIS_CLIENT } from '../../core/redis/redis.module';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { eq, ne, and, gt, isNull, lt, asc, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, ne, and, gt, isNull, isNotNull, lt, asc, desc, or, sql, type SQL } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { Request, Response } from 'express';
 import {
@@ -213,6 +213,9 @@ export class AuthService {
           eq(authOtps.email, normalizedEmail),
           isNull(authOtps.consumed_at),
           lt(authOtps.expires_at, shortLivedCutoff),
+          // Round R R2: a support sign-in link (link only, no code) is not a
+          // code the person re-requested — it stays usable for its 30 minutes.
+          isNotNull(authOtps.otp_hash),
         ),
       );
 
@@ -314,6 +317,9 @@ export class AuthService {
           eq(authOtps.email, normalizedEmail),
           isNull(authOtps.consumed_at),
           gt(authOtps.expires_at, new Date()),
+          // Round R R2: link-only rows (a support sign-in link) carry no code
+          // and must never shadow the code the person was actually emailed.
+          isNotNull(authOtps.otp_hash),
         ),
       )
       .orderBy(desc(authOtps.created_at))
@@ -640,7 +646,14 @@ export class AuthService {
     // users land in their oldest guest workspace. In-app switching
     // (CompanySwitcher → /auth/switch-company) covers the rest.
     // (stable sort: SQL already ordered oldest-first)
-    const sortedMemberships = [...userMemberships].sort(
+    // Round R R2: a company suspended by Specflicks is skipped at login — the
+    // person lands in another company they belong to, or nowhere, and the
+    // response names the suspended one so the web can say why.
+    const suspendedTenants = userMemberships
+      .filter((m) => m.tenantStatus === 'suspended')
+      .map((m) => m.tenantName);
+    const liveMemberships = userMemberships.filter((m) => m.tenantStatus !== 'suspended');
+    const sortedMemberships = [...liveMemberships].sort(
       (a, b) => this.membershipRank(a) - this.membershipRank(b),
     );
     // Round H — accept lands where you were invited. When THIS login flipped
@@ -693,6 +706,7 @@ export class AuthService {
       return {
         requiresTenantSelection: false,
         needsOnboarding: true,
+        ...(suspendedTenants.length ? { suspendedTenants } : {}),
         accessToken,
         refreshToken,
         refreshTtlMs,
@@ -899,6 +913,23 @@ export class AuthService {
     // Get current membership info from the token's tenant
     let membershipInfo = null;
     if (token.tenant_id) {
+      // Round R R2: a suspended company's sessions end at the next refresh —
+      // the token is retired and the web shows the "suspended" screen.
+      const [tenantRow] = await this.dbAdmin
+        .select({ status: tenants.status })
+        .from(tenants)
+        .where(eq(tenants.id, token.tenant_id))
+        .limit(1);
+      if (tenantRow?.status === 'suspended') {
+        await this.db
+          .update(refreshTokens)
+          .set({ revoked_at: new Date() })
+          .where(and(eq(refreshTokens.id, token.id), isNull(refreshTokens.revoked_at)));
+        throw new UnauthorizedException({
+          code: 'TENANT_SUSPENDED',
+          message: 'This workspace is suspended — contact support',
+        });
+      }
       const membershipResult = await this.dbAdmin
         .select({ id: memberships.id, role: memberships.role })
         .from(memberships)
@@ -942,7 +973,8 @@ export class AuthService {
         ip,
         userAgent,
         token.impersonator_user_id ?? undefined,
-        { trusted: stillTrusted },
+        // The second factor cleared at login stays cleared across rotation.
+        { trusted: stillTrusted, mfa: token.mfa === true },
       );
 
     // Retire the old token and link the chain in ONE conditional write. If
@@ -1077,7 +1109,12 @@ export class AuthService {
     return { revokedDevices };
   }
 
-  async selectTenant(userId: string, tenantId: string, deviceId?: string) {
+  async selectTenant(
+    userId: string,
+    tenantId: string,
+    deviceId?: string,
+    opts: { mfa?: boolean } = {},
+  ) {
     // Server-side re-verification (PRD §3.5): membership must exist, must not
     // be revoked or past its access window; pending invites are accepted on
     // switch. Shared with POST /auth/switch-company.
@@ -1111,7 +1148,7 @@ export class AuthService {
         undefined,
         undefined,
         undefined,
-        { trusted: switchTrusted },
+        { trusted: switchTrusted, mfa: opts.mfa === true },
       );
 
     await this.writeAuthEvent({
@@ -1401,7 +1438,12 @@ export class AuthService {
     return { ok: true };
   }
 
-  async getMe(userId: string, tenantId?: string, deviceId?: string) {
+  async getMe(
+    userId: string,
+    tenantId?: string,
+    deviceId?: string,
+    opts: { mfa?: boolean } = {},
+  ) {
     const user = await this.db
       .select()
       .from(users)
@@ -1477,6 +1519,13 @@ export class AuthService {
       lastLoginAt: user[0].last_login_at,
       requiresReacceptance,
       deviceTrusted,
+      // Round R R2 — what the FAM shell needs to decide between "set up
+      // two-factor", "finish two-factor sign-in" and "come in".
+      totp: {
+        enforced: user[0].is_platform_admin && this.totpService.isEnforced(),
+        enrolled: !!user[0].totp_enrolled_at,
+        satisfied: opts.mfa === true,
+      },
       currentMembership: currentMembership
         ? {
             id: currentMembership.id,
@@ -1499,6 +1548,10 @@ export class AuthService {
         tenantSlug: m.tenantSlug,
         role: m.role,
         status: m.status,
+        // Round R R2: the shell must know which companies are suspended so it
+        // never auto-switches into one and never offers one as a way out.
+        tenantStatus: m.tenantStatus,
+        tenantLogoUrl: m.tenantLogoUrl,
       })),
     };
   }
@@ -1707,7 +1760,7 @@ export class AuthService {
   async refreshAuthForUser(
     userId: string,
     res: Response,
-    opts: { preferTenantId?: string } = {},
+    opts: { preferTenantId?: string; mfa?: boolean } = {},
   ): Promise<{ tenantId: string | null; role: string | null }> {
     const [user] = await this.db
       .select()
@@ -1751,6 +1804,11 @@ export class AuthService {
         activeMembership?.tenantId ?? null,
         activeMembership?.id ?? null,
         (activeMembership?.role as UserRole | undefined) ?? null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { mfa: opts.mfa === true },
       );
 
     this.setAuthCookies(res, accessToken, refreshToken, refreshTtlMs);
@@ -1782,7 +1840,7 @@ export class AuthService {
     ip?: string,
     userAgent?: string,
     impersonatorUserId?: string,
-    opts: { trusted?: boolean } = {},
+    opts: { trusted?: boolean; mfa?: boolean } = {},
   ): Promise<{ accessToken: string; refreshToken: string; refreshTtlMs: number }> {
     // iss/aud are set globally by JwtModule.registerAsync in app.module.ts —
     // including them in the payload conflicts with sign() options.
@@ -1795,6 +1853,9 @@ export class AuthService {
       isPlatformAdmin: user.is_platform_admin,
       deviceId: deviceId ?? '',
       ...(impersonatorUserId ? { impersonatorUserId } : {}),
+      // Round R R2: set only after the TOTP challenge / enrolment confirmation
+      // and carried through rotation + company switches (refresh_tokens.mfa).
+      ...(opts.mfa ? { mfa: true } : {}),
     };
 
     const accessToken = this.jwtService.sign(payload);
@@ -1823,6 +1884,7 @@ export class AuthService {
       expires_at: refreshExpiry,
       last_used_at: new Date(),
       trusted,
+      mfa: opts.mfa === true,
       impersonator_user_id: impersonatorUserId ?? null,
     });
 
@@ -1968,10 +2030,64 @@ export class AuthService {
       throw new UnauthorizedException('Invalid challenge.');
     }
 
+    const user = await this.verifyTotpFactor(payload.sub, code, { ip, userAgent, deviceId });
+
+    const totpDeviceId = deviceId ?? payload.deviceId;
+    const totpTrusted = totpDeviceId
+      ? await this.isTrustedDevice(user.id, totpDeviceId)
+      : false;
+    const { accessToken, refreshToken, refreshTtlMs } =
+      await this.issueTokenPair(
+        user,
+        payload.tenantId || null,
+        payload.membershipId || null,
+        (payload.role as UserRole) ?? null,
+        totpDeviceId,
+        ip,
+        userAgent,
+        undefined,
+        { trusted: totpTrusted, mfa: true },
+      );
+
+    await this.writeAuthEvent({
+      email: user.email,
+      userId: user.id,
+      eventType: 'login_success',
+      ip,
+      userAgent,
+      deviceId,
+    });
+
+    return {
+      requiresTenantSelection: false,
+      accessToken,
+      refreshToken,
+      refreshTtlMs,
+      expiresIn: 900,
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.full_name,
+        avatarUrl: user.avatar_url,
+        theme: user.theme,
+      },
+    };
+  }
+
+  /**
+   * The second factor itself: a valid TOTP code or an unused backup code for
+   * an enrolled account, with the failure counter / 15-minute lock. Shared
+   * by the login challenge and the in-session step-up.
+   */
+  private async verifyTotpFactor(
+    userId: string,
+    code: string,
+    meta: { ip?: string; userAgent?: string; deviceId?: string },
+  ) {
     const [user] = await this.dbAdmin
       .select()
       .from(users)
-      .where(eq(users.id, payload.sub))
+      .where(eq(users.id, userId))
       .limit(1);
     if (!user?.totp_secret || !user.totp_enrolled_at) {
       throw new UnauthorizedException('TOTP is not set up for this account.');
@@ -2010,9 +2126,9 @@ export class AuthService {
         email: user.email,
         userId: user.id,
         eventType: 'login_failed',
-        ip,
-        userAgent,
-        deviceId,
+        ip: meta.ip,
+        userAgent: meta.userAgent,
+        deviceId: meta.deviceId,
       });
       throw new UnauthorizedException(
         locked
@@ -2028,47 +2144,32 @@ export class AuthService {
         .set({ totp_failed_attempts: 0, totp_locked_until: null, updated_at: new Date() })
         .where(eq(users.id, user.id));
     }
+    return user;
+  }
 
-    const totpDeviceId = deviceId ?? payload.deviceId;
-    const totpTrusted = totpDeviceId
-      ? await this.isTrustedDevice(user.id, totpDeviceId)
-      : false;
-    const { accessToken, refreshToken, refreshTtlMs } =
-      await this.issueTokenPair(
-        user,
-        payload.tenantId || null,
-        payload.membershipId || null,
-        (payload.role as UserRole) ?? null,
-        totpDeviceId,
-        ip,
-        userAgent,
-        undefined,
-        { trusted: totpTrusted },
-      );
-
+  /**
+   * Round R R2 — in-session step-up: an enrolled platform admin whose
+   * session was issued without the second factor (signed in before two-factor
+   * was enforced, or before this release) proves the authenticator here and
+   * the controller re-issues the session with the mfa claim. No sign-out, no
+   * challenge token, no redirect loop.
+   */
+  async stepUpTotp(
+    userId: string,
+    code: string,
+    meta: { ip?: string; userAgent?: string; deviceId?: string } = {},
+  ): Promise<{ ok: true }> {
+    const user = await this.verifyTotpFactor(userId, code, meta);
     await this.writeAuthEvent({
       email: user.email,
       userId: user.id,
       eventType: 'login_success',
-      ip,
-      userAgent,
-      deviceId,
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      deviceId: meta.deviceId,
+      metadata: { step: 'totp_step_up' },
     });
-
-    return {
-      requiresTenantSelection: false,
-      accessToken,
-      refreshToken,
-      refreshTtlMs,
-      expiresIn: 900,
-      user: {
-        id: user.id,
-        email: user.email,
-        fullName: user.full_name,
-        avatarUrl: user.avatar_url,
-        theme: user.theme,
-      },
-    };
+    return { ok: true };
   }
 
   private async upsertTrustedDevice(
@@ -2111,7 +2212,7 @@ export class AuthService {
   }
 
   /** "Chrome · macOS"-style label parsed from the user-agent, for device lists. */
-  private deviceNameFromUa(ua?: string): string | null {
+  private deviceNameFromUa(ua?: string | null): string | null {
     if (!ua) return null;
     const browser = /Edg\//.test(ua)
       ? 'Edge'
@@ -2219,6 +2320,341 @@ export class AuthService {
     });
 
     return { trusted: true, refreshTtlMs, expiresAt };
+  }
+
+  // ─── Round R R2 — FAM support console ────────────────────────────────────
+
+  /**
+   * Re-issue the current session as a two-factor session (after enrolment
+   * confirmation) so the FAM console opens without a fresh sign-in.
+   */
+  async issueMfaSession(payload: JwtPayload, deviceId?: string, ip?: string, userAgent?: string) {
+    const [user] = await this.db.select().from(users).where(eq(users.id, payload.sub)).limit(1);
+    if (!user) throw new UnauthorizedException('User not found');
+    const trusted = deviceId ? await this.isTrustedDevice(user.id, deviceId) : false;
+    return this.issueTokenPair(
+      user,
+      payload.tenantId || null,
+      payload.membershipId || null,
+      (payload.role as UserRole) ?? null,
+      deviceId,
+      ip,
+      userAgent,
+      undefined,
+      { trusted, mfa: true },
+    );
+  }
+
+  /** What is currently keeping this person out, if anything. */
+  async lockoutState(email: string, userId: string) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const maxAttempts = Number(this.configService.get<string>('MAX_OTP_ATTEMPTS', '5'));
+    const [latest] = await this.db
+      .select({ attempts: authOtps.attempt_count, expiresAt: authOtps.expires_at })
+      .from(authOtps)
+      .where(
+        and(
+          eq(authOtps.email, normalizedEmail),
+          isNull(authOtps.consumed_at),
+          gt(authOtps.expires_at, new Date()),
+          isNotNull(authOtps.otp_hash),
+        ),
+      )
+      .orderBy(desc(authOtps.created_at))
+      .limit(1);
+    let otpHourlyCount = 0;
+    let otpBurstActive = false;
+    if (this.redis) {
+      try {
+        const [h, b] = await Promise.all([
+          this.redis.get(`auth:otp:hr:${sha256(normalizedEmail)}`),
+          this.redis.get(`auth:otp:burst:${sha256(normalizedEmail)}`),
+        ]);
+        otpHourlyCount = Number(h ?? 0);
+        otpBurstActive = Number(b ?? 0) >= 1;
+      } catch (err) {
+        this.logger.warn(`lockout state degraded (redis): ${(err as Error).message}`);
+      }
+    }
+    const [u] = await this.db
+      .select({ lockedUntil: users.totp_locked_until, failed: users.totp_failed_attempts })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const totpLockedUntil =
+      u?.lockedUntil && u.lockedUntil.getTime() > Date.now() ? u.lockedUntil.toISOString() : null;
+    return {
+      otpAttemptsExhausted: !!latest && Number(latest.attempts) >= maxAttempts,
+      otpHourlyCount,
+      otpHourlyLimit: 5,
+      otpQuotaBlocked: otpHourlyCount >= 5 || otpBurstActive,
+      totpLockedUntil,
+      totpFailedAttempts: Number(u?.failed ?? 0),
+      locked:
+        (!!latest && Number(latest.attempts) >= maxAttempts) || otpHourlyCount >= 5 || !!totpLockedUntil,
+    };
+  }
+
+  /**
+   * Clear every sign-in lockout for a person: the per-email OTP quota keys,
+   * the failed-attempt counter on their live code, and the TOTP lock.
+   */
+  async clearSignInLockout(
+    email: string,
+    userId: string,
+    meta: { actorUserId: string; ip?: string; userAgent?: string },
+  ) {
+    const normalizedEmail = email.toLowerCase().trim();
+    let redisCleared = false;
+    if (this.redis) {
+      try {
+        await this.redis.del(
+          `auth:otp:burst:${sha256(normalizedEmail)}`,
+          `auth:otp:hr:${sha256(normalizedEmail)}`,
+        );
+        redisCleared = true;
+      } catch (err) {
+        this.logger.warn(`lockout clear degraded (redis): ${(err as Error).message}`);
+      }
+    }
+    const reset = await this.db
+      .update(authOtps)
+      .set({ attempt_count: 0 })
+      .where(and(eq(authOtps.email, normalizedEmail), isNull(authOtps.consumed_at)))
+      .returning({ id: authOtps.id });
+    await this.db
+      .update(users)
+      .set({ totp_failed_attempts: 0, totp_locked_until: null })
+      .where(eq(users.id, userId));
+    await this.writeAuthEvent({
+      email: normalizedEmail,
+      userId,
+      eventType: 'account_unlocked',
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      metadata: { by: 'fam', actorUserId: meta.actorUserId },
+    });
+    return { redisCleared, otpRowsReset: reset.length };
+  }
+
+  /**
+   * Mint and email a 30-minute sign-in link for a person who cannot get in
+   * (support action). Bypasses the per-email OTP quota — that quota is often
+   * exactly what the person is stuck behind.
+   */
+  async sendSignInLink(
+    user: { id: string; email: string },
+    meta: { actorUserId: string; ip?: string; userAgent?: string },
+  ): Promise<{ sent: boolean; expiresAt: string }> {
+    const email = user.email.toLowerCase().trim();
+    const raw = generateSecureToken();
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await this.db.insert(authOtps).values({
+      email,
+      user_id: user.id,
+      // No code travels with a support link. A NULL hash marks the row as
+      // link-only: verifyOtp skips it, and a later code request leaves it be.
+      otp_hash: null,
+      magic_link_token: sha256(raw),
+      attempt_count: 0,
+      ip_address: meta.ip,
+      user_agent: meta.userAgent,
+      expires_at: expiresAt,
+    });
+    const base = this.configService.get<string>('MAGIC_LINK_BASE_URL') || 'http://localhost:3000/verify';
+    const magicLinkUrl = `${base}?token=${raw}`;
+    const sent = await this.notificationsService.sendEmail('magic-link', email, {
+      magicLinkUrl,
+      expiryMinutes: 30,
+    });
+    await this.writeAuthEvent({
+      email,
+      userId: user.id,
+      eventType: 'magic_link_requested',
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      metadata: { by: 'fam', actorUserId: meta.actorUserId, sent },
+    });
+    return { sent, expiresAt: expiresAt.toISOString() };
+  }
+
+  /**
+   * Sign a person out of every device and company: all live refresh tokens
+   * retired, trusted devices revoked (the next sign-in asks again), and every
+   * open socket of theirs dropped.
+   */
+  async revokeAllSessions(
+    userId: string,
+    meta: { reason: string; actorUserId?: string; ip?: string; userAgent?: string },
+  ): Promise<{ sessionsRevoked: number; devicesRevoked: number }> {
+    const now = new Date();
+    // Their own sessions AND any impersonation they are running right now
+    // (those rows carry the customer's user id with this person as the
+    // impersonator) — "everywhere" includes the console's borrowed seat.
+    const revoked = await this.db
+      .update(refreshTokens)
+      .set({ revoked_at: now })
+      .where(
+        and(
+          or(eq(refreshTokens.user_id, userId), eq(refreshTokens.impersonator_user_id, userId)),
+          isNull(refreshTokens.revoked_at),
+        ),
+      )
+      .returning({ id: refreshTokens.id });
+    await this.dbAdmin
+      .update(impersonationSessions)
+      .set({ ended_at: now })
+      .where(and(eq(impersonationSessions.impersonator_user_id, userId), isNull(impersonationSessions.ended_at)));
+    const devices = await this.db
+      .update(trustedDevices)
+      .set({ revoked_at: now })
+      .where(and(eq(trustedDevices.user_id, userId), isNull(trustedDevices.revoked_at)))
+      .returning({ id: trustedDevices.id });
+    const seats = await this.dbAdmin
+      .select({ tenantId: memberships.tenant_id })
+      .from(memberships)
+      .where(and(eq(memberships.user_id, userId), eq(memberships.status, 'active')));
+    for (const s of seats) this.eventEmitter.emit('seat.revoked', { tenantId: s.tenantId, userId });
+    await this.writeAuthEvent({
+      userId,
+      eventType: 'token_revoked',
+      ip: meta.ip,
+      userAgent: meta.userAgent,
+      metadata: {
+        reason: meta.reason,
+        all_sessions: true,
+        devices_revoked: devices.length,
+        ...(meta.actorUserId ? { by: 'fam', actorUserId: meta.actorUserId } : {}),
+      },
+    });
+    return { sessionsRevoked: revoked.length, devicesRevoked: devices.length };
+  }
+
+  /** Sign one person out of ONE company (their other companies keep working). */
+  async revokeTenantSessionsForUser(userId: string, tenantId: string): Promise<number> {
+    this.eventEmitter.emit('seat.revoked', { tenantId, userId });
+    const revoked = await this.db
+      .update(refreshTokens)
+      .set({ revoked_at: new Date() })
+      .where(
+        and(
+          eq(refreshTokens.user_id, userId),
+          eq(refreshTokens.tenant_id, tenantId),
+          isNull(refreshTokens.revoked_at),
+        ),
+      )
+      .returning({ id: refreshTokens.id });
+    return revoked.length;
+  }
+
+  /** Every live session of every member of a company (suspension). */
+  async revokeTenantSessions(tenantId: string): Promise<number> {
+    const live = await this.db
+      .selectDistinct({ userId: refreshTokens.user_id })
+      .from(refreshTokens)
+      .where(and(eq(refreshTokens.tenant_id, tenantId), isNull(refreshTokens.revoked_at)));
+    const revoked = await this.db
+      .update(refreshTokens)
+      .set({ revoked_at: new Date() })
+      .where(and(eq(refreshTokens.tenant_id, tenantId), isNull(refreshTokens.revoked_at)))
+      .returning({ id: refreshTokens.id });
+    for (const row of live) this.eventEmitter.emit('seat.revoked', { tenantId, userId: row.userId });
+    return revoked.length;
+  }
+
+  /** Live sessions with the company each one is scoped to (FAM user page). */
+  async listSessionsDetailed(userId: string) {
+    const rows = await this.db
+      .select({
+        id: refreshTokens.id,
+        tenantId: refreshTokens.tenant_id,
+        tenantName: tenants.name,
+        deviceId: refreshTokens.device_id,
+        ipAddress: refreshTokens.ip_address,
+        userAgent: refreshTokens.user_agent,
+        trusted: refreshTokens.trusted,
+        mfa: refreshTokens.mfa,
+        impersonatorUserId: refreshTokens.impersonator_user_id,
+        createdAt: refreshTokens.created_at,
+        lastUsedAt: refreshTokens.last_used_at,
+        expiresAt: refreshTokens.expires_at,
+      })
+      .from(refreshTokens)
+      .leftJoin(tenants, eq(tenants.id, refreshTokens.tenant_id))
+      .where(
+        and(
+          eq(refreshTokens.user_id, userId),
+          isNull(refreshTokens.revoked_at),
+          gt(refreshTokens.expires_at, new Date()),
+        ),
+      )
+      .orderBy(desc(refreshTokens.last_used_at), desc(refreshTokens.created_at));
+    return rows.map((r) => ({
+      id: r.id,
+      tenantId: r.tenantId,
+      tenantName: r.tenantName ?? null,
+      deviceId: r.deviceId,
+      deviceName: this.deviceNameFromUa(r.userAgent),
+      ipAddress: r.ipAddress,
+      userAgent: r.userAgent,
+      trusted: r.trusted,
+      mfa: r.mfa,
+      impersonated: !!r.impersonatorUserId,
+      createdAt: r.createdAt.toISOString(),
+      lastUsedAt: r.lastUsedAt?.toISOString() ?? null,
+      expiresAt: r.expiresAt.toISOString(),
+    }));
+  }
+
+  /** Trusted ("stay signed in") devices of a person (FAM user page). */
+  async listTrustedDevices(userId: string) {
+    const rows = await this.db
+      .select()
+      .from(trustedDevices)
+      .where(eq(trustedDevices.user_id, userId))
+      .orderBy(desc(trustedDevices.last_used_at), desc(trustedDevices.created_at));
+    const now = Date.now();
+    return rows.map((d) => ({
+      id: d.id,
+      deviceId: d.device_id,
+      deviceName: d.device_name ?? this.deviceNameFromUa(d.user_agent),
+      ipAddress: d.ip_address,
+      userAgent: d.user_agent,
+      lastUsedAt: d.last_used_at?.toISOString() ?? null,
+      expiresAt: d.expires_at?.toISOString() ?? null,
+      revokedAt: d.revoked_at?.toISOString() ?? null,
+      active: !d.revoked_at && (!d.expires_at || d.expires_at.getTime() > now),
+    }));
+  }
+
+  /** Sign-in history: rows tied to the account OR to the address (pre-login failures carry only the email). */
+  async listAuthEvents(userId: string, email: string, opts: { page?: number; limit?: number } = {}) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
+    const where = or(eq(authEvents.user_id, userId), eq(authEvents.email, email.toLowerCase().trim()));
+    const [rows, [{ n }]] = await Promise.all([
+      this.db
+        .select()
+        .from(authEvents)
+        .where(where)
+        .orderBy(desc(authEvents.created_at))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      this.db.select({ n: sql<number>`COUNT(*)::int` }).from(authEvents).where(where),
+    ]);
+    return {
+      data: rows.map((e) => ({
+        id: e.id,
+        eventType: e.event_type,
+        ipAddress: e.ip_address,
+        userAgent: e.user_agent,
+        deviceName: this.deviceNameFromUa(e.user_agent),
+        deviceId: e.device_id,
+        metadata: e.metadata as Record<string, unknown> | null,
+        createdAt: e.created_at.toISOString(),
+      })),
+      pagination: { page, limit, total: Number(n ?? 0) },
+    };
   }
 
   private async writeAuthEvent(params: {

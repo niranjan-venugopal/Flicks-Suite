@@ -144,6 +144,8 @@ export function useFamTenant(id: string | null) {
 export interface FamTenantMember {
   membershipId: string
   userId: string
+  /** Round R R2: the employee record behind the seat (null for guests / auditors). */
+  employeeId?: string | null
   email: string | null
   fullName: string | null
   /** Signed photo URL — optional: older API builds omit it. */
@@ -152,6 +154,7 @@ export interface FamTenantMember {
   status: string
   invitedAt: string | null
   acceptedAt: string | null
+  lastLoginAt?: string | null
 }
 
 export function useFamTenantMembers(id: string | null) {
@@ -205,15 +208,20 @@ export interface FamTenantBilling {
     status: string
     perUserPrice: number
     userCount: number
+    /** Round R R2: live billable seats and what they would cost per month. */
+    seats?: number
+    monthlyEstimate?: number
     mrr: number
     billingCycle: string
     trialEndsAt: string | null
+    graceEndsAt?: string | null
     currentPeriodStart: string | null
     currentPeriodEnd: string | null
     cancelAtPeriodEnd: boolean
     canceledAt: string | null
     razorpaySubscriptionId: string | null
     createdAt: string
+    coupon?: { code: string; campaign: string; months: number; redeemedAt: string } | null
   }
   events: FamSubscriptionEvent[]
 }
@@ -239,17 +247,35 @@ export interface FamPlatformAuditEntry {
   targetUserId: string | null
   metadata: Record<string, unknown> | null
   ipAddress: string | null
+  userAgent?: string | null
   createdAt: string
 }
 
-export function useFamTenantAudit(id: string | null, page = 1, limit = 50) {
+/** Round R R2: filters shared by the platform audit log and its per-company view. */
+export interface FamAuditFilters {
+  action?: string
+  actor?: string
+  tenantId?: string
+  from?: string
+  to?: string
+}
+
+export function famAuditQs(filters: FamAuditFilters | undefined, page: number, limit: number): string {
+  const sp = new URLSearchParams()
+  sp.set('page', String(page))
+  sp.set('limit', String(limit))
+  for (const [k, v] of Object.entries(filters ?? {})) if (v) sp.set(k, v)
+  return sp.toString()
+}
+
+export function useFamTenantAudit(id: string | null, page = 1, limit = 50, filters?: FamAuditFilters) {
   return useQuery({
-    queryKey: ['fam', 'tenant-audit', id, page, limit],
+    queryKey: ['fam', 'tenant-audit', id, page, limit, filters ?? null],
     queryFn: () =>
       api.get<{
         data: FamPlatformAuditEntry[]
         pagination: { page: number; limit: number; total: number }
-      }>(`/api/v1/fam/tenants/${id}/audit?page=${page}&limit=${limit}`),
+      }>(`/api/v1/fam/tenants/${id}/audit?${famAuditQs(filters, page, limit)}`),
     enabled: !!id,
     staleTime: 30_000,
     placeholderData: (prev) => prev,
@@ -465,24 +491,48 @@ export interface FamPlatformAuditRow {
   action: string
   actor: string
   actorEmail: string | null
+  actorUserId?: string | null
   targetTenantId: string | null
   targetTenantName: string | null
   targetUserId: string | null
   metadata: Record<string, unknown> | null
+  ipAddress?: string | null
+  userAgent?: string | null
   createdAt: string
 }
 
-export function useFamPlatformAudit(page = 1, limit = 50) {
+export function useFamPlatformAudit(page = 1, limit = 50, filters?: FamAuditFilters) {
   return useQuery({
-    queryKey: ['fam', 'audit-platform', page, limit],
+    queryKey: ['fam', 'audit-platform', page, limit, filters ?? null],
     queryFn: () =>
       api.get<{
         data: FamPlatformAuditRow[]
         pagination: { page: number; limit: number; total: number }
-      }>(`/api/v1/fam/audit?page=${page}&limit=${limit}`),
+      }>(`/api/v1/fam/audit?${famAuditQs(filters, page, limit)}`),
     staleTime: 30_000,
     placeholderData: (prev) => prev,
   })
+}
+
+/** Save a CSV answered by the API (cookie auth + error surfacing via api.download). */
+async function saveCsv(path: string, fallbackName: string): Promise<void> {
+  const { blob, filename } = await api.download(path)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename ?? fallbackName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export function downloadPlatformAuditCsv(filters?: FamAuditFilters): Promise<void> {
+  return saveCsv(`/api/v1/fam/audit.csv?${famAuditQs(filters, 1, 5000)}`, 'platform-audit.csv')
+}
+
+export function downloadTenantAuditCsv(tenantId: string, filters?: FamAuditFilters): Promise<void> {
+  return saveCsv(`/api/v1/fam/tenants/${tenantId}/audit.csv?${famAuditQs(filters, 1, 5000)}`, 'platform-audit.csv')
 }
 
 // ─── C5: Feature flags ────────────────────────────────────────────────────
@@ -594,5 +644,332 @@ export function useEndImpersonation() {
     onSuccess: () => {
       qc.clear()
     },
+  })
+}
+
+// ─── Round R R2: find anyone ──────────────────────────────────────────────
+
+export interface FamSearchUser {
+  id: string
+  email: string
+  fullName: string | null
+  status: string
+  isPlatformAdmin: boolean
+  lastLoginAt: string | null
+  companies: number
+  avatarUrl: string | null
+}
+
+export interface FamSearchTenant {
+  id: string
+  name: string
+  slug: string
+  gstin: string | null
+  status: string
+  members: number
+  logoUrl: string | null
+}
+
+export function useFamSearch(q: string) {
+  const needle = q.trim()
+  return useQuery({
+    queryKey: ['fam', 'search', needle],
+    queryFn: () =>
+      api.get<{ users: FamSearchUser[]; tenants: FamSearchTenant[] }>(
+        `/api/v1/fam/search?q=${encodeURIComponent(needle)}`,
+      ),
+    enabled: needle.length >= 2,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+// ─── Round R R2: a person across companies ─────────────────────────────────
+
+export interface FamUserCompany {
+  membershipId: string
+  tenantId: string
+  tenantName: string
+  tenantSlug: string
+  tenantStatus: string
+  tenantLogoUrl: string | null
+  role: string
+  status: string
+  employeeId: string | null
+  accessExpiresAt: string | null
+  invitedAt: string | null
+  acceptedAt: string | null
+}
+
+export interface FamUserSession {
+  id: string
+  tenantId: string | null
+  tenantName: string | null
+  deviceId: string | null
+  deviceName: string | null
+  ipAddress: string | null
+  userAgent: string | null
+  trusted: boolean
+  mfa: boolean
+  impersonated: boolean
+  createdAt: string
+  lastUsedAt: string | null
+  expiresAt: string
+}
+
+export interface FamUserDevice {
+  id: string
+  deviceId: string
+  deviceName: string | null
+  ipAddress: string | null
+  userAgent: string | null
+  lastUsedAt: string | null
+  expiresAt: string | null
+  revokedAt: string | null
+  active: boolean
+}
+
+export interface FamUserLockout {
+  otpAttemptsExhausted: boolean
+  otpHourlyCount: number
+  otpHourlyLimit: number
+  otpQuotaBlocked: boolean
+  totpLockedUntil: string | null
+  totpFailedAttempts: number
+  locked: boolean
+}
+
+export interface FamUserDetail {
+  id: string
+  email: string
+  fullName: string | null
+  phone: string | null
+  avatarUrl: string | null
+  status: string
+  isPlatformAdmin: boolean
+  totpEnrolledAt: string | null
+  lastLoginAt: string | null
+  createdAt: string
+  lockout: FamUserLockout
+  companies: FamUserCompany[]
+  sessions: FamUserSession[]
+  devices: FamUserDevice[]
+}
+
+export interface FamAuthEvent {
+  id: string
+  eventType: string
+  ipAddress: string | null
+  userAgent: string | null
+  deviceName: string | null
+  deviceId: string | null
+  metadata: Record<string, unknown> | null
+  createdAt: string
+}
+
+export function useFamUser(id: string | null) {
+  return useQuery({
+    queryKey: ['fam', 'user', id],
+    queryFn: () => api.get<FamUserDetail>(`/api/v1/fam/users/${id}`),
+    enabled: !!id,
+    staleTime: 15_000,
+  })
+}
+
+export function useFamUserAuthEvents(id: string | null, page = 1, limit = 25) {
+  return useQuery({
+    queryKey: ['fam', 'user-auth-events', id, page, limit],
+    queryFn: () =>
+      api.get<{ data: FamAuthEvent[]; pagination: { page: number; limit: number; total: number } }>(
+        `/api/v1/fam/users/${id}/auth-events?page=${page}&limit=${limit}`,
+      ),
+    enabled: !!id,
+    staleTime: 15_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+function invalidateUser(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ['fam', 'user', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'user-auth-events', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+}
+
+export function useClearUserLockout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ ok: boolean; redisCleared: boolean; otpRowsReset: number }>(`/api/v1/fam/users/${id}/clear-lockout`, {}),
+    onSuccess: (_, id) => invalidateUser(qc, id),
+  })
+}
+
+export function useSendSignInLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ ok: boolean; expiresAt: string }>(`/api/v1/fam/users/${id}/send-sign-in-link`, {}),
+    onSuccess: (_, id) => invalidateUser(qc, id),
+  })
+}
+
+export function useSignOutEverywhere() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ ok: boolean; sessionsRevoked: number; devicesRevoked: number }>(
+        `/api/v1/fam/users/${id}/sign-out-everywhere`,
+        {},
+      ),
+    onSuccess: (_, id) => invalidateUser(qc, id),
+  })
+}
+
+// ─── Round R R2: company support tab ──────────────────────────────────────
+
+function invalidateTenant(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant-billing', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant-audit', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant-members', id] })
+  qc.invalidateQueries({ queryKey: ['fam', 'tenants'] })
+  qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+}
+
+export function useGrantFreeMonths() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, months, reason }: { id: string; months: number; reason: string }) =>
+      api.post<{ months: number; code: string; trialEndsAt: string | null }>(
+        `/api/v1/fam/tenants/${id}/free-months`,
+        { months, reason },
+      ),
+    onSuccess: (_, vars) => invalidateTenant(qc, vars.id),
+  })
+}
+
+export interface TenantActivityFilters {
+  action?: string
+  resourceType?: string
+  actorUserId?: string
+  from?: string
+  to?: string
+}
+
+export interface TenantActivityEntry {
+  id: string
+  actorUserId: string | null
+  actorName: string | null
+  actorEmail: string | null
+  avatarUrl: string | null
+  action: string
+  resourceType: string
+  resourceId: string | null
+  beforeState: Record<string, unknown> | null
+  afterState: Record<string, unknown> | null
+  ipAddress: string | null
+  userAgent: string | null
+  createdAt: string
+}
+
+function activityQs(filters: TenantActivityFilters | undefined, page: number, limit: number): string {
+  const sp = new URLSearchParams()
+  sp.set('page', String(page))
+  sp.set('limit', String(limit))
+  for (const [k, v] of Object.entries(filters ?? {})) if (v) sp.set(k, v)
+  return sp.toString()
+}
+
+export function useFamTenantActivity(id: string | null, page = 1, limit = 25, filters?: TenantActivityFilters) {
+  return useQuery({
+    queryKey: ['fam', 'tenant-activity', id, page, limit, filters ?? null],
+    queryFn: () =>
+      api.get<{ data: TenantActivityEntry[]; pagination: { page: number; limit: number; total: number } }>(
+        `/api/v1/fam/tenants/${id}/activity?${activityQs(filters, page, limit)}`,
+      ),
+    enabled: !!id,
+    staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+export function downloadTenantActivityCsv(tenantId: string, filters?: TenantActivityFilters): Promise<void> {
+  return saveCsv(`/api/v1/fam/tenants/${tenantId}/activity.csv?${activityQs(filters, 1, 200)}`, 'company-activity.csv')
+}
+
+export function useResendMemberInvite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenantId, membershipId }: { tenantId: string; membershipId: string }) =>
+      api.post<{ data: { employeeId: string; email: string; resentCount: number; emailSent: boolean } }>(
+        `/api/v1/fam/tenants/${tenantId}/members/${membershipId}/resend-invite`,
+        {},
+      ),
+    onSuccess: (_, vars) => invalidateTenant(qc, vars.tenantId),
+  })
+}
+
+export function useSignOutMember() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenantId, membershipId }: { tenantId: string; membershipId: string }) =>
+      api.post<{ ok: boolean; sessionsRevoked: number }>(
+        `/api/v1/fam/tenants/${tenantId}/members/${membershipId}/sign-out`,
+        {},
+      ),
+    onSuccess: (_, vars) => invalidateTenant(qc, vars.tenantId),
+  })
+}
+
+export interface FamTenantNote {
+  id: string
+  body: string
+  pinned: boolean
+  author: string
+  authorUserId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export function useFamTenantNotes(id: string | null) {
+  return useQuery({
+    queryKey: ['fam', 'tenant-notes', id],
+    queryFn: () => api.get<{ data: FamTenantNote[] }>(`/api/v1/fam/tenants/${id}/notes`),
+    enabled: !!id,
+    staleTime: 15_000,
+  })
+}
+
+export function useAddTenantNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenantId, body }: { tenantId: string; body: string }) =>
+      api.post<{ id: string }>(`/api/v1/fam/tenants/${tenantId}/notes`, { body }),
+    onSuccess: (_, vars) => invalidateNotes(qc, vars.tenantId),
+  })
+}
+
+/** Every note action lands on the platform audit log — both views refresh. */
+function invalidateNotes(qc: ReturnType<typeof useQueryClient>, tenantId: string) {
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant-notes', tenantId] })
+  qc.invalidateQueries({ queryKey: ['fam', 'tenant-audit', tenantId] })
+  qc.invalidateQueries({ queryKey: ['fam', 'audit-platform'] })
+}
+
+export function useUpdateTenantNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenantId, noteId, ...patch }: { tenantId: string; noteId: string; body?: string; pinned?: boolean }) =>
+      api.patch<{ id: string; pinned: boolean }>(`/api/v1/fam/tenants/${tenantId}/notes/${noteId}`, patch),
+    onSuccess: (_, vars) => invalidateNotes(qc, vars.tenantId),
+  })
+}
+
+export function useDeleteTenantNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ tenantId, noteId }: { tenantId: string; noteId: string }) =>
+      api.delete<{ ok: boolean }>(`/api/v1/fam/tenants/${tenantId}/notes/${noteId}`),
+    onSuccess: (_, vars) => invalidateNotes(qc, vars.tenantId),
   })
 }

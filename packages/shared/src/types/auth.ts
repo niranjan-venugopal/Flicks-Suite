@@ -18,6 +18,7 @@ export type AuthEventType =
   | 'otp_failed'
   | 'otp_expired'
   | 'magic_link_requested'
+  | 'magic_link_consumed'
   | 'magic_link_used'
   | 'magic_link_expired'
   | 'login_success'
@@ -31,6 +32,7 @@ export type AuthEventType =
   | 'impersonation_started'
   | 'impersonation_ended'
   | 'password_reset_requested'
+  | 'password_changed'
   | 'account_locked'
   | 'account_unlocked';
 
@@ -49,6 +51,13 @@ export interface JwtPayload {
   aud: string;
   /** Present only when an admin is impersonating this user */
   impersonatorUserId?: string;
+  /**
+   * Round R R2: the session cleared the FAM second factor (TOTP). Set by the
+   * TOTP challenge / enrolment confirmation and carried through refresh and
+   * company switches; the FAM console refuses platform-admin sessions
+   * without it when enforcement is on.
+   */
+  mfa?: boolean;
 }
 
 export interface LoginResponse {

@@ -17,6 +17,9 @@ const AUTH_PATHS_NO_REDIRECT = [
   '/api/v1/auth/magic-link/consume',
   '/api/v1/auth/magic-link/recover',
   '/api/v1/auth/refresh',
+  // Round R R2: a wrong authenticator code is a 401 the page handles itself
+  // (step-up card on /fam, enrolment on /totp-setup) — never a sign-out bounce.
+  '/api/v1/auth/totp/',
   '/api/v1/notifications/unread',
   '/api/v1/presence',
 ]
@@ -256,6 +259,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     // Round R: this tab is showing a different company than the session —
     // reload into the right one instead of failing every call from here on.
     if (response.status === 409 && errorData?.code === 'TENANT_MISMATCH') {
+      handleTenantMismatch()
+    }
+    // Round R R2: Specflicks suspended this company — reload so /me renders
+    // the "suspended" screen instead of a page full of failed calls.
+    // Account routes (switch-company, my-companies) are the exception: there
+    // the caller shows the message, and a reload would wipe it.
+    if (
+      response.status === 403 &&
+      errorData?.code === 'TENANT_SUSPENDED' &&
+      !/^\/api\/v1\/(auth|me)(\/|$)/.test(path)
+    ) {
       handleTenantMismatch()
     }
     throw new APIError(

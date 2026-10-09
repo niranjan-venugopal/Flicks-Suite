@@ -5,8 +5,12 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  Optional,
+  ConflictException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, desc, eq, gte, gt, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // The Specflicks-internal "platform tenant" that exists only to give the
 // FAM admin a JWT tenant_id without making them a member of any customer
@@ -33,6 +37,7 @@ import {
   razorpayWebhookEvents,
   auditLog,
   notifications,
+  famTenantNotes,
 } from '@flicks/db/schema';
 import { DB_SERVICE_ROLE } from '../../core/database/database.module';
 import type { DbAdmin } from '@flicks/db';
@@ -45,6 +50,9 @@ import {
   SERVER_EVENTS,
 } from '../../core/analytics/analytics.service';
 import type { UserRole } from '@flicks/shared/types';
+import { BillingService } from '../billing/public';
+import { EmployeesPublicService } from '../employees/public';
+import { BillingStateService } from '../../core/billing/billing-state.service';
 import type {
   SuspendTenantDto,
   ExtendTrialDto,
@@ -52,7 +60,32 @@ import type {
   UpsertFeatureFlagDto,
   UpsertCohortDto,
   TenantListQueryDto,
+  FamAuditQueryDto,
+  TenantActivityQueryDto,
 } from './fam.dto';
+
+/** Who did it, from where — stamped on every platform audit row (Round R R2). */
+export interface FamActor {
+  userId: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function toCsv(columns: string[], rows: Array<Record<string, unknown>>): string {
+  return [columns.join(','), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(','))].join('\n') + '\n';
+}
+
+function parseDate(v?: string): Date | undefined {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
 
 @Injectable()
 export class FamService {
@@ -65,6 +98,12 @@ export class FamService {
     private readonly notificationsService: NotificationsService,
     private readonly analytics: AnalyticsService,
     private readonly mediaService: MediaService,
+    // Round R R2 — optional so the hand-built service in older specs keeps
+    // its 6-arg form.
+    @Optional() private readonly billingService?: BillingService,
+    @Optional() private readonly employeesPublic?: EmployeesPublicService,
+    @Optional() private readonly billingState?: BillingStateService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   // ─── Overview (platform-wide stats) ────────────────────────────────────────
@@ -513,6 +552,9 @@ export class FamService {
         // row would return null, which I was mapping to '' and breaking
         // the @IsUUID validation when the FAM admin tried to impersonate.
         userId: memberships.user_id,
+        // Round R R2: the support tab's "Resend invite" needs the employee id.
+        employeeId: memberships.employee_id,
+        lastLoginAt: users.last_login_at,
         email: users.email,
         fullName: users.full_name,
         // Round N: the member list shows faces. The photo upload writes
@@ -530,6 +572,7 @@ export class FamService {
         rows.map(async (r) => ({
           membershipId: r.membershipId,
           userId: r.userId,
+          employeeId: r.employeeId ?? null,
           email: r.email ?? null,
           fullName: r.fullName ?? null,
           avatarUrl: await this.mediaService.servedUrl(r.avatarKey, r.avatarUrlLegacy, 64),
@@ -537,148 +580,232 @@ export class FamService {
           status: r.status,
           invitedAt: r.invitedAt?.toISOString() ?? null,
           acceptedAt: r.acceptedAt?.toISOString() ?? null,
+          lastLoginAt: r.lastLoginAt?.toISOString() ?? null,
         })),
       ),
     };
   }
 
   /**
-   * Suspends a tenant (status = suspended) with a reason.
-   * TODO: update tenants.status, write platform audit, optionally revoke active sessions.
+   * Round R R2 — suspend that really blocks. Saves what the suspension
+   * interrupted (Reactivate puts it back), flips the status, retires every
+   * live session of every member (login / refresh / switch / every tenant
+   * route refuse a suspended company), tells the Owners, and audits with the
+   * admin's IP / user agent. The Specflicks tenant can never be suspended.
    */
-  async suspendTenant(
-    tenantId: string,
-    actorUserId: string,
-    dto: SuspendTenantDto,
-  ) {
+  async suspendTenant(tenantId: string, actor: FamActor, dto: SuspendTenantDto) {
+    if (tenantId === SPECFLICKS_TENANT_ID) {
+      throw new BadRequestException('The Specflicks platform tenant cannot be suspended');
+    }
+    const [current] = await this.dbAdmin
+      .select({ id: tenants.id, name: tenants.name, status: tenants.status })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deleted_at)))
+      .limit(1);
+    if (!current) throw new NotFoundException('Tenant not found');
+    if (current.status === 'suspended') {
+      throw new ConflictException('This workspace is already suspended');
+    }
     const now = new Date();
     const [updated] = await this.dbAdmin
       .update(tenants)
-      .set({ status: 'suspended', updated_at: now })
+      .set({ status: 'suspended', status_before_suspend: current.status, updated_at: now })
       .where(eq(tenants.id, tenantId))
       .returning({ id: tenants.id, status: tenants.status });
 
-    if (!updated) {
-      throw new NotFoundException('Tenant not found');
+    let sessionsRevoked = 0;
+    try {
+      sessionsRevoked = await this.authService.revokeTenantSessions(tenantId);
+    } catch (err) {
+      this.logger.warn(`suspend ${tenantId}: session revoke failed: ${(err as Error).message}`);
     }
 
     await this.auditService.logPlatform({
-      actorUserId,
+      actorUserId: actor.userId,
       action: 'tenant.suspended',
       targetTenantId: tenantId,
-      metadata: { reason: dto.reason },
+      metadata: { reason: dto.reason, previousStatus: current.status, sessionsRevoked },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
     });
+    this.billingState?.invalidate(tenantId);
 
-    return { id: updated.id, status: updated.status };
+    // Owners hear about it — best-effort, after the write (house rules 6/7).
+    void this.notifyOwners(tenantId, 'workspace-suspended', (name) => ({
+      recipientName: name,
+      tenantName: current.name,
+      reason: dto.reason,
+    }));
+
+    return { id: updated!.id, status: updated!.status, previousStatus: current.status, sessionsRevoked };
   }
 
   /**
-   * Reverses a suspension by flipping the tenant back to 'active'.
-   * Pairs with suspendTenant; same audit pattern.
+   * Lifts a suspension: the status goes back to what it was before (a trial
+   * stays a trial), not blindly to 'active'.
    */
-  async reactivateTenant(tenantId: string, actorUserId: string) {
+  async reactivateTenant(tenantId: string, actor: FamActor) {
+    const [current] = await this.dbAdmin
+      .select({ id: tenants.id, name: tenants.name, status: tenants.status, before: tenants.status_before_suspend })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deleted_at)))
+      .limit(1);
+    if (!current) throw new NotFoundException('Tenant not found');
+    if (current.status !== 'suspended') {
+      throw new ConflictException('This workspace is not suspended');
+    }
+    const restored = current.before ?? 'active';
     const now = new Date();
     const [updated] = await this.dbAdmin
       .update(tenants)
-      .set({ status: 'active', updated_at: now })
+      .set({ status: restored, status_before_suspend: null, updated_at: now })
       .where(eq(tenants.id, tenantId))
       .returning({ id: tenants.id, status: tenants.status });
 
-    if (!updated) {
-      throw new NotFoundException('Tenant not found');
-    }
-
     await this.auditService.logPlatform({
-      actorUserId,
+      actorUserId: actor.userId,
       action: 'tenant.reactivated',
       targetTenantId: tenantId,
+      metadata: { restoredStatus: restored },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
     });
+    this.billingState?.invalidate(tenantId);
+    void this.notifyOwners(tenantId, 'workspace-reactivated', (name) => ({
+      recipientName: name,
+      tenantName: current.name,
+    }));
 
-    return { id: updated.id, status: updated.status };
+    return { id: updated!.id, status: updated!.status };
   }
 
   /**
-   * Extends a tenant's trial by N days. Updates tenants.trial_ends_at, and on
-   * the subscription (if any) slides current_period_end and — for a trialing
-   * sub — trial_ends_at, which is the column BillingStateService actually
-   * reads for the day-8 lock. Takes ≤60s to surface (billing-state cache).
+   * Extends a tenant's trial by N days — from today or the current trial end,
+   * whichever is later (an expired trial used to get days added to a date in
+   * the past and stayed locked). One expression on both rows the paywall and
+   * the fallbacks read, a plan-history event, and the billing cache dropped so
+   * the 402 wall lifts on the next request.
    */
-  async extendTrial(
-    tenantId: string,
-    actorUserId: string,
-    dto: ExtendTrialDto,
-  ) {
-    const now = new Date();
+  async extendTrial(tenantId: string, actor: FamActor, dto: ExtendTrialDto) {
     const [tenantRow] = await this.dbAdmin
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deleted_at)))
+      .limit(1);
+    if (!tenantRow) throw new NotFoundException('Tenant not found');
+
+    const [current] = await this.dbAdmin
+      .select({ status: subscriptions.status, razorpayId: subscriptions.razorpay_subscription_id })
+      .from(subscriptions)
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .limit(1);
+    // A live Razorpay subscription decides its own dates — an "extension"
+    // would change nothing about what is charged or when, so say so instead
+    // of reporting a success that is not one. A canceled one is dead at
+    // Razorpay: more time is a real lever there.
+    if (current?.razorpayId && current.status !== 'canceled') {
+      throw new BadRequestException(
+        'This workspace pays through Razorpay — a trial extension would not change what it is charged or when. Adjust the subscription in Razorpay instead.',
+      );
+    }
+    // A company with no subscription row yet gets the standard trialing one
+    // (the paywall reads it), exactly as the Billing tab promises.
+    if (!current) await this.billingService?.ensureRow(tenantId);
+
+    const days = Math.floor(dto.days);
+    const extension = sql`GREATEST(coalesce(trial_ends_at, now()), now()) + (${days} || ' days')::interval`;
+    // A canceled subscription's lock reads current_period_end — slide it too
+    // (when set), as the console always did.
+    const periodExtension = sql`CASE WHEN current_period_end IS NULL THEN NULL ELSE GREATEST(current_period_end, now()) + (${days} || ' days')::interval END`;
+    const now = new Date();
+    await this.dbAdmin
+      .update(tenants)
+      .set({ trial_ends_at: extension, updated_at: now })
+      .where(eq(tenants.id, tenantId));
+    const [sub] = await this.dbAdmin
+      .update(subscriptions)
+      .set({ trial_ends_at: extension, current_period_end: periodExtension, updated_at: now })
+      .where(eq(subscriptions.tenant_id, tenantId))
+      .returning({ id: subscriptions.id, trialEndsAt: subscriptions.trial_ends_at });
+    const [after] = await this.dbAdmin
       .select({ trialEndsAt: tenants.trial_ends_at })
       .from(tenants)
       .where(eq(tenants.id, tenantId))
       .limit(1);
+    // The paywall reads the subscription row when there is one.
+    const newTrialEndsAt = sub?.trialEndsAt ?? after?.trialEndsAt ?? null;
 
-    if (!tenantRow) {
-      throw new NotFoundException('Tenant not found');
-    }
-
-    const base = tenantRow.trialEndsAt ?? now;
-    const newTrialEndsAt = new Date(
-      base.getTime() + dto.days * 24 * 60 * 60 * 1000,
-    );
-
-    await this.dbAdmin
-      .update(tenants)
-      .set({ trial_ends_at: newTrialEndsAt, updated_at: now })
-      .where(eq(tenants.id, tenantId));
-
-    // Slide the subscription's current_period_end if there is one. We
-    // don't touch billing cycle or MRR — the trial extension is a
-    // free-of-charge runway grant, not a plan change.
-    const [sub] = await this.dbAdmin
-      .select({
-        id: subscriptions.id,
-        status: subscriptions.status,
-        trialEndsAt: subscriptions.trial_ends_at,
-        currentPeriodEnd: subscriptions.current_period_end,
-      })
-      .from(subscriptions)
-      .where(eq(subscriptions.tenant_id, tenantId))
-      .limit(1);
     if (sub) {
-      const patch: Partial<typeof subscriptions.$inferInsert> = { updated_at: now };
-      if (sub.currentPeriodEnd) {
-        patch.current_period_end = new Date(
-          sub.currentPeriodEnd.getTime() + dto.days * 24 * 60 * 60 * 1000,
-        );
-      }
-      // BillingStateService reads subscriptions.trial_ends_at (NOT the tenants
-      // column) to decide the day-8 lock — a trialing sub must be extended too
-      // or this whole lever is a no-op against the paywall.
-      if (sub.status === 'trialing') {
-        const subBase = sub.trialEndsAt ?? now;
-        patch.trial_ends_at = new Date(
-          subBase.getTime() + dto.days * 24 * 60 * 60 * 1000,
-        );
-      }
-      await this.dbAdmin
-        .update(subscriptions)
-        .set(patch)
-        .where(eq(subscriptions.id, sub.id));
+      await this.dbAdmin.insert(subscriptionEvents).values({
+        tenant_id: tenantId,
+        subscription_id: sub.id,
+        event_type: 'trial.extended',
+        // The plan history is the customer's; the reason and the staff id
+        // stay on the platform audit log below.
+        metadata: { days },
+      });
     }
-
     await this.auditService.logPlatform({
-      actorUserId,
+      actorUserId: actor.userId,
       action: 'tenant.trial.extended',
       targetTenantId: tenantId,
-      metadata: { days: dto.days, reason: dto.reason, newTrialEndsAt: newTrialEndsAt.toISOString() },
+      metadata: { days, reason: dto.reason, newTrialEndsAt: newTrialEndsAt?.toISOString() ?? null },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
     });
+    this.billingState?.invalidate(tenantId);
 
     return {
       id: tenantId,
-      trialEndsAt: newTrialEndsAt.toISOString(),
-      extendedByDays: dto.days,
+      trialEndsAt: newTrialEndsAt?.toISOString() ?? null,
+      extendedByDays: days,
     };
   }
 
-  // ─── Usage / Billing / Audit (C4 tabs) ─────────────────────────────────────
+  /** Round R R2 — "Give free months": a private coupon applied on the company's behalf. */
+  async grantFreeMonths(tenantId: string, actor: FamActor, input: { months: number; reason: string }) {
+    if (!this.billingService) throw new ServiceUnavailableException('Billing is not available');
+    const [t] = await this.dbAdmin
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deleted_at), ne(tenants.id, SPECFLICKS_TENANT_ID)))
+      .limit(1);
+    if (!t) throw new NotFoundException('Tenant not found');
+    return this.billingService.grantFreeMonths(tenantId, actor.userId, {
+      months: input.months,
+      reason: input.reason,
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+    });
+  }
+
+  /** Every active Owner of a company, emailed best-effort. */
+  private async notifyOwners(
+    tenantId: string,
+    template: 'workspace-suspended' | 'workspace-reactivated',
+    props: (recipientName: string) => Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const owners = await this.dbAdmin
+        .select({ email: users.email, name: users.full_name })
+        .from(memberships)
+        .innerJoin(users, eq(users.id, memberships.user_id))
+        .where(
+          and(
+            eq(memberships.tenant_id, tenantId),
+            eq(memberships.status, 'active'),
+            eq(memberships.role, 'owner'),
+          ),
+        );
+      for (const o of owners) {
+        await this.notificationsService
+          .sendEmail(template, o.email, props(o.name ?? o.email))
+          .catch((err: unknown) => this.logger.warn(`${template} email to ${o.email} failed: ${String(err)}`));
+      }
+    } catch (err) {
+      this.logger.warn(`${template}: owner lookup failed: ${(err as Error).message}`);
+    }
+  }
 
   /**
    * Per-tenant activity rollups for the Usage tab. All counts are scoped
@@ -765,6 +892,14 @@ export class FamService {
       .orderBy(desc(subscriptionEvents.created_at))
       .limit(50);
 
+    // Round R R2: the applied coupon, the grace window and a LIVE seat count
+    // (the stored one is recounted lazily) so the support panel explains
+    // "₹0 MRR on a trial" instead of looking broken.
+    const [coupon, seats] = await Promise.all([
+      this.billingService?.couponForTenant(tenantId) ?? Promise.resolve(null),
+      this.billingService?.billableSeats(tenantId) ?? Promise.resolve(Number(sub.user_count ?? 0)),
+    ]);
+
     return {
       subscription: {
         id: sub.id,
@@ -772,15 +907,19 @@ export class FamService {
         status: sub.status,
         perUserPrice: Number(sub.per_user_price ?? 0),
         userCount: Number(sub.user_count ?? 0),
+        seats,
+        monthlyEstimate: seats * Number(sub.per_user_price ?? 0),
         mrr: Number(sub.mrr_amount ?? 0),
         billingCycle: sub.billing_cycle,
         trialEndsAt: sub.trial_ends_at?.toISOString() ?? null,
+        graceEndsAt: sub.grace_ends_at?.toISOString() ?? null,
         currentPeriodStart: sub.current_period_start?.toISOString() ?? null,
         currentPeriodEnd: sub.current_period_end?.toISOString() ?? null,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
         canceledAt: sub.canceled_at?.toISOString() ?? null,
         razorpaySubscriptionId: sub.razorpay_subscription_id,
         createdAt: sub.created_at.toISOString(),
+        coupon,
       },
       events: events.map((e) => ({
         id: e.id,
@@ -791,23 +930,46 @@ export class FamService {
     };
   }
 
-  /**
-   * Platform audit log entries scoped to a single tenant for the Audit
-   * tab. Joined with users to surface the actor's display name.
-   */
-  async getTenantAudit(
-    tenantId: string,
-    opts: { page?: number; limit?: number } = {},
-  ) {
-    const page = Math.max(1, opts.page ?? 1);
-    const limit = Math.max(1, Math.min(opts.limit ?? 50, 100));
-    const offset = (page - 1) * limit;
+  /** WHERE clause shared by the platform audit log and its per-company view. */
+  private platformAuditWhere(q: FamAuditQueryDto, tenantId?: string) {
+    const conditions: Array<ReturnType<typeof eq>> = [];
+    if (tenantId) conditions.push(eq(auditLogPlatform.target_tenant_id, tenantId));
+    else if (q.tenantId) conditions.push(eq(auditLogPlatform.target_tenant_id, q.tenantId));
+    if (q.action?.trim()) {
+      // Comma-separated alternatives; a leading ^ anchors a term to the start
+      // of the action ("^tenant." = the company lifecycle only, which a plain
+      // substring would confuse with fam.tenant.note_*).
+      const alts = q.action
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .map((t) =>
+          t.startsWith('^')
+            ? sql`${auditLogPlatform.action} ILIKE ${`${t.slice(1)}%`}`
+            : sql`${auditLogPlatform.action} ILIKE ${`%${t}%`}`,
+        );
+      if (alts.length) conditions.push((alts.length === 1 ? alts[0] : or(...alts)) as never);
+    }
+    if (q.actor?.trim()) {
+      const needle = `%${q.actor.trim().toLowerCase()}%`;
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM users au WHERE au.id = ${auditLogPlatform.actor_user_id} AND (lower(au.email) LIKE ${needle} OR lower(au.full_name) LIKE ${needle}))` as never,
+      );
+    }
+    const from = parseDate(q.from);
+    const to = parseDate(q.to);
+    if (from) conditions.push(gte(auditLogPlatform.created_at, from) as never);
+    if (to) conditions.push(lte(auditLogPlatform.created_at, to) as never);
+    return conditions.length ? and(...conditions) : undefined;
+  }
 
-    const rows = await this.dbAdmin
+  private async platformAuditRows(where: ReturnType<typeof and> | undefined, limit: number, offset: number) {
+    return this.dbAdmin
       .select({
         id: auditLogPlatform.id,
         action: auditLogPlatform.action,
         actorUserId: auditLogPlatform.actor_user_id,
+        targetTenantId: auditLogPlatform.target_tenant_id,
         targetUserId: auditLogPlatform.target_user_id,
         metadata: auditLogPlatform.metadata,
         ipAddress: auditLogPlatform.ip_address,
@@ -815,19 +977,29 @@ export class FamService {
         createdAt: auditLogPlatform.created_at,
         actorEmail: users.email,
         actorName: users.full_name,
+        tenantName: tenants.name,
       })
       .from(auditLogPlatform)
       .leftJoin(users, eq(users.id, auditLogPlatform.actor_user_id))
-      .where(eq(auditLogPlatform.target_tenant_id, tenantId))
+      .leftJoin(tenants, eq(tenants.id, auditLogPlatform.target_tenant_id))
+      .where(where)
       .orderBy(desc(auditLogPlatform.created_at))
       .limit(limit)
       .offset(offset);
+  }
 
-    const [{ n }] = await this.dbAdmin
-      .select({ n: sql<number>`COUNT(*)::int` })
-      .from(auditLogPlatform)
-      .where(eq(auditLogPlatform.target_tenant_id, tenantId));
-
+  /**
+   * Platform audit log entries scoped to a single tenant for the Audit tab —
+   * Round R R2: filters (action, actor, dates) like the platform-wide log.
+   */
+  async getTenantAudit(tenantId: string, q: FamAuditQueryDto = {}) {
+    const page = Math.max(1, q.page ?? 1);
+    const limit = Math.max(1, Math.min(q.limit ?? 50, 100));
+    const where = this.platformAuditWhere(q, tenantId);
+    const [rows, [{ n }]] = await Promise.all([
+      this.platformAuditRows(where, limit, (page - 1) * limit),
+      this.dbAdmin.select({ n: sql<number>`COUNT(*)::int` }).from(auditLogPlatform).where(where),
+    ]);
     return {
       data: rows.map((r) => ({
         id: r.id,
@@ -838,13 +1010,60 @@ export class FamService {
         targetUserId: r.targetUserId,
         metadata: r.metadata as Record<string, unknown> | null,
         ipAddress: r.ipAddress,
+        userAgent: r.userAgent,
         createdAt: r.createdAt.toISOString(),
       })),
       pagination: { page, limit, total: Number(n ?? 0) },
     };
   }
 
-  // ─── Impersonation ─────────────────────────────────────────────────────────
+  /** Platform-wide audit log with filters (Round R R2 wires the page's controls). */
+  async getPlatformAudit(q: FamAuditQueryDto = {}) {
+    const page = Math.max(1, q.page ?? 1);
+    const limit = Math.max(1, Math.min(q.limit ?? 50, 200));
+    const where = this.platformAuditWhere(q);
+    const [rows, [{ n }]] = await Promise.all([
+      this.platformAuditRows(where, limit, (page - 1) * limit),
+      this.dbAdmin.select({ n: sql<number>`COUNT(*)::int` }).from(auditLogPlatform).where(where),
+    ]);
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        action: r.action,
+        actor: r.actorName ?? r.actorEmail ?? 'system',
+        actorEmail: r.actorEmail,
+        actorUserId: r.actorUserId,
+        targetTenantId: r.targetTenantId,
+        targetTenantName: r.tenantName,
+        targetUserId: r.targetUserId,
+        metadata: r.metadata as Record<string, unknown> | null,
+        ipAddress: r.ipAddress,
+        userAgent: r.userAgent,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      pagination: { page, limit, total: Number(n ?? 0) },
+    };
+  }
+
+  /** CSV of the platform audit log (whole platform or one company), newest first, up to 5 000 rows. */
+  async exportPlatformAuditCsv(q: FamAuditQueryDto = {}, tenantId?: string): Promise<string> {
+    const rows = await this.platformAuditRows(this.platformAuditWhere(q, tenantId), 5000, 0);
+    return toCsv(
+      ['when', 'action', 'actor', 'actor_email', 'company', 'target_tenant_id', 'target_user_id', 'ip', 'user_agent', 'metadata'],
+      rows.map((r) => ({
+        when: r.createdAt.toISOString(),
+        action: r.action,
+        actor: r.actorName ?? '',
+        actor_email: r.actorEmail ?? '',
+        company: r.tenantName ?? '',
+        target_tenant_id: r.targetTenantId ?? '',
+        target_user_id: r.targetUserId ?? '',
+        ip: r.ipAddress ?? '',
+        user_agent: r.userAgent ?? '',
+        metadata: r.metadata ?? '',
+      })),
+    );
+  }
 
   /**
    * Starts an impersonation session for a target user. Mints a fresh JWT
@@ -871,6 +1090,8 @@ export class FamService {
     const filters = [
       eq(memberships.status, 'active'),
       ne(memberships.tenant_id, SPECFLICKS_TENANT_ID),
+      // Round R R2: nobody signs in to a suspended company — staff included.
+      ne(tenants.status, 'suspended'),
     ];
     if (dto.membershipId) {
       filters.push(eq(memberships.id, dto.membershipId));
@@ -889,12 +1110,13 @@ export class FamService {
       })
       .from(users)
       .innerJoin(memberships, eq(memberships.user_id, users.id))
+      .innerJoin(tenants, eq(tenants.id, memberships.tenant_id))
       .where(and(...filters))
       .orderBy(memberships.created_at)
       .limit(1);
 
     if (!target) {
-      throw new NotFoundException('Target user has no active tenant membership');
+      throw new NotFoundException('Target user has no active tenant membership (or the company is suspended)');
     }
 
     // Open the session row first — gives us a hard 15-minute cap that's
@@ -1072,6 +1294,12 @@ export class FamService {
       impersonator.tenantId,
       impersonator.membershipId,
       impersonator.role as UserRole,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      // The admin cleared the FAM second factor to start impersonating.
+      { mfa: true },
     );
 
     await this.auditService.logPlatform({
@@ -1691,52 +1919,6 @@ export class FamService {
     };
   }
 
-  /**
-   * Platform-wide audit log (not tenant-filtered). Powers /fam/audit.
-   */
-  async getPlatformAudit(opts: { page?: number; limit?: number } = {}) {
-    const page = Math.max(1, opts.page ?? 1);
-    const limit = Math.max(1, Math.min(opts.limit ?? 50, 200));
-    const offset = (page - 1) * limit;
-
-    const rows = await this.dbAdmin
-      .select({
-        id: auditLogPlatform.id,
-        action: auditLogPlatform.action,
-        targetTenantId: auditLogPlatform.target_tenant_id,
-        targetUserId: auditLogPlatform.target_user_id,
-        metadata: auditLogPlatform.metadata,
-        createdAt: auditLogPlatform.created_at,
-        actorEmail: users.email,
-        actorName: users.full_name,
-        tenantName: tenants.name,
-      })
-      .from(auditLogPlatform)
-      .leftJoin(users, eq(users.id, auditLogPlatform.actor_user_id))
-      .leftJoin(tenants, eq(tenants.id, auditLogPlatform.target_tenant_id))
-      .orderBy(desc(auditLogPlatform.created_at))
-      .limit(limit)
-      .offset(offset);
-
-    const [{ n }] = await this.dbAdmin
-      .select({ n: sql<number>`COUNT(*)::int` })
-      .from(auditLogPlatform);
-
-    return {
-      data: rows.map((r) => ({
-        id: r.id,
-        action: r.action,
-        actor: r.actorName ?? r.actorEmail ?? 'system',
-        actorEmail: r.actorEmail,
-        targetTenantId: r.targetTenantId,
-        targetTenantName: r.tenantName,
-        targetUserId: r.targetUserId,
-        metadata: r.metadata as Record<string, unknown> | null,
-        createdAt: r.createdAt.toISOString(),
-      })),
-      pagination: { page, limit, total: Number(n ?? 0) },
-    };
-  }
 
   // ─── Invoicing v3 (§10): module toggles, auditor registry, seats, metrics ──
   //
@@ -2107,5 +2289,412 @@ export class FamService {
         notificationsByType: emailRows.map((e) => ({ type: e.type, count: Number(e.n) })),
       },
     };
+  }
+  // ─── Round R R2 — find anyone ──────────────────────────────────────────────
+
+  /** Users by email / name, companies by name / slug / GSTIN. Never the Specflicks tenant. */
+  async search(q: string) {
+    const needle = `%${q.trim().toLowerCase()}%`;
+    if (q.trim().length < 2) return { users: [], tenants: [] };
+    const [userRows, tenantRows] = await Promise.all([
+      this.dbAdmin
+        .select({
+          id: users.id,
+          email: users.email,
+          fullName: users.full_name,
+          status: users.status,
+          isPlatformAdmin: users.is_platform_admin,
+          lastLoginAt: users.last_login_at,
+          avatarKey: users.avatar_key,
+          avatarUrl: users.avatar_url,
+          // Drizzle renders an interpolated column UNQUALIFIED inside a select list
+          // ("id", which the correlated subquery would resolve to m.id) — spell
+          // the outer reference out.
+          companies: sql<number>`(SELECT COUNT(*)::int FROM memberships m WHERE m.user_id = "users"."id" AND m.tenant_id <> ${SPECFLICKS_TENANT_ID}::uuid)`,
+        })
+        .from(users)
+        .where(sql`(lower(${users.email}) LIKE ${needle} OR lower(coalesce(${users.full_name}, '')) LIKE ${needle})`)
+        .orderBy(desc(users.last_login_at))
+        .limit(8),
+      this.dbAdmin
+        .select({
+          id: tenants.id,
+          name: tenants.name,
+          slug: tenants.slug,
+          gstin: tenants.gstin,
+          status: tenants.status,
+          logoKey: tenants.logo_key,
+          logoUrl: tenants.logo_url,
+          members: sql<number>`(SELECT COUNT(*)::int FROM memberships m WHERE m.tenant_id = "tenants"."id" AND m.status = 'active')`,
+        })
+        .from(tenants)
+        .where(
+          and(
+            isNull(tenants.deleted_at),
+            ne(tenants.id, SPECFLICKS_TENANT_ID),
+            sql`(lower(${tenants.name}) LIKE ${needle} OR lower(${tenants.slug}) LIKE ${needle} OR lower(coalesce(${tenants.gstin}, '')) LIKE ${needle})`,
+          ),
+        )
+        .orderBy(tenants.name)
+        .limit(8),
+    ]);
+    return {
+      users: await Promise.all(
+        userRows.map(async (u) => ({
+          id: u.id,
+          email: u.email,
+          fullName: u.fullName,
+          status: u.status,
+          isPlatformAdmin: u.isPlatformAdmin,
+          lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
+          companies: Number(u.companies ?? 0),
+          avatarUrl: await this.mediaService.servedUrl(u.avatarKey, u.avatarUrl, 64),
+        })),
+      ),
+      tenants: await Promise.all(
+        tenantRows.map(async (t) => ({
+          id: t.id,
+          name: t.name,
+          slug: t.slug,
+          gstin: t.gstin,
+          status: t.status,
+          members: Number(t.members ?? 0),
+          logoUrl: await this.mediaService.servedUrl(t.logoKey, t.logoUrl, 64),
+        })),
+      ),
+    };
+  }
+
+  // ─── Round R R2 — a person, across companies ────────────────────────────────
+
+  private async loadUser(userId: string) {
+    const [u] = await this.dbAdmin.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!u) throw new NotFoundException('User not found');
+    return u;
+  }
+
+  async getUser(userId: string) {
+    const u = await this.loadUser(userId);
+    const [companies, sessions, devices, lockout] = await Promise.all([
+      this.dbAdmin
+        .select({
+          membershipId: memberships.id,
+          tenantId: memberships.tenant_id,
+          tenantName: tenants.name,
+          tenantSlug: tenants.slug,
+          tenantStatus: tenants.status,
+          tenantLogoKey: tenants.logo_key,
+          tenantLogoUrl: tenants.logo_url,
+          role: memberships.role,
+          status: memberships.status,
+          employeeId: memberships.employee_id,
+          accessExpiresAt: memberships.access_expires_at,
+          invitedAt: memberships.invited_at,
+          acceptedAt: memberships.accepted_at,
+        })
+        .from(memberships)
+        .innerJoin(tenants, eq(tenants.id, memberships.tenant_id))
+        .where(and(eq(memberships.user_id, userId), ne(memberships.tenant_id, SPECFLICKS_TENANT_ID)))
+        .orderBy(memberships.created_at),
+      this.authService.listSessionsDetailed(userId),
+      this.authService.listTrustedDevices(userId),
+      this.authService.lockoutState(u.email, userId),
+    ]);
+    return {
+      id: u.id,
+      email: u.email,
+      fullName: u.full_name,
+      phone: u.phone,
+      avatarUrl: await this.mediaService.servedUrl(u.avatar_key, u.avatar_url, 256),
+      status: u.status,
+      isPlatformAdmin: u.is_platform_admin,
+      totpEnrolledAt: u.totp_enrolled_at?.toISOString() ?? null,
+      lastLoginAt: u.last_login_at?.toISOString() ?? null,
+      createdAt: u.created_at.toISOString(),
+      lockout,
+      companies: await Promise.all(
+        companies.map(async (c) => ({
+          membershipId: c.membershipId,
+          tenantId: c.tenantId,
+          tenantName: c.tenantName,
+          tenantSlug: c.tenantSlug,
+          tenantStatus: c.tenantStatus,
+          tenantLogoUrl: await this.mediaService.servedUrl(c.tenantLogoKey, c.tenantLogoUrl, 64),
+          role: c.role,
+          status: c.status,
+          employeeId: c.employeeId,
+          accessExpiresAt: c.accessExpiresAt?.toISOString() ?? null,
+          invitedAt: c.invitedAt?.toISOString() ?? null,
+          acceptedAt: c.acceptedAt?.toISOString() ?? null,
+        })),
+      ),
+      sessions,
+      devices,
+    };
+  }
+
+  async getUserAuthEvents(userId: string, opts: { page?: number; limit?: number }) {
+    const u = await this.loadUser(userId);
+    return this.authService.listAuthEvents(userId, u.email, opts);
+  }
+
+  async clearUserLockout(userId: string, actor: FamActor) {
+    const u = await this.loadUser(userId);
+    const result = await this.authService.clearSignInLockout(u.email, userId, {
+      actorUserId: actor.userId,
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.user.lockout_cleared',
+      targetUserId: userId,
+      metadata: { email: u.email, ...result },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { ok: true, ...result };
+  }
+
+  async sendUserSignInLink(userId: string, actor: FamActor) {
+    const u = await this.loadUser(userId);
+    if (u.status !== 'active') throw new ConflictException('This account is not active');
+    const result = await this.authService.sendSignInLink(
+      { id: u.id, email: u.email },
+      { actorUserId: actor.userId, ip: actor.ip, userAgent: actor.userAgent },
+    );
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.user.sign_in_link_sent',
+      targetUserId: userId,
+      metadata: { email: u.email, sent: result.sent, expiresAt: result.expiresAt },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    if (!result.sent) throw new ServiceUnavailableException('The sign-in email could not be sent — try again in a minute');
+    return { ok: true, expiresAt: result.expiresAt };
+  }
+
+  async signOutUserEverywhere(userId: string, actor: FamActor) {
+    const u = await this.loadUser(userId);
+    const result = await this.authService.revokeAllSessions(userId, {
+      reason: 'fam_sign_out_everywhere',
+      actorUserId: actor.userId,
+      ip: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.user.signed_out_everywhere',
+      targetUserId: userId,
+      metadata: { email: u.email, ...result },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { ok: true, ...result };
+  }
+
+  // ─── Round R R2 — company support tab ──────────────────────────────────────
+
+  private tenantActivityFilters(q: TenantActivityQueryDto) {
+    return {
+      action: q.action?.trim() || undefined,
+      resourceType: q.resourceType?.trim() || undefined,
+      actorUserId: q.actorUserId,
+      from: parseDate(q.from),
+      to: parseDate(q.to),
+    };
+  }
+
+  /** The company's OWN audit log — exactly what its Owner sees under Reports → Audit log. */
+  async getTenantActivity(tenantId: string, q: TenantActivityQueryDto = {}) {
+    await this.assertTenant(tenantId);
+    return this.auditService.search(tenantId, {
+      ...this.tenantActivityFilters(q),
+      page: Math.max(1, q.page ?? 1),
+      limit: Math.max(1, Math.min(q.limit ?? 50, 200)),
+    });
+  }
+
+  async exportTenantActivityCsv(tenantId: string, q: TenantActivityQueryDto = {}): Promise<string> {
+    await this.assertTenant(tenantId);
+    const rows: Array<Record<string, unknown>> = [];
+    const filters = this.tenantActivityFilters(q);
+    for (let page = 1; page <= 25; page++) {
+      const { data } = await this.auditService.search(tenantId, { ...filters, page, limit: 200 });
+      for (const r of data) {
+        rows.push({
+          when: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+          action: r.action,
+          resource_type: r.resourceType,
+          resource_id: r.resourceId ?? '',
+          actor: r.actorName ?? '',
+          actor_email: r.actorEmail ?? '',
+          ip: r.ipAddress ?? '',
+          user_agent: r.userAgent ?? '',
+          before: r.beforeState ?? '',
+          after: r.afterState ?? '',
+        });
+      }
+      if (data.length < 200) break;
+    }
+    return toCsv(['when', 'action', 'resource_type', 'resource_id', 'actor', 'actor_email', 'ip', 'user_agent', 'before', 'after'], rows);
+  }
+
+  private async assertTenant(tenantId: string) {
+    const [t] = await this.dbAdmin
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deleted_at), ne(tenants.id, SPECFLICKS_TENANT_ID)))
+      .limit(1);
+    if (!t) throw new NotFoundException('Tenant not found');
+    return t;
+  }
+
+  private async loadMember(tenantId: string, membershipId: string) {
+    const [m] = await this.dbAdmin
+      .select({
+        id: memberships.id,
+        userId: memberships.user_id,
+        employeeId: memberships.employee_id,
+        status: memberships.status,
+        role: memberships.role,
+        email: users.email,
+      })
+      .from(memberships)
+      .leftJoin(users, eq(users.id, memberships.user_id))
+      .where(and(eq(memberships.id, membershipId), eq(memberships.tenant_id, tenantId)))
+      .limit(1);
+    if (!m) throw new NotFoundException('Member not found');
+    return m;
+  }
+
+  async resendMemberInvite(tenantId: string, membershipId: string, actor: FamActor) {
+    if (!this.employeesPublic) throw new ServiceUnavailableException('Invites are not available');
+    await this.assertTenant(tenantId);
+    const m = await this.loadMember(tenantId, membershipId);
+    if (!m.employeeId) {
+      throw new ConflictException('This seat has no employee record — invites go through People → Onboarding');
+    }
+    const result = await this.employeesPublic.resendInvite(m.employeeId, tenantId, actor.userId);
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.member.invite_resent',
+      targetTenantId: tenantId,
+      targetUserId: m.userId,
+      metadata: { email: m.email, emailSent: result.data.emailSent, resentCount: result.data.resentCount },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return result;
+  }
+
+  async signOutMember(tenantId: string, membershipId: string, actor: FamActor) {
+    await this.assertTenant(tenantId);
+    const m = await this.loadMember(tenantId, membershipId);
+    const sessionsRevoked = await this.authService.revokeTenantSessionsForUser(m.userId, tenantId);
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.member.signed_out',
+      targetTenantId: tenantId,
+      targetUserId: m.userId,
+      metadata: { email: m.email, sessionsRevoked },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { ok: true, sessionsRevoked };
+  }
+
+  async listTenantNotes(tenantId: string) {
+    await this.assertTenant(tenantId);
+    const rows = await this.dbAdmin
+      .select({
+        id: famTenantNotes.id,
+        body: famTenantNotes.body,
+        pinned: famTenantNotes.pinned,
+        createdAt: famTenantNotes.created_at,
+        updatedAt: famTenantNotes.updated_at,
+        authorUserId: famTenantNotes.author_user_id,
+        authorName: users.full_name,
+        authorEmail: users.email,
+      })
+      .from(famTenantNotes)
+      .leftJoin(users, eq(users.id, famTenantNotes.author_user_id))
+      .where(and(eq(famTenantNotes.tenant_id, tenantId), isNull(famTenantNotes.deleted_at)))
+      .orderBy(desc(famTenantNotes.pinned), desc(famTenantNotes.created_at));
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        body: r.body,
+        pinned: r.pinned,
+        author: r.authorName ?? r.authorEmail ?? 'Specflicks',
+        authorUserId: r.authorUserId,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    };
+  }
+
+  async addTenantNote(tenantId: string, actor: FamActor, body: string) {
+    await this.assertTenant(tenantId);
+    const [row] = await this.dbAdmin
+      .insert(famTenantNotes)
+      .values({ tenant_id: tenantId, author_user_id: actor.userId, body: body.trim() })
+      .returning({ id: famTenantNotes.id });
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.tenant.note_added',
+      targetTenantId: tenantId,
+      metadata: { noteId: row!.id, length: body.trim().length },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { id: row!.id };
+  }
+
+  async updateTenantNote(
+    tenantId: string,
+    noteId: string,
+    actor: FamActor,
+    patch: { body?: string; pinned?: boolean },
+  ) {
+    await this.assertTenant(tenantId);
+    const set: Partial<typeof famTenantNotes.$inferInsert> = { updated_at: new Date() };
+    if (patch.body !== undefined) set.body = patch.body.trim();
+    if (patch.pinned !== undefined) set.pinned = patch.pinned;
+    const [row] = await this.dbAdmin
+      .update(famTenantNotes)
+      .set(set)
+      .where(and(eq(famTenantNotes.id, noteId), eq(famTenantNotes.tenant_id, tenantId), isNull(famTenantNotes.deleted_at)))
+      .returning({ id: famTenantNotes.id, pinned: famTenantNotes.pinned });
+    if (!row) throw new NotFoundException('Note not found');
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.tenant.note_updated',
+      targetTenantId: tenantId,
+      metadata: { noteId, pinned: row.pinned, edited: patch.body !== undefined },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { id: row.id, pinned: row.pinned };
+  }
+
+  async deleteTenantNote(tenantId: string, noteId: string, actor: FamActor) {
+    await this.assertTenant(tenantId);
+    const [row] = await this.dbAdmin
+      .update(famTenantNotes)
+      .set({ deleted_at: new Date() })
+      .where(and(eq(famTenantNotes.id, noteId), eq(famTenantNotes.tenant_id, tenantId), isNull(famTenantNotes.deleted_at)))
+      .returning({ id: famTenantNotes.id });
+    if (!row) throw new NotFoundException('Note not found');
+    await this.auditService.logPlatform({
+      actorUserId: actor.userId,
+      action: 'fam.tenant.note_deleted',
+      targetTenantId: tenantId,
+      metadata: { noteId },
+      ipAddress: actor.ip,
+      userAgent: actor.userAgent,
+    });
+    return { ok: true };
   }
 }

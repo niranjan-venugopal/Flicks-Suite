@@ -19,6 +19,16 @@ import { ModuleAccessService } from '../module-access.service';
  */
 const SEAT_EXEMPT_PATH = /^\/api\/v1\/(auth|me)(\/|$)/;
 
+/**
+ * Round R R2: a company suspended by Specflicks answers the same way on
+ * every tenant route — a code the web shell turns into the "suspended"
+ * screen instead of a generic permission error.
+ */
+export const TENANT_SUSPENDED = {
+  code: 'TENANT_SUSPENDED',
+  message: 'This workspace is suspended — contact support',
+} as const;
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(
@@ -89,6 +99,9 @@ export class RolesGuard implements CanActivate {
     let role: UserRole = user.role;
     if (this.access && user.tenantId && user.membershipId) {
       const seat = await this.access.liveSeat(user.tenantId, user.membershipId);
+      if (seat?.suspended) {
+        throw new ForbiddenException(TENANT_SUSPENDED);
+      }
       if (!seat || !seat.active) {
         await this.logDenied(req, user, requiredRoles);
         throw new ForbiddenException('Your access to this workspace is no longer active');
@@ -126,6 +139,9 @@ export class RolesGuard implements CanActivate {
     const path = (req.originalUrl ?? req.url ?? '').split('?')[0] ?? '';
     if (SEAT_EXEMPT_PATH.test(path)) return;
     const seat = await this.access.liveSeat(user.tenantId, user.membershipId);
+    if (seat?.suspended) {
+      throw new ForbiddenException(TENANT_SUSPENDED);
+    }
     if (!seat || !seat.active) {
       throw new ForbiddenException('Your access to this workspace is no longer active');
     }

@@ -12,6 +12,7 @@ import { STATUS_META } from '@/components/presence/PresenceDot'
 import { useUserPresence, usePresence } from '@/lib/api/queries/use-presence'
 import { useFeedbackPanel } from '@/components/feedback/FeedbackPanel'
 import { NotificationsBell } from './NotificationsBell'
+import { FamSearch } from '@/components/fam/FamSearch'
 import { ThemeMenuItems } from './ThemeMenuItems'
 import type { SidebarVariant } from './Sidebar'
 import {
@@ -57,7 +58,10 @@ export function Topbar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}
       {/* Left-side space (page header lives inside the page content) */}
       <div style={{ flex: 1, minWidth: 0 }} />
 
-      {/* Search */}
+      {/* Search — Round R R2: the platform console finds people and companies */}
+      {isFam ? (
+        <FamSearch />
+      ) : (
       <div style={{ position: 'relative', width: 280 }}>
         <Icon.search
           size={15}
@@ -94,6 +98,7 @@ export function Topbar({ variant = 'tenant' }: { variant?: SidebarVariant } = {}
           ⌘K
         </div>
       </div>
+      )}
 
       {/* Notifications */}
       <NotificationsBell />

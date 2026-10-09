@@ -1,11 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
-import {
-  membershipGrants,
-  memberships,
-  tenantModuleToggles,
-  tenantRoleModuleDefaults,
-} from '@flicks/db/schema';
+import { membershipGrants, memberships, tenantModuleToggles, tenantRoleModuleDefaults, tenants } from '@flicks/db/schema';
 import type { DbAdmin } from '@flicks/db';
 import type { UserRole } from '@flicks/shared/types';
 import { DatabaseService } from '../database/database.service';
@@ -255,20 +250,25 @@ export class ModuleAccessService {
   async liveSeat(
     tenantId: string,
     membershipId: string,
-  ): Promise<{ active: boolean; role: UserRole | null } | null> {
+  ): Promise<{ active: boolean; role: UserRole | null; suspended: boolean } | null> {
+    // Round R R2: the company itself may be suspended by Specflicks — every
+    // seat in it is refused on the next request, whatever its own status.
     const [m] = await this.dbAdmin
       .select({
         status: memberships.status,
         expires: memberships.access_expires_at,
         role: memberships.role,
+        tenantStatus: tenants.status,
       })
       .from(memberships)
+      .innerJoin(tenants, eq(tenants.id, memberships.tenant_id))
       .where(and(eq(memberships.id, membershipId), eq(memberships.tenant_id, tenantId)))
       .limit(1);
-    if (!m) return { active: false, role: null };
+    if (!m) return { active: false, role: null, suspended: false };
     return {
       active: m.status === 'active' && (!m.expires || new Date(m.expires).getTime() > Date.now()),
       role: (m.role as UserRole | undefined) ?? null,
+      suspended: m.tenantStatus === 'suspended',
     };
   }
 
